@@ -139,7 +139,7 @@ pub const Agent = struct {
                     .out = null,
                     .err = null,
                 };
-                threads[i] = std.Thread.spawn(.{}, ToolWorker.run, .{&workers[i]}) catch |err| {
+                threads[i] = std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, ToolWorker.run, .{&workers[i]}) catch |err| {
                     for (threads[0..spawned]) |t| t.join();
                     return err;
                 };
