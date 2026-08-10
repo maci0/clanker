@@ -1081,6 +1081,16 @@ pub const Agent = struct {
             handles.deinit(self.ctx.gpa);
         }
 
+        // Calls ready for a worker, with before-transforms already applied.
+        const PendingCall = struct {
+            slot: usize,
+            tool: *const registry.Tool,
+            eff_args: []const u8,
+            wasm_bytes: []const u8,
+        };
+        var pending: std.ArrayList(PendingCall) = .empty;
+        defer pending.deinit(self.ctx.gpa);
+
         for (calls, 0..) |tc, i| {
             if (seen.contains(tc.name)) continue; // duplicate -> sequential pass
             try seen.put(self.ctx.gpa, tc.name, {});
@@ -1104,19 +1114,29 @@ pub const Agent = struct {
             };
 
             // Run the before-transform chain on the main thread, rewriting
-            // this call's arguments before the worker ever sees them.
+            // this call's arguments before the worker ever sees them. The
+            // call is queued, not spawned yet: a transform can itself call
+            // the model (ck_llm) and take seconds, and spawning interleaved
+            // with transforms would delay every later worker's start by the
+            // accumulated transform time.
             const eff_args = self.runChain(tc.name, .before, tc.arguments) catch tc.arguments;
+            try pending.append(self.ctx.gpa, .{ .slot = i, .tool = tool, .eff_args = eff_args, .wasm_bytes = wasm_bytes });
+        }
+
+        // All before-transforms are done, so spawn every worker now and they
+        // all start (and run) together.
+        for (pending.items) |p| {
             const worker = try self.ctx.gpa.create(ToolWorker);
             worker.* = .{
                 .ctx = self.ctx,
                 .cfg = self.cfg,
-                .tool = tool,
-                .arguments = eff_args,
-                .wasm_bytes = wasm_bytes,
+                .tool = p.tool,
+                .arguments = p.eff_args,
+                .wasm_bytes = p.wasm_bytes,
                 .subagent_runner = self.subagent_runner,
             };
             const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
-            try handles.append(self.ctx.gpa, .{ .slot = i, .thread = thread, .worker = worker, .wasm_bytes = wasm_bytes });
+            try handles.append(self.ctx.gpa, .{ .slot = p.slot, .thread = thread, .worker = worker, .wasm_bytes = p.wasm_bytes });
         }
 
         // Join every worker and move its output into the matching slot.
