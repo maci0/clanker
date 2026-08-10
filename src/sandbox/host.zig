@@ -1028,8 +1028,15 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         var allowed = false;
         for (sb.fs_prefixes) |p| {
             if (std.mem.startsWith(u8, sub_path, p)) {
-                allowed = true;
-                break;
+                // The match must end at a path boundary: a bare prefix
+                // ("notes") authorizes the directory itself and paths
+                // beneath it, but never a sibling that merely shares the
+                // leading bytes ("notes2/x"). Trailing-slash prefixes
+                // ("notes/") only match beneath the directory, as before.
+                if (p.len == 0 or p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') {
+                    allowed = true;
+                    break;
+                }
             }
             // A prefix of "state/runs/" also authorizes "state/runs" itself,
             // otherwise a tool allowed to read inside a directory cannot list
@@ -1130,6 +1137,25 @@ test "ckFsMkdir rejects paths outside sandbox" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc"));
     // Empty
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
+}
+
+test "safeJoin bare prefix does not bleed into sibling names" {
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"notes"},
+        .environ_map = undefined,
+    };
+    // The directory itself and its children are allowed.
+    const dir = try safeJoin(&sb, "notes");
+    defer std.testing.allocator.free(dir);
+    const child = try safeJoin(&sb, "notes/todo.txt");
+    defer std.testing.allocator.free(child);
+    // A sibling that merely shares the leading bytes must be rejected.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notes2/secret.txt"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notes-old/plans.txt"));
 }
 
 test "safeJoin rejects escapes" {
