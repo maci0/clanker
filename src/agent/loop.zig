@@ -836,11 +836,18 @@ pub const Agent = struct {
         };
 
         var sb = try self.sandboxFor(tool);
-        // Transform modules are not cached in `self.modules`: they are keyed by
-        // the wrapped tool there, and a stale module would carry another call's
-        // state into this one.
-        const mod = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes);
-        defer mod.deinit();
+        // Cache compiled transform modules under a "transform:"-prefixed key so
+        // they never collide with the wrapped tool's own module in
+        // `self.modules`; repeated invocations skip recompilation (the modules
+        // are deinitialized by the run() defer like any other cached module).
+        const cache_key = try std.fmt.allocPrint(self.arena, "transform:{s}", .{tool.name});
+        const mod = if (self.modules.get(cache_key)) |m|
+            m
+        else blk: {
+            const m = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes);
+            try self.modules.put(self.arena, cache_key, m);
+            break :blk m;
+        };
 
         const out = try mod.executeTool(input);
         defer self.ctx.gpa.free(out);
