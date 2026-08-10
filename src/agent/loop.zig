@@ -205,7 +205,9 @@ pub const Agent = struct {
     }
 
     /// Compacts the conversation history to keep context size bounded: if the
-    /// accumulated message bytes (content + tool arguments) exceed 24000,
+    /// accumulated message bytes (content + tool arguments) exceed the
+    /// effective threshold (compact_threshold_bytes, capped at half the
+    /// provider's context window; 0 selects the auto half-window value),
     /// keeps the system message and the last 6 messages, replacing the
     /// removed middle with a single user placeholder message.
     fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {

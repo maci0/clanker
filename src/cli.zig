@@ -66,9 +66,10 @@ pub fn parse(args: []const []const u8) !Options {
         // Once git is the active command, every remaining token — including
         // dash-prefixed ones like git's own flags/options — passes through to
         // git verbatim, so `clanker git status --porcelain` keeps its args.
+        // cmdGit re-reads the raw argv itself; recording the token here only
+        // absorbs it so it never reaches the flag parser below (no alloc).
         if (opts.command == .git) {
-            const joined = if (opts.task) |t| std.fmt.allocPrint(std.heap.page_allocator, "{s} {s}", .{ t, a }) catch t else a;
-            opts.task = joined;
+            opts.task = a;
             continue;
         }
 
