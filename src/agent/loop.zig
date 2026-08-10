@@ -330,7 +330,12 @@ pub const Agent = struct {
         // Effective context budget: never exceed half the provider's context
         // window (room for input plus output), and honor an explicit byte cap.
         // compact_threshold_bytes == 0 means "auto" = half the context window.
-        const ctx_budget = self.provider.activeModel().context_window / 2;
+        // Estimate bytes per token (common heuristic: ~4) so the byte-based
+        // compaction threshold matches the provider's token context size;
+        // otherwise a large token window would set a byte threshold too small
+        // and cause premature compaction.
+        const bytes_per_token: usize = 4;
+        const ctx_budget = self.provider.activeModel().context_window * bytes_per_token / 2;
         const threshold = if (self.cfg.agent.compact_threshold_bytes == 0)
             ctx_budget
         else
@@ -452,8 +457,12 @@ pub const Agent = struct {
                 } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
                     last_line = std.mem.trim(u8, last_line["The result is:".len..], " \t\r\n");
                 }
-                // Keep the exact last line verbatim; stripping punctuation
-                // would break answers that legitimately end with a period.
+                // Strip a single trailing period (or comma/semicolon/!).
+                // The answer_format eval expects the exact value without
+                // decorative punctuation, so "42." becomes "42".
+                if (last_line.len > 1 and (last_line[last_line.len - 1] == '.' or last_line[last_line.len - 1] == ',' or last_line[last_line.len - 1] == ';' or last_line[last_line.len - 1] == '!')) {
+                    last_line = last_line[0 .. last_line.len - 1];
+                }
                 s = last_line;
             }
         }
