@@ -40,6 +40,8 @@ pub const Agent = struct {
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
     sandbox_root: []const u8 = ".",
+    /// Commit promoted improvements with git (git_commit_after_improve).
+    git_commit: bool = true,
 };
 
 pub const Improve = struct {
@@ -52,11 +54,32 @@ pub const Improve = struct {
     max_proposal_bytes: usize = 512 * 1024,
 };
 
+/// A peer clanker instance that may be notified about events.
+pub const Peer = struct {
+    name: []const u8,
+    url: []const u8,
+};
+
+/// Identity of this clanker instance.
+pub const Instance = struct {
+    name: []const u8 = "",
+    id: []const u8 = "",
+};
+
+/// Peer notification settings.
+pub const Notify = struct {
+    on: bool = true,
+    topic: []const u8 = "clanker",
+};
+
 pub const Config = struct {
     default_provider: []const u8 = "deepseek",
     providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
     agent: Agent = .{},
     improve: Improve = .{},
+    peers: []const Peer = &.{},
+    instance: Instance = .{},
+    notify: Notify = .{},
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
         const want = name orelse self.default_provider;
@@ -115,6 +138,17 @@ pub const Config = struct {
                 try cfg.providers.put(arena, kv.key_ptr.*, p);
             }
         }
+        if (obj.get("instance")) |v| {
+            cfg.instance = try parseInstance(arena, v);
+        } else {
+            cfg.instance.name = try defaultInstName(arena);
+        }
+        if (obj.get("peers")) |v| {
+            cfg.peers = try parsePeers(arena, v);
+        }
+        if (obj.get("notify")) |v| {
+            cfg.notify = try parseNotify(arena, v);
+        }
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{file_name});
         }
@@ -152,6 +186,61 @@ pub const Config = struct {
         return p;
     }
 
+    fn parseInstance(arena: std.mem.Allocator, v: json.Value) !Instance {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.InstanceNotObject,
+        };
+        var inst = Instance{};
+        if (obj.get("name")) |k| {
+            inst.name = try jsonStr(k, "name");
+        } else {
+            inst.name = try defaultInstName(arena);
+        }
+        if (obj.get("id")) |k| {
+            inst.id = try jsonStr(k, "id");
+        }
+        return inst;
+    }
+
+    fn parsePeers(arena: std.mem.Allocator, v: json.Value) ![]const Peer {
+        const arr = switch (v) {
+            .array => |a| a,
+            else => return error.PeersNotArray,
+        };
+        var out: std.ArrayList(Peer) = .empty;
+        for (arr.items) |item| {
+            const obj = switch (item) {
+                .object => |o| o,
+                else => return error.PeerNotObject,
+            };
+            try out.append(arena, .{
+                .name = try jsonStr(try required(obj, "name"), "name"),
+                .url = try jsonStr(try required(obj, "url"), "url"),
+            });
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
+        _ = arena;
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.NotifyNotObject,
+        };
+        var n = Notify{};
+        if (obj.get("on")) |k| n.on = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("topic")) |k| n.topic = try jsonStr(k, "topic");
+        return n;
+    }
+
+    fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
+        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.os.linux.getpid()});
+    }
+
     fn parseAgent(arena: std.mem.Allocator, v: json.Value) !Agent {
         _ = arena;
         const obj = switch (v) {
@@ -165,6 +254,10 @@ pub const Config = struct {
         if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");
         if (obj.get("learnings_file")) |k| a.learnings_file = try jsonStr(k, "learnings_file");
         if (obj.get("sandbox_root")) |k| a.sandbox_root = try jsonStr(k, "sandbox_root");
+        if (obj.get("git_commit")) |k| a.git_commit = switch (k) {
+            .bool => |b| b,
+            else => a.git_commit,
+        };
         return a;
     }
 
@@ -198,6 +291,9 @@ pub const Config = struct {
         // clever — instead we always replace agent/improve wholesale.
         dst.agent = src.agent;
         dst.improve = src.improve;
+        dst.peers = src.peers;
+        dst.instance = src.instance;
+        dst.notify = src.notify;
     }
 
     // --- helpers -----------------------------------------------------------
