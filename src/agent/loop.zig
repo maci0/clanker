@@ -92,6 +92,13 @@ pub const Agent = struct {
                 self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
             }
 
+            if (self.cfg.agent.max_total_tokens) |budget| {
+                if (self.stats.total_tokens >= budget) {
+                    log.log(.warn, "token budget reached ({d} total tokens)", .{self.stats.total_tokens});
+                    break;
+                }
+            }
+
             try messages.append(self.arena, resp.message);
 
             const calls = resp.message.tool_calls orelse {
@@ -130,7 +137,7 @@ pub const Agent = struct {
                 for (calls) |tc| total += tc.arguments.len;
             }
         }
-        if (total <= 24000) return;
+        if (total <= self.cfg.agent.compact_threshold_bytes) return;
         // Need at least system + one middle + last 6 = 8 messages to compact.
         if (messages.items.len <= 7) return;
         log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });

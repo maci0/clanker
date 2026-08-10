@@ -35,6 +35,8 @@ pub const Provider = struct {
 
 pub const Agent = struct {
     max_iterations: u32 = 12,
+    compact_threshold_bytes: usize = 24000,
+    max_total_tokens: ?u32 = null,
     tools_dir: []const u8 = "tools",
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
@@ -74,6 +76,8 @@ pub const Notify = struct {
 };
 
 pub const Config = struct {
+    agent_present: bool = false,
+    improve_present: bool = false,
     default_provider: []const u8 = "deepseek",
     providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
     agent: Agent = .{},
@@ -124,9 +128,11 @@ pub const Config = struct {
         }
         if (obj.get("agent")) |v| {
             cfg.agent = try parseAgent(arena, v);
+            cfg.agent_present = true;
         }
         if (obj.get("improve")) |v| {
             cfg.improve = try parseImprove(arena, v);
+            cfg.improve_present = true;
         }
         if (obj.get("providers")) |v| {
             const pobj = switch (v) {
@@ -286,13 +292,10 @@ pub const Config = struct {
         while (it.next()) |kv| {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
-        // agent / improve: wholesale replace when present in local file is not
-        // trackable here; local parsed values keep their defaults, so we only
-        // override scalars the local file actually set. For simplicity we
-        // replace when any field differs from the Config defaults is too
-        // clever — instead we always replace agent/improve wholesale.
-        dst.agent = src.agent;
-        dst.improve = src.improve;
+        // Only override agent/improve when the local file actually defined
+        // them; otherwise the local defaults would clobber the global file.
+        if (src.agent_present) dst.agent = src.agent;
+        if (src.improve_present) dst.improve = src.improve;
         dst.peers = src.peers;
         dst.instance = src.instance;
         dst.notify = src.notify;
