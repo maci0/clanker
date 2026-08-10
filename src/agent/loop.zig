@@ -783,7 +783,7 @@ pub const Agent = struct {
 
         const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
             log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
-            return error.ToolWasmMissing;
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s}). Run `zig build tools`.\"}}", .{ tc.name, @errorName(err) });
         };
         defer self.ctx.gpa.free(wasm_bytes);
 
@@ -797,7 +797,7 @@ pub const Agent = struct {
         else blk: {
             const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes) catch |err| {
                 log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tc.name, @errorName(err) });
-                return error.ToolLoadFailed;
+                return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool load failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
             };
             try self.modules.put(self.arena, tc.name, m);
             break :blk m;
@@ -805,7 +805,7 @@ pub const Agent = struct {
 
         const out = mod.executeTool(tc.arguments) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
-            return error.ToolExecutionFailed;
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
         };
         defer self.ctx.gpa.free(out);
         const t1 = std.Io.Timestamp.now(self.ctx.io, .awake);
@@ -858,7 +858,8 @@ pub const Agent = struct {
             if ((try self.reg.transformsFor(self.arena, tc.name, .after)).len > 0) continue;
             const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
-                return error.ToolWasmMissing;
+                results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+                continue;
             };
 
             const worker = try self.ctx.gpa.create(ToolWorker);
@@ -879,11 +880,13 @@ pub const Agent = struct {
         for (handles.items) |h| {
             if (h.worker.err) |e| {
                 log.log(.error_, "tool '{s}' failed: {s}", .{ h.worker.tool.name, @errorName(e) });
-                return error.ToolExecutionFailed;
+                results[h.slot] = std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ h.worker.tool.name, @errorName(e) }) catch "{{\"ok\":false,\"error\":\"tool execution failed\"}}";
+            } else if (h.worker.out) |out| {
+                results[h.slot] = try self.arena.dupe(u8, out);
+                self.ctx.gpa.free(out);
+            } else {
+                results[h.slot] = "{\"ok\":false,\"error\":\"tool produced no output\"}";
             }
-            const out = h.worker.out.?;
-            results[h.slot] = try self.arena.dupe(u8, out);
-            self.ctx.gpa.free(out);
             self.ctx.gpa.free(h.wasm_bytes);
             self.ctx.gpa.destroy(h.worker);
         }
