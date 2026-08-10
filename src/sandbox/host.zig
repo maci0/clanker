@@ -761,6 +761,26 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
+/// ck_fs_rename(old_path, new_path) — rename/move a file under the sandbox root.
+/// Both paths must pass the same fs_prefixes policy as ck_fs_read / ck_fs_write.
+/// Returns Err.not_found when the source does not exist.
+pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u32, new_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const old_path = sliceOf(bytes, old_ptr, old_len) orelse return Err.invalid;
+    const new_path = sliceOf(bytes, new_ptr, new_len) orelse return Err.invalid;
+    if (old_path.len == 0 or new_path.len == 0) return Err.invalid;
+    const full_old = safeJoin(h.sandbox, old_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full_old);
+    const full_new = safeJoin(h.sandbox, new_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full_new);
+    std.Io.Dir.cwd().rename(h.sandbox.io, full_old, full_new) catch |err| switch (err) {
+        error.FileNotFound => return Err.not_found,
+        else => return Err.invalid,
+    };
+    return Err.ok;
+}
+
 /// ck_fs_delete(path) — delete a file under the sandbox root.
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
@@ -1192,6 +1212,35 @@ test "ckFsStat uses safeJoin policy" {
     // Traversal attempt
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
     // Empty path
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
+}
+
+test "ckFsRename uses safeJoin policy for both paths" {
+    // Verify the safeJoin policy that ckFsRename relies on.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"data/"},
+        .environ_map = undefined,
+    };
+    // Both paths allowed
+    const ok_src = try safeJoin(&sb, "data/old.txt");
+    defer std.testing.allocator.free(ok_src);
+    const ok_dst = try safeJoin(&sb, "data/new.txt");
+    defer std.testing.allocator.free(ok_dst);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/old.txt", ok_src);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/new.txt", ok_dst);
+    // Source outside prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/old.txt"));
+    // Destination outside prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/new.txt"));
+    // Traversal in source
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
+    // Traversal in destination
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc/passwd"));
+    // Empty paths
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
