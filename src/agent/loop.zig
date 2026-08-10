@@ -1200,14 +1200,29 @@ pub const Agent = struct {
 /// tool workers an explicit stack size.
 ///
 /// This is a *reservation*, not memory in use: the pages are mapped lazily, so
-/// only the frames actually touched are ever resident. The zwasm sandbox
-/// executes WASM modules whose linear memory is capped at 1 MiB; the
-/// host-side call depth is shallow (sandbox.exec → a few ck_* host
-/// trampolines), so 2 MiB is generous for the native stack.
-pub const parallel_tool_stack_bytes: usize = 2 * 1024 * 1024;
+/// only the frames actually touched are ever resident. Lowering it frees no
+/// real memory and has already cost two crashes.
+///
+/// DO NOT LOWER THIS. The interpreter's native call depth is not shallow: it
+/// recurses per WASM frame, and a host call at the bottom recurses again (the
+/// ck_exec JSON result is parsed there). A `search_code` call segfaulted the
+/// process outright at 2 MiB — a stack overflow, not a catchable trap — and
+/// the reasoning that "the host-side call depth is shallow" was written into
+/// this comment once already and was wrong both times.
+pub const parallel_tool_stack_bytes: usize = 64 * 1024 * 1024;
 
-/// Lower bound for the above, asserted by a test.
-pub const parallel_tool_stack_floor_bytes: usize = 2 * 1024 * 1024;
+comptime {
+    if (parallel_tool_stack_bytes < 32 * 1024 * 1024) @compileError(
+        "parallel_tool_stack_bytes must stay >= 32 MiB: it is a lazily-mapped " ++
+            "reservation (shrinking it frees nothing) and the wasm interpreter " ++
+            "recursing into a host JSON parse overflowed a smaller stack, " ++
+            "segfaulting the run. Measure a deep search_code call before changing it.",
+    );
+}
+
+/// Lower bound for the above, asserted by a test. Raising the reservation is
+/// fine; lowering either number is what the comptime check above forbids.
+pub const parallel_tool_stack_floor_bytes: usize = 32 * 1024 * 1024;
 
 /// Hard cap on a single response's completion tokens (per-turn budgeting): a
 /// lone huge response must not blow the context window, even if the session
