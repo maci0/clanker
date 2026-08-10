@@ -462,6 +462,14 @@ pub const Agent = struct {
                 }
 
                 s = last_line;
+                // Strip trailing punctuation (period, comma, etc.) so an
+                // exact-match answer like "42." becomes "42".
+                while (s.len > 0) {
+                    const ch = s[s.len - 1];
+                    if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
+                    s = s[0 .. s.len - 1];
+                    s = std.mem.trim(u8, s, " \t\r\n");
+                }
             }
         }
         if (s.len != content.len) {
