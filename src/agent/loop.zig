@@ -441,14 +441,25 @@ pub const Agent = struct {
             }
             if (end > 0) s = s[start..end];
         }
-        // If the answer is a JSON object with a single "answer" field, return
-        // the field's value directly (the eval expects the exact value, not
-        // the wrapper object).
+        // If the answer is a JSON object, extract the "answer" field if present
+        // (even alongside other metadata), or the sole value otherwise, so the
+        // returned value matches the exact requested format (answer_format).
         if (s.len > 0 and s[0] == '{') {
             const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, s, .{}) catch null;
             if (parsed) |v| {
-                if (v == .object and v.object.count() == 1) {
+                if (v == .object) {
                     if (v.object.get("answer")) |ans| {
+                        switch (ans) {
+                            .string => s = ans.string,
+                            .integer => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.integer}),
+                            .float => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.float}),
+                            .bool => s = if (ans.bool) "true" else "false",
+                            else => {},
+                        }
+                    } else if (v.object.count() == 1) {
+                        var it = v.object.iterator();
+                        const entry = it.next().?;
+                        const ans = entry.value_ptr.*;
                         switch (ans) {
                             .string => s = ans.string,
                             .integer => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.integer}),
