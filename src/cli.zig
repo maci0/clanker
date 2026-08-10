@@ -654,7 +654,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         }
         if (!goal_found) log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
     }
-    compactMessages(&messages, max_session_tokens);
+    compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
@@ -1920,7 +1920,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // Streaming mode: send headers up front, then the agent's tokens as
         // they are produced; the final newline + Connection: close ends the
         // stream on the client side.
-        writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n");
+        writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
         a.on_token = &runStreamDelta;
@@ -1982,7 +1982,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+    // nosniff on every response, not just the HTML one: these bodies carry peer
+    // names, provider error text, and model output, and none of it should ever
+    // be content-sniffed into markup.
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
     writeAllFd(stream.socket.handle, hdr);
     writeAllFd(stream.socket.handle, body);
 }
