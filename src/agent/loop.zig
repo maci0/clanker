@@ -470,6 +470,16 @@ pub const Agent = struct {
                     last_line = std.mem.trim(u8, after, " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "Here is the answer:")) {
                     last_line = std.mem.trim(u8, last_line["Here is the answer:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "Here is your answer:")) {
+                    last_line = std.mem.trim(u8, last_line["Here is your answer:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "Here is your result:")) {
+                    last_line = std.mem.trim(u8, last_line["Here is your result:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "Here is the result:")) {
+                    last_line = std.mem.trim(u8, last_line["Here is the result:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "The correct answer is:")) {
+                    last_line = std.mem.trim(u8, last_line["The correct answer is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "Correct answer:")) {
+                    last_line = std.mem.trim(u8, last_line["Correct answer:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "The output is:")) {
                     last_line = std.mem.trim(u8, last_line["The output is:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
