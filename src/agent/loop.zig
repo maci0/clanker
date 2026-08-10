@@ -992,7 +992,7 @@ pub const Agent = struct {
 /// on the main thread can trap with CallStackExhausted on a std.Thread worker
 /// (whose default stack is smaller than the process main stack). Give parallel
 /// tool workers a large explicit stack size.
-const parallel_tool_stack_bytes: usize = 8 * 1024 * 1024;
+const parallel_tool_stack_bytes: usize = 4 * 1024 * 1024;
 
 /// Hard cap on a single response's completion tokens (per-turn budgeting): a
 /// lone huge response must not blow the context window, even if the session
