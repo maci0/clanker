@@ -709,7 +709,10 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     while (it.next(h.sandbox.io) catch null) |entry| {
         if (entry.kind != .file and entry.kind != .directory) continue;
         if (entry.name.len == 0) continue;
-        if (w.end + entry.name.len + 5 > h.sandbox.max_fs_bytes) return Err.too_large;
+        // A huge directory must not fail the whole listing: stop at the cap
+        // and return a truncated (but still valid JSON) array instead of
+        // Err.too_large, so tools always learn at least part of a directory.
+        if (w.end + entry.name.len + 5 > h.sandbox.max_fs_bytes) break;
         if (entry.kind == .directory) {
             const name_slash = std.fmt.allocPrint(h.sandbox.gpa, "{s}/", .{entry.name}) catch return Err.too_large;
             defer h.sandbox.gpa.free(name_slash);
