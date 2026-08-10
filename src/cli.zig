@@ -885,7 +885,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
                 return;
             }
             if (std.mem.eql(u8, line, ":help")) {
-                try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\n");
+                try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\n");
                 try out_w.interface.flush();
                 const rest1 = acc.items[nl + 1 ..];
                 std.mem.copyForwards(u8, acc.items[0..rest1.len], rest1);
@@ -949,9 +949,24 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
                 }
                 continue;
             }
+            // A bare number answers the last multiple-choice question: send
+            // the option's own words, so the model reads an answer rather
+            // than a digit with no referent.
+            const picked: ?[]const u8 = blk: {
+                if (repl_choices.items.len == 0) break :blk null;
+                const digits = std.mem.trimEnd(u8, line, ".)");
+                const idx = std.fmt.parseInt(usize, digits, 10) catch break :blk null;
+                if (idx < 1 or idx > repl_choices.items.len) break :blk null;
+                break :blk repl_choices.items[idx - 1];
+            };
             // Copy the task text into the arena BEFORE shifting the buffer:
             // messages keep referencing it across turns.
-            const owned = try arena.dupe(u8, line);
+            const owned = try arena.dupe(u8, picked orelse line);
+            if (picked) |choice| {
+                const echo = try std.fmt.allocPrint(arena, "\x1b[2m→ {s}\x1b[0m\n", .{choice});
+                try out_w.interface.writeAll(echo);
+                try out_w.interface.flush();
+            }
             const rest = acc.items[nl + 1 ..];
             std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
             acc.items.len = rest.len;
@@ -1361,12 +1376,23 @@ const MdStream = struct {
     in_bold: bool = false,
     in_italic: bool = false,
     in_code: bool = false,
+    /// Styling opened by a line construct (heading, quote) and closed at the
+    /// newline that ends it.
+    line_style: bool = false,
     at_line_start: bool = true,
-    hold: [2]u8 = undefined,
+    /// Longest marker needing lookahead: "###### " (7 bytes).
+    hold: [7]u8 = undefined,
     hold_len: usize = 0,
 
     fn at(self: *const MdStream, chunk: []const u8, idx: usize) u8 {
         return if (idx < self.hold_len) self.hold[idx] else chunk[idx - self.hold_len];
+    }
+
+    /// Bytes from `i` that are the same character `c`, capped at `max`.
+    fn runOf(self: *const MdStream, chunk: []const u8, i: usize, total: usize, c: u8, max: usize) usize {
+        var n: usize = 0;
+        while (i + n < total and n < max and self.at(chunk, i + n) == c) n += 1;
+        return n;
     }
 
     fn feed(self: *MdStream, w: *std.Io.Writer, chunk: []const u8) void {
@@ -1375,10 +1401,98 @@ const MdStream = struct {
         while (i < total) {
             const remaining = total - i;
             const c = self.at(chunk, i);
+
+            // Inside a fence everything is literal: a code block full of *,
+            // _ and ` must not toggle emphasis on its way to the terminal.
+            if (self.in_fence) {
+                if (c == '`') {
+                    if (remaining < 3) break;
+                    if (self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
+                        self.in_fence = false;
+                        w.writeAll("\x1b[0m") catch {};
+                        i += 3;
+                        self.at_line_start = false;
+                        continue;
+                    }
+                }
+                w.writeAll(&[_]u8{c}) catch {};
+                self.at_line_start = (c == '\n');
+                i += 1;
+                continue;
+            }
+
+            // ---- line-start constructs ----
+            if (self.at_line_start) {
+                // Heading: "# " .. "###### ". Rendered by weight, not by
+                // repeating the hashes back at the reader.
+                if (c == '#') {
+                    const hashes = self.runOf(chunk, i, total, '#', 6);
+                    if (i + hashes >= total) break; // need the char after them
+                    if (hashes <= 6 and self.at(chunk, i + hashes) == ' ') {
+                        w.writeAll(if (hashes == 1) "\x1b[1;4m" else "\x1b[1m") catch {};
+                        self.line_style = true;
+                        i += hashes + 1;
+                        self.at_line_start = false;
+                        continue;
+                    }
+                }
+                // Horizontal rule: a line of --- or ***.
+                if (c == '-' or c == '*') {
+                    const rule_run = self.runOf(chunk, i, total, c, 4);
+                    if (rule_run >= 3) {
+                        if (i + rule_run >= total) break; // the line may continue
+                        if (self.at(chunk, i + rule_run) == '\n') {
+                            w.writeAll("\x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[0m") catch {};
+                            i += rule_run;
+                            continue;
+                        }
+                    }
+                }
+                // Block quote.
+                if (c == '>') {
+                    if (remaining < 2) break;
+                    if (self.at(chunk, i + 1) == ' ') {
+                        w.writeAll("\x1b[2m\xe2\x94\x82 ") catch {};
+                        self.line_style = true;
+                        i += 2;
+                        self.at_line_start = false;
+                        continue;
+                    }
+                }
+                // Ordered list: "1. " / "1) ", marker in cyan.
+                if (c >= '0' and c <= '9') {
+                    var d: usize = 0;
+                    while (i + d < total and d < 3 and self.at(chunk, i + d) >= '0' and self.at(chunk, i + d) <= '9') d += 1;
+                    if (i + d + 1 >= total) break;
+                    const sep = self.at(chunk, i + d);
+                    if ((sep == '.' or sep == ')') and self.at(chunk, i + d + 1) == ' ') {
+                        w.writeAll("\x1b[36m") catch {};
+                        var k: usize = 0;
+                        while (k < d) : (k += 1) w.writeAll(&[_]u8{self.at(chunk, i + k)}) catch {};
+                        w.writeAll(&[_]u8{sep}) catch {};
+                        w.writeAll("\x1b[0m ") catch {};
+                        i += d + 2;
+                        self.at_line_start = false;
+                        continue;
+                    }
+                }
+                // Bullet: "- " or "* ".
+                if (c == '-' or c == '*') {
+                    if (remaining < 2) break;
+                    if (self.at(chunk, i + 1) == ' ') {
+                        w.writeAll("\xe2\x80\xa2 ") catch {};
+                        i += 2;
+                        self.at_line_start = false;
+                        continue;
+                    }
+                }
+            }
+
+            // ---- inline constructs ----
             if (c == '`' and remaining < 3) break; // could still become ```
             if (c == '`' and self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
-                self.in_fence = !self.in_fence;
-                w.writeAll(if (self.in_fence) "\x1b[2m" else "\x1b[0m") catch {};
+                self.in_fence = true;
+                w.writeAll("\x1b[2m") catch {};
                 i += 3;
                 self.at_line_start = false;
                 continue;
@@ -1405,12 +1519,11 @@ const MdStream = struct {
                 self.at_line_start = false;
                 continue;
             }
-            if (self.at_line_start and c == '-' and remaining < 2) break; // could still become "- "
-            if (self.at_line_start and c == '-' and self.at(chunk, i + 1) == ' ') {
-                w.writeAll("\xe2\x80\xa2 ") catch {};
-                i += 2;
-                self.at_line_start = false;
-                continue;
+
+            // A heading or quote's styling ends with its line.
+            if (c == '\n' and self.line_style) {
+                w.writeAll("\x1b[0m") catch {};
+                self.line_style = false;
             }
             w.writeAll(&[_]u8{c}) catch {};
             self.at_line_start = (c == '\n');
@@ -1433,6 +1546,7 @@ const MdStream = struct {
         if (self.in_italic) w.writeAll("\x1b[0m") catch {};
         if (self.in_bold) w.writeAll("\x1b[0m") catch {};
         if (self.in_fence) w.writeAll("\x1b[0m") catch {};
+        if (self.line_style) w.writeAll("\x1b[0m") catch {};
         self.* = .{};
     }
 };
@@ -1441,6 +1555,63 @@ const MdStream = struct {
 /// colored "›" gutter is only printed once, right before the first token.
 var repl_answer_started = false;
 var repl_md: MdStream = .{};
+
+/// Options offered by the last answer, so the next line can be a bare number.
+/// gpa-owned: replaced (and freed) on every turn that ends in a question.
+var repl_choices: std.ArrayList([]u8) = .empty;
+
+fn replClearChoices(gpa: std.mem.Allocator) void {
+    for (repl_choices.items) |c| gpa.free(c);
+    repl_choices.clearRetainingCapacity();
+}
+
+/// The options a multiple-choice answer offers, or null when the answer does
+/// not end in a question.
+///
+/// Two shapes cover what models actually produce: an enumerated list under a
+/// question ("1. ... 2. ..."), and the inline form ("do X, or dig into Y?").
+/// Anything else is left alone — a wrong guess here would put words in the
+/// user's mouth on the next turn.
+fn parseChoices(arena: std.mem.Allocator, text: []const u8) !?[]const []const u8 {
+    const trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
+    if (trimmed.len == 0 or trimmed[trimmed.len - 1] != '?') return null;
+
+    // The question is the last non-empty line.
+    const q_start = if (std.mem.lastIndexOfScalar(u8, trimmed, '\n')) |nl| nl + 1 else 0;
+    const question = std.mem.trim(u8, trimmed[q_start..], " \t\r\n");
+
+    var out: std.ArrayList([]const u8) = .empty;
+
+    // Enumerated options anywhere above the question: "1. foo" / "2) bar".
+    var lines = std.mem.splitScalar(u8, trimmed[0..q_start], '\n');
+    var want: u8 = '1';
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (line.len < 3) continue;
+        if (line[0] != want) continue;
+        if (line[1] != '.' and line[1] != ')') continue;
+        const body = std.mem.trim(u8, line[2..], " \t");
+        if (body.len == 0) continue;
+        try out.append(arena, body);
+        if (want == '9') break;
+        want += 1;
+    }
+    if (out.items.len >= 2) return try out.toOwnedSlice(arena);
+    out.clearRetainingCapacity();
+
+    // Inline: "... A, or B?" — split the question itself.
+    const body = std.mem.trim(u8, question[0 .. question.len - 1], " \t");
+    var it = std.mem.splitSequence(u8, body, ", or ");
+    while (it.next()) |part| {
+        const opt = std.mem.trim(u8, part, " \t");
+        // A fragment this short is punctuation, not an option worth offering.
+        if (opt.len < 3) return null;
+        try out.append(arena, opt);
+        if (out.items.len > 4) return null;
+    }
+    if (out.items.len >= 2) return try out.toOwnedSlice(arena);
+    return null;
+}
 
 fn replDelta(delta: []const u8) void {
     replClearThinking();
@@ -1585,6 +1756,18 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     else
         try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
     try out_w.interface.writeAll(stats);
+
+    // A turn that ends in a multiple-choice question gets numbered options,
+    // so the reply can be "2" instead of retyping the option.
+    replClearChoices(gpa);
+    if (try parseChoices(a.arena, content)) |choices| {
+        for (choices, 1..) |c, n| {
+            const line = try std.fmt.allocPrint(a.arena, "  \x1b[1;36m{d}\x1b[0m \x1b[2m·\x1b[0m {s}\n", .{ n, c });
+            try out_w.interface.writeAll(line);
+            repl_choices.append(gpa, try gpa.dupe(u8, c)) catch {};
+        }
+        try out_w.interface.writeAll("  \x1b[2mreply with a number, or type anything else\x1b[0m\n");
+    }
     try out_w.interface.flush();
     // run() already appended (and finish()-cleaned) the assistant message.
 
@@ -3122,4 +3305,101 @@ test "MdStream only treats a leading dash-space as a bullet at line start" {
     const out = try mdStreamRender(allocator, &.{"a - b\n- c"});
     defer allocator.free(out);
     try std.testing.expectEqualStrings("a - b\n\xe2\x80\xa2 c", out);
+}
+
+test "parseChoices reads an inline 'A, or B?' question" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const answer =
+        \\Here is the snapshot.
+        \\
+        \\Want me to draft the eval definition for chatrooms, or dig into the Vertex caching issue?
+    ;
+    const choices = (try parseChoices(arena, answer)).?;
+    try std.testing.expectEqual(@as(usize, 2), choices.len);
+    try std.testing.expectEqualStrings("Want me to draft the eval definition for chatrooms", choices[0]);
+    try std.testing.expectEqualStrings("dig into the Vertex caching issue", choices[1]);
+}
+
+test "parseChoices prefers an enumerated list over splitting the question" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const answer =
+        \\Three options:
+        \\
+        \\1. Prune the stale learnings
+        \\2) Add an eval for chat_send
+        \\3. Audit the Vertex cache hit rate
+        \\
+        \\Which one, or something else?
+    ;
+    const choices = (try parseChoices(arena, answer)).?;
+    try std.testing.expectEqual(@as(usize, 3), choices.len);
+    try std.testing.expectEqualStrings("Prune the stale learnings", choices[0]);
+    try std.testing.expectEqualStrings("Add an eval for chat_send", choices[1]);
+    try std.testing.expectEqualStrings("Audit the Vertex cache hit rate", choices[2]);
+}
+
+test "parseChoices stays quiet when the answer is not a choice question" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // No question at all.
+    try std.testing.expect((try parseChoices(arena, "Done. The eval passes.")) == null);
+    // A question with a single answer is not a menu.
+    try std.testing.expect((try parseChoices(arena, "Should I start on the eval?")) == null);
+    // A numbered list with no closing question is a report, not a prompt.
+    const report =
+        \\1. built the tool
+        \\2. ran the gate
+    ;
+    try std.testing.expect((try parseChoices(arena, report)) == null);
+}
+
+test "MdStream renders headings, rules, quotes and ordered lists" {
+    var buf: [1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var md: MdStream = .{};
+    md.feed(&w, "# Title\nbody\n## Sub\n> quoted\n---\n1. first\n2) second\n");
+    md.flush(&w);
+    const out = buf[0..w.end];
+
+    // Headings are styled, and the hashes themselves are not echoed.
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[1;4mTitle") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[1mSub") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "# ") == null);
+    // Quote gets a gutter, the rule becomes a line, list markers keep numbers.
+    try std.testing.expect(std.mem.indexOf(u8, out, "\u{2502} quoted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\u{2500}\u{2500}\u{2500}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m1.\x1b[0m first") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m2)\x1b[0m second") != null);
+}
+
+test "MdStream leaves fenced code untouched" {
+    // Emphasis markers inside a code block are code, not formatting: toggling
+    // on them corrupted every snippet containing * or `.
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var md: MdStream = .{};
+    md.feed(&w, "```zig\nconst p: *u8 = x; // **not bold**\n```\nafter\n");
+    md.flush(&w);
+    const out = buf[0..w.end];
+
+    try std.testing.expect(std.mem.indexOf(u8, out, "const p: *u8 = x; // **not bold**") != null);
+    // And the fence closes, so following text is not left dim.
+    try std.testing.expect(std.mem.endsWith(u8, out, "after\n"));
+}
+
+test "MdStream does not mistake a hyphen mid-sentence for a rule" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var md: MdStream = .{};
+    md.feed(&w, "well-known --- inline\n");
+    md.flush(&w);
+    try std.testing.expectEqualStrings("well-known --- inline\n", buf[0..w.end]);
 }
