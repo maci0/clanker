@@ -130,6 +130,51 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     };
 }
 
+/// Enough of a session to list it without reading every message: what a
+/// picker needs to show one row.
+pub const SessionMeta = struct {
+    id: []const u8,
+    title: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    messages: usize = 0,
+};
+
+/// Lists every saved session, most recently updated first — the order a
+/// picker wants, since the session you were just in is the one you are most
+/// likely to return to. A file that cannot be read or parsed is skipped
+/// rather than failing the whole listing: one corrupt session should not make
+/// the others unreachable.
+pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]SessionMeta {
+    var out: std.ArrayList(SessionMeta) = .empty;
+
+    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
+        const path = std.fmt.allocPrint(arena, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
+        const raw = base.readFileAlloc(io, path, arena, .limited(1 << 24)) catch continue;
+        const stored = json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        out.append(arena, .{
+            .id = stored.id,
+            .title = stored.title,
+            .created = stored.created,
+            .updated = stored.updated,
+            .messages = stored.messages.len,
+        }) catch continue;
+    }
+
+    std.mem.sort(SessionMeta, out.items, {}, struct {
+        fn newestFirst(_: void, a: SessionMeta, b: SessionMeta) bool {
+            return a.updated > b.updated;
+        }
+    }.newestFirst);
+    return out.toOwnedSlice(arena);
+}
+
 fn roleFromStr(s: []const u8) types.Role {
     return if (std.mem.eql(u8, s, "system")) .system else if (std.mem.eql(u8, s, "user")) .user else if (std.mem.eql(u8, s, "assistant")) .assistant else if (std.mem.eql(u8, s, "tool")) .tool else .user;
 }

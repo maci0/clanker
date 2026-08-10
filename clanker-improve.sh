@@ -11,6 +11,9 @@
 # Options:
 #   --instruction TEXT        the improvement instruction (overrides positional)
 #   --instruction-file FILE   read the instruction from FILE ('-' = stdin)
+#   --note TEXT               extra constraints appended to the instruction
+#                             (repeatable; e.g. local API idioms, "don't touch X")
+#   --note-file FILE          same, read from a file
 #   --roadmap [N]             implement the Nth unchecked (planned) feature in
 #                             docs/ROADMAP.md (default 1: the next planned one)
 #   --iters N                 improvement iterations (default 2, must be >= 1)
@@ -86,6 +89,7 @@ declare -A KEY_FILE=(
 
 # ------------------------------------------------------------- defaults --
 INSTRUCTION=""
+NOTES=()
 INSTRUCTION_FILE=""
 ROADMAP=0
 ROADMAP_N=1
@@ -107,6 +111,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --instruction)       need_arg "$@"; INSTRUCTION="$2"; shift 2 ;;
     --instruction-file)  need_arg "$@"; INSTRUCTION_FILE="$2"; shift 2 ;;
+    --note)              need_arg "$@"; NOTES+=("$2"); shift 2 ;;
+    --note-file)         need_arg "$@"; [ -f "$2" ] || die "note file not found: $2"; NOTES+=("$(cat "$2")"); shift 2 ;;
     --roadmap)           ROADMAP=1; if [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then ROADMAP_N="$2"; shift 2; else shift; fi ;;
     --iters)             need_arg "$@"; ITERS="$2"; shift 2 ;;
     --provider)          need_arg "$@"; PROVIDER="$2"; shift 2 ;;
@@ -192,6 +198,15 @@ ${ROADMAP_HINT}${GUARDRAILS}"
 fi
 [ -n "$INSTRUCTION" ] || die "empty instruction"
 
+# Notes ride along with every instruction: constraints the model cannot infer
+# from the source alone (local API idioms, guards it must not weaken) belong
+# with the task, not in a wrapper that has to re-derive them.
+for note in ${NOTES+"${NOTES[@]}"}; do
+  INSTRUCTION="$INSTRUCTION
+
+$note"
+done
+
 case "$ITERS" in
   ''|*[!0-9]*) die "--iters must be a positive integer, got '$ITERS'" ;;
 esac
@@ -272,6 +287,13 @@ if [ -z "$RUN_LOG" ]; then
 fi
 if [ -n "$LOG_FILE" ]; then info "logging to $LOG_FILE"; fi
 zig-out/bin/clanker "${CLANKER_ARGS[@]}" "$INSTRUCTION" 2>&1 | tee "$RUN_LOG"
+CLANKER_RC=${PIPESTATUS[0]}
+
+# One machine-readable line at the end: a loop driving this script should not
+# have to grep the whole log to find out whether anything landed.
+PROMOTED=$(grep -c 'promoted improvement' "$RUN_LOG" || true)
+GATE=$(grep -o 'final gate: [0-9.]*/[0-9]*' "$RUN_LOG" | tail -1)
+info "summary: promoted=$PROMOTED exit=$CLANKER_RC ${GATE:-gate=unknown}"
 
 # The model cannot edit docs/ROADMAP.md (the engine never puts it in context),
 # so ticking the item is done here, and only when something was really promoted.
@@ -286,3 +308,5 @@ if [ "$ROADMAP" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
     info "nothing was promoted; docs/ROADMAP.md left unchanged"
   fi
 fi
+
+exit "${CLANKER_RC:-0}"

@@ -56,7 +56,10 @@ pub const Command = enum {
 };
 
 pub const Options = struct {
-    command: Command = .help,
+    /// No command given means the interactive REPL: a bare `clanker` should
+    /// drop the user into a session, the way every other coding agent does,
+    /// not print usage at them.
+    command: Command = .repl,
     /// Sub-command for `providers`: "check" (default) or "models".
     providers_sub: []const u8 = "check",
     provider: ?[]const u8 = null,
@@ -141,8 +144,9 @@ pub fn parse(args: []const []const u8) !Options {
             continue;
         }
 
-        // Non-flag token.
-        if (!cmd_seen and opts.command == .help) {
+        // Non-flag token. The first one names the command; with no command
+        // at all the default (the REPL) stands.
+        if (!cmd_seen) {
             cmd_seen = true;
             if (std.mem.eql(u8, a, "init")) {
                 opts.command = .init;
@@ -719,25 +723,15 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     run_stdout_color = stdout_file.isTty(io) catch false;
     a.on_token = &runDelta;
 
-    const stderr_file = std.Io.File.stderr();
-    var err_buf: [1024]u8 = undefined;
-    var err_w: std.Io.File.Writer = undefined;
-    if ((stderr_file.isTty(io) catch false) and cfg.modules.streaming) {
-        err_w = stderr_file.writer(io, &err_buf);
-        repl_out = &err_w;
-        repl_io = io;
-        a.on_tool_call = &replToolCall;
-        a.on_tool_result = &replToolResult;
-    }
-
+    // The spinner and the live tool-status line belong to the REPL. `run` is
+    // a one-shot command that gets piped, redirected and read by scripts, so
+    // it stays plain: streamed answer on stdout, log lines on stderr, no
+    // animation to clean up out of a captured log.
     repl_answer_started = false;
-    replShowThinking();
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
-        replClearThinking();
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return err;
     };
-    replClearThinking();
 
     const streamed = a.on_token != null and cfg.modules.streaming;
     if (!streamed) {
@@ -2336,6 +2330,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleStatus(cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/sessions")) {
+            handleSessions(io, gpa, cfg, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
@@ -2843,6 +2839,143 @@ fn handleRuns(
         return;
     };
     respond(stream, 200, "OK", body);
+}
+
+/// `GET /api/sessions` lists saved conversations; `GET /api/sessions/<id>`
+/// returns one whole transcript. Answered natively rather than through a
+/// plugin (the way `/api/runs` reaches cmd_graph) because session.zig already
+/// owns this store on the native side, and a long transcript exceeds the
+/// 64 KiB host arena a WASM tool reads through.
+fn handleSessions(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    target: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    if (!cfg.modules.sessions) {
+        respond(stream, 404, "Not Found", "{\"error\":\"sessions module disabled\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/api/sessions".len..];
+    if (rest.len > 1 and rest[0] == '/') {
+        const id = rest[1..];
+        if (!validSessionId(id)) {
+            respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+            return;
+        }
+        const s = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id) catch {
+            respond(stream, 404, "Not Found", "{\"error\":\"no such session\"}");
+            return;
+        };
+        const body = sessionJSON(arena, s) catch {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
+            return;
+        };
+        respond(stream, 200, "OK", body);
+        return;
+    }
+    if (rest.len != 0) {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        return;
+    }
+
+    const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"session list failed\"}");
+        return;
+    };
+    const body = sessionListJSON(arena, list) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", body);
+}
+
+/// Session ids reach the filesystem as a path fragment, so they are restricted
+/// to the shapes this server itself mints: a UUID from the browser, or the
+/// `sess-<base36>` fallback. Anything with a separator or a dot is refused
+/// before it can be used to walk out of `state/sessions/`.
+fn validSessionId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 64) return false;
+    for (id) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+    return true;
+}
+
+test "validSessionId refuses path traversal" {
+    try std.testing.expect(validSessionId("7f3a1c2e-0b44-4a91-9d3e-1c2b3a4d5e6f"));
+    try std.testing.expect(validSessionId("sess-m1x2y3-ab12cd"));
+    try std.testing.expect(!validSessionId("../../etc/passwd"));
+    try std.testing.expect(!validSessionId("a/b"));
+    try std.testing.expect(!validSessionId("a.json"));
+    try std.testing.expect(!validSessionId(""));
+    try std.testing.expect(!validSessionId("x" ** 65));
+}
+
+fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("sessions");
+    try s.beginArray();
+    for (list) |m| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(m.id);
+        try s.objectField("title");
+        try s.write(m.title);
+        try s.objectField("created");
+        try s.write(m.created);
+        try s.objectField("updated");
+        try s.write(m.updated);
+        try s.objectField("messages");
+        try s.write(m.messages);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    return out.written();
+}
+
+/// Only the roles the transcript actually renders: system prompts are internal
+/// and tool-call plumbing is already shown by the run graph, so shipping them
+/// here would just be noise the UI has to filter again.
+fn sessionJSON(arena: std.mem.Allocator, s_in: session.Session) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("id");
+    try s.write(s_in.id);
+    try s.objectField("title");
+    try s.write(s_in.title);
+    try s.objectField("created");
+    try s.write(s_in.created);
+    try s.objectField("updated");
+    try s.write(s_in.updated);
+    try s.objectField("messages");
+    try s.beginArray();
+    for (s_in.messages) |m| {
+        if (m.role != .user and m.role != .assistant) continue;
+        if (m.content == null or m.content.?.len == 0) continue;
+        try s.beginObject();
+        try s.objectField("role");
+        try s.write(if (m.role == .user) "user" else "assistant");
+        try s.objectField("content");
+        try s.write(m.content.?);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    return out.written();
 }
 
 /// Instance + configured peers, consumed by the web UI status panel.
@@ -3402,4 +3535,19 @@ test "MdStream does not mistake a hyphen mid-sentence for a rule" {
     md.feed(&w, "well-known --- inline\n");
     md.flush(&w);
     try std.testing.expectEqualStrings("well-known --- inline\n", buf[0..w.end]);
+}
+
+test "a bare invocation starts the REPL, and --help still asks for help" {
+    // parse() takes the raw argv, so every case here starts with the program
+    // name the shell passes.
+    try std.testing.expectEqual(Command.repl, (try parse(&.{"clanker"})).command);
+    // Global flags alone are still a REPL start, not a usage error.
+    const with_flags = try parse(&.{ "clanker", "--provider", "vertex-opus" });
+    try std.testing.expectEqual(Command.repl, with_flags.command);
+    try std.testing.expectEqualStrings("vertex-opus", with_flags.provider.?);
+    // An explicit command still wins, and help stays reachable.
+    try std.testing.expectEqual(Command.run, (try parse(&.{ "clanker", "run", "hi" })).command);
+    try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" })).command);
+    // A typo is still a typo, not a silent REPL start.
+    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }));
 }

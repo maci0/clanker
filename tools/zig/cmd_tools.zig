@@ -1,6 +1,7 @@
-//! cmd_tools: list registered tools (tool names from tools/manifests/*.tool.json).
+//! cmd_tools: list registered tools with what each one is for, read from
+//! tools/manifests/*.tool.json.
 //! Input:  {"args": "..."}
-//! Output: {"ok": true, "text": "<tool names, one per line>"}
+//! Output: {"ok": true, "text": "<name  description, one per line>"}
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -28,6 +29,20 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const base = name[0 .. name.len - ".tool.json".len];
             count += 1;
             try buf.appendSlice(std.heap.wasm_allocator, base);
+
+            // A bare list of names says nothing about what any of them do:
+            // pull each manifest's own description in, padded into a column.
+            const desc = describe(name);
+            if (desc.len > 0) {
+                const pad = if (base.len < name_col) name_col - base.len else 1;
+                try buf.appendNTimes(std.heap.wasm_allocator, ' ', pad);
+                // One line per tool: a description with newlines in it would
+                // break the column, so only the first line is shown.
+                const first = desc[0 .. std.mem.indexOfScalar(u8, desc, '\n') orelse desc.len];
+                const clipped = first[0..@min(first.len, desc_max)];
+                try buf.appendSlice(std.heap.wasm_allocator, clipped);
+                if (clipped.len < first.len) try buf.appendSlice(std.heap.wasm_allocator, "…");
+            }
             try buf.append(std.heap.wasm_allocator, '\n');
         }
     }
@@ -44,6 +59,21 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(buf.items);
     try s.endObject();
     try out.writeAll(rbuf[0..w.end]);
+}
+
+/// Column the descriptions start at, and how much of one is shown.
+const name_col: usize = 18;
+const desc_max: usize = 96;
+
+/// The `description` field of one manifest, or "" when it cannot be read.
+fn describe(file_name: []const u8) []const u8 {
+    var path_buf: [256]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return "";
+    const raw = lib.fsRead(path) catch return "";
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{}) catch return "";
+    if (parsed != .object) return "";
+    const d = parsed.object.get("description") orelse return "";
+    return if (d == .string) d.string else "";
 }
 
 fn errJson(out: *lib.Out, msg: []const u8) !void {
