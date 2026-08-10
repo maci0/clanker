@@ -1,0 +1,27 @@
+{
+  "name": "read_file",
+  "description": "Reads a file by path and returns its text. Use offset and limit to paginate large files: the result reports the file's total byte size and, when truncated, the next_offset to resume from. Prefer this over search_code when you need a file's exact contents (e.g. src/agent/loop.zig, AGENTS.md, manifests).",
+  "wasm": "zig-out/tools/read_file.wasm",
+  "enabled": true,
+  "fs_prefixes": ["."],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path of the file to read, relative to the sandbox root (e.g. \"src/agent/loop.zig\")."
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Byte offset to start reading from (0-based). Use the previous result's next_offset to continue a truncated read.",
+        "default": 0
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of bytes to return in this call.",
+        "default": 65536
+      }
+    },
+    "required": ["path"]
+  }
+}
