@@ -42,9 +42,10 @@ pub const Agent = struct {
     /// zwasm for AssemblyScript guests — cache and reuse instead of
     /// re-instantiating per call).
     modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
-    /// Loaded tool wasm bytes, keyed by tool name (arena-owned): read from
-    /// disk once per tool per session, then reused for every execution and
-    /// worker spawn so repeated calls skip the filesystem read.
+    /// Loaded tool wasm bytes, keyed by the tool's wasm path (arena-owned):
+    /// read from disk once per distinct path per session, then reused for
+    /// every execution, worker spawn, and transform invocation so repeated
+    /// calls skip the filesystem read.
     wasm_cache: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     /// Cumulative token usage across all LLM calls in this agent run.
     stats: RunStats = .{},
@@ -829,7 +830,7 @@ pub const Agent = struct {
 
     /// Runs one transform module. Returns null when it declined to rewrite.
     fn runTransform(self: *Agent, tool: *const registry.Tool, input: []const u8) !?[]const u8 {
-        const wasm_bytes = self.wasmBytes(tool.name, tool) catch |err| {
+        const wasm_bytes = self.wasmBytes(tool) catch |err| {
             log.log(.error_, "transform '{s}': cannot load {s}: {s}", .{ tool.name, tool.wasm, @errorName(err) });
             return err;
         };
@@ -854,12 +855,13 @@ pub const Agent = struct {
     }
 
     /// Returns the wasm bytes for `tool`, reading the file from disk only on
-    /// the first call for a given tool name; the bytes are arena-allocated and
-    /// cached so repeated tool calls (and worker spawns) skip the filesystem.
-    fn wasmBytes(self: *Agent, name: []const u8, tool: *const registry.Tool) ![]const u8 {
-        if (self.wasm_cache.get(name)) |bytes| return bytes;
+    /// the first call for a given wasm path; the bytes are arena-allocated
+    /// and cached so repeated tool calls, worker spawns, and transform runs
+    /// against the same module skip the filesystem.
+    fn wasmBytes(self: *Agent, tool: *const registry.Tool) ![]const u8 {
+        if (self.wasm_cache.get(tool.wasm)) |bytes| return bytes;
         const bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.arena, .limited(1 << 20));
-        try self.wasm_cache.put(self.arena, name, bytes);
+        try self.wasm_cache.put(self.arena, tool.wasm, bytes);
         return bytes;
     }
 
@@ -874,7 +876,7 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plugin disabled: {s}\"}}", .{tc.name});
         }
 
-        const wasm_bytes = self.wasmBytes(tc.name, tool) catch |err| {
+        const wasm_bytes = self.wasmBytes(tool) catch |err| {
             log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s}). Run `zig build tools`.\"}}", .{ tc.name, @errorName(err) });
         };
@@ -953,7 +955,7 @@ pub const Agent = struct {
             if (self.no_parallel_tools) continue;
             if ((try self.reg.transformsFor(self.arena, tc.name, .before)).len > 0) continue;
             if ((try self.reg.transformsFor(self.arena, tc.name, .after)).len > 0) continue;
-            const wasm_bytes = self.wasmBytes(tc.name, tool) catch |err| {
+            const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
                 results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
                 continue;
