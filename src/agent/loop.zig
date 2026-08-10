@@ -234,6 +234,12 @@ pub const Agent = struct {
     fn finalAnswer(self: *Agent, resp: types.ChatResponse) !types.ChatResponse {
         var content = resp.message.content orelse return resp;
         var s = std.mem.trim(u8, content, " \t\r\n");
+        // Remove surrounding double quotes (the model sometimes wraps the
+        // answer in quotes, which fails the exact-match answer_format eval).
+        if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+            s = s[1 .. s.len - 1];
+            s = std.mem.trim(u8, s, " \t\r\n");
+        }
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
