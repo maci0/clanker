@@ -858,10 +858,23 @@ pub const Agent = struct {
         for (calls) |tc| {
             const tool = self.reg.get(tc.name) orelse continue;
             if (!tool.enabled) continue;
-            _ = self.wasmBytes(tool) catch |err| {
+            const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.warn, "tool '{s}': cannot pre-load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
                 continue;
             };
+            // Pre-compile the primary tool module so executeTool (sequential
+            // path) finds it already in self.modules and skips recompilation.
+            if (!self.modules.contains(tc.name)) {
+                var sb = self.sandboxFor(tool) catch continue;
+                const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes) catch |err| {
+                    log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
+                    continue;
+                };
+                self.modules.put(self.arena, tc.name, m) catch {
+                    m.deinit();
+                    continue;
+                };
+            }
             const phases = [_]registry.Transform.Phase{ .before, .after };
             for (phases) |phase| {
                 const chain = self.reg.transformsFor(self.arena, tc.name, phase) catch continue;
