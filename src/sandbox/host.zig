@@ -1056,16 +1056,11 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
     const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
-    // Open for appending; create the file if it doesn't exist.
-    var file = std.Io.Dir.cwd().openFile(h.sandbox.io, full, .{ .mode = .read_write }) catch |err| switch (err) {
-        error.FileNotFound => {
-            // Create the file and write the data as the initial content.
-            std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full, .data = data }) catch |e| switch (e) {
-                error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
-                else => return Err.invalid,
-            };
-            return Err.ok;
-        },
+    // Open for appending, creating the file if it doesn't exist: one
+    // syscall instead of open-fail-then-writeFile (truncate=false never
+    // clobbers existing content).
+    var file = std.Io.Dir.cwd().createFile(h.sandbox.io, full, .{ .truncate = false }) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
     defer file.close(h.sandbox.io);
