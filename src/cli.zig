@@ -631,7 +631,9 @@ fn replDelta(delta: []const u8) void {
 /// the session. Returns true if the loop should exit (only on :quit).
 fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
     const gpa = a.ctx.gpa;
-    try messages.append(a.arena, .{ .role = .user, .content = task });
+    // NOTE: a.run() appends the user task (and each assistant reply) to
+    // `messages` itself; appending here would duplicate them in the
+    // transcript and the persisted session.
     var err_detail: ?[]const u8 = null;
     const resp = a.run(messages, task, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
@@ -645,7 +647,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     }
     try out_w.interface.writeAll("\n\n");
     try out_w.interface.flush();
-    try messages.append(a.arena, resp.message);
+    // run() already appended (and finish()-cleaned) the assistant message.
 
     const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});

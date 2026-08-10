@@ -95,7 +95,12 @@ pub const Agent = struct {
             graph_mod.write(self.ctx.io, self.ctx.gpa, self.arena, &g) catch {};
             g.deinit(self.ctx.gpa);
         }
-        try messages.append(self.arena, .{ .role = .system, .content = self.system_prompt_text });
+        // Multi-turn callers (the REPL) reuse one message list across runs:
+        // prepend the system prompt only once, otherwise every turn would
+        // duplicate it and waste a large chunk of the context window.
+        if (messages.items.len == 0 or messages.items[0].role != .system) {
+            try messages.append(self.arena, .{ .role = .system, .content = self.system_prompt_text });
+        }
         try messages.append(self.arena, .{ .role = .user, .content = task });
 
         var iteration: u32 = 0;
