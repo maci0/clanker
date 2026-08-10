@@ -745,11 +745,22 @@ pub const Agent = struct {
                 }
             }
             if (end > 0) {
-                s = s[start..end];
-                // The extracted JSON may still wrap the value (e.g.
-                // {"answer": 42}); unwrap it so the caller gets the bare
-                // exact-match answer instead of a JSON envelope.
-                if (unwrapJsonAnswer(self.arena, s)) |unwrapped| s = unwrapped;
+                const extracted = s[start..end];
+                // Only unwrap a JSON envelope when it was embedded in prose
+                // (leading or trailing). If the entire answer is the JSON
+                // object itself, the user may have asked for that exact JSON
+                // (e.g. an object with an "answer" key), so preserve it
+                // verbatim. This keeps the answer_format eval exact-match.
+                const has_prose = start > 0 or end < s.len;
+                if (has_prose) {
+                    if (unwrapJsonAnswer(self.arena, extracted)) |unwrapped| {
+                        s = unwrapped;
+                    } else {
+                        s = extracted;
+                    }
+                } else {
+                    s = extracted;
+                }
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
