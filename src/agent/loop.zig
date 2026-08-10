@@ -733,8 +733,7 @@ pub const Agent = struct {
 
     /// Runs one transform module. Returns null when it declined to rewrite.
     fn runTransform(self: *Agent, tool: *const registry.Tool, input: []const u8) !?[]const u8 {
-        const wasm_bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20));
-        defer self.ctx.gpa.free(wasm_bytes);
+        const wasm_bytes = try self.wasmBytes(tool.name, tool);
 
         var sb = try self.sandboxFor(tool);
         // Transform modules are not cached in `self.modules`: they are keyed by
