@@ -48,6 +48,9 @@ pub const Agent = struct {
     /// REPL renders tokens live). Tool-call flows still assemble a normal
     /// ChatResponse internally.
     on_token: ?*const fn ([]const u8) void = null,
+    /// Nested sub-agent runner, wired by the app when modules.subagents is
+    /// enabled (powers the subagent tool via ck_subagent).
+    subagent_runner: ?host.SubagentRunner = null,
     /// Optional hook fired right before a batch of tool calls executes (e.g.
     /// the REPL prints a "running: ..." status line to cover the otherwise
     /// silent gap between tool dispatch and the next streamed token).
@@ -328,6 +331,11 @@ pub const Agent = struct {
         if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
             s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
+        // Unwrap a JSON string literal (e.g. the model returned "\"42\"" when
+        // the answer_format eval expects 42) so the value exactly matches.
+        if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
+        }
         // If the answer is still wrapped in prose (e.g. "here is your JSON:
         // { ... }"), extract the first JSON object/array — the answer_format
         // eval expects an exact-match value, not prose.
@@ -407,6 +415,8 @@ pub const Agent = struct {
             .environ_map = self.ctx.environ_map,
             .seed = self.cfg.agent.seed,
             .config_json = try std.fmt.allocPrint(self.arena, "{f}", .{std.json.fmt(tool.config, .{})}),
+            .subagent_runner = self.subagent_runner,
+            .cfg = self.cfg,
         };
         if (tool.llm) sb.llm = .{
             .provider = try self.pluginProvider(tool),
@@ -608,6 +618,7 @@ pub const Agent = struct {
                 .tool = tool,
                 .arguments = tc.arguments,
                 .wasm_bytes = wasm_bytes,
+                .subagent_runner = self.subagent_runner,
             };
             const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
             try handles.append(self.ctx.gpa, .{ .slot = i, .thread = thread, .worker = worker, .wasm_bytes = wasm_bytes });
@@ -663,6 +674,7 @@ const ToolWorker = struct {
     tool: *const registry.Tool,
     arguments: []const u8,
     wasm_bytes: []const u8,
+    subagent_runner: ?host.SubagentRunner = null,
     out: ?[]u8 = null,
     err: ?anyerror = null,
 
@@ -688,6 +700,8 @@ const ToolWorker = struct {
             .fs_prefixes = self.tool.fs_prefixes,
             .environ_map = self.ctx.environ_map,
             .seed = self.cfg.agent.seed,
+            .subagent_runner = self.subagent_runner,
+            .cfg = self.cfg,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ self.tool.name, self.arguments });
