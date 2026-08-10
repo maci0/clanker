@@ -14,7 +14,7 @@
 //! docs/ROADMAP.md with concrete, actionable items.
 
 const std = @import("std");
-const log = @import("util/log.zig");
+const log = @import("../util/log.zig");
 
 const event_path = "state/autolearn.jsonl";
 
@@ -54,14 +54,17 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
 }
 
 fn appendLine(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line: []const u8) void {
-    const existing = std.Io.Dir.cwd().readFileAlloc(io, event_path, arena, .limited(1 << 24)) catch "";
+    const existing = std.Io.Dir.cwd().readFileAlloc(io, event_path, arena, .limited(1 << 24)) catch |err| switch (err) {
+        error.FileNotFound => "",
+        else => return,
+    };
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     out.appendSlice(gpa, existing) catch return;
     if (existing.len > 0 and existing[existing.len - 1] != '\n') out.append(gpa, '\n') catch return;
     out.appendSlice(gpa, line) catch return;
     out.append(gpa, '\n') catch return;
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items }) catch {};
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items }) catch |err| std.log.warn("autolearn: failed to persist event: {s}", .{@errorName(err)});
 }
 
 /// Records a completed run (from agent stats + used tool names).

@@ -493,14 +493,17 @@ pub const Agent = struct {
         s.endObject() catch return;
 
         const path = "state/reasoning.jsonl";
-        const existing = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 24)) catch "";
+        const existing = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 24)) catch |err| switch (err) {
+            error.FileNotFound => "",
+            else => return,
+        };
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(gpa);
         out.appendSlice(gpa, existing) catch return;
         if (existing.len > 0 and existing[existing.len - 1] != '\n') out.append(gpa, '\n') catch return;
         out.appendSlice(gpa, buf[0..w.end]) catch return;
         out.append(gpa, '\n') catch return;
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch {};
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch |err| log.log(.warn, "recordReasoning: failed to persist event: {s}", .{@errorName(err)});
     }
 
     /// Estimates the number of LLM tokens for a text string using the
