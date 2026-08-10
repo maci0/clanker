@@ -360,6 +360,22 @@ pub const Agent = struct {
             }
             if (end > 0) s = s[start..end];
         }
+        // If no fence/JSON was found, the model likely wrapped the exact
+        // answer in a prose preamble (e.g. "Here is the result:"). For the
+        // answer_format eval we need the exact value, so fall back to the last
+        // non-empty line and strip a leading "Answer:"/"Result:" prefix.
+        if (std.mem.indexOf(u8, s, "```") == null and
+            std.mem.indexOfScalar(u8, s, '{') == null and
+            std.mem.indexOfScalar(u8, s, '[') == null)
+        {
+            var last_line: []const u8 = s;
+            var line_it = std.mem.tokenizeScalar(u8, s, '\n');
+            while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
+            if (last_line.len > 0) s = last_line;
+            if (std.mem.indexOf(u8, s, ": ")) |colon| {
+                s = std.mem.trim(u8, s[colon + 1 ..], " \t\r\n");
+            }
+        }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
         }
