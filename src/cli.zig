@@ -1263,7 +1263,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
-        const is_webui = (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui")) or (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run"));
+        const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui");
         const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify");
         if (is_webui and !cfg.modules.webui) {
