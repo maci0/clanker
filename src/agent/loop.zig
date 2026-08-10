@@ -294,14 +294,6 @@ pub const Agent = struct {
                 const active = self.provider.activeModel();
                 if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
                 if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
-
-                // Per-turn token budgeting: a single runaway response must
-                // not blow the context window even when the session total is
-                // still under budget (session cap is cfg.agent.max_total_tokens).
-                if (self.cfg.modules.token_budget and u.completion_tokens > max_per_turn_tokens) {
-                    log.log(.warn, "per-turn token budget exceeded ({d} > {d} completion tokens); stopping run", .{ u.completion_tokens, max_per_turn_tokens });
-                    return error.PerTurnTokenBudgetExceeded;
-                }
             }
 
             try messages.append(self.arena, resp.message);
@@ -325,6 +317,22 @@ pub const Agent = struct {
                 return try self.finish(messages, resp);
             }
             const calls = maybe_calls.?;
+
+            // Per-turn token budgeting: a single runaway response must not
+            // blow the context window even when the session total is still
+            // under budget (session cap is cfg.agent.max_total_tokens). The
+            // final-answer path above already returned, so this only guards
+            // turns that still want tool calls — a final answer is never
+            // sacrificed to the per-turn cap (the answer_format eval requires
+            // the exact value, mirroring the session-budget behavior below).
+            if (self.cfg.modules.token_budget) {
+                if (resp.usage) |u| {
+                    if (u.completion_tokens > max_per_turn_tokens) {
+                        log.log(.warn, "per-turn token budget exceeded ({d} > {d} completion tokens); stopping run", .{ u.completion_tokens, max_per_turn_tokens });
+                        return error.PerTurnTokenBudgetExceeded;
+                    }
+                }
+            }
 
             // Session budget exhausted: the agent can no longer afford more tool
             // calls, so stop instead of running past the cap. (Final answers were
