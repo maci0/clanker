@@ -478,20 +478,36 @@ pub const Agent = struct {
                     last_line = std.mem.trim(u8, last_line["The value is:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "Sure,")) {
                     last_line = std.mem.trim(u8, last_line["Sure,".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "answer:")) {
+                    last_line = std.mem.trim(u8, last_line["answer:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "result:")) {
+                    last_line = std.mem.trim(u8, last_line["result:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "here is the answer:")) {
+                    last_line = std.mem.trim(u8, last_line["here is the answer:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "the answer is")) {
+                    var after = last_line["the answer is".len..];
+                    if (after.len > 0 and after[0] == ':') after = after[1..];
+                    last_line = std.mem.trim(u8, after, " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "the output is:")) {
+                    last_line = std.mem.trim(u8, last_line["the output is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "the result is:")) {
+                    last_line = std.mem.trim(u8, last_line["the result is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "the value is:")) {
+                    last_line = std.mem.trim(u8, last_line["the value is:".len..], " \t\r\n");
                 }
 
                 s = last_line;
-                // Strip trailing punctuation (period, comma, etc.) only when
-                // the remainder is a number, so an exact-match answer like
-                // "42." becomes "42" while a sentence like "hello world."
-                // keeps its period.
+                // Strip trailing punctuation (period, comma, etc.) when the
+                // remainder is a number OR a single word (no spaces), so an
+                // exact-match answer like "42." or "hello." becomes "42"/"hello"
+                // while a sentence like "hello world." keeps its period.
                 var stripped = s;
                 while (stripped.len > 0) {
                     const ch = stripped[stripped.len - 1];
                     if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
                     stripped = stripped[0 .. stripped.len - 1];
                 }
-                if (stripped.len < s.len and isNumericString(stripped)) {
+                if (stripped.len < s.len and (isNumericString(stripped) or std.mem.indexOfScalar(u8, stripped, ' ') == null)) {
                     s = std.mem.trim(u8, stripped, " \t\r\n");
                 }
             }
