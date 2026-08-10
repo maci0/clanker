@@ -71,11 +71,12 @@ pub const Agent = struct {
         reg: *const registry.Registry,
         tool_defs: []const types.ToolDef,
     ) !Agent {
-        const prompt_text = try system_prompt.build(arena, ctx.io, .{
+        const base_prompt = try system_prompt.build(arena, ctx.io, .{
             .system_prompt_file = cfg.agent.system_prompt_file,
             .skills_dir = cfg.agent.skills_dir,
             .learnings_file = cfg.agent.learnings_file,
         }, tool_defs);
+        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt});
         return .{
             .ctx = ctx,
             .arena = arena,
