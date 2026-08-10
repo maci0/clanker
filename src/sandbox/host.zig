@@ -685,9 +685,11 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
     return h.writeResult(mem_bytes, response);
 }
 
-/// Lists the file names (not directories) under an allowed directory, as a
-/// JSON string array written to the host arena. Enforces the same
-/// fs_prefixes policy as ck_fs_read.
+/// Lists the entries under an allowed directory as a JSON string array
+/// written to the host arena. Directory names carry a trailing '/' so tools
+/// can tell them from files (and recurse); anything that is neither a file
+/// nor a directory is skipped. Enforces the same fs_prefixes policy as
+/// ck_fs_read.
 pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -705,10 +707,16 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     s.beginArray() catch return Err.too_large;
     var it = dir.iterate();
     while (it.next(h.sandbox.io) catch null) |entry| {
-        if (entry.kind != .file) continue;
+        if (entry.kind != .file and entry.kind != .directory) continue;
         if (entry.name.len == 0) continue;
-        if (w.end + entry.name.len + 4 > h.sandbox.max_fs_bytes) return Err.too_large;
-        s.write(entry.name) catch return Err.too_large;
+        if (w.end + entry.name.len + 5 > h.sandbox.max_fs_bytes) return Err.too_large;
+        if (entry.kind == .directory) {
+            const name_slash = std.fmt.allocPrint(h.sandbox.gpa, "{s}/", .{entry.name}) catch return Err.too_large;
+            defer h.sandbox.gpa.free(name_slash);
+            s.write(name_slash) catch return Err.too_large;
+        } else {
+            s.write(entry.name) catch return Err.too_large;
+        }
     }
     s.endArray() catch return Err.too_large;
     return h.writeResult(bytes, buf[0..w.end]);
