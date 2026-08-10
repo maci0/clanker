@@ -262,9 +262,13 @@ pub const Agent = struct {
         // { ... }"), extract the first JSON object/array — the answer_format
         // eval expects an exact-match value, not prose.
         var js_start: ?usize = null;
-        if (std.mem.indexOfScalar(u8, s, '{')) |i| js_start = i;
-        if (std.mem.indexOfScalar(u8, s, '[')) |i| {
-            if (js_start == null or i < js_start.?) js_start = i;
+        // Prefer a JSON object if present, even if an array appears earlier
+        // in prose (the answer_format eval expects an exact-match value, and
+        // JSON objects are the overwhelmingly common answer format).
+        if (std.mem.indexOfScalar(u8, s, '{')) |i| {
+            js_start = i;
+        } else if (std.mem.indexOfScalar(u8, s, '[')) |i| {
+            js_start = i;
         }
         if (js_start) |start| {
             var depth: usize = 0;
