@@ -419,10 +419,10 @@ pub const Agent = struct {
                 threshold = @min(threshold, budget_tokens * bytes_per_token / 2);
             }
         }
-        if (total <= threshold) return;
         // Threshold floors: compaction must never race the per-turn cap,
         // which would otherwise terminate the run before compaction runs.
         threshold = @max(threshold, max_per_turn_tokens * bytes_per_token);
+        if (total <= threshold) return;
         // Need at least system + one middle + last 6 = 8 messages to compact.
         if (messages.items.len <= 7) return;
         log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
