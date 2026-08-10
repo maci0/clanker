@@ -79,7 +79,7 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
 
     try s.beginObject();
     try s.objectField("model");
-    try jstr(&s, params.provider.model);
+    try jstr(&s, params.provider.activeModelName());
     try s.objectField("messages");
     try s.beginArray();
     for (params.messages) |m| {
@@ -139,19 +139,29 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
         try s.endArray();
     }
 
-    const temp = params.temperature orelse params.provider.temperature;
+    const temp = params.temperature orelse params.provider.activeModel().temperature;
     if (temp) |t| {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
     }
     // Clamp the requested output budget to fit the model's context window:
     // never ask for more completion tokens than half the window.
-    const max_tokens = @min(params.max_tokens orelse params.provider.max_tokens, params.provider.context_window / 2);
+    const active = params.provider.activeModel();
+    const max_tokens = @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
     try s.objectField("stream");
     try s.write(params.stream);
-    if (params.provider.reasoning_effort) |re| {
+    if (params.stream) {
+        // Ask the provider to include usage in the final chunk so streaming
+        // runs still get token accounting.
+        try s.objectField("stream_options");
+        try s.beginObject();
+        try s.objectField("include_usage");
+        try s.write(true);
+        try s.endObject();
+    }
+    if (params.provider.activeModel().reasoning_effort) |re| {
         try s.objectField("reasoning_effort");
         try jstr(&s, re);
     }
@@ -270,10 +280,11 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
 
     try s.beginObject();
     try s.objectField("model");
-    try jstr(&s, params.provider.model);
+    try jstr(&s, params.provider.activeModelName());
     // Clamp the requested output budget to fit the model's context window:
     // never ask for more completion tokens than half the window.
-    const max_tokens = @min(params.max_tokens orelse params.provider.max_tokens, params.provider.context_window / 2);
+    const active = params.provider.activeModel();
+    const max_tokens = @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
 
@@ -381,7 +392,7 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
         try s.endArray();
     }
 
-    const temp = params.temperature orelse params.provider.temperature;
+    const temp = params.temperature orelse params.provider.activeModel().temperature;
     if (temp) |t| {
         try s.objectField("temperature");
         try s.print("{d}", .{t});

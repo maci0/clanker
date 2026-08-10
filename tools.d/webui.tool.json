@@ -1,6 +1,6 @@
 {
   "name": "webui",
-  "description": "serve the clanker web UI (single-file htmx + Alpine page)",
+  "description": "serve the clanker web UI (single self-contained page, no external assets)",
   "wasm": "zig-out/tools/webui.wasm",
   "input_schema": {
     "type": "object",

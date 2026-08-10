@@ -82,7 +82,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             defer std.heap.wasm_allocator.free(line);
             try buf.appendSlice(std.heap.wasm_allocator, line);
         } else {
-            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  llm  {s}  {d}/{d} tok, {d}ms\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms });
+            const ntps: f64 = if (n.duration_ms > 0) @as(f64, @floatFromInt(n.completion_tokens)) / (@as(f64, @floatFromInt(n.duration_ms)) / 1000.0) else 0;
+            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  llm  {s}  {d}/{d} tok, {d}ms ({d:.1} tok/s)\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms, ntps });
             defer std.heap.wasm_allocator.free(line);
             try buf.appendSlice(std.heap.wasm_allocator, line);
         }

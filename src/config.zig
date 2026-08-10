@@ -17,24 +17,62 @@ pub const ProviderKind = enum {
     }
 };
 
+pub const Model = struct {
+    /// Total model context window in tokens (input + output). Used to size
+    /// conversation compaction and the improve context budget.
+    context_window: u32 = 131072,
+    /// Per-request max output tokens (completion cap).
+    max_tokens: u32 = 1024,
+    temperature: ?f64 = null,
+    /// Keeps reasoning models' chain-of-thought short so `content` stays
+    /// populated (e.g. DeepSeek v4: "low" | "medium").
+    reasoning_effort: ?[]const u8 = null,
+    /// Estimated USD per 1M input tokens (for run cost accounting).
+    cost_per_1m_input: ?f64 = null,
+    /// Estimated USD per 1M output tokens (for run cost accounting).
+    cost_per_1m_output: ?f64 = null,
+};
+
 pub const Provider = struct {
     name: []const u8,
     kind: ProviderKind = .openai_compat,
     base_url: []const u8,
     api_key_env: ?[]const u8 = null,
-    model: []const u8,
+    /// Per-model settings keyed by model name. When non-empty, `default_model`
+    /// selects the active model; the legacy flat fields below are ignored.
+    models: std.StringArrayHashMapUnmanaged(Model) = .empty,
+    /// Default model name within `models` (or the legacy `model` name).
+    default_model: []const u8 = "",
+    /// Legacy: single model name.
+    model: []const u8 = "",
     /// Endpoint path override; defaults per kind (`/chat/completions`,
     /// `/v1/messages`).
     path: ?[]const u8 = null,
-    /// Per-request max output tokens (completion cap).
+    /// Legacy flat settings, used when `models` is empty.
     max_tokens: u32 = 1024,
-    /// Total model context window in tokens (input + output). Used to size
-    /// conversation compaction and the improve context budget.
     context_window: u32 = 131072,
     temperature: ?f64 = null,
-    /// Keeps reasoning models' chain-of-thought short so `content` stays
-    /// populated (e.g. DeepSeek v4: "low" | "medium").
     reasoning_effort: ?[]const u8 = null,
+
+    /// Name of the active model (sent as the API `model` field).
+    pub fn activeModelName(self: *const Provider) []const u8 {
+        if (self.default_model.len > 0) return self.default_model;
+        return self.model;
+    }
+
+    /// Resolves the active model's settings: the configured model in the
+    /// `models` map, or the legacy flat fields.
+    pub fn activeModel(self: *const Provider) Model {
+        if (self.models.count() > 0 and self.default_model.len > 0) {
+            if (self.models.get(self.default_model)) |m| return m;
+        }
+        return .{
+            .context_window = self.context_window,
+            .max_tokens = self.max_tokens,
+            .temperature = self.temperature,
+            .reasoning_effort = self.reasoning_effort,
+        };
+    }
 };
 
 pub const Agent = struct {
@@ -79,6 +117,19 @@ pub const Notify = struct {
     topic: []const u8 = "clanker",
 };
 
+pub const Modules = struct {
+    mcp: bool = true,
+    peers: bool = true,
+    a2a: bool = true,
+    webui: bool = true,
+    graphs: bool = true,
+    sessions: bool = true,
+    goal: bool = true,
+    token_budget: bool = true,
+    streaming: bool = true,
+    dotenv: bool = true,
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     improve_present: bool = false,
@@ -89,6 +140,8 @@ pub const Config = struct {
     peers: []const Peer = &.{},
     instance: Instance = .{},
     notify: Notify = .{},
+    modules: Modules = .{},
+    modules_present: bool = false,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
         const want = name orelse self.default_provider;
@@ -145,7 +198,7 @@ pub const Config = struct {
             };
             var it = pobj.iterator();
             while (it.next()) |kv| {
-                const p = try parseProvider(kv.key_ptr.*, kv.value_ptr.*);
+                const p = try parseProvider(arena, kv.key_ptr.*, kv.value_ptr.*);
                 try cfg.providers.put(arena, kv.key_ptr.*, p);
             }
         }
@@ -160,21 +213,27 @@ pub const Config = struct {
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
         }
+        if (obj.get("modules")) |v| {
+            cfg.modules = try parseModules(arena, v);
+            cfg.modules_present = true;
+        }
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{file_name});
         }
         return cfg;
     }
 
-    fn parseProvider(name: []const u8, v: json.Value) !Provider {
+    fn parseProvider(arena: std.mem.Allocator, name: []const u8, v: json.Value) !Provider {
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ProviderNotObject,
         };
+        // Legacy: "model" is required when "models" is absent.
+        const legacy_model = if (obj.get("model")) |m| (try jsonStr(m, "model")) else "";
         var p = Provider{
             .name = name,
             .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
-            .model = try jsonStr(try required(obj, "model"), "model"),
+            .model = legacy_model,
         };
         if (obj.get("kind")) |k| {
             p.kind = ProviderKind.fromStr(try jsonStr(k, "kind")) orelse return error.UnknownProviderKind;
@@ -197,7 +256,43 @@ pub const Config = struct {
         if (obj.get("reasoning_effort")) |k| {
             p.reasoning_effort = try jsonStr(k, "reasoning_effort");
         }
+        if (obj.get("default_model")) |k| {
+            p.default_model = try jsonStr(k, "default_model");
+        }
+        if (obj.get("models")) |models_v| {
+            const models_obj = switch (models_v) {
+                .object => |o| o,
+                else => return error.ModelsNotObject,
+            };
+            var it = models_obj.iterator();
+            while (it.next()) |kv| {
+                const m = try parseModel(kv.key_ptr.*, kv.value_ptr.*);
+                try p.models.put(arena, kv.key_ptr.*, m);
+            }
+            if (p.default_model.len == 0 and p.model.len > 0) {
+                p.default_model = p.model;
+            }
+        }
+        if (p.default_model.len == 0 and p.model.len == 0 and p.models.count() > 0) {
+            return error.ProviderMissingModel;
+        }
         return p;
+    }
+
+    fn parseModel(name: []const u8, v: json.Value) !Model {
+        _ = name;
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.ModelNotObject,
+        };
+        var m = Model{};
+        if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
+        if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
+        if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
+        if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
+        if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
+        if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
+        return m;
     }
 
     fn parseInstance(arena: std.mem.Allocator, v: json.Value) !Instance {
@@ -306,6 +401,34 @@ pub const Config = struct {
         dst.peers = src.peers;
         dst.instance = src.instance;
         dst.notify = src.notify;
+        if (src.modules_present) dst.modules = src.modules;
+    }
+
+    fn parseModules(arena: std.mem.Allocator, v: json.Value) !Modules {
+        _ = arena;
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.ModulesNotObject,
+        };
+        var m = Modules{};
+        const fields = [_]struct { key: []const u8, ptr: *bool }{
+            .{ .key = "mcp", .ptr = &m.mcp },
+            .{ .key = "peers", .ptr = &m.peers },
+            .{ .key = "a2a", .ptr = &m.a2a },
+            .{ .key = "webui", .ptr = &m.webui },
+            .{ .key = "graphs", .ptr = &m.graphs },
+            .{ .key = "sessions", .ptr = &m.sessions },
+            .{ .key = "goal", .ptr = &m.goal },
+            .{ .key = "token_budget", .ptr = &m.token_budget },
+            .{ .key = "streaming", .ptr = &m.streaming },
+            .{ .key = "dotenv", .ptr = &m.dotenv },
+        };
+        for (fields) |f| {
+            if (obj.get(f.key)) |val| {
+                if (val == .bool) f.ptr.* = val.bool;
+            }
+        }
+        return m;
     }
 
     // --- helpers -----------------------------------------------------------

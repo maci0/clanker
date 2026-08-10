@@ -1,6 +1,8 @@
 const std = @import("std");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
+const dotenv = @import("util/dotenv.zig");
+const config = @import("config.zig");
 
 // Zig 0.16 only runs test blocks in the root file; reference every module
 // containing tests so `zig build test` picks them all up.
@@ -18,6 +20,7 @@ comptime {
     _ = @import("agent/loop.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/graph.zig");
+    _ = @import("util/dotenv.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
@@ -31,6 +34,15 @@ comptime {
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
+    // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
+    // (existing real env vars always win). Gated by the modules.dotenv flag.
+    const arena = init.arena.allocator();
+    const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch null;
+    if (early_cfg) |c| {
+        if (c.modules.dotenv) dotenv.load(init.io, gpa, init.environ_map);
+    } else {
+        dotenv.load(init.io, gpa, init.environ_map); // no config: still try .env
+    }
 
     var arg_list: std.ArrayList([]const u8) = .empty;
     defer arg_list.deinit(gpa);

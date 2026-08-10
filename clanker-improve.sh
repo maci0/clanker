@@ -133,8 +133,27 @@ fi
 
 # ---------------------------------------------------------- api keys ---------
 # Load the API key for a known provider from the environment or ~/.secrets.
+# Resolve the effective provider: an explicit --provider wins; otherwise the
+# default_provider from config.local.json (overrides) or config.json.
+read_default_provider() {
+  local f v
+  for f in config.local.json config.json; do
+    [ -f "$f" ] || continue
+    v="$(sed -n 's/.*"default_provider"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)"
+    if [ -n "$v" ]; then printf '%s' "$v"; return; fi
+  done
+  printf '%s' ""
+}
+
 load_key() {
-  local provider="$1"
+  local requested="${1:-}"
+  local provider="$requested"
+  if [ -z "$provider" ]; then
+    provider="$(read_default_provider)"
+    if [ -n "$provider" ]; then
+      info "no --provider given; using default '$provider' from config"
+    fi
+  fi
   case "$provider" in
     ""|deepseek)
       if [ -z "${DEEPSEEK_API_KEY:-}" ] && [ -f "$HOME/.secrets/deepseek.txt" ]; then
@@ -155,7 +174,7 @@ load_key() {
       [ -n "${META_AI_API_KEY:-}" ] || die "META_AI_API_KEY is not set (export it or add ~/.secrets/meta-llm-api)"
       ;;
     *)
-      info "unknown provider '$provider' — assuming its API key env var is already set"
+      info "provider '$provider' — assuming its API key env var is already set"
       ;;
   esac
 }
@@ -168,7 +187,7 @@ if [ -n "$MODEL" ]; then CLANKER_ARGS+=(--model "$MODEL"); fi
 CLANKER_ARGS+=(--iters "$ITERS")
 if [ "$DRY_RUN" -eq 1 ]; then CLANKER_ARGS+=(--dry-run); fi
 
-info "improve-self (iters=$ITERS provider=${PROVIDER:-default} model=${MODEL:-default}$( [ "$DRY_RUN" -eq 1 ] && echo ' dry-run'))"
+info "improve-self (iters=$ITERS provider=${PROVIDER:-$(read_default_provider)} model=${MODEL:-default}$( [ "$DRY_RUN" -eq 1 ] && echo ' dry-run'))"
 info "instruction: $(printf '%s' "$INSTRUCTION" | head -c 150)$([ ${#INSTRUCTION} -gt 150 ] && echo '…')"
 
 if [ "$WANT_LOG" -eq 1 ] && [ -z "$LOG_FILE" ]; then

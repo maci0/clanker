@@ -266,6 +266,7 @@ pub fn chatStream(
     var sse: std.ArrayList(u8) = .empty;
     defer sse.deinit(ctx.gpa);
     var sse_done = false;
+    var stream_usage: ?StreamUsage = null;
     while (!sse_done) {
         const n = reader.readSliceShort(&buf) catch |err| {
             log.log(.error_, "stream read failed: {s}", .{@errorName(err)});
@@ -288,6 +289,11 @@ pub fn chatStream(
                     break;
                 }
                 const chunk = std.json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch continue;
+                // The final chunk may carry usage with an empty choices list;
+                // capture it before the choices guard.
+                if (chunk.usage) |u| {
+                    if (u.total_tokens > 0) stream_usage = u;
+                }
                 if (chunk.choices.len == 0) continue;
                 const choice = chunk.choices[0];
                 if (choice.delta.content) |c| {
@@ -328,6 +334,16 @@ pub fn chatStream(
 
     var msg = types.Message{ .role = .assistant };
     if (content.items.len > 0) msg.content = try arena.dupe(u8, content.items);
+    var usage_out: ?types.Usage = null;
+    if (stream_usage) |su| {
+        if (su.total_tokens > 0) {
+            usage_out = .{
+                .prompt_tokens = su.prompt_tokens,
+                .completion_tokens = su.completion_tokens,
+                .total_tokens = su.total_tokens,
+            };
+        }
+    }
     if (call_args.items.len > 0) {
         for (call_args.items, 0..) |*args_list, i| {
             if (args_list.items.len == 0) continue;
@@ -339,8 +355,14 @@ pub fn chatStream(
         }
         msg.tool_calls = try calls.toOwnedSlice(arena);
     }
-    return .{ .message = msg, .usage = null };
+    return .{ .message = msg, .usage = usage_out };
 }
+
+const StreamUsage = struct {
+    prompt_tokens: u32 = 0,
+    completion_tokens: u32 = 0,
+    total_tokens: u32 = 0,
+};
 
 const StreamFunction = struct {
     name: ?[]const u8 = null,
@@ -364,6 +386,7 @@ const StreamChoice = struct {
 
 const StreamChunk = struct {
     choices: []const StreamChoice = &.{},
+    usage: ?StreamUsage = null,
 };
 
 fn isRetryable(status: std.http.Status) bool {

@@ -1,13 +1,28 @@
 {
-  "default_provider": "deepseek",
+  "default_provider": "kimi-k3",
   "providers": {
     "deepseek": {
       "kind": "openai_compat",
       "base_url": "https://api.deepseek.com",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "model": "deepseek-v4-flash",
-      "max_tokens": 2048,
-      "context_window": 1048576
+      "default_model": "deepseek-v4-flash",
+      "models": {
+        "deepseek-v4-flash": {
+          "context_window": 1048576,
+          "max_tokens": 8192,
+          "temperature": 0.2,
+          "reasoning_effort": "low",
+          "cost_per_1m_input": 0.14,
+          "cost_per_1m_output": 0.28
+        },
+        "deepseek-v4": {
+          "context_window": 1048576,
+          "max_tokens": 16384,
+          "reasoning_effort": "medium",
+          "cost_per_1m_input": 0.44,
+          "cost_per_1m_output": 0.87
+        }
+      }
     },
     "openai": {
       "kind": "openai_compat",
@@ -15,6 +30,12 @@
       "api_key_env": "OPENAI_API_KEY",
       "model": "gpt-4o-mini",
       "context_window": 128000
+    },
+    "vllm-local": {
+      "kind": "openai_compat",
+      "base_url": "http://192.168.0.211:8000/v1",
+      "model": "deepseek-v4-flash",
+      "context_window": 512000
     },
     "ollama": {
       "kind": "openai_compat",
@@ -49,10 +70,22 @@
       "kind": "openai_compat",
       "base_url": "https://api.moonshot.ai/v1",
       "api_key_env": "KIMI_API_KEY",
-      "model": "kimi-k3",
-      "max_tokens": 16384,
-      "reasoning_effort": "high",
-      "context_window": 1048576
+      "default_model": "kimi-k3",
+      "models": {
+        "kimi-k3": {
+          "context_window": 1048576,
+          "max_tokens": 16384,
+          "reasoning_effort": "high",
+          "cost_per_1m_input": 3.0,
+          "cost_per_1m_output": 15.0
+        },
+        "kimi-k2.7-code": {
+          "context_window": 262144,
+          "max_tokens": 16384,
+          "cost_per_1m_input": 0.7,
+          "cost_per_1m_output": 3.5
+        }
+      }
     }
   },
   "agent": {
@@ -72,5 +105,21 @@
     "max_tool_source_bytes": 65536,
     "max_skill_bytes": 32768,
     "max_proposal_bytes": 524288
+  },
+  "instance": {
+    "name": "clanker",
+    "id": "main"
+  },
+  "modules": {
+    "mcp": true,
+    "peers": true,
+    "a2a": true,
+    "webui": true,
+    "graphs": true,
+    "sessions": true,
+    "goal": true,
+    "token_budget": true,
+    "streaming": true,
+    "dotenv": true
   }
 }

@@ -73,6 +73,7 @@ pub const Agent = struct {
     /// Runs the agent on a task; returns the final assistant response.
     /// The full conversation transcript is appended to `messages` (arena).
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
+        const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
         // Free cached tool modules (zwasm engines/linkers) when the agent
         // finishes, whether we return a final answer, bail out, or error out.
         defer {
@@ -81,11 +82,12 @@ pub const Agent = struct {
                 kv.value_ptr.*.deinit();
             }
             self.modules.clearRetainingCapacity();
-            log.log(.info, "run tokens: prompt={d} completion={d} total={d} cost=${d:.4}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens, self.stats.cost });
+            const run_ms: u64 = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
+            log.log(.info, "run tokens: prompt={d} completion={d} total={d} ({d:.1} tok/s) cost=${d:.4}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens, tps, self.stats.cost });
         }
         // Execution graph: record every LLM call and tool invocation, then
         // persist it to state/runs/<run-id>.json on every exit path.
-        const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
         const started_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.ctx.io, .real).nanoseconds, 1_000_000_000));
         var g = graph_mod.Graph{
             .run_id = try std.fmt.allocPrint(self.arena, "run-{d}", .{started_at}),

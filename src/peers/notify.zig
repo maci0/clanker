@@ -5,6 +5,7 @@ const config = @import("../config.zig");
 const log = @import("../util/log.zig");
 
 pub fn notifyAll(gpa: std.mem.Allocator, io: std.Io, cfg: *const config.Config, kind: []const u8, payload: []const u8) void {
+    if (!cfg.modules.peers) return;
     if (!cfg.notify.on) return;
     if (cfg.peers.len == 0) return;
 
