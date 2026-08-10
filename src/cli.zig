@@ -29,6 +29,7 @@ pub const Command = enum {
     mcp,
     goal,
     notify,
+    phonebook,
     serve,
 };
 
@@ -139,6 +140,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .goal;
             } else if (std.mem.eql(u8, a, "notify")) {
                 opts.command = .notify;
+            } else if (std.mem.eql(u8, a, "phonebook")) {
+                opts.command = .phonebook;
             } else if (std.mem.eql(u8, a, "serve")) {
                 opts.command = .serve;
             } else if (std.mem.eql(u8, a, "repl")) {
@@ -192,6 +195,7 @@ const usage_text =
     \\  clanker run "<task>"            run the agent on a task
     \\  clanker run --goal <id> "<task>"  run with an active goal
     \\  clanker notify <peer> "<message>" send a notification to a peer
+    \\  clanker phonebook               list peer agent cards
     \\  clanker --verbose               enable debug logging
     \\
 ;
@@ -211,6 +215,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .mcp => try cmdMcp(init, opts),
         .goal => try cmdGoal(init, opts),
         .notify => try cmdNotify(init, opts),
+        .phonebook => try cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
     }
 }
@@ -596,6 +601,8 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const port = opts.port;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
 
     const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
     var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
@@ -608,11 +615,11 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        handleConnection(io, gpa, stream);
+        handleConnection(io, gpa, &cfg, port, stream);
     }
 }
 
-fn handleConnection(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Stream) void {
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
     defer stream.close(io);
     var total: std.ArrayList(u8) = .empty;
     defer total.deinit(gpa);
@@ -634,12 +641,16 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Strea
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
-        if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
+        if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
+            handleAgentCard(io, gpa, cfg, port, stream);
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
                 return;
             };
             respond(stream, 200, "OK", "{\"ok\":true}");
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
+            handleA2AMessage(io, gpa, stream, body);
         } else {
             respond(stream, 404, "Not Found", "{\"error\":\"not found\"}");
         }
@@ -663,6 +674,12 @@ const NotificationRecord = struct {
     payload: std.json.Value,
     ts: i64,
     received_at: i64,
+};
+
+const A2ARequest = struct {
+    id: ?std.json.Value = null,
+    method: ?[]const u8 = null,
+    params: ?std.json.Value = null,
 };
 
 fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
@@ -700,6 +717,102 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = out_list.items });
 }
 
+fn handleAgentCard(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
+    _ = io;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const url = std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{port}) catch return;
+    var buf: [1 << 20]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("name") catch return;
+    s.write(cfg.instance.name) catch return;
+    s.objectField("description") catch return;
+    s.write("clanker self-improving agent") catch return;
+    s.objectField("url") catch return;
+    s.write(url) catch return;
+    s.objectField("skills") catch return;
+    s.beginArray() catch return;
+    s.write("self-improve") catch return;
+    s.write("tools") catch return;
+    s.write("mcp") catch return;
+    s.write("goals") catch return;
+    s.endArray() catch return;
+    s.objectField("version") catch return;
+    s.write("0.1.0") catch return;
+    s.objectField("capabilities") catch return;
+    s.beginObject() catch return;
+    s.objectField("streaming") catch return;
+    s.write(false) catch return;
+    s.objectField("pushNotifications") catch return;
+    s.write(true) catch return;
+    s.endObject() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8) void {
+    _ = io;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(A2ARequest, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"error\":\"bad request\"}");
+        return;
+    };
+    const id = parsed.id orelse .null;
+    var text: []const u8 = "";
+    if (parsed.params) |p| {
+        if (p == .object) {
+            if (p.object.get("message")) |m| {
+                if (m == .object) {
+                    if (m.object.get("parts")) |parts| {
+                        if (parts == .array and parts.array.items.len > 0) {
+                            if (parts.array.items[0] == .object) {
+                                if (parts.array.items[0].object.get("text")) |t| {
+                                    if (t == .string) text = t.string;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    var buf: [1 << 20]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("jsonrpc") catch return;
+    s.write("2.0") catch return;
+    s.objectField("result") catch return;
+    s.beginObject() catch return;
+    s.objectField("id") catch return;
+    s.write(id) catch return;
+    s.objectField("message") catch return;
+    s.beginObject() catch return;
+    s.objectField("role") catch return;
+    s.write("user") catch return;
+    s.objectField("parts") catch return;
+    s.beginArray() catch return;
+    s.beginObject() catch return;
+    s.objectField("text") catch return;
+    s.write(text) catch return;
+    s.endObject() catch return;
+    s.endArray() catch return;
+    s.endObject() catch return;
+    s.objectField("context") catch return;
+    s.beginObject() catch return;
+    s.endObject() catch return;
+    s.endObject() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
@@ -735,4 +848,70 @@ fn parseContentLength(headers: []const u8) ?usize {
         }
     }
     return null;
+}
+
+// -------------------------------------------------------------- phonebook --
+
+const AgentCard = struct {
+    name: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    url: ?[]const u8 = null,
+    skills: ?[]const []const u8 = null,
+    version: ?[]const u8 = null,
+};
+
+const PeerScan = struct {
+    card: ?AgentCard = null,
+    status: []const u8 = "ok",
+};
+
+fn fetchAgentCard(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8) PeerScan {
+    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http_client.deinit();
+    var response_buf: [1 << 20]u8 = undefined;
+    var rw: std.Io.Writer = .fixed(&response_buf);
+    const result = http_client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .headers = .{ .user_agent = .{ .override = "clanker/0.1.0" } },
+        .response_writer = &rw,
+    }) catch |err| {
+        return .{ .status = @errorName(err) };
+    };
+    if (@intFromEnum(result.status) >= 400) return .{ .status = "http_error" };
+    const body = response_buf[0..rw.end];
+    const card = std.json.parseFromSliceLeaky(AgentCard, arena, body, .{ .ignore_unknown_fields = true }) catch |err| {
+        return .{ .status = @errorName(err) };
+    };
+    return .{ .card = card };
+}
+
+fn cmdPhonebook(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, "name\turl\tskills\tstatus\n");
+
+    for (cfg.peers) |peer| {
+        const base = std.mem.trimEnd(u8, peer.url, "/");
+        const url = try std.fmt.allocPrint(arena, "{s}/.well-known/agent.json", .{base});
+        const scan = fetchAgentCard(io, gpa, arena, url);
+
+        const name = if (scan.card) |c| c.name orelse peer.name else peer.name;
+        var skills_joined: []const u8 = "";
+        if (scan.card) |c| {
+            if (c.skills) |skills| {
+                var buf: std.ArrayList(u8) = .empty;
+                for (skills, 0..) |s, i| {
+                    if (i > 0) try buf.append(arena, ',');
+                    try buf.appendSlice(arena, s);
+                }
+                if (buf.items.len > 0) skills_joined = try buf.toOwnedSlice(arena);
+            }
+        }
+        const line = try std.fmt.allocPrint(arena, "{s}\t{s}\t{s}\t{s}\n", .{ name, peer.url, skills_joined, scan.status });
+        try out.writeStreamingAll(io, line);
+    }
 }
