@@ -11,6 +11,7 @@ const host = @import("../sandbox/host.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
 const autolearn = @import("autolearn.zig");
+const chatrooms = @import("../peers/chatrooms.zig");
 const log = @import("../util/log.zig");
 
 /// Cumulative token usage across all LLM calls in a single agent run.
@@ -147,6 +148,31 @@ pub const Agent = struct {
             try messages.insert(self.arena, 0, .{ .role = .system, .content = self.system_prompt_text });
         }
         try messages.append(self.arena, .{ .role = .user, .content = task });
+        // Chatrooms inbox: surface messages that arrived since the last run
+        // so a subscribed clanker actually notices what its peers said.
+        if (self.cfg.modules.chatrooms and self.cfg.chatrooms.on) {
+            const state_dir = self.cfg.agent.state_dir;
+            const since = chatrooms.readCursor(std.Io.Dir.cwd(), self.ctx.io, self.arena, state_dir);
+            const inbox = chatrooms.readNew(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, self.arena, state_dir, since) catch &[_]chatrooms.Message{};
+            if (inbox.len > 0) {
+                var chat_buf: std.ArrayList(u8) = .empty;
+                defer chat_buf.deinit(self.ctx.gpa);
+                try chat_buf.appendSlice(self.ctx.gpa, "[chatroom inbox]\n");
+                var latest: i64 = since;
+                for (inbox) |m| {
+                    if (m.ts > latest) latest = m.ts;
+                    const preview = if (m.text.len > 300) m.text[0..300] else m.text;
+                    const line = try std.fmt.allocPrint(self.ctx.gpa, "- [{s}] {s}: \"{s}\"\n", .{ m.room, m.from, preview });
+                    defer self.ctx.gpa.free(line);
+                    try chat_buf.appendSlice(self.ctx.gpa, line);
+                }
+                const text = try self.arena.dupe(u8, chat_buf.items);
+                if (text.len > 0) {
+                    try messages.append(self.arena, .{ .role = .user, .content = text });
+                    chatrooms.writeCursor(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, state_dir, latest);
+                }
+            }
+        }
 
         var iteration: u32 = 0;
         var budget_hit = false;
@@ -178,6 +204,11 @@ pub const Agent = struct {
                 .completion_tokens = if (resp.usage) |u| u.completion_tokens else 0,
                 .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
                 .ok = true,
+                // Set here as on every other node: `output` is only the first
+                // `output_preview_cap` bytes, so the full length is what tells
+                // a reader (and the web UI) that the rest was dropped.
+                .result_bytes = if (resp.message.content) |c| c.len else 0,
+                .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
             });
 
             // RLM: persist reasoning traces so the agent can review and learn
@@ -195,7 +226,7 @@ pub const Agent = struct {
                 self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
                 self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
                 const active = self.provider.activeModel();
-                if (active.cost_per_1m_input) |ci| self.stats.cost += @as(f64, @floatFromInt(u.prompt_tokens)) / 1_000_000.0 * ci;
+                if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
                 if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
 
                 // Per-turn token budgeting: a single runaway response must
@@ -227,6 +258,7 @@ pub const Agent = struct {
                     .detail = resp.finish_reason orelse "",
                     .result_bytes = if (resp.message.content) |c| c.len else 0,
                     .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                    .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
                 });
                 return try self.finish(messages, resp);
             };
@@ -238,6 +270,7 @@ pub const Agent = struct {
                     .detail = resp.finish_reason orelse "",
                     .result_bytes = if (resp.message.content) |c| c.len else 0,
                     .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                    .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
                 });
                 return try self.finish(messages, resp);
             }
@@ -256,22 +289,17 @@ pub const Agent = struct {
                 cb(tool_ms);
             }
             for (calls, results) |tc, content| {
-                // Multimodal: a tool result of the form {"ok":true,"image":{mime,b64}}
-                // (e.g. from the image tool) is attached to the conversation so
-                // the model can see it on the next turn.
+                // Tool results must follow the assistant tool_calls message
+                // immediately (OpenAI ordering rule; strict providers like
+                // kimi-k3 reject anything interleaved), so the image
+                // attachment is queued here and appended *after* all tool
+                // results of this iteration.
+                var image: ?struct { mime: []const u8, b64: []const u8 } = null;
                 if (self.cfg.modules.multimodal) {
                     if (std.mem.indexOf(u8, content, "\"image\":{\"mime\":")) |_| {
                         const img = std.json.parseFromSliceLeaky(ImageResult, self.arena, content, .{ .ignore_unknown_fields = true }) catch null;
                         if (img) |im| {
-                            if (im.image) |iv| {
-                                try messages.append(self.arena, .{
-                                    .role = .user,
-                                    .content = try std.fmt.allocPrint(self.arena, "[attached image: {s}]", .{tc.name}),
-                                    .images = try self.arena.alloc(types.ImagePart, 1),
-                                });
-                                const last = &messages.items[messages.items.len - 1];
-                                last.images.?[0] = .{ .mime = iv.mime, .b64 = iv.b64 };
-                            }
+                            if (im.image) |iv| image = .{ .mime = iv.mime, .b64 = iv.b64 };
                         }
                     }
                 }
@@ -287,12 +315,24 @@ pub const Agent = struct {
                     .iteration = iteration + 1,
                     .label = tc.name,
                     .result_bytes = content.len,
+                    .output = graph_mod.truncatedPreview(content),
                 });
                 try messages.append(self.arena, .{
                     .role = .tool,
                     .tool_call_id = tc.id,
                     .content = content,
                 });
+                // Multimodal: attach the image after its tool result so the
+                // assistant(tool_calls) -> tool(result) ordering is preserved.
+                if (image) |iv| {
+                    try messages.append(self.arena, .{
+                        .role = .user,
+                        .content = try std.fmt.allocPrint(self.arena, "[attached image: {s}]", .{tc.name}),
+                        .images = try self.arena.alloc(types.ImagePart, 1),
+                    });
+                    const last = &messages.items[messages.items.len - 1];
+                    last.images.?[0] = .{ .mime = iv.mime, .b64 = iv.b64 };
+                }
             }
         }
         if (budget_hit) return error.SessionTokenBudgetExceeded;
@@ -474,15 +514,12 @@ pub const Agent = struct {
             const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, s, .{}) catch null;
             if (parsed) |v| {
                 if (v == .object) {
-                    if (v.object.get("answer")) |ans| {
-                        switch (ans) {
-                            .string => s = ans.string,
-                            .integer => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.integer}),
-                            .float => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.float}),
-                            .bool => s = if (ans.bool) "true" else "false",
-                            else => {},
-                        }
-                    } else if (v.object.count() == 1) {
+                    // Only unwrap an object when it contains exactly one key.
+                    // This preserves multi-field JSON objects requested by the
+                    // user (so the exact answer format is not broken by pulling
+                    // out an "answer" field), while still handling the common
+                    // {"answer": ...} or single-value response shapes.
+                    if (v.object.count() == 1) {
                         var it = v.object.iterator();
                         const entry = it.next().?;
                         const ans = entry.value_ptr.*;
@@ -656,58 +693,19 @@ pub const Agent = struct {
     /// descriptor, plus the plugin's own `config` object and, when it declared
     /// the llm capability, a provider to call.
     fn sandboxFor(self: *Agent, tool: *const registry.Tool) !host.Sandbox {
-        var sb = host.Sandbox{
-            .gpa = self.ctx.gpa,
-            .io = self.ctx.io,
-            .root_dir = self.cfg.agent.sandbox_root,
-            .network_allow = tool.network_allow,
-            .fs_prefixes = tool.fs_prefixes,
-            .environ_map = self.ctx.environ_map,
-            .seed = self.cfg.agent.seed,
-            .config_json = try std.fmt.allocPrint(self.arena, "{f}", .{std.json.fmt(tool.config, .{})}),
-            .subagent_runner = self.subagent_runner,
-            .cfg = self.cfg,
-        };
-        if (tool.llm) sb.llm = .{
-            .provider = try self.pluginProvider(tool),
-            .ctx = self.ctx,
-            .max_tokens = pluginU32(tool.config, "max_tokens") orelse 1024,
-        };
-        return sb;
-    }
-
-    /// A plugin may aim `ck_llm` at its own backend: `"config": {"provider":
-    /// "kimi-k3", "model": "kimi-k2.7-code"}`. Anything it leaves out falls
-    /// back to the provider the agent itself is running on.
-    fn pluginProvider(self: *Agent, tool: *const registry.Tool) !*const config.Provider {
-        const want_provider = pluginStr(tool.config, "provider");
-        const want_model = pluginStr(tool.config, "model");
-        if (want_provider == null and want_model == null) return self.provider;
-
-        const base = if (want_provider) |name|
-            self.cfg.provider(name) catch blk: {
-                log.log(.warn, "plugin '{s}': unknown provider '{s}', using the agent's", .{ tool.name, name });
-                break :blk self.provider;
+        var sb = try host.sandboxFor(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, tool, self.ctx);
+        // Agent-only extras: nested sub-agents and the state dir are meaningless
+        // for the CLI and MCP callers of the shared builder.
+        sb.subagent_runner = self.subagent_runner;
+        sb.state_dir = self.cfg.agent.state_dir;
+        // A tool that named no provider of its own follows the agent, which may
+        // itself be running under a --provider override rather than the default.
+        if (sb.llm) |*access| {
+            if (host.pluginStr(tool.config, "provider") == null and host.pluginStr(tool.config, "model") == null) {
+                access.provider = self.provider;
             }
-        else
-            self.provider;
-
-        const copy = try self.arena.create(config.Provider);
-        copy.* = base.*;
-        if (want_model) |m| copy.default_model = m;
-        return copy;
-    }
-
-    fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
-        if (cfg_value != .object) return null;
-        const v = cfg_value.object.get(key) orelse return null;
-        return if (v == .string) v.string else null;
-    }
-
-    fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
-        if (cfg_value != .object) return null;
-        const v = cfg_value.object.get(key) orelse return null;
-        return if (v == .integer and v.integer > 0) @intCast(v.integer) else null;
+        }
+        return sb;
     }
 
     /// Passes `payload` through every enabled transform plugin registered for
@@ -724,7 +722,7 @@ pub const Agent = struct {
         payload: []const u8,
     ) ![]const u8 {
         const chain = try self.reg.transformsFor(self.arena, tool_name, phase);
-        var current: []const u8 = payload;
+        var current = try self.arena.dupe(u8, payload);
         if (chain.len == 0) return current;
 
         var applied: std.ArrayList([]const u8) = .empty;
@@ -805,8 +803,7 @@ pub const Agent = struct {
             break :blk m;
         };
 
-        const args = try self.runChain(tc.name, .before, tc.arguments);
-        const out = mod.executeTool(args) catch |err| {
+        const out = mod.executeTool(tc.arguments) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
             return error.ToolExecutionFailed;
         };
@@ -814,8 +811,10 @@ pub const Agent = struct {
         const t1 = std.Io.Timestamp.now(self.ctx.io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
 
-        // Arena-own the result for the conversation history.
-        const owned = try self.runChain(tc.name, .after, out);
+        // Arena-own the result for the conversation history BEFORE the defer
+        // above frees the gpa buffer: returning it raw yields 0xAA-poisoned
+        // tool messages on the sequential path (use-after-free).
+        const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
         return owned;
     }
@@ -853,7 +852,7 @@ pub const Agent = struct {
             // Tools that call the model, and tools wrapped in a transform
             // chain, go through the sequential pass below: one provider call at
             // a time, and no worker thread sharing the HTTP client.
-            if (tool.llm or !tool.enabled) continue;
+            if (tool.llm or tool.sequential or !tool.enabled) continue;
             if (self.no_parallel_tools) continue;
             if ((try self.reg.transformsFor(self.arena, tc.name, .before)).len > 0) continue;
             if ((try self.reg.transformsFor(self.arena, tc.name, .after)).len > 0) continue;
