@@ -1077,6 +1077,12 @@ fn fsWriteImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
     const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
+    // Create parent directories first so a tool can scaffold a file in a
+    // fresh directory without a separate ck_fs_mkdir round-trip. A failure
+    // here is harmless: writeFile below then fails and reports Err.invalid.
+    if (std.mem.lastIndexOfScalar(u8, full, '/')) |slash| {
+        if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full[0..slash]) catch {};
+    }
     std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
