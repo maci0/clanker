@@ -1049,7 +1049,7 @@ pub fn ckFsWrite(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, data_ptr: 
     const bytes = memBytes(caller) orelse return Err.invalid;
     const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
     const data = sliceOf(bytes, data_ptr, data_len) orelse &.{};
-    return fsWriteImpl(h, path, data);
+    return fsWriteImpl(h, bytes, path, data);
 }
 
 fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
@@ -1073,7 +1073,7 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     return Err.ok;
 }
 
-fn fsWriteImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
+fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8) u32 {
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
     const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
@@ -1087,7 +1087,11 @@ fn fsWriteImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
-    return Err.ok;
+    // Report {"ok":true,"bytes":N} so a tool authoring a file gets the
+    // same confirmation contract as the requested write_file built-in.
+    var buf: [64]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"bytes\":{d}}}", .{data.len}) catch return Err.too_large;
+    return h.writeResult(mem_bytes, json);
 }
 
 pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
