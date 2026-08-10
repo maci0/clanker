@@ -714,6 +714,53 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
+/// ck_fs_stat(path) — stat a path under the sandbox root.
+/// Returns a JSON object in the host arena:
+///   {"exists":true,"kind":"file","size":1234}
+/// kind is one of "file", "directory", or "other".
+/// Returns Err.not_found when the path does not exist (no arena write).
+/// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
+pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    if (path.len == 0) return Err.invalid;
+    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+
+    // Try to stat as a file first, then as a directory.
+    const cwd = std.Io.Dir.cwd();
+    var kind_str: []const u8 = "other";
+    var size: u64 = 0;
+
+    if (cwd.statFile(h.sandbox.io, full)) |stat| {
+        kind_str = "file";
+        size = stat.size;
+    } else |_| {
+        // Not a file — try opening as a directory to distinguish dir vs not-found.
+        var dir = cwd.openDir(h.sandbox.io, full, .{}) catch |err| switch (err) {
+            error.FileNotFound => return Err.not_found,
+            else => return Err.not_found,
+        };
+        dir.close(h.sandbox.io);
+        kind_str = "directory";
+        size = 0;
+    }
+
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return Err.too_large;
+    s.objectField("exists") catch return Err.too_large;
+    s.write(true) catch return Err.too_large;
+    s.objectField("kind") catch return Err.too_large;
+    s.write(kind_str) catch return Err.too_large;
+    s.objectField("size") catch return Err.too_large;
+    s.print("{d}", .{size}) catch return Err.too_large;
+    s.endObject() catch return Err.too_large;
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
 /// ck_fs_delete(path) — delete a file under the sandbox root.
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
@@ -1124,6 +1171,28 @@ test "argDenied matches operator tokens anywhere, word tokens only at boundaries
     try std.testing.expect(argDenied("gc", "gc"));
     try std.testing.expect(argDenied("-force", "-f"));
     try std.testing.expect(argDenied("--force", "--force"));
+}
+
+test "ckFsStat uses safeJoin policy" {
+    // Verify the safeJoin policy that ckFsStat relies on.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"data/"},
+        .environ_map = undefined,
+    };
+    // Allowed prefix
+    const ok = try safeJoin(&sb, "data/info.txt");
+    defer std.testing.allocator.free(ok);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/info.txt", ok);
+    // Disallowed prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
+    // Traversal attempt
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
+    // Empty path
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
 test "ckFsDelete uses safeJoin policy" {
