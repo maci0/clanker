@@ -17,6 +17,7 @@ const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const log = @import("util/log.zig");
+const gate_checks = @import("gate/checks.zig");
 
 pub const Command = enum {
     help,
@@ -36,10 +37,13 @@ pub const Command = enum {
     serve,
     repl,
     graph,
+    gate,
 };
 
 pub const Options = struct {
     command: Command = .help,
+    /// Sub-command for `providers`: "check" (default) or "models".
+    providers_sub: []const u8 = "check",
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     task: ?[]const u8 = null,
@@ -124,7 +128,7 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .init;
             } else if (std.mem.eql(u8, a, "providers")) {
                 opts.command = .providers_check;
-                pending_sub = "check";
+                pending_sub = "";
             } else if (std.mem.eql(u8, a, "run")) {
                 opts.command = .run;
             } else if (std.mem.eql(u8, a, "sessions")) {
@@ -154,12 +158,17 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .graph;
             } else if (std.mem.eql(u8, a, "repl")) {
                 opts.command = .repl;
+            } else if (std.mem.eql(u8, a, "gate")) {
+                opts.command = .gate;
             } else {
                 return error.UnknownCommand;
             }
         } else if (pending_sub) |sub| {
             if (std.mem.eql(u8, a, sub)) {
                 pending_sub = null;
+            } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models"))) {
+                opts.providers_sub = a;
+                pending_sub = null; // sub consumed; next token is the provider name
             } else {
                 return error.BadSubcommand;
             }
@@ -213,6 +222,7 @@ const usage_text =
     \\  clanker revert <id>             revert a previously applied improvement
     \\  clanker goal "<intent>"         design and persist a structured goal
     \\  clanker graph [run-id]          list runs or render one as an ASCII timeline
+    \\  clanker gate                    run deterministic gates (build/test/tools/fmt/lint)
     \\  clanker mcp                     serve tools over MCP (stdio)
     \\  clanker serve [--port N]        HTTP API + web UI (default port 17921)
     \\  clanker notify <peer> "<message>" send a notification to a peer
@@ -241,11 +251,80 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .serve => try cmdServe(init, opts),
         .repl => try cmdRepl(init, opts),
         .graph => try cmdGraph(init, opts),
+        .gate => try cmdGate(init, opts),
     }
 }
 
 fn writeStdErr(io: std.Io, bytes: []const u8) !void {
     try std.Io.File.stderr().writeStreamingAll(io, bytes);
+}
+
+// -------------------------------------------------------------------- gate --
+
+/// Runs the deterministic gates (build, test, tools, fmt, lint) in the
+/// current directory. This wires the gate/checks.zig module into the CLI so
+/// operators can verify the repo independently of the improve loop.
+fn cmdGate(init: std.process.Init, opts: Options) !void {
+    _ = opts;
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+
+    var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
+    defer build.deinit(gpa);
+    log.log(.info, "build: {s}", .{if (build.ok) "PASS" else "FAIL"});
+    if (!build.ok) return error.GateFailed;
+
+    var test_gate = try gate_checks.testGate(gpa, io, std.Io.Dir.cwd());
+    defer test_gate.deinit(gpa);
+    log.log(.info, "tests: {s}", .{if (test_gate.ok) "PASS" else "FAIL"});
+    if (!test_gate.ok) return error.GateFailed;
+
+    var tools = try gate_checks.toolsGate(gpa, io, std.Io.Dir.cwd());
+    defer tools.deinit(gpa);
+    log.log(.info, "tools: {s}", .{if (tools.ok) "PASS" else "FAIL"});
+    if (!tools.ok) return error.GateFailed;
+
+    const files = try collectZigFiles(io, arena);
+    var fmt = try gate_checks.fmtGate(gpa, io, std.Io.Dir.cwd(), files);
+    defer fmt.deinit(gpa);
+    log.log(.info, "fmt: {s}", .{if (fmt.ok) "PASS" else "FAIL"});
+    if (!fmt.ok) return error.GateFailed;
+
+    var lint = try gate_checks.lintGate(gpa, io, std.Io.Dir.cwd(), files);
+    defer lint.deinit(gpa);
+    log.log(.info, "lint: {s}", .{if (lint.ok) "PASS" else "FAIL"});
+    if (!lint.ok) return error.GateFailed;
+
+    log.log(.info, "all gates passed", .{});
+}
+
+/// Recursively collects all .zig file paths under the current directory.
+fn collectZigFiles(io: std.Io, arena: std.mem.Allocator) ![][]const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    try walkZig(io, arena, &list, ".");
+    return list.toOwnedSlice(arena);
+}
+
+fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8), dir_path: []const u8) !void {
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return;
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        const sub = std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_path, entry.name }) catch continue;
+        switch (entry.kind) {
+            .directory => {
+                if (std.mem.eql(u8, entry.name, ".git") or std.mem.eql(u8, entry.name, "zig-cache") or std.mem.eql(u8, entry.name, "zig-out") or std.mem.eql(u8, entry.name, "state")) continue;
+                try walkZig(io, arena, list, sub);
+            },
+            .file => {
+                if (std.mem.endsWith(u8, entry.name, ".zig")) {
+                    try list.append(arena, sub);
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 // -------------------------------------------------------------------- init --
@@ -301,6 +380,9 @@ fn cmdInit(init: std.process.Init) !void {
 // --------------------------------------------------------- providers check --
 
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
+    if (std.mem.eql(u8, opts.providers_sub, "models")) {
+        return cmdProvidersModels(init, opts);
+    }
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
@@ -339,10 +421,138 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         const tok = if (resp.usage) |u| u.total_tokens else 0;
         checked_any = true;
-        log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok)", .{ name, p.model, ms, tok });
+        log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok) cost={any}", .{ name, p.activeModelName(), ms, tok, p.activeModel().cost_per_1m_input });
     }
     if (opts.provider != null and !found_any) return error.UnknownProvider;
     if (opts.provider != null and !checked_any) return error.ProviderCheckFailed;
+}
+
+/// `clanker providers models [provider]` — list a provider's models with their
+/// context window. With provider name "openrouter", pulls OpenRouter's model
+/// database (context_length + per-1M pricing) filtered to our providers'
+/// model families.
+fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+
+    const provider_name = opts.provider orelse cfg.default_provider;
+    const out = std.Io.File.stdout();
+
+    if (std.mem.eql(u8, provider_name, "openrouter")) {
+        // Pull OpenRouter's public model database.
+        const body = try httpGet(io, gpa, arena, "https://openrouter.ai/api/v1/models", null);
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
+        try out.writeStreamingAll(io, "id\tctx\tin $/1M\tout $/1M\n");
+        const families = [_][]const u8{ "kimi", "moonshot", "deepseek", "muse" };
+        if (parsed == .object) {
+            if (parsed.object.get("data")) |data| {
+                if (data == .array) {
+                    for (data.array.items) |item| {
+                        if (item != .object) continue;
+                        const id = fieldStr(item.object, "id") orelse continue;
+                        var relevant = false;
+                        for (families) |f| {
+                            if (std.ascii.indexOfIgnoreCase(id, f) != null) {
+                                relevant = true;
+                                break;
+                            }
+                        }
+                        if (!relevant) continue;
+                        const ctx = if (item.object.get("context_length")) |c| switch (c) {
+                            .integer => |i| i,
+                            else => 0,
+                        } else 0;
+                        var in_rate: f64 = 0;
+                        var out_rate: f64 = 0;
+                        if (item.object.get("pricing")) |p| {
+                            if (p == .object) {
+                                if (p.object.get("prompt")) |v| {
+                                    switch (v) {
+                                        .integer, .float, .number_string, .string => in_rate = numToF64(v),
+                                        else => {},
+                                    }
+                                }
+                                if (p.object.get("completion")) |v| {
+                                    switch (v) {
+                                        .integer, .float, .number_string, .string => out_rate = numToF64(v),
+                                        else => {},
+                                    }
+                                }
+                            }
+                        }
+                        const line = try std.fmt.allocPrint(arena, "{s}\t{d}\t{d:.2}\t{d:.2}\n", .{ id, ctx, in_rate * 1_000_000, out_rate * 1_000_000 });
+                        try out.writeStreamingAll(io, line);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // Provider's own OpenAI-compat /models endpoint.
+    const provider = try cfg.provider(provider_name);
+    const url = try std.fmt.allocPrint(arena, "{s}/models", .{std.mem.trimEnd(u8, provider.base_url, "/")});
+    const bearer = if (provider.api_key_env) |env_name| blk: {
+        const key = init.environ_map.get(env_name) orelse break :blk null;
+        break :blk try std.fmt.allocPrint(arena, "Bearer {s}", .{key});
+    } else null;
+    const body = try httpGet(io, gpa, arena, url, bearer);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
+    try out.writeStreamingAll(io, "id\tctx\n");
+    if (parsed == .object) {
+        if (parsed.object.get("data")) |data| {
+            if (data == .array) {
+                for (data.array.items) |item| {
+                    if (item != .object) continue;
+                    const id = fieldStr(item.object, "id") orelse continue;
+                    const ctx = if (item.object.get("context_length")) |c| switch (c) {
+                        .integer => |i| i,
+                        else => 0,
+                    } else 0;
+                    const line = try std.fmt.allocPrint(arena, "{s}\t{d}\n", .{ id, ctx });
+                    try out.writeStreamingAll(io, line);
+                }
+            }
+        }
+    }
+}
+
+fn fieldStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    if (obj.get(key)) |v| {
+        if (v == .string) return v.string;
+    }
+    return null;
+}
+
+fn numToF64(v: std.json.Value) f64 {
+    return switch (v) {
+        .integer => |i| @floatFromInt(i),
+        .float => |f| f,
+        .number_string => |s| std.fmt.parseFloat(f64, s) catch 0,
+        .string => |s| std.fmt.parseFloat(f64, s) catch 0,
+        else => 0,
+    };
+}
+
+fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8, bearer: ?[]const u8) ![]const u8 {
+    var http: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http.deinit();
+    var buf: [1 << 20]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var headers: std.http.Client.Request.Headers = .{
+        .user_agent = .{ .override = "clanker/0.1.0" },
+    };
+    if (bearer) |b| headers.authorization = .{ .override = b };
+    const res = try http.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .headers = headers,
+        .response_writer = &w,
+    });
+    if (@intFromEnum(res.status) >= 400) return error.HttpError;
+    return arena.dupe(u8, buf[0..w.end]);
 }
 
 // ---------------------------------------------------------------------- run --
@@ -356,7 +566,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.model = m;
+    if (opts.model) |m| provider_copy.default_model = m;
     provider = &provider_copy;
 
     // Make sure the sandbox root exists.
@@ -427,6 +637,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     if (opts.session) |sid| {
         const title = opts.task.?[0..@min(opts.task.?.len, 60)];
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        if (!cfg.modules.sessions) return;
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
             .id = sid,
             .title = title,
@@ -446,7 +657,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.model = m;
+    if (opts.model) |m| provider_copy.default_model = m;
     provider = &provider_copy;
 
     // Make sure the sandbox root exists.
@@ -684,7 +895,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     };
     const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
 
-    const streamed = a.on_token != null;
+    const streamed = a.on_token != null and a.cfg.modules.streaming;
     const content = resp.message.content orelse "";
     if (!streamed) {
         try out_w.interface.writeAll(content);
@@ -692,7 +903,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     try out_w.interface.writeAll("\n\n");
     // Dim turn stats (tokens + wall time) so each turn reports its cost.
     const stats = if (a.stats.total_tokens > 0)
-        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion tokens \xc2\xb7 {d}ms]\x1b[0m\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens, ms })
+        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion tokens \xc2\xb7 {d}ms \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens, ms, a.stats.cost })
     else
         try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
     try out_w.interface.writeAll(stats);
@@ -700,6 +911,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     // run() already appended (and finish()-cleaned) the assistant message.
 
     const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    if (!a.cfg.modules.sessions) return false;
     const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});
     try session.saveSession(io, gpa, a.arena, std.Io.Dir.cwd(), .{
         .id = sid,
@@ -714,6 +926,11 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
 fn cmdSessions(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.sessions) {
+        log.log(.error_, "sessions module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
     const metas = try session.listSessions(io, init.gpa, arena, std.Io.Dir.cwd());
     const out = std.Io.File.stdout();
     for (metas) |m| {
@@ -734,6 +951,11 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.graphs) {
+        log.log(.error_, "graphs module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
     const out = std.Io.File.stdout();
 
     if (opts.task) |run_id| {
@@ -806,7 +1028,7 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.model = m;
+    if (opts.model) |m| provider_copy.default_model = m;
     provider = &provider_copy;
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
@@ -844,7 +1066,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.model = m;
+    if (opts.model) |m| provider_copy.default_model = m;
     provider = &provider_copy;
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
@@ -862,7 +1084,13 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
 }
 
 fn cmdGoal(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
     const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.goal) {
+        log.log(.error_, "goal module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
     const intent = opts.task orelse return error.MissingTask;
     const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
     var goal_opts = opts;
@@ -875,6 +1103,10 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.peers) {
+        log.log(.error_, "peers module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
     const peer_name = opts.peer orelse return error.MissingPeer;
     const message = opts.message orelse return error.MissingMessage;
 
@@ -936,6 +1168,10 @@ fn cmdMcp(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.mcp) {
+        log.log(.error_, "mcp module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
     try mcp.serve(io, gpa, arena, &cfg);
 }
 
@@ -1023,7 +1259,16 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
-        if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
+        const is_webui = (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui")) or (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run"));
+        const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
+        const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify");
+        if (is_webui and !cfg.modules.webui) {
+            respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
+        } else if (is_a2a and !cfg.modules.a2a) {
+            respond(stream, 404, "Not Found", "{\"error\":\"a2a module disabled\"}");
+        } else if (is_notify and !cfg.modules.peers) {
+            respond(stream, 404, "Not Found", "{\"error\":\"peers module disabled\"}");
+        } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
@@ -1490,6 +1735,10 @@ fn cmdPhonebook(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.peers) {
+        log.log(.error_, "peers module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
     const out = std.Io.File.stdout();
     try out.writeStreamingAll(io, "name\turl\tskills\tstatus\n");
 
