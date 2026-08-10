@@ -654,7 +654,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         }
         if (!goal_found) log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
     }
-    compactMessages(&messages, max_session_chars);
+    compactMessages(&messages, max_session_tokens);
     var err_detail: ?[]const u8 = null;
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
@@ -670,7 +670,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         if (!cfg.modules.sessions) return;
-        compactMessages(&messages, max_session_chars);
+        compactMessages(&messages, max_session_tokens);
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
             .id = sid,
             .title = title,
@@ -1154,22 +1154,23 @@ fn replToolResult(ms: u64) void {
 /// Per-turn cap keeps the transcript small before each LLM call; the session
 /// cap bounds the persisted history so long sessions auto-compact instead of
 /// exceeding the context window.
-const max_turn_chars = 16 * 1024;
-const max_session_chars = 32 * 1024;
+const max_turn_tokens = 4096;
+const max_session_tokens = 8192;
 
-/// Drops oldest non-system messages until total content fits under `max_chars`
-/// so long REPL sessions auto-compact instead of exceeding the context window.
-fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) void {
+/// Drops oldest non-system messages until the estimated token count fits under
+/// `max_tokens` so long sessions auto-compact instead of exceeding the context
+/// window. Token count is estimated as chars/4 (a rough heuristic).
+fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) void {
     var total: usize = 0;
     for (messages.items) |m| {
-        total += if (m.content) |c| c.len else 0;
+        total += if (m.content) |c| c.len / 4 else 0;
     }
-    if (total <= max_chars) return;
+    if (total <= max_tokens) return;
     var i: usize = 0;
-    while (i < messages.items.len and total > max_chars) {
+    while (i < messages.items.len and total > max_tokens) {
         const m = messages.items[i];
         if (m.role != .system) {
-            total -|= if (m.content) |c| c.len else 0;
+            total -|= if (m.content) |c| c.len / 4 else 0;
             _ = messages.orderedRemove(i);
         } else {
             i += 1;
@@ -1178,7 +1179,7 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) vo
 }
 
 fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
-    compactMessages(messages, max_turn_chars);
+    compactMessages(messages, max_turn_tokens);
     const gpa = a.ctx.gpa;
     // NOTE: a.run() appends the user task (and each assistant reply) to
     // `messages` itself; appending here would duplicate them in the
@@ -1227,7 +1228,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
 
     const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     if (!a.cfg.modules.sessions) return false;
-    compactMessages(messages, max_session_chars);
+    compactMessages(messages, max_session_tokens);
     const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});
     try session.saveSession(io, gpa, a.arena, std.Io.Dir.cwd(), .{
         .id = sid,
@@ -2097,4 +2098,15 @@ fn cmdPhonebook(init: std.process.Init) !void {
         const line = try std.fmt.allocPrint(arena, "{s}\t{s}\t{s}\t{s}\n", .{ name, peer.url, skills_joined, scan.status });
         try out.writeStreamingAll(io, line);
     }
+}
+
+test "compactMessages drops oldest non-system messages over token budget" {
+    const allocator = std.testing.allocator;
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(allocator);
+    try messages.append(allocator, .{ .role = .user, .content = "aaaa" });
+    try messages.append(allocator, .{ .role = .user, .content = "bbbb" });
+    try messages.append(allocator, .{ .role = .user, .content = "cccc" });
+    compactMessages(&messages, 2);
+    try std.testing.expect(messages.items.len == 2);
 }
