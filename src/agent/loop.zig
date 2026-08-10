@@ -9,6 +9,7 @@ const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
 const system_prompt = @import("system_prompt.zig");
+const graph_mod = @import("graph.zig");
 const log = @import("../util/log.zig");
 
 /// Cumulative token usage across all LLM calls in a single agent run.
@@ -79,6 +80,21 @@ pub const Agent = struct {
             self.modules.clearRetainingCapacity();
             log.log(.info, "run tokens: prompt={d} completion={d} total={d}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens });
         }
+        // Execution graph: record every LLM call and tool invocation, then
+        // persist it to state/runs/<run-id>.json on every exit path.
+        const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
+        const started_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.ctx.io, .real).nanoseconds, 1_000_000_000));
+        var g = graph_mod.Graph{
+            .run_id = try std.fmt.allocPrint(self.arena, "run-{d}", .{started_at}),
+            .task = task,
+            .provider = self.provider.name,
+            .started_at = started_at,
+        };
+        defer {
+            g.duration_ms = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            graph_mod.write(self.ctx.io, self.ctx.gpa, self.arena, &g) catch {};
+            g.deinit(self.ctx.gpa);
+        }
         try messages.append(self.arena, .{ .role = .system, .content = self.system_prompt_text });
         try messages.append(self.arena, .{ .role = .user, .content = task });
 
@@ -86,6 +102,7 @@ pub const Agent = struct {
         var budget_hit = false;
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
+            const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const resp = if (self.on_token) |cb|
                 try client.chatStream(self.ctx, self.arena, .{
                     .provider = self.provider,
@@ -98,6 +115,16 @@ pub const Agent = struct {
                     .messages = messages.items,
                     .tools = self.tool_defs,
                 }, err_detail);
+            try g.add(self.ctx.gpa, .{
+                .kind = .llm,
+                .iteration = iteration + 1,
+                .label = "chat",
+                .detail = resp.finish_reason orelse "",
+                .prompt_tokens = if (resp.usage) |u| u.prompt_tokens else 0,
+                .completion_tokens = if (resp.usage) |u| u.completion_tokens else 0,
+                .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                .ok = true,
+            });
 
             if (resp.usage) |u| {
                 self.stats.total_prompt_tokens += u.prompt_tokens;
@@ -124,9 +151,27 @@ pub const Agent = struct {
             try messages.append(self.arena, resp.message);
 
             const calls = resp.message.tool_calls orelse {
+                try g.add(self.ctx.gpa, .{
+                    .kind = .final,
+                    .iteration = iteration + 1,
+                    .label = "final",
+                    .detail = resp.finish_reason orelse "",
+                    .result_bytes = if (resp.message.content) |c| c.len else 0,
+                    .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                });
                 return try self.finalAnswer(resp); // final answer
             };
-            if (calls.len == 0) return try self.finalAnswer(resp);
+            if (calls.len == 0) {
+                try g.add(self.ctx.gpa, .{
+                    .kind = .final,
+                    .iteration = iteration + 1,
+                    .label = "final",
+                    .detail = resp.finish_reason orelse "",
+                    .result_bytes = if (resp.message.content) |c| c.len else 0,
+                    .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                });
+                return try self.finalAnswer(resp);
+            }
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
 
@@ -136,6 +181,12 @@ pub const Agent = struct {
             // module is stateful and the cached instance is reused.
             const results = try self.executeCalls(calls);
             for (calls, results) |tc, content| {
+                try g.add(self.ctx.gpa, .{
+                    .kind = .tool,
+                    .iteration = iteration + 1,
+                    .label = tc.name,
+                    .result_bytes = content.len,
+                });
                 try messages.append(self.arena, .{
                     .role = .tool,
                     .tool_call_id = tc.id,
@@ -160,7 +211,15 @@ pub const Agent = struct {
                 for (calls) |tc| total += tc.arguments.len;
             }
         }
-        if (total <= self.cfg.agent.compact_threshold_bytes) return;
+        // Effective context budget: never exceed half the provider's context
+        // window (room for input plus output), and honor an explicit byte cap.
+        // compact_threshold_bytes == 0 means "auto" = half the context window.
+        const ctx_budget = self.provider.context_window / 2;
+        const threshold = if (self.cfg.agent.compact_threshold_bytes == 0)
+            ctx_budget
+        else
+            @min(self.cfg.agent.compact_threshold_bytes, ctx_budget);
+        if (total <= threshold) return;
         // Need at least system + one middle + last 6 = 8 messages to compact.
         if (messages.items.len <= 7) return;
         log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
@@ -186,6 +245,34 @@ pub const Agent = struct {
                 body = body[0..end];
             }
             s = std.mem.trim(u8, body, " \t\r\n");
+        }
+        // If the answer is still wrapped in prose (e.g. "here is your JSON:
+        // { ... }"), extract the first JSON object/array — the answer_format
+        // eval expects an exact-match value, not prose.
+        var js_start: ?usize = null;
+        if (std.mem.indexOfScalar(u8, s, '{')) |i| js_start = i;
+        if (std.mem.indexOfScalar(u8, s, '[')) |i| {
+            if (js_start == null or i < js_start.?) js_start = i;
+        }
+        if (js_start) |start| {
+            var depth: usize = 0;
+            var in_str = false;
+            var end: usize = 0;
+            for (s[start..], 0..) |ch, i| {
+                if (ch == '"' and (i == 0 or s[start + i - 1] != '\\')) in_str = !in_str;
+                if (in_str) continue;
+                if (ch == '{' or ch == '[') {
+                    depth += 1;
+                } else if (ch == '}' or ch == ']') {
+                    if (depth == 0) break;
+                    depth -= 1;
+                    if (depth == 0) {
+                        end = start + i + 1;
+                        break;
+                    }
+                }
+            }
+            if (end > 0) s = s[start..end];
         }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
