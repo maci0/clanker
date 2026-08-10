@@ -670,6 +670,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         if (!cfg.modules.sessions) return;
+        compactMessages(&messages, max_session_chars);
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
             .id = sid,
             .title = title,
@@ -735,6 +736,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     // Stream the model's tokens to stdout as they arrive.
     repl_out = &out_w;
     a.on_token = &replDelta;
+    a.on_tool_call = &replToolCall;
 
     // Accumulate raw stdin and split on newlines: readSliceShort can return
     // several lines at once (piped input), and each task line must be copied
@@ -1049,17 +1051,56 @@ fn replHotReload(io: std.Io, gpa: std.mem.Allocator, exe_path: []const u8, start
 /// Agent.on_token) while the run is still in flight.
 var repl_out: ?*std.Io.File.Writer = null;
 
+/// True while the dim "…" thinking placeholder is on screen, covering the
+/// otherwise silent gap between submitting a turn and the first streamed
+/// token or tool-call status line.
+var repl_thinking_shown = false;
+
+fn replShowThinking() void {
+    const w = repl_out orelse return;
+    w.interface.writeAll("\x1b[2m\xe2\x80\xa6\x1b[0m") catch return;
+    w.interface.flush() catch {};
+    repl_thinking_shown = true;
+}
+
+fn replClearThinking() void {
+    if (!repl_thinking_shown) return;
+    repl_thinking_shown = false;
+    const w = repl_out orelse return;
+    w.interface.writeAll("\r\x1b[K") catch {};
+}
+
 fn replDelta(delta: []const u8) void {
+    replClearThinking();
     if (repl_out) |w| {
         w.interface.writeAll(delta) catch {};
         w.interface.flush() catch {};
     }
 }
 
+/// Prints a compact status line naming the tool(s) about to run, covering
+/// the silent gap while WASM tools execute between LLM calls.
+fn replToolCall(calls: []const types.ToolCall) void {
+    replClearThinking();
+    const w = repl_out orelse return;
+    w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
+    for (calls, 0..) |tc, i| {
+        if (i > 0) w.interface.writeAll(", ") catch {};
+        w.interface.writeAll(tc.name) catch {};
+    }
+    w.interface.writeAll("\x1b[0m\n") catch return;
+    w.interface.flush() catch {};
+    replShowThinking();
+}
+
 /// Runs one REPL turn for `task` (arena-owned): appends the user message, runs
 /// the agent, prints the answer, appends the assistant message, and persists
 /// the session. Returns true if the loop should exit (only on :quit).
-const max_session_chars = 32 * 1024; // approx. token budget cap for the REPL transcript
+/// Per-turn cap keeps the transcript small before each LLM call; the session
+/// cap bounds the persisted history so long sessions auto-compact instead of
+/// exceeding the context window.
+const max_turn_chars = 16 * 1024;
+const max_session_chars = 32 * 1024;
 
 /// Drops oldest non-system messages until total content fits under `max_chars`
 /// so long REPL sessions auto-compact instead of exceeding the context window.
@@ -1082,7 +1123,7 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) vo
 }
 
 fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
-    compactMessages(messages, max_session_chars);
+    compactMessages(messages, max_turn_chars);
     const gpa = a.ctx.gpa;
     // NOTE: a.run() appends the user task (and each assistant reply) to
     // `messages` itself; appending here would duplicate them in the
@@ -1095,12 +1136,15 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const prev_cost = a.stats.cost;
     const prev_cache_hit = a.stats.total_cache_hit_tokens;
     const prev_cache_miss = a.stats.total_cache_miss_tokens;
+    replShowThinking();
     const resp = a.run(messages, task, &err_detail) catch |err| {
+        replClearThinking();
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return false;
     };
     const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
 
+    replClearThinking();
     const streamed = a.on_token != null and a.cfg.modules.streaming;
     const content = resp.message.content orelse "";
     if (!streamed) {
@@ -1126,6 +1170,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
 
     const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     if (!a.cfg.modules.sessions) return false;
+    compactMessages(messages, max_session_chars);
     const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});
     try session.saveSession(io, gpa, a.arena, std.Io.Dir.cwd(), .{
         .id = sid,
