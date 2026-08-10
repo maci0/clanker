@@ -713,52 +713,53 @@ pub const Agent = struct {
         }
         // If the answer is still wrapped in prose (e.g. "here is your JSON:
         // { ... }"), extract the first JSON object/array — the answer_format
-        // eval expects an exact-match value, not prose.
-        var js_start: ?usize = null;
-        // Pick whichever of a JSON object or array appears first in the answer.
-        // Preferring objects can misparse an expected array when prose contains
-        // an earlier '{'; the answer_format eval needs the exact value.
-        const obj_start = std.mem.indexOfScalar(u8, s, '{');
-        const arr_start = std.mem.indexOfScalar(u8, s, '[');
-        if (obj_start != null or arr_start != null) {
-            js_start = if (obj_start != null and arr_start != null)
-                @min(obj_start.?, arr_start.?)
-            else if (obj_start != null) obj_start else arr_start;
-        }
-        if (js_start) |start| {
-            var depth: usize = 0;
-            var in_str = false;
-            var end: usize = 0;
-            for (s[start..], 0..) |ch, i| {
-                if (ch == '"' and (i == 0 or s[start + i - 1] != '\\')) in_str = !in_str;
-                if (in_str) continue;
-                if (ch == '{' or ch == '[') {
-                    depth += 1;
-                } else if (ch == '}' or ch == ']') {
-                    if (depth == 0) break;
-                    depth -= 1;
-                    if (depth == 0) {
-                        end = start + i + 1;
-                        break;
+        // eval expects an exact-match value, not prose. Only treat the answer
+        // as JSON when it *starts* with '{' or '['; a bracket in surrounding
+        // prose must not hijack the extraction (e.g. "42 [source]").
+        if (s.len > 0 and (s[0] == '{' or s[0] == '[')) {
+            var js_start: ?usize = null;
+            // Pick whichever of a JSON object or array appears first in the answer.
+            // Preferring objects can misparse an expected array when prose contains
+            // an earlier '{'; the answer_format eval needs the exact value.
+            const obj_start = std.mem.indexOfScalar(u8, s, '{');
+            const arr_start = std.mem.indexOfScalar(u8, s, '[');
+            if (obj_start != null or arr_start != null) {
+                js_start = if (obj_start != null and arr_start != null)
+                    @min(obj_start.?, arr_start.?)
+                else if (obj_start != null) obj_start else arr_start;
+            }
+            if (js_start) |start| {
+                var depth: usize = 0;
+                var in_str = false;
+                var end: usize = 0;
+                for (s[start..], 0..) |ch, i| {
+                    if (ch == '"' and (i == 0 or s[start + i - 1] != '\\')) in_str = !in_str;
+                    if (in_str) continue;
+                    if (ch == '{' or ch == '[') {
+                        depth += 1;
+                    } else if (ch == '}' or ch == ']') {
+                        if (depth == 0) break;
+                        depth -= 1;
+                        if (depth == 0) {
+                            end = start + i + 1;
+                            break;
+                        }
                     }
                 }
-            }
-            if (end > 0) {
-                s = s[start..end];
-                // The extracted JSON may still wrap the value (e.g.
-                // {"answer": 42}); unwrap it so the caller gets the bare
-                // exact-match answer instead of a JSON envelope.
-                if (unwrapJsonAnswer(self.arena, s)) |unwrapped| s = unwrapped;
+                if (end > 0) {
+                    s = s[start..end];
+                    // The extracted JSON may still wrap the value (e.g.
+                    // {"answer": 42}); unwrap it so the caller gets the bare
+                    // exact-match answer instead of a JSON envelope.
+                    if (unwrapJsonAnswer(self.arena, s)) |unwrapped| s = unwrapped;
+                }
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
         // answer in a prose preamble (e.g. "Here is the result:"). For the
         // answer_format eval we need the exact value, so fall back to the last
         // non-empty line and strip a leading "Answer:"/"Result:" prefix.
-        if (std.mem.indexOf(u8, s, "```") == null and
-            std.mem.indexOfScalar(u8, s, '{') == null and
-            std.mem.indexOfScalar(u8, s, '[') == null)
-        {
+        if (std.mem.indexOf(u8, s, "```") == null) {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
             while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
