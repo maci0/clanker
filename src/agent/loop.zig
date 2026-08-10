@@ -195,6 +195,16 @@ pub const Agent = struct {
         if (messages.items.len == 0 or messages.items[0].role != .system) {
             try messages.insert(self.arena, 0, .{ .role = .system, .content = self.system_prompt_text });
         }
+        // A resumed session may have been persisted mid-tool-call (crash or
+        // atomic-rename rebuild between the assistant's tool_calls message
+        // and the tool results). Providers reject tool_calls with no matching
+        // tool results, so drop the dangling tail before continuing.
+        while (messages.items.len > 0) {
+            const last = messages.items[messages.items.len - 1];
+            if (last.role == .assistant and last.tool_calls != null and last.tool_calls.?.len > 0) {
+                _ = messages.pop();
+            } else break;
+        }
         try messages.append(self.arena, .{ .role = .user, .content = task });
         // Chatrooms inbox: surface messages that arrived since the last run
         // so a subscribed clanker actually notices what its peers said.
