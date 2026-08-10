@@ -1645,3 +1645,46 @@ test "compactionKeepStart never splits a tool-call exchange" {
     const keep_start = Agent.compactionKeepStart(&msgs, 10_000, 16) orelse return error.TestExpectedCompaction;
     try std.testing.expect(keep_start == 2);
 }
+
+test "compactionKeepStart walks back so a tool result is never orphaned from its tool_calls" {
+    // With 9 messages the naive window start is index 3, which here is a
+    // .tool result. The window must be extended backwards to the assistant
+    // message that issued the calls, otherwise providers reject the kept
+    // transcript for carrying a tool result with no matching tool_calls.
+    const msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" }, // 0
+        .{ .role = .user, .content = "u1" }, // 1
+        .{ .role = .assistant, .content = "a1" }, // 2 (issued the tool call)
+        .{ .role = .tool, .content = "t1" }, // 3
+        .{ .role = .user, .content = "u2" }, // 4
+        .{ .role = .assistant, .content = "a2" }, // 5
+        .{ .role = .tool, .content = "t2" }, // 6
+        .{ .role = .user, .content = "u3" }, // 7
+        .{ .role = .assistant, .content = "a3" }, // 8
+    };
+    const keep = Agent.compactionKeepStart(&msgs, 10_000, 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(msgs[keep].role != .tool);
+    try std.testing.expectEqual(@as(usize, 2), keep);
+}
+
+test "compactionKeepStart returns null when the history fits the threshold" {
+    const msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" },
+        .{ .role = .user, .content = "hi" },
+    };
+    // estimated_tokens (4) <= threshold (1000): no compaction, no slicing.
+    try std.testing.expect(Agent.compactionKeepStart(&msgs, 4, 1_000) == null);
+}
+
+test "compactionKeepStart returns null when the history is too short to compact" {
+    const msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" },
+        .{ .role = .user, .content = "u1" },
+        .{ .role = .assistant, .content = "a1" },
+        .{ .role = .user, .content = "u2" },
+        .{ .role = .assistant, .content = "a2" },
+    };
+    // Over the token threshold but fewer than 8 messages: compaction would
+    // have to delete context it is supposed to preserve, so it must decline.
+    try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
+}
