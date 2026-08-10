@@ -55,6 +55,15 @@ pub const Agent = struct {
     /// Runs the agent on a task; returns the final assistant response.
     /// The full conversation transcript is appended to `messages` (arena).
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
+        // Free cached tool modules (zwasm engines/linkers) when the agent
+        // finishes, whether we return a final answer, bail out, or error out.
+        defer {
+            var it = self.modules.iterator();
+            while (it.next()) |kv| {
+                kv.value_ptr.*.deinit();
+            }
+            self.modules.clearRetainingCapacity();
+        }
         try messages.append(self.arena, .{ .role = .system, .content = self.system_prompt_text });
         try messages.append(self.arena, .{ .role = .user, .content = task });
 
