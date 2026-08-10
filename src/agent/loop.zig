@@ -127,6 +127,30 @@ pub const Agent = struct {
 
     /// Runs the agent on a task; returns the final assistant response.
     /// The full conversation transcript is appended to `messages` (arena).
+    /// Rebuilds the system prompt from the current skills and learnings on
+    /// disk, so a multi-turn session picks up anything that was recorded
+    /// (autolearn, manual edits) since the last run. Updates the cached
+    /// `system_prompt_text` and, when a conversation already has a leading
+    /// system message, replaces it in-place.
+    fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
+        const base_prompt = system_prompt.build(self.arena, self.ctx.io, .{
+            .system_prompt_file = self.cfg.agent.system_prompt_file,
+            .skills_dir = self.cfg.agent.skills_dir,
+            .learnings_file = self.cfg.agent.learnings_file,
+        }, self.tool_defs) catch return;
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt}) catch return;
+        // Only update when the content actually changed, to avoid needless
+        // arena churn on turns where nothing was learned.
+        if (std.mem.eql(u8, prompt_text, self.system_prompt_text)) return;
+        self.system_prompt_text = prompt_text;
+        // Patch the leading system message in the conversation transcript so
+        // the LLM sees the refreshed prompt without a full rebuild.
+        if (messages.items.len > 0 and messages.items[0].role == .system) {
+            messages.items[0].content = prompt_text;
+        }
+        log.log(.info, "system prompt refreshed ({d} bytes)", .{prompt_text.len});
+    }
+
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
         // Each run() call is self-contained: `stats` counts only this run's
         // tokens, so per-run logging, autolearn records, and the defer that
@@ -134,6 +158,9 @@ pub const Agent = struct {
         // reset, a multi-turn REPL session accumulated prior runs' totals in
         // `stats`, and `session_stats` double-counted them on every call.
         self.stats = .{};
+        // Rebuild the system prompt so new skills/learnings from prior turns
+        // (or external edits) are visible to the model on this turn.
+        self.refreshSystemPrompt(messages);
         const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
         var used_tools: std.ArrayList([]const u8) = .empty;
         defer used_tools.deinit(self.ctx.gpa);
