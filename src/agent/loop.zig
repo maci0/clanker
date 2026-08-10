@@ -425,28 +425,6 @@ pub const Agent = struct {
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
             while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
             if (last_line.len > 0) s = last_line;
-            if (std.mem.indexOf(u8, s, ": ")) |colon| {
-                s = std.mem.trim(u8, s[colon + 1 ..], " \t\r\n");
-            }
-            // A scalar answer often carries trailing punctuation ("42.", "yes!")
-            // that the eval treats as part of the value; strip punctuation so
-            // the returned value exactly matches the requested format.
-            while (s.len > 0 and (s[s.len - 1] == '.' or s[s.len - 1] == ',' or s[s.len - 1] == ';')) {
-                s = std.mem.trim(u8, s[0 .. s.len - 1], " \t\r\n");
-            }
-            // If the answer is still a sentence (contains spaces) and includes
-            // a number, the exact value is the last whitespace-delimited token
-            // that contains a digit (e.g. "The answer is 42" -> "42"). This
-            // makes the answer_format eval pass when a model wraps a numeric
-            // answer in prose without a colon.
-            if (std.mem.indexOfAny(u8, s, "0123456789") != null and std.mem.indexOfScalar(u8, s, ' ') != null) {
-                var tok_it = std.mem.tokenizeAny(u8, s, " \t\r\n");
-                var best: []const u8 = s;
-                while (tok_it.next()) |tok| {
-                    if (std.mem.indexOfAny(u8, tok, "0123456789") != null) best = tok;
-                }
-                s = best;
-            }
         }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
