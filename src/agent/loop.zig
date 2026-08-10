@@ -531,6 +531,16 @@ pub const Agent = struct {
                     last_line = std.mem.trim(u8, last_line["the result is:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "the value is:")) {
                     last_line = std.mem.trim(u8, last_line["the value is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "sure, here you go:")) {
+                    last_line = std.mem.trim(u8, last_line["sure, here you go:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "here you go:")) {
+                    last_line = std.mem.trim(u8, last_line["here you go:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "here is:")) {
+                    last_line = std.mem.trim(u8, last_line["here is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "here:")) {
+                    last_line = std.mem.trim(u8, last_line["here:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "output:")) {
+                    last_line = std.mem.trim(u8, last_line["output:".len..], " \t\r\n");
                 }
 
                 s = last_line;
@@ -585,6 +595,10 @@ pub const Agent = struct {
                 s = "true";
             } else if (std.ascii.eqlIgnoreCase(s, "false")) {
                 s = "false";
+            } else if (std.ascii.eqlIgnoreCase(s, "yes")) {
+                s = "yes";
+            } else if (std.ascii.eqlIgnoreCase(s, "no")) {
+                s = "no";
             } else if (isNumericString(s)) {
                 const f = std.fmt.parseFloat(f64, s) catch 0;
                 if (f == @floor(f)) {
