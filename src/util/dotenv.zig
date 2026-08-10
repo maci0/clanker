@@ -63,6 +63,7 @@ test "dotenv parses and fills the environ map without overriding" {
         \\FOO=bar
         \\export QUOTED="hello world"
         \\EMPTY=
+        \\SINGLE='single quoted'
         \\ALREADY=from-dotenv
         \\
     });
@@ -76,5 +77,6 @@ test "dotenv parses and fills the environ map without overriding" {
     try std.testing.expectEqualStrings("bar", env.get("FOO").?);
     try std.testing.expectEqualStrings("hello world", env.get("QUOTED").?);
     try std.testing.expectEqualStrings("", env.get("EMPTY").?);
+    try std.testing.expectEqualStrings("single quoted", env.get("SINGLE").?);
     try std.testing.expectEqualStrings("from-real-env", env.get("ALREADY").?);
 }
