@@ -436,14 +436,21 @@ pub const Agent = struct {
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
             while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
             if (last_line.len > 0) {
-                // Strip a leading "Answer:"/"Result:"/"The answer is" prefix so
-                // an exact-match answer (e.g. "The answer is 42") becomes "42".
+                // Strip a leading "Answer:"/"Result:"/"The answer is" and other
+                // common preamble prefixes so an exact-match answer (e.g.
+                // "The answer is 42") becomes "42".
                 if (std.mem.startsWith(u8, last_line, "Answer:")) {
                     last_line = std.mem.trim(u8, last_line["Answer:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "Result:")) {
                     last_line = std.mem.trim(u8, last_line["Result:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "The answer is")) {
                     last_line = std.mem.trim(u8, last_line["The answer is".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "Here is the answer:")) {
+                    last_line = std.mem.trim(u8, last_line["Here is the answer:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "The output is:")) {
+                    last_line = std.mem.trim(u8, last_line["The output is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
+                    last_line = std.mem.trim(u8, last_line["The result is:".len..], " \t\r\n");
                 }
                 // Strip trailing punctuation (.,;:!?) that would break an
                 // exact-match answer (e.g. "42." -> "42"). Quote-wrapped
