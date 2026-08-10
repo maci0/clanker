@@ -27,10 +27,10 @@
     },
     "muse-spark": {
       "kind": "openai_compat",
-      "base_url": "https://openrouter.ai/api/v1",
-      "api_key_env": "OPENROUTER_API_KEY",
-      "model": "meta/muse-spark-1.2",
-      "max_tokens": 8192
+      "base_url": "https://api.meta.ai/v1",
+      "api_key_env": "META_AI_API_KEY",
+      "model": "muse-spark-1.2-contributor",
+      "max_tokens": 16384
     },
     "muse-spark-1.1": {
       "kind": "openai_compat",
