@@ -889,6 +889,10 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     // transcript and the persisted session.
     const t0 = std.Io.Timestamp.now(io, .awake);
     var err_detail: ?[]const u8 = null;
+    // stats are cumulative across turns; capture per-turn counters before.
+    const prev_prompt = a.stats.total_prompt_tokens;
+    const prev_completion = a.stats.total_completion_tokens;
+    const prev_cost = a.stats.cost;
     const resp = a.run(messages, task, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return false;
@@ -902,9 +906,12 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     }
     try out_w.interface.writeAll("\n\n");
     // Dim turn stats (tokens + wall time) so each turn reports its cost.
-    const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(a.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
-    const stats = if (a.stats.total_tokens > 0)
-        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens, ms, tps, a.stats.cost })
+    const turn_prompt = a.stats.total_prompt_tokens -| prev_prompt;
+    const turn_completion = a.stats.total_completion_tokens -| prev_completion;
+    const turn_cost = a.stats.cost - prev_cost;
+    const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(turn_completion)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
+    const stats = if (turn_prompt + turn_completion > 0)
+        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ turn_prompt, turn_completion, ms, tps, turn_cost })
     else
         try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
     try out_w.interface.writeAll(stats);
