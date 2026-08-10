@@ -23,10 +23,12 @@ comptime {
     _ = @import("improve/history.zig");
     _ = @import("improve/engine.zig");
     _ = @import("patch/apply.zig");
+    _ = @import("gate/checks.zig");
 }
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
+    std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
 
     var arg_list: std.ArrayList([]const u8) = .empty;
     defer arg_list.deinit(gpa);
