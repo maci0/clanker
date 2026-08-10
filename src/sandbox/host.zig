@@ -950,16 +950,14 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         else => 1,
     };
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(h.sandbox.gpa);
     const wbuf = h.sandbox.gpa.alloc(u8, 96 * 1024) catch return Err.too_large;
     defer h.sandbox.gpa.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
-    writeExecResult(h, &out, &w, code, result.stdout, result.stderr) catch return Err.invalid;
-    return h.writeResult(bytes, out.items);
+    writeExecResult(&w, code, result.stdout, result.stderr) catch return Err.too_large;
+    return h.writeResult(bytes, wbuf[0..w.end]);
 }
 
-fn writeExecResult(h: *Host, out: *std.ArrayList(u8), w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
+fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
     try s.objectField("ok");
@@ -971,7 +969,6 @@ fn writeExecResult(h: *Host, out: *std.ArrayList(u8), w: *std.Io.Writer, code: u
     try s.objectField("stderr");
     try s.write(stderr);
     try s.endObject();
-    try out.appendSlice(h.sandbox.gpa, w.buffer[0..w.end]);
 }
 
 // ------------------------------------------------------------- sandbox core --
