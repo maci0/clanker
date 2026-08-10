@@ -452,13 +452,9 @@ pub const Agent = struct {
                 } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
                     last_line = std.mem.trim(u8, last_line["The result is:".len..], " \t\r\n");
                 }
-                // Strip trailing punctuation (.,;:!?) that would break an
-                // exact-match answer (e.g. "42." -> "42"). Quote-wrapped
-                // answers are handled above.
-                var end = last_line.len;
-                while (end > 0 and std.mem.indexOfScalar(u8, ".,;:!?", last_line[end - 1]) != null) end -= 1;
-                if (end < last_line.len) last_line = last_line[0..end];
-                s = std.mem.trim(u8, last_line, " \t\r\n");
+                // Keep the exact last line verbatim; stripping punctuation
+                // would break answers that legitimately end with a period.
+                s = last_line;
             }
         }
         if (s.len != content.len) {
