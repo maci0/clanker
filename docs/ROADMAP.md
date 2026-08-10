@@ -27,4 +27,18 @@
 - [ ] **REPL/TUI** — interactive shell and terminal UI for the agent. (Not yet implemented; `repl` currently returns `NotYetImplemented`.)
 - [ ] **Webui plugin** — browser-based interface for managing sessions and watching improvements.
 - [ ] **Plugin manifest SDK** — formalized developer SDK for building and shipping tools with a manifest-driven build.
-- [ ] **Remaining evals** — more self-evaluation tasks and example-graded evals beyond the current set.
+- [ ] **Remaining evals** — more self-evaluation tasks and example-graded evals beyond the current set.# Roadmap
+
+## Done
+
+- **REPL/TUI** — `clanker repl` command with `:help` / `:quit` and stateful sessions.
+- **Streaming** — SSE client with tool-call accumulation and `Agent.on_token` hook; REPL streams tokens live.
+- **Web UI plugin** — Internal `webui` WASM tool served at `GET /`.
+- **Token budget** — `compact_threshold_bytes` and `max_total_tokens` in agent config.
+
+## Planned
+
+- **Plugin manifest SDK** — a formal manifest format for third-party tool plugins.
+- **Remaining evals/coverage gaps** — expand eval coverage to more modules.
+- **Peer group messaging with shared todos** — collaborative task management between agents.
+- **Other ideas** — e.g. more advanced sandbox policies, multi-tenant deployments.

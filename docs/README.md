@@ -167,4 +167,193 @@ The `improve-self` command runs the following loop (with retries):
 4. **Promote** — if all gates pass, copy the changed files into the live tree.
 5. **Commit** — optionally commit with git using the proposal summary.
 
-The engine also snapshots the original files in `state/history/` and records the outcome so a failed improvement can be retried with error feedback.
+The engine also snapshots the original files in `state/history/` and records the outcome so a failed improvement can be retried with error feedback.# clanker documentation
+
+## Architecture
+
+clanker is a self-improving AI agent harness written in Zig 0.16. It runs tools as sandboxed WebAssembly modules via zwasm and improves its own source through a gated loop.
+
+### Agent loop (`src/agent/loop.zig`)
+
+The agent loop is a think-act-observe cycle:
+1. *Think*: call the LLM with the conversation and available tool definitions.
+2. *Act*: if the response contains tool calls, execute them in the sandbox.
+3. *Observe*: feed the tool results back into the conversation.
+
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive.
+
+### LLM providers (`src/llm/`)
+
+- **OpenAI-compatible** (`src/llm/client.zig`): works with any OpenAI-compatible endpoint.
+- **Anthropic** (`src/llm/providers.zig`): supports Anthropic's native API.
+- **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com` with model `deepseek-chat`.
+- **kimi-k3**: OpenAI-compatible provider at `api.moonshot.ai/v1`, supports reasoning.
+- **muse-spark**: Anthropic-compatible provider for Muse Spark models.
+
+Providers are configured in `config.json` / `config.local.json` (see below).
+
+### Sandbox (`src/sandbox/`)
+
+Tools run in a WebAssembly sandbox using the zwasm runtime. The guest exports `scratch`, `host_arena`, and `run`. Host functions (`env.ck_*`) provide:
+
+| Function | Purpose |
+|----------|---------|
+| `ck_log` | Log a message |
+| `ck_now` | Get current timestamp |
+| `ck_random` | Generate random bytes |
+| `ck_http` | Make an HTTP request |
+| `ck_fs_read` | Read a file from the sandbox root |
+| `ck_fs_write` | Write a file into the sandbox root |
+| `ck_getenv` | Read an environment variable |
+| `ck_exec` | Execute a command in the sandbox |
+| `ck_docker` | Run a Docker container (if allowed) |
+| `ck_result` | Write the tool result into the host arena |
+
+Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools.d/*.tool.json` control network and filesystem access.
+
+The tool target is `wasm32-freestanding` (not `wasip1`).
+
+### Self-improvement engine (`src/improve/`)
+
+`clanker improve-self "<instruction>"` runs a gated loop:
+
+1. Collect relevant source files as context.
+2. Ask the model for a patch proposal (JSON with `summary`, `rationale`, `changes`).
+3. Validate and apply the proposal to a staging copy of the project.
+4. Run gates: `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint.
+5. On green, promote the changes to the live tree and commit as `clanker: <summary> [imp-<id>]`.
+
+The history is stored in `state/history/` and can be reverted with `clanker revert <id>`.
+
+### Evals and gates (`src/evals/`, `src/gate/checks.zig`)
+
+Deterministic evals live in `src/evals/` and run with `clanker eval`. The gates are used both for self-improvement and CI. They include:
+- `selfhost_build`: `zig build`
+- `selfhost_tests`: `zig build test`
+- `selfhost_tools`: `zig build tools`
+- plus `zig fmt` and a lint check.
+
+### MCP server (`src/mcp/server.zig`)
+
+`clanker mcp` starts a Model Context Protocol server over stdio (JSON-RPC). It exposes the tool registry to MCP clients.
+
+### Peers (`src/peers/notify.zig`)
+
+`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL.
+
+### Patch application (`src/patch/apply.zig`)
+
+Proposals are applied via exact-match `old` → `new` replacements. The first occurrence of each `old` is replaced.
+
+## WASM tool ABI
+
+Each tool is a WebAssembly module compiled to `wasm32-freestanding` with these exports:
+- `scratch`: a mutable memory region for scratch data.
+- `host_arena`: a larger memory region for results.
+- `run`: the entry point that takes input and writes output.
+
+The guest imports `env.ck_*` functions listed above. The host writes the tool result into the host arena, and the guest reads it back via `ck_result`.
+
+## Tool layout
+
+- `tool-src/zig/` — Zig tool sources.
+- `tool-src/ts/` — AssemblyScript tool sources.
+- `tools.d/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`).
+- `zig-out/tools/` — built WASM binaries from `zig build tools`.
+- `tool-bin/` — committed AssemblyScript artifacts (compiled JS/WASM).
+
+Tools are discovered by the registry (`src/tools/registry.zig`) from the configured `tools_dir` (default `tools.d`).
+
+## CLI commands
+
+| Command | Description |
+|---------|-------------|
+| `init` | Create `config.local.json` and `state/` |
+| `providers check [name]` | Verify provider connectivity |
+| `run "<task>"` | Run the agent on a task |
+| `repl` | Start an interactive REPL with streaming |
+| `sessions` | List saved sessions |
+| `tools list` | List registered tools |
+| `eval [name]` | Run evals |
+| `improve-self "<instructions>"` | Run the self-improvement loop |
+| `revert <id>` | Revert a promoted improvement |
+| `git` | Git passthrough (everything after `git` is passed through) |
+| `mcp` | Start the MCP server |
+| `goal` | Design and persist a structured goal |
+| `notify <peer> "<message>"` | Send a notification to a peer |
+| `phonebook` | List peer agent cards |
+| `serve` | Start the HTTP server |
+
+## Configuration
+
+`config.json` is the global config; `config.local.json` overrides it. Example:
+
+```json
+{
+  "default_provider": "deepseek",
+  "providers": {
+    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 },
+    "kimi-k3": { "kind": "openai_compat", "base_url": "https://api.moonshot.ai/v1", "api_key_env": "MOONSHOT_API_KEY", "model": "kimi-k3" },
+    "muse-spark": { "kind": "anthropic", "base_url": "https://api.musespark.ai/v1", "api_key_env": "MUSE_SPARK_API_KEY", "model": "spark-v3" }
+  },
+  "agent": {
+    "max_iterations": 12,
+    "compact_threshold_bytes": 30000,
+    "max_total_tokens": 100000,
+    "tools_dir": "tools.d",
+    "sandbox_root": "state/sandbox"
+  },
+  "peers": [
+    { "name": "peer1", "url": "http://127.0.0.1:17922" }
+  ],
+  "instance": { "name": "clanker-1", "id": "abc" },
+  "notify": { "topic": "updates" },
+  "improve": { "min_delta": 0.05 }
+}
+```
+
+Fields:
+- `providers`: map of provider name → config.
+  - `kind`: `"openai_compat"` or `"anthropic"`.
+  - `base_url`, `api_key_env`, `model`, `max_tokens`.
+  - `kimi-k3` supports reasoning (returns `reasoning` field).
+- `agent`:
+  - `max_iterations`: max agent loop iterations.
+  - `compact_threshold_bytes`: if conversation exceeds this, compact history.
+  - `max_total_tokens`: total token budget across the run.
+  - `tools_dir`: directory containing `.tool.json` descriptors.
+  - `sandbox_root`: base directory for file operations in tools.
+- `peers`: list of peer agents with `name` and `url`.
+- `instance`: identity of this agent.
+- `notify`: default topic for notifications.
+- `improve`: settings for self-improvement (`min_delta` etc.).
+
+## HTTP server
+
+`clanker serve` starts a local HTTP server on port 17921 (override with `--port`). Endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Web UI (rendered by the internal `webui` WASM tool) |
+| `/.well-known/agent.json` | GET | Agent card for A2A discovery |
+| `/api/status` | GET | Instance + peers status (JSON) |
+| `/api/notify` | POST | Receive a notification (JSON) |
+| `/api/a2a/message` | POST | A2A message handler |
+| `/api/run` | POST | Run an agent task and return the response |
+
+`GET /` loads the `webui` tool from the registry and renders its output as HTML.
+
+## Streaming
+
+The LLM client supports SSE streaming (`client.chatStream`). The agent parses the stream, accumulates tool-call deltas, and invokes `Agent.on_token` for each content token. The REPL uses this to display tokens live.
+
+## Self-improvement loop
+
+1. **Proposal**: model returns JSON `{summary, rationale, changes[]}`.
+2. **Staging**: copy project to `state/staging/<id>` and apply changes.
+3. **Gates**: run `zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint.
+4. **Promote**: if all pass, copy staged files into the live tree.
+5. **Commit**: `git commit -m "clanker: <summary> [imp-<id>]"`.
+6. **History**: store snapshot in `state/history/` for revert.
+
+Gate failures give feedback to retry.

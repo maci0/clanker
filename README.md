@@ -22,3 +22,27 @@ zig build test     # run the test suite
 - **Web UI** – internal WASM tool served at `GET /`
 
 For full documentation, see [docs/README.md](docs/README.md).
+# clanker
+
+clanker is a self-improving AI agent harness written in Zig 0.16. It runs its tools as sandboxed WebAssembly modules via zwasm and improves its own source through a gated loop.
+
+## Quick start
+
+```sh
+zig build          # build the clanker binary
+zig build tools    # build the WASM tools
+zig build test     # run the test suite
+```
+
+## Features
+
+- WASM tools executed in a sandboxed zwasm runtime
+- MCP server (stdio JSON-RPC)
+- Peer notifications + phonebook
+- A2A agent cards
+- `/goal` command
+- REPL with streaming
+- Token budget (compact_threshold_bytes + max_total_tokens)
+- Web UI served at `GET /`
+
+See [docs/README.md](docs/README.md) for full documentation.
