@@ -163,6 +163,29 @@ pub const Registry = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// A tool's JSON Schema, with the shape providers insist on filled in.
+    ///
+    /// Anthropic rejects a request whose tool list contains a schema with no
+    /// "type" — and it rejects the *entire* request, so one manifest written
+    /// with OpenAI's "parameters" key, or with the type omitted, silently
+    /// breaks every tool call for every tool. Accept both spellings here and
+    /// default the type rather than shipping a request no provider will take.
+    fn normalizedSchema(arena: std.mem.Allocator, obj: json.ObjectMap) !json.Value {
+        const raw = obj.get("input_schema") orelse obj.get("parameters") orelse json.Value{ .object = .empty };
+        const src = switch (raw) {
+            .object => |o| o,
+            // A non-object schema is not something a provider can use.
+            else => return json.Value{ .object = .empty },
+        };
+        if (src.get("type") != null) return raw;
+
+        var out: json.ObjectMap = .empty;
+        var it = src.iterator();
+        while (it.next()) |kv| try out.put(arena, kv.key_ptr.*, kv.value_ptr.*);
+        try out.put(arena, "type", json.Value{ .string = "object" });
+        return json.Value{ .object = out };
+    }
+
     fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8, tools_dir: []const u8) !Tool {
         const v = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
         const obj = switch (v) {
@@ -173,7 +196,11 @@ pub const Registry = struct {
             .name = try strField(obj, "name"),
             .description = try strField(obj, "description"),
             .wasm = try strField(obj, "wasm"),
-            .input_schema = obj.get("input_schema") orelse .{ .object = .empty },
+            // A schema without a "type" is rejected by the provider, and it
+            // rejects the *whole* request: one malformed manifest takes every
+            // tool call down with it. Normalize here instead — an object
+            // schema is what every tool in this registry has.
+            .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
         };
         _ = tools_dir;
         if (obj.get("network_allow")) |na| {
@@ -382,4 +409,59 @@ test "plugin toggles disable optional tools but never core ones" {
     // A disabled plugin leaves the catalog the model sees.
     const defs = try reg.toToolDefs(arena);
     try std.testing.expectEqual(@as(usize, 0), defs.len);
+}
+
+test "a descriptor schema always reaches the provider with a type" {
+    // Anthropic rejects the whole request — every tool, not just the bad one —
+    // when any tool's input_schema has no "type". A manifest written with
+    // OpenAI's "parameters" key, or with the type left out, used to do exactly
+    // that and broke every run until the file was found by hand.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const openai_style =
+        \\{ "name": "read_file", "description": "read", "wasm": "read_file.wasm",
+        \\  "parameters": { "properties": { "path": { "type": "string" } }, "required": ["path"] } }
+    ;
+    const t = try Registry.parseDescriptor(arena, openai_style, "tools");
+    try std.testing.expectEqualStrings("object", t.input_schema.object.get("type").?.string);
+    // The rest of the schema survives the normalization.
+    try std.testing.expect(t.input_schema.object.get("properties") != null);
+    try std.testing.expectEqualStrings("path", t.input_schema.object.get("required").?.array.items[0].string);
+
+    // A descriptor with no schema at all still yields something sendable.
+    const bare =
+        \\{ "name": "noargs", "description": "d", "wasm": "n.wasm" }
+    ;
+    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    try std.testing.expect(b.input_schema == .object);
+}
+
+test "every shipped manifest carries a schema the provider accepts" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+        const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const t = Registry.parseDescriptor(arena, raw, "tools") catch |err| {
+            std.debug.print("manifest {s}: {s}\n", .{ entry.name, @errorName(err) });
+            return err;
+        };
+        if (t.input_schema != .object or t.input_schema.object.get("type") == null) {
+            std.debug.print("manifest {s} has no usable input_schema type\n", .{entry.name});
+            return error.SchemaMissingType;
+        }
+    }
 }
