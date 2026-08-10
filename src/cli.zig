@@ -278,11 +278,18 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
     if (opts.session) |sid| {
-        const s = try session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid);
-        created = s.created;
-        for (s.messages) |m| {
-            if (m.role == .system) continue;
-            try messages.append(arena, m);
+        const maybe_s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (maybe_s) |s| {
+            created = s.created;
+            for (s.messages) |m| {
+                if (m.role == .system) continue;
+                try messages.append(arena, m);
+            }
+        } else {
+            log.log(.info, "no existing session '{s}', starting fresh", .{sid});
         }
     }
     var err_detail: ?[]const u8 = null;
