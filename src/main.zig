@@ -17,11 +17,13 @@ comptime {
     _ = @import("tools/builder.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
+    _ = @import("agent/session.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
     _ = @import("improve/history.zig");
     _ = @import("improve/engine.zig");
+    _ = @import("patch/apply.zig");
 }
 
 pub fn main(init: std.process.Init) !void {
