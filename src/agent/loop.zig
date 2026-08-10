@@ -597,7 +597,13 @@ pub const Agent = struct {
                     }
                 }
             }
-            if (end > 0) s = s[start..end];
+            if (end > 0) {
+                s = s[start..end];
+                // The extracted JSON may still wrap the value (e.g.
+                // {"answer": 42}); unwrap it so the caller gets the bare
+                // exact-match answer instead of a JSON envelope.
+                if (unwrapJsonAnswer(self.arena, s)) |unwrapped| s = unwrapped;
+            }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
         // answer in a prose preamble (e.g. "Here is the result:"). For the
