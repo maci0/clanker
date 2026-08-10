@@ -566,6 +566,21 @@ pub const Agent = struct {
         if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
             s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
+        // Normalize exact-match answers: strip a trailing ".0" from whole
+        // numbers, and lowercase boolean spellings ("True" -> "true") so the
+        // returned value matches the requested format exactly (answer_format).
+        if (s.len > 0) {
+            if (std.ascii.eqlIgnoreCase(s, "true")) {
+                s = "true";
+            } else if (std.ascii.eqlIgnoreCase(s, "false")) {
+                s = "false";
+            } else if (isNumericString(s)) {
+                const f = std.fmt.parseFloat(f64, s) catch 0;
+                if (f == @floor(f)) {
+                    s = try std.fmt.allocPrint(self.arena, "{d}", .{@as(i64, @intFromFloat(f))});
+                }
+            }
+        }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
         }
