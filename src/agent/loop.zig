@@ -1152,3 +1152,33 @@ test "the transform chain type-checks before anything calls it" {
     _ = &Agent.runChain;
     _ = &Agent.runTransform;
 }
+
+test "wasmBytes reads each wasm path from disk only once (cached slice)" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    const path = "test_wasm_bytes_cache.tmp";
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "fake-wasm-bytes" });
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    // wasmBytes only touches ctx.io, arena, wasm_cache, and tool.wasm, so the
+    // rest of the Agent/Tool state can stay undefined for this test.
+    var ctx: client.Ctx = undefined;
+    ctx.io = io;
+    var agent: Agent = undefined;
+    agent.ctx = &ctx;
+    agent.arena = arena_state.allocator();
+    agent.wasm_cache = .empty;
+
+    var tool: registry.Tool = undefined;
+    tool.wasm = path;
+
+    const first = try agent.wasmBytes(&tool);
+    const second = try agent.wasmBytes(&tool);
+    try std.testing.expect(first.ptr == second.ptr);
+    try std.testing.expect(first.len == second.len);
+    try std.testing.expectEqualStrings("fake-wasm-bytes", second);
+}
