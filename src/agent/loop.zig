@@ -864,6 +864,18 @@ pub const Agent = struct {
     /// Builds the sandbox policy for one tool: filesystem and network from the
     /// descriptor, plus the plugin's own `config` object and, when it declared
     /// the llm capability, a provider to call.
+    /// Sandbox for a module that will be cached: `ToolModule` keeps the
+    /// pointer it is loaded with, and a cached module is used again from later
+    /// frames, so a stack local here dangles the moment this call returns —
+    /// the host functions then read a freed `Sandbox` and the process
+    /// segfaults inside the allocator. Arena-allocated, it lives as long as
+    /// the run that owns the cache.
+    fn sandboxPtrFor(self: *Agent, tool: *const registry.Tool) !*host.Sandbox {
+        const sb = try self.arena.create(host.Sandbox);
+        sb.* = try self.sandboxFor(tool);
+        return sb;
+    }
+
     fn sandboxFor(self: *Agent, tool: *const registry.Tool) !host.Sandbox {
         var sb = try host.sandboxFor(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, tool, self.ctx);
         // Agent-only extras: nested sub-agents and the state dir are meaningless
@@ -927,7 +939,7 @@ pub const Agent = struct {
             return err;
         };
 
-        var sb = try self.sandboxFor(tool);
+        const sbp = try self.sandboxPtrFor(tool);
         // Cache compiled transform modules under a "transform:"-prefixed key so
         // they never collide with the wrapped tool's own module in
         // `self.modules`; repeated invocations skip recompilation (the modules
@@ -936,7 +948,7 @@ pub const Agent = struct {
         const mod = if (self.modules.get(cache_key)) |m|
             m
         else blk: {
-            const m = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes);
+            const m = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes);
             self.modules.put(self.arena, cache_key, m) catch {
                 m.deinit();
                 return error.OutOfMemory;
@@ -991,8 +1003,8 @@ pub const Agent = struct {
             // would be discarded work on every batch.
             const uses_modules_cache = self.no_parallel_tools or tool.llm or tool.sequential;
             if (uses_modules_cache and !self.modules.contains(tc.name)) {
-                var sb = self.sandboxFor(tool) catch continue;
-                const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes) catch |err| {
+                const sbp = self.sandboxPtrFor(tool) catch continue;
+                const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
                     log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
                     continue;
                 };
@@ -1009,8 +1021,8 @@ pub const Agent = struct {
                     const cache_key = std.fmt.allocPrint(self.arena, "transform:{s}", .{t.name}) catch continue;
                     if (self.modules.contains(cache_key)) continue;
                     const tbytes = self.wasmBytes(t) catch continue;
-                    var tsb = self.sandboxFor(t) catch continue;
-                    const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &tsb, tbytes) catch |err| {
+                    const tsbp = self.sandboxPtrFor(t) catch continue;
+                    const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, tsbp, tbytes) catch |err| {
                         log.log(.warn, "transform '{s}': pre-compile failed: {s}", .{ t.name, @errorName(err) });
                         continue;
                     };
@@ -1039,7 +1051,7 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s}). Run `zig build tools`.\"}}", .{ tc.name, @errorName(err) });
         };
 
-        var sb = try self.sandboxFor(tool);
+        const sbp = try self.sandboxPtrFor(tool);
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ tc.name, tc.arguments });
         const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
@@ -1047,7 +1059,7 @@ pub const Agent = struct {
         const mod = if (self.modules.get(tc.name)) |m|
             m
         else blk: {
-            const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes) catch |err| {
+            const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
                 log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tc.name, @errorName(err) });
                 return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool load failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
             };
