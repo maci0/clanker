@@ -460,12 +460,7 @@ pub const Agent = struct {
                 } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
                     last_line = std.mem.trim(u8, last_line["The result is:".len..], " \t\r\n");
                 }
-                // Strip a single trailing period (or comma/semicolon/!).
-                // The answer_format eval expects the exact value without
-                // decorative punctuation, so "42." becomes "42".
-                if (last_line.len > 1 and (last_line[last_line.len - 1] == '.' or last_line[last_line.len - 1] == ',' or last_line[last_line.len - 1] == ';' or last_line[last_line.len - 1] == '!')) {
-                    last_line = last_line[0 .. last_line.len - 1];
-                }
+
                 s = last_line;
             }
         }
