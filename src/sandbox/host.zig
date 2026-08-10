@@ -365,6 +365,18 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, h.sandbox.config_json);
 }
 
+/// ck_env(name_ptr, name_len) -> value of the environment variable in the
+/// host arena. Returns Err.not_found when the variable is not set, and
+/// Err.invalid when the name is empty or the memory slice is invalid.
+pub fn ckEnv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const name = sliceOf(bytes, name_ptr, name_len) orelse return Err.invalid;
+    if (name.len == 0) return Err.invalid;
+    const value = h.sandbox.environ_map.get(name) orelse return Err.not_found;
+    return h.writeResult(bytes, value);
+}
+
 pub fn ckResult(caller: *zwasm.Caller) u64 {
     const h = getHost(caller);
     return protocol.packPtrLen(h.result_ptr, h.result_len);
