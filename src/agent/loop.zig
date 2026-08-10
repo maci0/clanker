@@ -852,19 +852,9 @@ pub const Agent = struct {
                         s = if (std.mem.startsWith(u8, lead, "true")) "true" else "false";
                     }
                 }
-                // Strip trailing punctuation (period, comma, etc.) only when
-                // the remainder is a number, so an exact-match answer like
-                // "42." becomes "42" while a string like "hello." keeps its
-                // punctuation (the user asked for the exact value).
-                var stripped = s;
-                while (stripped.len > 0) {
-                    const ch = stripped[stripped.len - 1];
-                    if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
-                    stripped = stripped[0 .. stripped.len - 1];
-                }
-                if (stripped.len < s.len) {
-                    s = std.mem.trim(u8, stripped, " \t\r\n");
-                }
+                // Strip trailing punctuation from a numeric/boolean answer only;
+                // a string answer keeps its punctuation (exact-match).
+                s = stripTrailingPunctForExact(s);
             }
         }
         // The fallback may pick a line that itself carries markdown emphasis
@@ -1419,6 +1409,24 @@ const ToolWorker = struct {
     }
 };
 
+/// Strips trailing punctuation from a candidate exact-match answer only when
+/// the remainder is a number or boolean, so "42." becomes "42" while a string
+/// like "hello." keeps its period (the user asked for the exact value).
+fn stripTrailingPunctForExact(s: []const u8) []const u8 {
+    var stripped = s;
+    while (stripped.len > 0) {
+        const ch = stripped[stripped.len - 1];
+        if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
+        stripped = stripped[0 .. stripped.len - 1];
+    }
+    if (stripped.len == s.len) return s;
+    const candidate = std.mem.trim(u8, stripped, " \t\r\n");
+    if (isNumericString(candidate) or std.mem.eql(u8, candidate, "true") or std.mem.eql(u8, candidate, "false")) {
+        return candidate;
+    }
+    return s;
+}
+
 fn isNumericString(s: []const u8) bool {
     if (s.len == 0) return false;
     var i: usize = 0;
@@ -1460,6 +1468,16 @@ test "isNumericString rejects dot-only strings without digits" {
     // The accepted edge forms: a dot may lead or trail the digits.
     try std.testing.expect(isNumericString(".5") == true);
     try std.testing.expect(isNumericString("3.") == true);
+}
+
+test "stripTrailingPunctForExact preserves string punctuation" {
+    try std.testing.expectEqualStrings("hello.", stripTrailingPunctForExact("hello."));
+    try std.testing.expectEqualStrings("hello,", stripTrailingPunctForExact("hello,"));
+    try std.testing.expectEqualStrings("hello!!!", stripTrailingPunctForExact("hello!!!"));
+    try std.testing.expectEqualStrings("42", stripTrailingPunctForExact("42."));
+    try std.testing.expectEqualStrings("42", stripTrailingPunctForExact("42,"));
+    try std.testing.expectEqualStrings("true", stripTrailingPunctForExact("true."));
+    try std.testing.expectEqualStrings("hello", stripTrailingPunctForExact("hello"));
 }
 
 /// Extracts the exact-match answer from a JSON object: only unwraps when an
