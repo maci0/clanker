@@ -229,6 +229,137 @@ pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
     return Err.not_found;
 }
 
+// ------------------------------------------------------- ck_exec (shell-ish) --
+
+const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode" };
+
+fn isWordChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_' or c == '-';
+}
+
+/// Returns true if `arg` should be denied because it contains deny token `t`.
+/// Bare subcommand words ("rm", "gc", "push", ...) are only matched as whole
+/// words; dash flags ("-f", "--force", ...) match as exact/prefix flags;
+/// shell-operator tokens match anywhere (defense in depth).
+fn argDenied(arg: []const u8, t: []const u8) bool {
+    if (t.len == 0) return false;
+    if (std.mem.eql(u8, arg, t)) return true;
+    if (t[0] == '-') return std.mem.startsWith(u8, arg, t);
+    var op = true;
+    for (t) |c| {
+        if (isWordChar(c)) {
+            op = false;
+            break;
+        }
+    }
+    if (op) return std.mem.indexOf(u8, arg, t) != null;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, arg, i, t)) |p| {
+        const before = p == 0 or !isWordChar(arg[p - 1]);
+        const after = p + t.len >= arg.len or !isWordChar(arg[p + t.len]);
+        if (before and after) return true;
+        i = p + 1;
+    }
+    return false;
+}
+
+/// Arguments that are never allowed for sandboxed commands.
+const exec_deny_tokens = [_][]const u8{
+    "push",  "reset",   "rebase", "checkout", "clean", "rm",       "fetch",
+    "merge", "revert",  "stash",  "remote",   "tag",   "filter-branch",
+    "gc",    "repack",  "prune",  "submodule", "-f",   "--force",  "--exec",
+    "&&",    "||",      ";",      "|",        ">",     "<",        "`",
+};
+
+pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const argv_json = sliceOf(bytes, argv_ptr, argv_len) orelse return Err.invalid;
+
+    // parse {cmd, args}
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, argv_json, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const cmd = switch (obj.get("cmd") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    var allowed_cmd = false;
+    for (exec_cmds) |c| {
+        if (std.mem.eql(u8, cmd, c)) {
+            allowed_cmd = true;
+            break;
+        }
+    }
+    if (!allowed_cmd) return Err.denied;
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(h.sandbox.gpa);
+    argv.append(h.sandbox.gpa, cmd) catch return Err.invalid;
+    if (obj.get("args")) |a| {
+        switch (a) {
+            .array => |arr| {
+                for (arr.items) |item| {
+                    const arg = switch (item) {
+                        .string => |s| s,
+                        else => return Err.invalid,
+                    };
+                    // deny-list check: match whole arguments / flag prefixes /
+                    // word boundaries so single-char tokens like "-f", "rm",
+                    // "gc" don't false-positive on innocent arguments.
+                    for (exec_deny_tokens) |t| {
+                        if (argDenied(arg, t)) {
+                            log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ t, arg });
+                            return Err.denied;
+                        }
+                    }
+                    argv.append(h.sandbox.gpa, arg) catch return Err.invalid;
+                }
+            },
+            else => {},
+        }
+    }
+
+    const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
+        .argv = argv.items,
+        .cwd = .{ .dir = std.Io.Dir.cwd() },
+        .stdout_limit = .limited(64 * 1024),
+        .stderr_limit = .limited(8 * 1024),
+    }) catch return Err.network;
+    defer h.sandbox.gpa.free(result.stdout);
+    defer h.sandbox.gpa.free(result.stderr);
+
+    const code: u32 = switch (result.term) {
+        .exited => |c| c,
+        else => 1,
+    };
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(h.sandbox.gpa);
+    const wbuf = h.sandbox.gpa.alloc(u8, 96 * 1024) catch return Err.too_large;
+    defer h.sandbox.gpa.free(wbuf);
+    var w: std.Io.Writer = .fixed(wbuf);
+    writeExecResult(h, &out, &w, code, result.stdout, result.stderr) catch return Err.invalid;
+    return h.writeResult(bytes, out.items);
+}
+
+fn writeExecResult(h: *Host, out: *std.ArrayList(u8), w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
+    var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(code == 0);
+    try s.objectField("code");
+    try s.print("{d}", .{code});
+    try s.objectField("stdout");
+    try s.write(stdout);
+    try s.objectField("stderr");
+    try s.write(stderr);
+    try s.endObject();
+    try out.appendSlice(h.sandbox.gpa, w.buffer[0..w.end]);
+}
+
 // ------------------------------------------------------------- sandbox core --
 
 /// Resolves a tool-supplied path against the sandbox root, rejecting absolute

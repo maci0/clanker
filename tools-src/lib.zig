@@ -18,6 +18,7 @@ extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_l
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
+extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_result() u64;
 
 const scratch_cap = 64 * 1024;
@@ -62,9 +63,16 @@ fn pack(out: *const Out) u64 {
 
 fn memSlice(ptr: u32, len: u32) ?[]const u8 {
     const base: usize = ptr;
-    if (base + len > @as(usize, @intFromPtr(&scratch_buf)) + scratch_buf.len) return null;
-    // Input is only guaranteed valid inside the scratch region.
-    if (base < @intFromPtr(&scratch_buf) or base + len > @intFromPtr(&scratch_buf) + scratch_buf.len) return null;
+    // The host writes tool inputs into the scratch region but writes results
+    // into the host arena; both live in this module's linear memory, so a
+    // result pointer must be accepted outside the scratch buffer.
+    const scratch_lo: usize = @intFromPtr(&scratch_buf);
+    const scratch_hi = scratch_lo + scratch_buf.len;
+    const host_lo: usize = @intFromPtr(&host_arena_buf);
+    const host_hi = host_lo + host_arena_buf.len;
+    const in_scratch = base >= scratch_lo and base + len <= scratch_hi;
+    const in_host = base >= host_lo and base + len <= host_hi;
+    if (!in_scratch and !in_host) return null;
     return @as([*]const u8, @ptrFromInt(base))[0..len];
 }
 
@@ -182,4 +190,34 @@ pub fn getenv(name: []const u8) ?[]const u8 {
     const rc = ck_getenv(n.ptr, n.len);
     if (rc != 0) return null;
     return readResult();
+}
+
+pub const ExecError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidArg, NetworkError };
+
+/// Runs an allowlisted host command (git / rg / ast-grep / semcode) with the
+/// given arguments. Returns the raw {"ok","code","stdout","stderr"} JSON.
+pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.heap.wasm_allocator);
+    var w: std.Io.Writer = .fixed(try std.heap.wasm_allocator.alloc(u8, 8 * 1024));
+    defer std.heap.wasm_allocator.free(w.buffer);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("cmd");
+    try s.write(cmd);
+    try s.objectField("args");
+    try s.beginArray();
+    for (args) |a| try s.write(a);
+    try s.endArray();
+    try s.endObject();
+    try buf.appendSlice(std.heap.wasm_allocator, w.buffer[0..w.end]);
+
+    const b = sliceToMem(buf.items);
+    const rc = ck_exec(b.ptr, b.len);
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
 }
