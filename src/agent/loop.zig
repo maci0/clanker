@@ -1055,7 +1055,19 @@ pub const Agent = struct {
 /// on the main thread can trap with CallStackExhausted on a std.Thread worker
 /// (whose default stack is smaller than the process main stack). Give parallel
 /// tool workers a large explicit stack size.
-const parallel_tool_stack_bytes: usize = 2 * 1024 * 1024;
+///
+/// This is a *reservation*, not memory in use: the pages are mapped lazily, so
+/// only the frames actually touched are ever resident. Trimming the number
+/// therefore buys nothing and costs a hard crash — a real tool call
+/// (search_code shelling out through ck_exec, whose JSON result parses
+/// recursively on top of an already-deep interpreter stack) segfaulted the
+/// whole run at 2 MiB. `parallel_tool_stack_floor_bytes` below keeps it honest.
+pub const parallel_tool_stack_bytes: usize = 64 * 1024 * 1024;
+
+/// Lower bound for the above, asserted by a test: an observed crash, not a
+/// guess. Anything that lowers the reservation past this has to justify it
+/// against a real tool call, not against the size of the number.
+pub const parallel_tool_stack_floor_bytes: usize = 32 * 1024 * 1024;
 
 /// Hard cap on a single response's completion tokens (per-turn budgeting): a
 /// lone huge response must not blow the context window, even if the session
@@ -1244,4 +1256,42 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
     try std.testing.expect(first.ptr == second.ptr);
     try std.testing.expect(first.len == second.len);
     try std.testing.expectEqualStrings("fake-wasm-bytes", second);
+}
+
+test "the parallel-tool stack reservation stays above the observed crash floor" {
+    // Regression: successive "reduce the stack size" changes took this
+    // reservation from 64 MiB down to 2 MiB, and a search_code call — the
+    // zwasm interpreter recursing, then ck_exec's JSON result parsing on top
+    // of it — overflowed the worker stack and segfaulted the whole run. The
+    // reservation is lazily mapped, so a smaller number frees no real memory;
+    // it only moves the crash closer. No other test spawns a worker with this
+    // stack, so every shrink sailed through the gate.
+    try std.testing.expect(parallel_tool_stack_bytes >= parallel_tool_stack_floor_bytes);
+
+    // And the reservation has to be one a thread can actually be spawned with.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tests/fixtures/tiny.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const W = struct {
+        wasm: []const u8,
+        io: std.Io,
+        sum: ?i32 = null,
+        fn run(self: *@This()) void {
+            var env = std.process.Environ.Map.init(std.testing.allocator);
+            defer env.deinit();
+            var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = self.io, .root_dir = ".", .network_allow = &.{}, .environ_map = &env };
+            const mod = runtime.ToolModule.load(std.testing.allocator, self.io, &sb, self.wasm) catch return;
+            defer mod.deinit();
+            var add = mod.inst.typedFunc(fn (i32, i32) i32, "add");
+            self.sum = add.call(.{ 17, 25 }) catch return;
+        }
+    };
+    var w = W{ .wasm = wasm, .io = io };
+    const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, W.run, .{&w});
+    thread.join();
+    try std.testing.expectEqual(@as(i32, 42), w.sum orelse return error.WorkerDidNotRun);
 }
