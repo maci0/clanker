@@ -76,6 +76,7 @@ pub const Registry = struct {
                 .name = t.name,
                 .description = t.description,
                 .input_schema = t.input_schema,
+                .internal = t.internal,
             });
         }
         return out.toOwnedSlice(arena);

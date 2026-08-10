@@ -40,6 +40,8 @@ pub const ToolDef = struct {
     description: []const u8,
     /// JSON Schema object for the tool input.
     input_schema: std.json.Value,
+    /// If true, the tool is loaded and runnable but hidden from the LLM catalog.
+    internal: bool = false,
 };
 
 pub const Usage = struct {

@@ -64,6 +64,7 @@ pub fn build(
     if (tool_defs.len > 0) {
         try buf.appendSlice(arena, "## Available tools\n\n");
         for (tool_defs) |t| {
+            if (t.internal) continue;
             try buf.appendSlice(arena, "- `");
             try buf.appendSlice(arena, t.name);
             try buf.appendSlice(arena, "`: ");
