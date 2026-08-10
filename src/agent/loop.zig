@@ -549,8 +549,8 @@ pub const Agent = struct {
         if (keep_start <= 1) return false;
         const before_len = messages.items.len;
         const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
-            log.log(.warn, "forced compaction summary failed ({s}), using static placeholder", .{@errorName(err)});
-            break :blk null;
+            log.log(.warn, "forced compaction summary failed ({s}), trying local extractive summary", .{@errorName(err)});
+            break :blk self.localSummary(messages.items[1..keep_start]);
         };
         const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
         try compactMiddle(messages, self.arena, keep_start, placeholder);
@@ -583,8 +583,8 @@ pub const Agent = struct {
         log.log(.info, "compacting conversation: {d} messages, ~{d} estimated tokens (threshold {d})", .{ messages.items.len, estimated_tokens, threshold });
         // Build a summary of the messages being removed (indices 1..keep_start-1).
         const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
-            log.log(.warn, "compaction summary failed ({s}), using static placeholder", .{@errorName(err)});
-            break :blk null;
+            log.log(.warn, "compaction summary failed ({s}), trying local extractive summary", .{@errorName(err)});
+            break :blk self.localSummary(messages.items[1..keep_start]);
         };
         const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
         try compactMiddle(messages, self.arena, keep_start, placeholder);
@@ -618,11 +618,103 @@ pub const Agent = struct {
         try messages.replaceRange(arena, 1, keep_start - 1, &new_mid);
     }
 
+    /// Builds a best-effort extractive summary from the messages themselves,
+    /// without calling the LLM. Used as a fallback when summarizeMessages
+    /// fails (network error, budget exhausted, etc.) so compaction never
+    /// discards context entirely.
+    fn localSummary(self: *Agent, msgs: []const types.Message) ?[]const u8 {
+        if (msgs.len == 0) return null;
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(self.ctx.gpa);
+        buf.appendSlice(self.ctx.gpa, "[conversation summary — ") catch return null;
+        const count_str = std.fmt.allocPrint(self.ctx.gpa, "{d}", .{msgs.len}) catch return null;
+        defer self.ctx.gpa.free(count_str);
+        buf.appendSlice(self.ctx.gpa, count_str) catch return null;
+        buf.appendSlice(self.ctx.gpa, " earlier messages compacted (extractive)]\n") catch return null;
+
+        // Cap the total summary size so it does not itself blow the context.
+        const max_summary: usize = 4000;
+        var tool_calls_seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+        defer tool_calls_seen.deinit(self.ctx.gpa);
+
+        for (msgs) |m| {
+            if (buf.items.len >= max_summary) break;
+            switch (m.role) {
+                .user => {
+                    if (m.content) |c| {
+                        const preview = if (c.len > 200) c[0..200] else c;
+                        buf.appendSlice(self.ctx.gpa, "- User: ") catch continue;
+                        buf.appendSlice(self.ctx.gpa, preview) catch continue;
+                        if (c.len > 200) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                        buf.append(self.ctx.gpa, '\n') catch continue;
+                    }
+                },
+                .assistant => {
+                    if (m.tool_calls) |calls| {
+                        for (calls) |tc| {
+                            if (buf.items.len >= max_summary) break;
+                            tool_calls_seen.put(self.ctx.gpa, tc.name, {}) catch {};
+                            buf.appendSlice(self.ctx.gpa, "- Called tool: ") catch continue;
+                            buf.appendSlice(self.ctx.gpa, tc.name) catch continue;
+                            // Include a short preview of arguments for context.
+                            if (tc.arguments.len > 0 and tc.arguments.len <= 120) {
+                                buf.appendSlice(self.ctx.gpa, " args=") catch {};
+                                buf.appendSlice(self.ctx.gpa, tc.arguments) catch {};
+                            } else if (tc.arguments.len > 120) {
+                                buf.appendSlice(self.ctx.gpa, " args=") catch {};
+                                buf.appendSlice(self.ctx.gpa, tc.arguments[0..120]) catch {};
+                                buf.appendSlice(self.ctx.gpa, "...") catch {};
+                            }
+                            buf.append(self.ctx.gpa, '\n') catch continue;
+                        }
+                    }
+                    if (m.content) |c| {
+                        if (c.len > 0) {
+                            const preview = if (c.len > 200) c[0..200] else c;
+                            buf.appendSlice(self.ctx.gpa, "- Assistant: ") catch continue;
+                            buf.appendSlice(self.ctx.gpa, preview) catch continue;
+                            if (c.len > 200) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                            buf.append(self.ctx.gpa, '\n') catch continue;
+                        }
+                    }
+                },
+                .tool => {
+                    if (m.content) |c| {
+                        // For tool results, extract the first 150 chars as a preview
+                        // so key values (numbers, paths, statuses) survive compaction.
+                        const preview = if (c.len > 150) c[0..150] else c;
+                        buf.appendSlice(self.ctx.gpa, "- Tool result: ") catch continue;
+                        buf.appendSlice(self.ctx.gpa, preview) catch continue;
+                        if (c.len > 150) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                        buf.append(self.ctx.gpa, '\n') catch continue;
+                    }
+                },
+                .system => {},
+            }
+        }
+
+        // Append a summary line listing distinct tools used.
+        if (tool_calls_seen.count() > 0) {
+            buf.appendSlice(self.ctx.gpa, "- Tools used: ") catch {};
+            var it = tool_calls_seen.iterator();
+            var first = true;
+            while (it.next()) |kv| {
+                if (!first) buf.appendSlice(self.ctx.gpa, ", ") catch {};
+                buf.appendSlice(self.ctx.gpa, kv.key_ptr.*) catch {};
+                first = false;
+            }
+            buf.append(self.ctx.gpa, '\n') catch {};
+        }
+
+        if (buf.items.len == 0) return null;
+        return self.arena.dupe(u8, buf.items) catch null;
+    }
+
     /// Produces a concise summary of a slice of conversation messages by
     /// asking the LLM to distill them. Returns an arena-owned string prefixed
     /// with "[conversation summary]" so downstream code knows it is synthetic.
-    /// Returns error on LLM failure; the caller falls back to a static
-    /// placeholder.
+    /// Returns error on LLM failure; the caller falls back to a local
+    /// extractive summary, then a static placeholder.
     fn summarizeMessages(self: *Agent, msgs: []const types.Message) ![]const u8 {
         if (msgs.len == 0) return error.EmptyMessages;
         // Build a textual transcript of the messages to summarize, capped at
