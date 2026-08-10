@@ -309,6 +309,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
 
     var it = cfg.providers.iterator();
     var found_any = false;
+    var checked_any = false;
     while (it.next()) |kv| {
         const name = kv.key_ptr.*;
         if (opts.provider) |want| {
@@ -337,9 +338,11 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         const t1 = std.Io.Timestamp.now(io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         const tok = if (resp.usage) |u| u.total_tokens else 0;
+        checked_any = true;
         log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok)", .{ name, p.model, ms, tok });
     }
     if (opts.provider != null and !found_any) return error.UnknownProvider;
+    if (opts.provider != null and !checked_any) return error.ProviderCheckFailed;
 }
 
 // ---------------------------------------------------------------------- run --
