@@ -149,8 +149,14 @@ pub const Agent = struct {
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
             .learnings_file = self.cfg.agent.learnings_file,
-        }, self.tool_defs) catch return;
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt}) catch return;
+        }, self.tool_defs) catch |err| {
+            log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
+            return;
+        };
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt}) catch |err| {
+            log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
+            return;
+        };
         // Only update when the content actually changed, to avoid needless
         // arena churn on turns where nothing was learned.
         if (std.mem.eql(u8, prompt_text, self.system_prompt_text)) return;
@@ -745,22 +751,11 @@ pub const Agent = struct {
                 }
             }
             if (end > 0) {
-                const extracted = s[start..end];
-                // Only unwrap a JSON envelope when it was embedded in prose
-                // (leading or trailing). If the entire answer is the JSON
-                // object itself, the user may have asked for that exact JSON
-                // (e.g. an object with an "answer" key), so preserve it
-                // verbatim. This keeps the answer_format eval exact-match.
-                const has_prose = start > 0 or end < s.len;
-                if (has_prose) {
-                    if (unwrapJsonAnswer(self.arena, extracted)) |unwrapped| {
-                        s = unwrapped;
-                    } else {
-                        s = extracted;
-                    }
-                } else {
-                    s = extracted;
-                }
+                s = s[start..end];
+                // The extracted JSON may still wrap the value (e.g.
+                // {"answer": 42}); unwrap it so the caller gets the bare
+                // exact-match answer instead of a JSON envelope.
+                if (unwrapJsonAnswer(self.arena, s)) |unwrapped| s = unwrapped;
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
