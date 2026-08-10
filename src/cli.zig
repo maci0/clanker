@@ -721,9 +721,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
         sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
     }
 
-    var stdin_file = std.Io.File.stdin();
-    var read_buf: [4096]u8 = undefined;
-    var stdin_reader = stdin_file.reader(io, &read_buf);
+    const stdin_file = std.Io.File.stdin();
     var stdout_file = std.Io.File.stdout();
     var out_buf: [4096]u8 = undefined;
     var out_w = stdout_file.writer(io, &out_buf);
@@ -745,7 +743,12 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
         try out_w.interface.writeAll("\x1b[32mclanker> \x1b[0m");
         try out_w.interface.flush();
 
-        const n = stdin_reader.interface.readSliceShort(&tmp) catch |err| {
+        // Short read on the raw fd: readSliceShort blocks until the buffer is
+        // full or EOF, which never happens on an interactive TTY (it reads the
+        // first line, then blocks for more) — the REPL would silently swallow
+        // input. posix.read returns whatever is available (one canonical line
+        // on a TTY), retrying on EINTR.
+        const n = std.posix.read(stdin_file.handle, &tmp) catch |err| {
             log.log(.error_, "repl read error: {s}", .{@errorName(err)});
             return err;
         };
@@ -1743,8 +1746,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             writeAllFd(stream.socket.handle, "]\n");
             return;
         };
-        _ = resp;
-        // The answer was already streamed via runStreamDelta; append a small
+        // When modules.streaming is off the agent never invokes on_token,
+        // so nothing was streamed — write the answer directly or the client
+        // would receive an empty body (just the trailer) for a successful run.
+        if (!cfg.modules.streaming) {
+            if (resp.message.content) |c| writeAllFd(stream.socket.handle, c);
+        }
+        // Otherwise the answer was already streamed via runStreamDelta; append a small
         // stats trailer, then the trailing newline + Connection: close
         // terminate the client-side stream.
         var tbuf: [256]u8 = undefined;
