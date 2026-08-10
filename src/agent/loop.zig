@@ -757,12 +757,11 @@ pub const Agent = struct {
                 // wrapped a bare value like 42 in {"answer": 42}).
                 const json_was_whole = (end - start) == s.len;
                 s = s[start..end];
-                if (!json_was_whole) {
-                    // The extracted JSON may still wrap the value (e.g.
-                    // {"answer": 42}); unwrap it so the caller gets the bare
-                    // exact-match answer instead of a JSON envelope.
-                    if (unwrapJsonAnswer(self.arena, s)) |unwrapped| s = unwrapped;
-                }
+                _ = json_was_whole;
+                // Do NOT unwrap JSON objects/arrays even when embedded in
+                // prose: if the user asked for a JSON value, the extracted
+                // JSON is the exact-match answer. Unwrapping would turn a
+                // requested object into a bare field (answer_format eval).
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
