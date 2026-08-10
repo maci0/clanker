@@ -961,6 +961,19 @@ pub fn ckFsReadRange(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, offset
     return fsReadRangeImpl(h, bytes, path, offset, length);
 }
 
+/// ck_fs_write_range(path, offset, data) — write data at a byte offset in a
+/// file under the sandbox root. The file must already exist. Bytes in
+/// [offset, offset+data.len) are overwritten; if offset+data.len exceeds the
+/// current file size the file is extended. `data.len` is capped at
+/// max_fs_bytes. Enforces the same fs_prefixes policy as ck_fs_write.
+pub fn ckFsWriteRange(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, offset: u32, data_ptr: u32, data_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    const data = sliceOf(bytes, data_ptr, data_len) orelse return Err.invalid;
+    return fsWriteRangeImpl(h, path, data, offset);
+}
+
 fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
     const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
@@ -971,6 +984,26 @@ fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
     };
     defer h.sandbox.gpa.free(data);
     return h.writeResult(mem_bytes, data);
+}
+
+fn fsWriteRangeImpl(h: *Host, sub_path: []const u8, data: []const u8, offset: u32) u32 {
+    if (data.len == 0) return Err.ok;
+    if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
+    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+
+    var file = std.Io.Dir.cwd().openFile(h.sandbox.io, full, .{ .mode = .read_write }) catch |err| switch (err) {
+        error.FileNotFound => return Err.not_found,
+        else => return Err.invalid,
+    };
+    defer file.close(h.sandbox.io);
+
+    file.seekTo(h.sandbox.io, @as(u64, offset)) catch return Err.invalid;
+    file.writeAll(h.sandbox.io, data) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        else => return Err.invalid,
+    };
+    return Err.ok;
 }
 
 fn fsReadRangeImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, offset: u32, length: u32) u32 {
@@ -1476,6 +1509,28 @@ test "httpImpl rejects unknown method codes" {
         // Just verify the mapping doesn't crash
         _ = method;
     }
+}
+
+test "ckFsWriteRange uses safeJoin policy" {
+    // Verify the safeJoin policy that ckFsWriteRange relies on.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"data/"},
+        .environ_map = undefined,
+    };
+    // Allowed prefix
+    const ok = try safeJoin(&sb, "data/patch.bin");
+    defer std.testing.allocator.free(ok);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/patch.bin", ok);
+    // Disallowed prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
+    // Traversal attempt
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
+    // Empty path
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
 test "ckFsAppend uses safeJoin policy" {
