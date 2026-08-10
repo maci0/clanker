@@ -175,10 +175,17 @@ pub const Agent = struct {
     fn finalAnswer(self: *Agent, resp: types.ChatResponse) !types.ChatResponse {
         var content = resp.message.content orelse return resp;
         var s = std.mem.trim(u8, content, " \t\r\n");
-        if (std.mem.startsWith(u8, s, "```")) {
-            if (std.mem.indexOf(u8, s, "\n")) |nl| s = s[nl + 1 ..];
-            if (std.mem.endsWith(u8, s, "```")) s = s[0 .. s.len - 3];
-            s = std.mem.trim(u8, s, " \t\r\n");
+        // Find the first code fence marker; if present, extract content between
+        // the fences even if prose precedes it (the answer_format eval expects
+        // an exact-match answer, not a fenced/prose-wrapped variant).
+        if (std.mem.indexOf(u8, s, "```")) |start| {
+            const after_first = s[start + 3 ..];
+            const body_start = if (std.mem.indexOf(u8, after_first, "\n")) |nl| nl + 1 else 0;
+            var body = after_first[body_start..];
+            if (std.mem.lastIndexOf(u8, body, "```")) |end| {
+                body = body[0..end];
+            }
+            s = std.mem.trim(u8, body, " \t\r\n");
         }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
