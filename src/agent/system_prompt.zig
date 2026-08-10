@@ -43,15 +43,26 @@ pub fn build(
     if (dir) |*d| {
         defer d.close(io);
         try buf.appendSlice(arena, "## Skills\n\n");
+        var names: std.ArrayList([]const u8) = .empty;
         var it = d.iterate();
         while (it.next(io) catch null) |entry| {
             if (entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
             if (std.mem.eql(u8, entry.name, "SYSTEM.md")) continue; // base already included
-            const content = d.readFileAlloc(io, entry.name, arena, .limited(parts.max_skill_bytes)) catch continue;
+            try names.append(arena, try arena.dupe(u8, entry.name));
+        }
+        // Sort so the system prompt is byte-stable across runs; LLM prompt
+        // caches key on the prompt prefix and unstable file order defeats it.
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        for (names.items) |name| {
+            const content = d.readFileAlloc(io, name, arena, .limited(parts.max_skill_bytes)) catch continue;
             if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;
             try buf.appendSlice(arena, "### ");
-            try buf.appendSlice(arena, entry.name);
+            try buf.appendSlice(arena, name);
             try buf.appendSlice(arena, "\n\n");
             try buf.appendSlice(arena, content);
             try buf.appendSlice(arena, "\n\n");

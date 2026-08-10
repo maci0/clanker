@@ -203,12 +203,7 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, reg: *
         return;
     }
 
-    const wasm_path = std.fmt.allocPrint(gpa, "{s}", .{tool.?.wasm}) catch {
-        try respondText(s, "OOM", true);
-        return;
-    };
-    defer gpa.free(wasm_path);
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, wasm_path, gpa, .limited(1 << 20)) catch {
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.?.wasm, gpa, .limited(1 << 20)) catch {
         try respondText(s, "wasm missing (run zig build tools)", true);
         return;
     };

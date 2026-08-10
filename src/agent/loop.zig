@@ -146,10 +146,8 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
         };
 
-        const wasm_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}", .{tool.wasm});
-        defer self.ctx.gpa.free(wasm_path);
-        const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, wasm_path, self.ctx.gpa, .limited(1 << 20)) catch |err| {
-            log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, wasm_path, @errorName(err) });
+        const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
+            log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
             return error.ToolWasmMissing;
         };
         defer self.ctx.gpa.free(wasm_bytes);
@@ -185,7 +183,6 @@ pub const Agent = struct {
         defer self.ctx.gpa.free(out);
         const t1 = std.Io.Timestamp.now(self.ctx.io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
-        _ = &t0;
 
         // Arena-own the result for the conversation history.
         const owned = try self.arena.dupe(u8, out);
