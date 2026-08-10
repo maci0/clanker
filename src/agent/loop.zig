@@ -17,6 +17,9 @@ pub const RunStats = struct {
     total_prompt_tokens: u64 = 0,
     total_completion_tokens: u64 = 0,
     total_tokens: u64 = 0,
+    /// Estimated USD cost for this run (from the active model's
+    /// cost_per_1k_input / cost_per_1k_output).
+    cost: f64 = 0,
 };
 
 pub const Agent = struct {
@@ -78,7 +81,7 @@ pub const Agent = struct {
                 kv.value_ptr.*.deinit();
             }
             self.modules.clearRetainingCapacity();
-            log.log(.info, "run tokens: prompt={d} completion={d} total={d}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens });
+            log.log(.info, "run tokens: prompt={d} completion={d} total={d} cost=${d:.4}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens, self.stats.cost });
         }
         // Execution graph: record every LLM call and tool invocation, then
         // persist it to state/runs/<run-id>.json on every exit path.
@@ -92,7 +95,7 @@ pub const Agent = struct {
         };
         defer {
             g.duration_ms = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
-            graph_mod.write(self.ctx.io, self.ctx.gpa, self.arena, &g) catch {};
+            if (self.cfg.modules.graphs) graph_mod.write(self.ctx.io, self.ctx.gpa, self.arena, &g) catch {};
             g.deinit(self.ctx.gpa);
         }
         // Multi-turn callers (the REPL) reuse one message list across runs:
@@ -111,18 +114,22 @@ pub const Agent = struct {
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
-            const resp = if (self.on_token) |cb|
-                try client.chatStream(self.ctx, self.arena, .{
-                    .provider = self.provider,
-                    .messages = messages.items,
-                    .tools = self.tool_defs,
-                }, err_detail, cb)
-            else
-                try client.chat(self.ctx, self.arena, .{
+            const resp = if (self.on_token) |cb| blk: {
+                if (!self.cfg.modules.streaming) break :blk try client.chat(self.ctx, self.arena, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
                 }, err_detail);
+                break :blk try client.chatStream(self.ctx, self.arena, .{
+                    .provider = self.provider,
+                    .messages = messages.items,
+                    .tools = self.tool_defs,
+                }, err_detail, cb);
+            } else try client.chat(self.ctx, self.arena, .{
+                .provider = self.provider,
+                .messages = messages.items,
+                .tools = self.tool_defs,
+            }, err_detail);
             try g.add(self.ctx.gpa, .{
                 .kind = .llm,
                 .iteration = iteration + 1,
@@ -138,21 +145,26 @@ pub const Agent = struct {
                 self.stats.total_prompt_tokens += u.prompt_tokens;
                 self.stats.total_completion_tokens += u.completion_tokens;
                 self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+                const active = self.provider.activeModel();
+                if (active.cost_per_1m_input) |ci| self.stats.cost += @as(f64, @floatFromInt(u.prompt_tokens)) / 1_000_000.0 * ci;
+                if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
 
                 // Per-turn token budgeting: a single runaway response must
                 // not blow the context window even when the session total is
                 // still under budget (session cap is cfg.agent.max_total_tokens).
-                if (u.completion_tokens > max_per_turn_tokens) {
+                if (self.cfg.modules.token_budget and u.completion_tokens > max_per_turn_tokens) {
                     log.log(.warn, "per-turn token budget exceeded ({d} > {d} completion tokens); stopping run", .{ u.completion_tokens, max_per_turn_tokens });
                     return error.PerTurnTokenBudgetExceeded;
                 }
             }
 
-            if (self.cfg.agent.max_total_tokens) |budget| {
-                if (self.stats.total_tokens >= budget) {
-                    log.log(.warn, "token budget reached ({d} total tokens)", .{self.stats.total_tokens});
-                    budget_hit = true;
-                    break;
+            if (self.cfg.modules.token_budget) {
+                if (self.cfg.agent.max_total_tokens) |budget| {
+                    if (self.stats.total_tokens >= budget) {
+                        log.log(.warn, "token budget reached ({d} total tokens)", .{self.stats.total_tokens});
+                        budget_hit = true;
+                        break;
+                    }
                 }
             }
 
@@ -225,7 +237,7 @@ pub const Agent = struct {
         // Effective context budget: never exceed half the provider's context
         // window (room for input plus output), and honor an explicit byte cap.
         // compact_threshold_bytes == 0 means "auto" = half the context window.
-        const ctx_budget = self.provider.context_window / 2;
+        const ctx_budget = self.provider.activeModel().context_window / 2;
         const threshold = if (self.cfg.agent.compact_threshold_bytes == 0)
             ctx_budget
         else
@@ -251,18 +263,6 @@ pub const Agent = struct {
     fn finalAnswer(self: *Agent, resp: types.ChatResponse) !types.ChatResponse {
         var content = resp.message.content orelse return resp;
         var s = std.mem.trim(u8, content, " \t\r\n");
-        // Remove surrounding double quotes (the model sometimes wraps the
-        // answer in quotes, which fails the exact-match answer_format eval).
-        if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
-            s = s[1 .. s.len - 1];
-            s = std.mem.trim(u8, s, " \t\r\n");
-        }
-        // Also strip surrounding single quotes (some models wrap plain-text
-        // answers in single quotes, which also fails exact-match evals).
-        if (s.len >= 2 and s[0] == '\'' and s[s.len - 1] == '\'') {
-            s = s[1 .. s.len - 1];
-            s = std.mem.trim(u8, s, " \t\r\n");
-        }
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
