@@ -31,6 +31,7 @@ pub const Command = enum {
     notify,
     phonebook,
     serve,
+    repl,
 };
 
 pub const Options = struct {
@@ -145,7 +146,7 @@ pub fn parse(args: []const []const u8) !Options {
             } else if (std.mem.eql(u8, a, "serve")) {
                 opts.command = .serve;
             } else if (std.mem.eql(u8, a, "repl")) {
-                return error.NotYetImplemented;
+                opts.command = .repl;
             } else {
                 return error.UnknownCommand;
             }
@@ -217,6 +218,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .notify => try cmdNotify(init, opts),
         .phonebook => try cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
+        .repl => try cmdRepl(init, opts),
     }
 }
 
@@ -384,6 +386,149 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             .updated = updated,
         });
     }
+}
+
+fn cmdRepl(init: std.process.Init, opts: Options) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
+
+    var provider = try cfg.provider(opts.provider);
+    var provider_copy = provider.*;
+    if (opts.model) |m| provider_copy.model = m;
+    provider = &provider_copy;
+
+    // Make sure the sandbox root exists.
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    const tool_defs = try reg.toToolDefs(arena);
+
+    var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
+    var messages: std.ArrayList(types.Message) = .empty;
+
+    const created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    const sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
+
+    var stdin_file = std.Io.File.stdin();
+    var read_buf: [4096]u8 = undefined;
+    var stdin_reader = stdin_file.reader(io, &read_buf);
+    var stdout_file = std.Io.File.stdout();
+    var out_buf: [4096]u8 = undefined;
+    var out_w = stdout_file.writer(io, &out_buf);
+
+    // Stream the model's tokens to stdout as they arrive.
+    repl_out = &out_w;
+    a.on_token = &replDelta;
+
+    // Accumulate raw stdin and split on newlines: readSliceShort can return
+    // several lines at once (piped input), and each task line must be copied
+    // into the arena before the accumulator buffer is shifted (messages keep
+    // referencing it across turns).
+    var acc: std.ArrayList(u8) = .empty;
+    defer acc.deinit(gpa);
+    var tmp: [4096]u8 = undefined;
+
+    while (true) {
+        try out_w.interface.writeAll("clanker> ");
+        try out_w.interface.flush();
+
+        const n = stdin_reader.interface.readSliceShort(&tmp) catch |err| {
+            log.log(.error_, "repl read error: {s}", .{@errorName(err)});
+            return err;
+        };
+        if (n == 0) {
+            // EOF: flush a trailing partial line, then exit.
+            const last = std.mem.trim(u8, acc.items, " \t\r\n");
+            if (last.len > 0) {
+                const owned = try arena.dupe(u8, last);
+                const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
+                if (quit) return;
+            }
+            try out_w.interface.writeAll("\n");
+            try out_w.interface.flush();
+            return;
+        }
+        try acc.appendSlice(gpa, tmp[0..n]);
+        while (std.mem.indexOfScalar(u8, acc.items, '\n')) |nl| {
+            const line = std.mem.trim(u8, acc.items[0..nl], " \t\r\n");
+            // Use `line` only before the buffer is shifted below: it is a
+            // view into acc.items, so the copyForwards would overwrite it.
+            if (line.len == 0) {
+                const rest0 = acc.items[nl + 1 ..];
+                std.mem.copyForwards(u8, acc.items[0..rest0.len], rest0);
+                acc.items.len = rest0.len;
+                continue;
+            }
+            if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) {
+                try out_w.interface.writeAll("\n");
+                try out_w.interface.flush();
+                return;
+            }
+            if (std.mem.eql(u8, line, ":help")) {
+                try out_w.interface.writeAll("REPL commands: :quit  :help   (any other text is a task)\n");
+                try out_w.interface.flush();
+                const rest1 = acc.items[nl + 1 ..];
+                std.mem.copyForwards(u8, acc.items[0..rest1.len], rest1);
+                acc.items.len = rest1.len;
+                continue;
+            }
+            // Copy the task text into the arena BEFORE shifting the buffer:
+            // messages keep referencing it across turns.
+            const owned = try arena.dupe(u8, line);
+            const rest = acc.items[nl + 1 ..];
+            std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
+            acc.items.len = rest.len;
+            const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
+            if (quit) return;
+        }
+    }
+}
+
+/// Streams REPL output: the model's content deltas land here (via
+/// Agent.on_token) while the run is still in flight.
+var repl_out: ?*std.Io.File.Writer = null;
+
+fn replDelta(delta: []const u8) void {
+    if (repl_out) |w| {
+        w.interface.writeAll(delta) catch {};
+        w.interface.flush() catch {};
+    }
+}
+
+/// Runs one REPL turn for `task` (arena-owned): appends the user message, runs
+/// the agent, prints the answer, appends the assistant message, and persists
+/// the session. Returns true if the loop should exit (only on :quit).
+fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
+    const gpa = a.ctx.gpa;
+    try messages.append(a.arena, .{ .role = .user, .content = task });
+    var err_detail: ?[]const u8 = null;
+    const resp = a.run(messages, task, &err_detail) catch |err| {
+        log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
+        return false;
+    };
+
+    const streamed = a.on_token != null;
+    const content = resp.message.content orelse "";
+    if (!streamed) {
+        try out_w.interface.writeAll(content);
+    }
+    try out_w.interface.writeAll("\n\n");
+    try out_w.interface.flush();
+    try messages.append(a.arena, resp.message);
+
+    const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});
+    try session.saveSession(io, gpa, a.arena, std.Io.Dir.cwd(), .{
+        .id = sid,
+        .title = title,
+        .messages = messages.items,
+        .created = created,
+        .updated = updated,
+    });
+    return false;
 }
 
 fn cmdSessions(init: std.process.Init) !void {
