@@ -383,6 +383,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
     var task_text = opts.task.?;
     if (opts.goal) |goal_id| {
+        var goal_found = false;
         const goals_raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch null;
         if (goals_raw) |raw| {
             const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch null;
@@ -398,6 +399,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
                                     const boundaries = if (obj.get("boundaries")) |v| if (v == .string) v.string else "" else "";
                                     const goal_section = try std.fmt.allocPrint(arena, "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n", .{ objective, completion, boundaries });
                                     task_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ goal_section, opts.task.? });
+                                    goal_found = true;
                                     break;
                                 }
                             }
@@ -406,6 +408,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
                 }
             }
         }
+        if (!goal_found) log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
     }
     var err_detail: ?[]const u8 = null;
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
@@ -419,7 +422,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
 
     if (opts.session) |sid| {
-        const title = try std.fmt.allocPrint(arena, "{s}", .{opts.task.?[0..@min(opts.task.?.len, 60)]});
+        const title = opts.task.?[0..@min(opts.task.?.len, 60)];
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
             .id = sid,
@@ -475,7 +478,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var tmp: [4096]u8 = undefined;
 
     while (true) {
-        try out_w.interface.writeAll("clanker> ");
+        try out_w.interface.writeAll("\x1b[32mclanker> \x1b[0m");
         try out_w.interface.flush();
 
         const n = stdin_reader.interface.readSliceShort(&tmp) catch |err| {
@@ -670,11 +673,13 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     // NOTE: a.run() appends the user task (and each assistant reply) to
     // `messages` itself; appending here would duplicate them in the
     // transcript and the persisted session.
+    const t0 = std.Io.Timestamp.now(io, .awake);
     var err_detail: ?[]const u8 = null;
     const resp = a.run(messages, task, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return false;
     };
+    const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
 
     const streamed = a.on_token != null;
     const content = resp.message.content orelse "";
@@ -682,6 +687,12 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
         try out_w.interface.writeAll(content);
     }
     try out_w.interface.writeAll("\n\n");
+    // Dim turn stats (tokens + wall time) so each turn reports its cost.
+    const stats = if (a.stats.total_tokens > 0)
+        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion tokens \xc2\xb7 {d}ms]\x1b[0m\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens, ms })
+    else
+        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
+    try out_w.interface.writeAll(stats);
     try out_w.interface.flush();
     // run() already appended (and finish()-cleaned) the assistant message.
 
@@ -1349,10 +1360,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             writeAllFd(stream.socket.handle, "]\n");
             return;
         };
-        if (resp.message.content) |c| {
-            if (c.len > 0) writeAllFd(stream.socket.handle, c);
-        }
-        writeAllFd(stream.socket.handle, "\n");
+        _ = resp;
+        // The answer was already streamed via runStreamDelta; append a small
+        // stats trailer, then the trailing newline + Connection: close
+        // terminate the client-side stream.
+        var tbuf: [256]u8 = undefined;
+        const trailer = std.fmt.bufPrint(&tbuf, "\n[done: {d} prompt + {d} completion tokens]\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens }) catch "\n[done]\n";
+        writeAllFd(stream.socket.handle, trailer);
         return;
     }
 
