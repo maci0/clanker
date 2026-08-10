@@ -46,7 +46,8 @@
     "skills_dir": "skills",
     "system_prompt_file": "skills/SYSTEM.md",
     "learnings_file": "state/learnings.md",
-    "sandbox_root": "."
+    "sandbox_root": ".",
+    "seed": 0
   },
   "improve": {
     "min_delta": 0.05,

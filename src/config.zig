@@ -42,6 +42,7 @@ pub const Agent = struct {
     sandbox_root: []const u8 = ".",
     /// Commit promoted improvements with git (git_commit_after_improve).
     git_commit: bool = true,
+    seed: u64 = 0,
 };
 
 pub const Improve = struct {
@@ -258,6 +259,7 @@ pub const Config = struct {
             .bool => |b| b,
             else => a.git_commit,
         };
+        if (obj.get("seed")) |k| a.seed = @intCast(try jsonInt(k, "seed"));
         return a;
     }
 

@@ -122,6 +122,7 @@ pub const Agent = struct {
             .network_allow = tool.network_allow,
             .fs_prefixes = tool.fs_prefixes,
             .environ_map = self.ctx.environ_map,
+            .seed = self.cfg.agent.seed,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ tc.name, tc.arguments });
@@ -184,6 +185,7 @@ const ToolWorker = struct {
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
             .environ_map = self.ctx.environ_map,
+            .seed = self.cfg.agent.seed,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ self.tool.name, self.arguments });

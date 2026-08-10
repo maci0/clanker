@@ -41,6 +41,8 @@ pub const Sandbox = struct {
     max_http_bytes: usize = 1 << 20,
     max_fs_bytes: usize = 1 << 20,
     environ_map: *std.process.Environ.Map,
+    /// Deterministic seed for the tool RNG (from agent.seed).
+    seed: u64 = 0,
 };
 
 /// Per-module execution context; passed to host functions via
@@ -265,10 +267,10 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
 
 /// Arguments that are never allowed for sandboxed commands.
 const exec_deny_tokens = [_][]const u8{
-    "push",  "reset",   "rebase", "checkout", "clean", "rm",       "fetch",
-    "merge", "revert",  "stash",  "remote",   "tag",   "filter-branch",
-    "gc",    "repack",  "prune",  "submodule", "-f",   "--force",  "--exec",
-    "&&",    "||",      ";",      "|",        ">",     "<",        "`",
+    "push",   "reset",  "rebase",    "checkout", "clean",   "rm",            "fetch",
+    "merge",  "revert", "stash",     "remote",   "tag",     "filter-branch", "gc",
+    "repack", "prune",  "submodule", "-f",       "--force", "--exec",        "&&",
+    "||",     ";",      "|",         ">",        "<",       "`",
 };
 
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {

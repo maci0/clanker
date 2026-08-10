@@ -32,6 +32,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_fs_read", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsRead);
     try lk.defineFuncCtx("env", "ck_fs_write", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsWrite);
     try lk.defineFuncCtx("env", "ck_getenv", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckGetenv);
+    try lk.defineFuncCtx("env", "ck_exec", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckExec);
     try lk.defineFuncCtx("env", "ck_result", h, fn (*zwasm.Caller) u64, &host.ckResult);
 }
 
@@ -65,7 +66,7 @@ pub const ToolModule = struct {
         self.h = try gpa.create(host.Host);
         self.h.* = .{
             .sandbox = sb,
-            .rng = std.Random.DefaultPrng.init(seedRng(@intFromPtr(self))),
+            .rng = std.Random.DefaultPrng.init(seedRng(sb.seed, wasm_bytes)),
         };
 
         self.engine = try zwasm.Engine.init(gpa, .{});
@@ -126,9 +127,11 @@ pub const ToolModule = struct {
     }
 };
 
-fn seedRng(addr: usize) u64 {
-    var ctr: std.atomic.Value(u64) = .init(0);
-    return std.hash.Wyhash.hash(0x6A09E667F3BCC909, std.mem.asBytes(&addr)) +% ctr.fetchAdd(1, .monotonic);
+fn seedRng(seed: u64, salt: []const u8) u64 {
+    var h = std.hash.Wyhash.init(0x6A09E667F3BCC909);
+    h.update(std.mem.asBytes(&seed));
+    h.update(salt);
+    return h.final();
 }
 
 // ------------------------------------------------------------------- tests --
@@ -191,5 +194,4 @@ test "assemblyscript calc_ts tool executes" {
     const out2 = try mod.runTool("{\"expr\": \"17*23\"}");
     defer std.testing.allocator.free(out2);
     std.debug.print("calc_ts json input -> {s}\n", .{out2});
-
 }
