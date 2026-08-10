@@ -122,11 +122,11 @@ pub fn parse(args: []const []const u8) !Options {
         }
 
         // Non-flag token.
-        if (!cmd_seen) {
+        if (!cmd_seen and opts.command == .help) {
             cmd_seen = true;
             if (std.mem.eql(u8, a, "init")) {
                 opts.command = .init;
-            } else if (std.mem.eql(u8, a, "providers")) {
+            } else if (std.mem.eql(u8, a, "provide") or std.mem.eql(u8, a, "providers")) {
                 opts.command = .providers_check;
                 pending_sub = "";
             } else if (std.mem.eql(u8, a, "run")) {
@@ -902,8 +902,9 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     }
     try out_w.interface.writeAll("\n\n");
     // Dim turn stats (tokens + wall time) so each turn reports its cost.
+    const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(a.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
     const stats = if (a.stats.total_tokens > 0)
-        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion tokens \xc2\xb7 {d}ms \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens, ms, a.stats.cost })
+        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens, ms, tps, a.stats.cost })
     else
         try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
     try out_w.interface.writeAll(stats);
@@ -980,7 +981,10 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
                 try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "iter {d}\n", .{n.iteration}));
             }
             switch (n.kind) {
-                .llm => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  llm  {s}  {d}/{d} tok, {d}ms\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms })),
+                .llm => {
+                    const ntps: f64 = if (n.duration_ms > 0) @as(f64, @floatFromInt(n.completion_tokens)) / (@as(f64, @floatFromInt(n.duration_ms)) / 1000.0) else 0;
+                    try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  llm  {s}  {d}/{d} tok, {d}ms ({d:.1} tok/s)\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms, ntps }));
+                },
                 .tool => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  tool {s}  {d} B{s}{s}\n", .{ n.label, n.result_bytes, if (n.ok) "" else " FAILED", if (n.detail.len > 0) try std.fmt.allocPrint(arena, " ({s})", .{n.detail}) else "" })),
                 .final => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  done {d} B, {s}, {d}ms\n", .{ n.result_bytes, n.detail, n.duration_ms })),
             }
@@ -1657,9 +1661,15 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
     writeAllFd(stream.socket.handle, body);
 }
 
+/// The web UI ships its CSS and JS inline in one embedded file, so the policy
+/// allows inline styles and scripts but no external origin: a page fronting
+/// `/api/run` (which executes agent tools) must never be able to pull code from
+/// a third party.
+const webui_csp = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, webui_csp }) catch return;
     writeAllFd(stream.socket.handle, hdr);
     writeAllFd(stream.socket.handle, body);
 }
