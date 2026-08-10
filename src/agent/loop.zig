@@ -1080,11 +1080,62 @@ pub const Agent = struct {
 
         // ---- sequential fallback: duplicate tool names (stateful modules) --
         for (calls, 0..) |tc, i| {
-            if (results[i].len == 0) {
-                results[i] = try self.executeTool(tc);
-            }
+            if (results[i].len != 0) continue;
+            // Run it on a worker even though nothing here is parallel: the
+            // wasm interpreter recurses on the native stack, and the main
+            // thread's stack is whatever the OS handed the process (8 MiB),
+            // which a deep tool call blows outright — a segfault, not a
+            // catchable trap. A worker gets the explicit reservation. When
+            // this agent is *already* inside such a worker (a sub-agent, with
+            // no_parallel_tools set) the stack is big enough, so run inline
+            // and do not nest threads.
+            results[i] = if (self.no_parallel_tools)
+                try self.executeTool(tc)
+            else
+                try self.executeToolOnWorker(tc);
         }
         return results;
+    }
+
+    /// Runs one tool call to completion on a dedicated worker thread with the
+    /// explicit stack reservation, then applies the after-transform chain on
+    /// the caller's thread (the transform module cache is not thread-safe).
+    fn executeToolOnWorker(self: *Agent, tc: types.ToolCall) ![]const u8 {
+        const tool = self.reg.get(tc.name) orelse
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
+        // Tools that call the model, and disabled ones, keep the original
+        // in-thread path: they do not run wasm deeply and the LLM client is
+        // not shared with worker threads.
+        if (tool.llm or tool.sequential or !tool.enabled) return self.executeTool(tc);
+
+        const wasm_bytes = self.wasmBytes(tool) catch |err| {
+            log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+        };
+        const eff_args = self.runChain(tc.name, .before, tc.arguments) catch tc.arguments;
+
+        const worker = try self.ctx.gpa.create(ToolWorker);
+        defer self.ctx.gpa.destroy(worker);
+        worker.* = .{
+            .ctx = self.ctx,
+            .cfg = self.cfg,
+            .tool = tool,
+            .arguments = eff_args,
+            .wasm_bytes = wasm_bytes,
+            .subagent_runner = self.subagent_runner,
+        };
+        const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
+        thread.join();
+
+        if (worker.err) |e| {
+            log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(e) });
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ tc.name, @errorName(e) });
+        }
+        const out = worker.out orelse return "{\"ok\":false,\"error\":\"tool produced no output\"}";
+        const owned = try self.arena.dupe(u8, out);
+        self.ctx.gpa.free(out);
+        log.log(.info, "tool '{s}' -> {d} bytes", .{ tc.name, owned.len });
+        return self.runChain(tc.name, .after, owned) catch owned;
     }
 };
 
