@@ -235,9 +235,16 @@ const ToolWorker = struct {
     }
 
     fn execute(self: *ToolWorker) !void {
+        // Give each worker its own thread-safe I/O context so concurrent
+        // zwasm instantiations cannot corrupt shared state and recurse
+        // into a stack overflow.
+        var threaded = std.Io.Threaded.init(self.ctx.gpa, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+
         var sb = host.Sandbox{
             .gpa = self.ctx.gpa,
-            .io = self.ctx.io,
+            .io = io,
             .root_dir = self.cfg.agent.sandbox_root,
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
@@ -245,13 +252,13 @@ const ToolWorker = struct {
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ self.tool.name, self.arguments });
-        const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
+        const t0 = std.Io.Timestamp.now(io, .awake);
 
-        var mod = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, self.wasm_bytes);
+        var mod = try runtime.ToolModule.load(self.ctx.gpa, io, &sb, self.wasm_bytes);
         defer mod.deinit();
 
         const out = try mod.runTool(self.arguments);
-        const t1 = std.Io.Timestamp.now(self.ctx.io, .awake);
+        const t1 = std.Io.Timestamp.now(io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ self.tool.name, out.len, ms });
         self.out = out;
