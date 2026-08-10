@@ -841,18 +841,17 @@ pub const Agent = struct {
                         s = if (std.mem.startsWith(u8, lead, "true")) "true" else "false";
                     }
                 }
-                // Strip trailing punctuation (period, comma, etc.) when the
-                // remainder is a number OR has no internal period, so an
-                // exact-match answer like "42." or "hello." or "hello world."
-                // becomes "42"/"hello"/"hello world" while an abbreviation
-                // like "e.g." keeps its period.
+                // Strip trailing punctuation (period, comma, etc.) only when
+                // the remainder is a number, so an exact-match answer like
+                // "42." becomes "42" while a string like "hello." keeps its
+                // punctuation (the user asked for the exact value).
                 var stripped = s;
                 while (stripped.len > 0) {
                     const ch = stripped[stripped.len - 1];
                     if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
                     stripped = stripped[0 .. stripped.len - 1];
                 }
-                if (stripped.len < s.len and (isNumericString(stripped) or std.mem.count(u8, stripped, ".") == 0)) {
+                if (stripped.len < s.len and isNumericString(stripped)) {
                     s = std.mem.trim(u8, stripped, " \t\r\n");
                 }
             }
