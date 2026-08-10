@@ -2,10 +2,7 @@
 //! + tool catalog + persistent learnings.
 
 const std = @import("std");
-const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
-const tools = @import("../tools/registry.zig");
-const log = @import("../util/log.zig");
 
 pub const PromptParts = struct {
     system_prompt_file: []const u8,

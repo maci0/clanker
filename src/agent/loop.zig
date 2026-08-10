@@ -5,7 +5,6 @@ const std = @import("std");
 const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
-const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
@@ -179,7 +178,7 @@ pub const Agent = struct {
             break :blk m;
         };
 
-        const out = mod.runTool(tc.arguments) catch |err| {
+        const out = mod.executeTool(tc.arguments) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
             return error.ToolExecutionFailed;
         };
@@ -320,7 +319,7 @@ const ToolWorker = struct {
         var mod = try runtime.ToolModule.load(self.ctx.gpa, io, &sb, self.wasm_bytes);
         defer mod.deinit();
 
-        const out = try mod.runTool(self.arguments);
+        const out = try mod.executeTool(self.arguments);
         const t1 = std.Io.Timestamp.now(io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ self.tool.name, out.len, ms });
