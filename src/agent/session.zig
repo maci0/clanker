@@ -5,6 +5,7 @@ const std = @import("std");
 const json = std.json;
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 
 pub const Session = struct {
     id: []const u8,
@@ -14,18 +15,12 @@ pub const Session = struct {
     updated: i64,
 };
 
-pub const SessionMeta = struct {
-    id: []const u8,
-    title: []const u8,
-    updated: i64,
-};
-
 const store_dir = "state/sessions";
 
 /// Writes a session to `base_dir/state/sessions/<id>.json`.
 pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, session: Session) !void {
     _ = arena;
-    base.createDirPath(io, store_dir) catch {};
+    try base.createDirPath(io, store_dir);
 
     const buf = try gpa.alloc(u8, 1 << 20);
     defer gpa.free(buf);
@@ -77,7 +72,10 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 
     const path = try std.fmt.allocPrint(gpa, "{s}/{s}.json", .{ store_dir, session.id });
     defer gpa.free(path);
-    try base.writeFile(io, .{ .sub_path = path, .data = w.buffer[0..w.end] });
+    // Atomic: a reader (including this same process resuming after a
+    // hot-reload restart) must never observe a session file truncated
+    // mid-write.
+    try atomic_write.writeFile(io, base, path, w.buffer[0..w.end]);
 }
 
 const StoredToolCall = struct {
@@ -132,46 +130,14 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     };
 }
 
-/// Lists sessions, newest-updated first.
-pub fn listSessions(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir) ![]const SessionMeta {
-    _ = gpa;
-    var out: std.ArrayList(SessionMeta) = .empty;
-    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return &.{};
-    defer dir.close(io);
-
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const raw = dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
-        const meta = json.parseFromSliceLeaky(struct {
-            id: []const u8,
-            title: []const u8,
-            updated: i64,
-        }, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
-        try out.append(arena, .{ .id = meta.id, .title = meta.title, .updated = meta.updated });
-    }
-    const items = try out.toOwnedSlice(arena);
-    std.mem.sort(SessionMeta, items, {}, struct {
-        fn lt(_: void, a: SessionMeta, b: SessionMeta) bool {
-            return a.updated > b.updated;
-        }
-    }.lt);
-    return items;
-}
-
 fn roleFromStr(s: []const u8) types.Role {
-    return if (std.mem.eql(u8, s, "system")) .system
-    else if (std.mem.eql(u8, s, "user")) .user
-    else if (std.mem.eql(u8, s, "assistant")) .assistant
-    else if (std.mem.eql(u8, s, "tool")) .tool
-    else .user;
+    return if (std.mem.eql(u8, s, "system")) .system else if (std.mem.eql(u8, s, "user")) .user else if (std.mem.eql(u8, s, "assistant")) .assistant else if (std.mem.eql(u8, s, "tool")) .tool else .user;
 }
 
 // ------------------------------------------------------------------- tests --
 
 test "session save/load round trip" {
-    var gpa_state = std.heap.DebugAllocator(.{}) .init;
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa_state.deinit();
     const gpa = gpa_state.allocator();
 
