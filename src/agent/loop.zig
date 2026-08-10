@@ -843,6 +843,11 @@ pub const Agent = struct {
                     const lead = std.mem.trim(u8, s, " \t\r\n");
                     if (lead.len > 0 and (isNumericString(lead) or std.mem.eql(u8, lead, "true") or std.mem.eql(u8, lead, "false"))) {
                         s = lead;
+                    } else if (lead.len > 0 and (std.ascii.isDigit(lead[0]) or (lead[0] == '-' and lead.len > 1 and std.ascii.isDigit(lead[1])))) {
+                        var i: usize = 0;
+                        if (lead[0] == '-') i = 1;
+                        while (i < lead.len and (std.ascii.isDigit(lead[i]) or lead[i] == '.' or lead[i] == ',')) i += 1;
+                        if (i > 0) s = std.mem.trim(u8, lead[0..i], " \t\r\n");
                     } else if (std.mem.startsWith(u8, lead, "true") or std.mem.startsWith(u8, lead, "false")) {
                         s = if (std.mem.startsWith(u8, lead, "true")) "true" else "false";
                     }
@@ -1099,19 +1104,20 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plugin disabled: {s}\"}}", .{tc.name});
         }
 
-        const wasm_bytes = self.wasmBytes(tool) catch |err| {
-            log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s}). Run `zig build tools`.\"}}", .{ tc.name, @errorName(err) });
-        };
-
-        const sbp = try self.sandboxPtrFor(tool);
-
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ tc.name, tc.arguments });
         const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
         const mod = if (self.modules.get(tc.name)) |m|
             m
         else blk: {
+            const wasm_bytes = self.wasmBytes(tool) catch |err| {
+                log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
+                return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s}). Run `zig build tools`.\"}}", .{ tc.name, @errorName(err) });
+            };
+            const sbp = self.sandboxPtrFor(tool) catch |err| {
+                log.log(.error_, "tool '{s}': sandbox setup failed: {s}", .{ tc.name, @errorName(err) });
+                return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool sandbox failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
+            };
             const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
                 log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tc.name, @errorName(err) });
                 return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool load failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
