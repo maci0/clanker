@@ -708,6 +708,22 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
+/// ck_fs_mkdir(path) — create a directory (and parents) under the sandbox root.
+/// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
+pub fn ckFsMkdir(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    if (path.len == 0) return Err.invalid;
+    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+    std.Io.Dir.cwd().createDirPath(h.sandbox.io, full) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        else => return Err.invalid,
+    };
+    return Err.ok;
+}
+
 pub fn ckFsRead(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -1027,6 +1043,29 @@ test "argDenied matches operator tokens anywhere, word tokens only at boundaries
     try std.testing.expect(argDenied("gc", "gc"));
     try std.testing.expect(argDenied("-force", "-f"));
     try std.testing.expect(argDenied("--force", "--force"));
+}
+
+test "ckFsMkdir rejects paths outside sandbox" {
+    // We can't call ckFsMkdir directly (needs a zwasm.Caller), but we can
+    // verify the safeJoin policy it relies on rejects the same cases.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"data/"},
+        .environ_map = undefined,
+    };
+    // Allowed prefix
+    const ok = try safeJoin(&sb, "data/subdir");
+    defer std.testing.allocator.free(ok);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/subdir", ok);
+    // Disallowed prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "other/subdir"));
+    // Traversal
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc"));
+    // Empty
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
 test "safeJoin rejects escapes" {
