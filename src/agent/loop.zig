@@ -80,6 +80,7 @@ pub const Agent = struct {
 
         var iteration: u32 = 0;
         while (iteration < self.max_iterations) : (iteration += 1) {
+            try self.maybeCompactMessages(messages);
             const resp = try client.chat(self.ctx, self.arena, .{
                 .provider = self.provider,
                 .messages = messages.items,
@@ -116,6 +117,27 @@ pub const Agent = struct {
         }
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
+    }
+
+    /// Compacts the conversation history to keep context size bounded: if the
+    /// accumulated message bytes (content + tool arguments) exceed 24000,
+    /// keeps the system message and the last 6 messages, replacing the
+    /// removed middle with a single user placeholder message.
+    fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
+        var total: usize = 0;
+        for (messages.items) |m| {
+            if (m.content) |c| total += c.len;
+            if (m.tool_calls) |calls| {
+                for (calls) |tc| total += tc.arguments.len;
+            }
+        }
+        if (total <= 24000) return;
+        // Need at least system + one middle + last 6 = 8 messages to compact.
+        if (messages.items.len <= 7) return;
+        log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
+        const placeholder: []const u8 = "[earlier conversation compacted — the context is summarized above in learnings and skills]";
+        const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
+        try messages.replaceRange(self.arena, 1, messages.items.len - 7, &new_mid);
     }
 
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
