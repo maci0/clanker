@@ -31,6 +31,16 @@ pub fn build(
     try buf.appendSlice(arena, base);
     try buf.appendSlice(arena, "\n\n");
 
+    // Project conventions (AGENTS.md).
+    const agents_md = std.Io.Dir.cwd().readFileAlloc(io, "AGENTS.md", arena, .limited(64 * 1024)) catch null;
+    if (agents_md) |content| {
+        if (content.len > 0) {
+            try buf.appendSlice(arena, "## Project conventions (AGENTS.md)\n\n");
+            try buf.appendSlice(arena, content);
+            try buf.appendSlice(arena, "\n\n");
+        }
+    }
+
     // Skills (agent-editable markdown files in skills_dir).
     var dir = std.Io.Dir.cwd().openDir(io, parts.skills_dir, .{ .iterate = true }) catch null;
     if (dir) |*d| {
