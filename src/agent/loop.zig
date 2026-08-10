@@ -998,7 +998,10 @@ pub const Agent = struct {
         const out = try mod.executeTool(input);
         defer self.ctx.gpa.free(out);
 
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, out, .{ .ignore_unknown_fields = true }) catch return null;
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, out, .{ .ignore_unknown_fields = true }) catch |err| {
+            log.log(.warn, "transform '{s}': output is not valid JSON ({s}), skipping", .{ tool.name, @errorName(err) });
+            return null;
+        };
         if (parsed != .object) return null;
         if (parsed.object.get("ok")) |ok| {
             if (ok == .bool and !ok.bool) return null;
