@@ -288,6 +288,31 @@ pub const Agent = struct {
                 }
             }
 
+            try messages.append(self.arena, resp.message);
+
+            const maybe_calls = resp.message.tool_calls;
+            // A final answer must never be discarded just because the call that
+            // produced it crossed the session budget: the caller wants that exact
+            // answer (and the answer_format eval asserts it). Return it before the
+            // budget check below, which can then only terminate a run that still
+            // wants to call tools.
+            if (maybe_calls == null or maybe_calls.?.len == 0) {
+                try g.add(self.ctx.gpa, .{
+                    .kind = .final,
+                    .iteration = iteration + 1,
+                    .label = "final",
+                    .detail = resp.finish_reason orelse "",
+                    .result_bytes = if (resp.message.content) |c| c.len else 0,
+                    .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                    .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
+                });
+                return try self.finish(messages, resp);
+            }
+            const calls = maybe_calls.?;
+
+            // Session budget exhausted: the agent can no longer afford more tool
+            // calls, so stop instead of running past the cap. (Final answers were
+            // already returned above and are never sacrificed to the budget.)
             if (self.cfg.modules.token_budget) {
                 if (self.cfg.agent.max_total_tokens) |budget| {
                     if (self.stats.total_tokens >= budget) {
@@ -296,33 +321,6 @@ pub const Agent = struct {
                         break;
                     }
                 }
-            }
-
-            try messages.append(self.arena, resp.message);
-
-            const calls = resp.message.tool_calls orelse {
-                try g.add(self.ctx.gpa, .{
-                    .kind = .final,
-                    .iteration = iteration + 1,
-                    .label = "final",
-                    .detail = resp.finish_reason orelse "",
-                    .result_bytes = if (resp.message.content) |c| c.len else 0,
-                    .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
-                    .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
-                });
-                return try self.finish(messages, resp);
-            };
-            if (calls.len == 0) {
-                try g.add(self.ctx.gpa, .{
-                    .kind = .final,
-                    .iteration = iteration + 1,
-                    .label = "final",
-                    .detail = resp.finish_reason orelse "",
-                    .result_bytes = if (resp.message.content) |c| c.len else 0,
-                    .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
-                    .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
-                });
-                return try self.finish(messages, resp);
             }
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
