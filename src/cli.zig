@@ -250,26 +250,47 @@ fn writeStdErr(io: std.Io, bytes: []const u8) !void {
 
 // -------------------------------------------------------------------- init --
 
+/// Memorable auto-generated instance names (adjective-noun), so multi-instance
+/// setups identify each other by names like "clanker-cobalt-otter" instead of
+/// opaque ids.
+const name_adjectives = [_][]const u8{ "amber", "azure", "cobalt", "crimson", "ember", "frost", "golden", "jade", "misty", "onyx", "rustic", "sage", "silver", "stormy", "swift", "velvet" };
+const name_nouns = [_][]const u8{ "badger", "cactus", "dolphin", "falcon", "gecko", "heron", "jaguar", "koala", "lemur", "manta", "narwhal", "otter", "panda", "quokka", "raven", "sloth", "tiger", "viper", "wolf", "zebra" };
+
+fn friendlyInstanceName(arena: std.mem.Allocator, io: std.Io) !struct { name: []const u8, id: []const u8 } {
+    const ts: u64 = @intCast(std.Io.Timestamp.now(io, .real).nanoseconds);
+    var prng = std.Random.DefaultPrng.init(ts ^ (ts >> 32));
+    const r = prng.random();
+    const adj = name_adjectives[r.uintLessThan(usize, name_adjectives.len)];
+    const noun = name_nouns[r.uintLessThan(usize, name_nouns.len)];
+    const id = try std.fmt.allocPrint(arena, "{s}-{s}", .{ adj, noun });
+    const name = try std.fmt.allocPrint(arena, "clanker-{s}", .{id});
+    return .{ .name = name, .id = id };
+}
+
 const local_template =
-    \\{
+    \\{{
     \\  "default_provider": "deepseek",
-    \\  "providers": {
-    \\    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 }
-    \\  },
-    \\  "agent": { "max_iterations": 12 },
-    \\  "improve": { "min_delta": 0.05 }
-    \\}
+    \\  "providers": {{
+    \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 }}
+    \\  }},
+    \\  "instance": {{ "name": "{s}", "id": "{s}" }},
+    \\  "agent": {{ "max_iterations": 12 }},
+    \\  "improve": {{ "min_delta": 0.05 }}
+    \\}}
     \\
 ;
 
 fn cmdInit(init: std.process.Init) !void {
     const io = init.io;
     const dir = std.Io.Dir.cwd();
+    const arena = init.arena.allocator();
     const local = "config.local.json";
     _ = dir.openFile(io, local, .{}) catch |err| switch (err) {
         error.FileNotFound => {
-            try dir.writeFile(io, .{ .sub_path = local, .data = local_template });
-            log.log(.info, "wrote {s}", .{local});
+            const ident = try friendlyInstanceName(arena, io);
+            const content = try std.fmt.allocPrint(arena, local_template, .{ ident.name, ident.id });
+            try dir.writeFile(io, .{ .sub_path = local, .data = content });
+            log.log(.info, "wrote {s} (instance '{s}')", .{ local, ident.name });
         },
         else => return err,
     };
@@ -954,6 +975,8 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     defer server.socket.close(io);
 
     log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
+    // Bare clickable URL (no log prefix) so terminals render it as a link.
+    std.debug.print("http://127.0.0.1:{d}/webui\n", .{port});
 
     while (true) {
         const stream = server.accept(io) catch |err| {
@@ -1140,14 +1163,18 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Strea
     s.beginObject() catch return;
     s.objectField("jsonrpc") catch return;
     s.write("2.0") catch return;
-    s.objectField("result") catch return;
-    s.beginObject() catch return;
+    // JSON-RPC 2.0: the response id belongs at the top level so callers can
+    // correlate it with their request (it was previously nested in result).
     s.objectField("id") catch return;
     s.write(id) catch return;
+    s.objectField("result") catch return;
+    s.beginObject() catch return;
     s.objectField("message") catch return;
     s.beginObject() catch return;
+    // A2A: messages produced by the agent must carry role "agent";
+    // role "user" makes peers treat our reply as new user input.
     s.objectField("role") catch return;
-    s.write("user") catch return;
+    s.write("agent") catch return;
     s.objectField("parts") catch return;
     s.beginArray() catch return;
     s.beginObject() catch return;
@@ -1166,7 +1193,21 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Strea
 
 const RunRequestBody = struct {
     task: []const u8 = "",
+    /// When true, the answer is streamed back as plain text chunks as the
+    /// agent produces it (Connection: close terminates the stream).
+    stream: bool = false,
 };
+
+/// Module-level socket for streaming /api/run output. The serve loop is
+/// single-threaded (one connection handled to completion at a time), so a
+/// single module-level writer is safe.
+var run_stream_socket: ?std.posix.fd_t = null;
+
+fn runStreamDelta(delta: []const u8) void {
+    if (run_stream_socket) |fd| {
+        writeAllFd(fd, delta);
+    }
+}
 
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
 /// resulting HTML page.
@@ -1292,14 +1333,47 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     };
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
-    const resp = a.run(&messages, req.task, &err_detail) catch |err| {
-        const detail = err_detail orelse @errorName(err);
-        var ebuf: [8192]u8 = undefined;
-        const ebody = std.fmt.bufPrint(&ebuf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{detail}) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"run failed\"}");
+
+    if (req.stream) {
+        // Streaming mode: send headers up front, then the agent's tokens as
+        // they are produced; the final newline + Connection: close ends the
+        // stream on the client side.
+        writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n");
+        run_stream_socket = stream.socket.handle;
+        defer run_stream_socket = null;
+        a.on_token = &runStreamDelta;
+        const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+            const detail = err_detail orelse @errorName(err);
+            writeAllFd(stream.socket.handle, "\n[error: ");
+            writeAllFd(stream.socket.handle, detail);
+            writeAllFd(stream.socket.handle, "]\n");
             return;
         };
-        respond(stream, 500, "Internal Server Error", ebody);
+        if (resp.message.content) |c| {
+            if (c.len > 0) writeAllFd(stream.socket.handle, c);
+        }
+        writeAllFd(stream.socket.handle, "\n");
+        return;
+    }
+
+    const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+        const detail = err_detail orelse @errorName(err);
+        // Escape `detail` through the JSON stringifier: provider error text
+        // can contain quotes, backslashes, or newlines that plain bufPrint
+        // interpolation would turn into malformed JSON clients cannot parse.
+        var ebuf: [8192]u8 = undefined;
+        var ew: std.Io.Writer = .fixed(&ebuf);
+        var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
+        const built = err_body: {
+            es.beginObject() catch break :err_body false;
+            es.objectField("ok") catch break :err_body false;
+            es.write(false) catch break :err_body false;
+            es.objectField("error") catch break :err_body false;
+            es.write(detail) catch break :err_body false;
+            es.endObject() catch break :err_body false;
+            break :err_body true;
+        };
+        respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
         return;
     };
 
