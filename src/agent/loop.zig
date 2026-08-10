@@ -10,7 +10,7 @@ const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
-const autolearn = @import("../autolearn.zig");
+const autolearn = @import("autolearn.zig");
 const log = @import("../util/log.zig");
 
 /// Cumulative token usage across all LLM calls in a single agent run.
@@ -51,6 +51,9 @@ pub const Agent = struct {
     /// Nested sub-agent runner, wired by the app when modules.subagents is
     /// enabled (powers the subagent tool via ck_subagent).
     subagent_runner: ?host.SubagentRunner = null,
+    /// When set, tool calls run strictly sequentially (no worker threads).
+    /// Used by sub-agent runs to avoid spawning threads from within threads.
+    no_parallel_tools: bool = false,
     /// Optional hook fired right before a batch of tool calls executes (e.g.
     /// the REPL prints a "running: ..." status line to cover the otherwise
     /// silent gap between tool dispatch and the next streamed token).
@@ -176,6 +179,14 @@ pub const Agent = struct {
                 .ok = true,
             });
 
+            // RLM: persist reasoning traces so the agent can review and learn
+            // from its own chain-of-thought (reasoning tool / modules.rlm).
+            if (self.cfg.modules.rlm) {
+                if (resp.reasoning) |r| {
+                    if (r.len > 0) recordReasoning(self.ctx.io, self.ctx.gpa, self.arena, self.provider.name, self.provider.activeModelName(), task, r);
+                }
+            }
+
             if (resp.usage) |u| {
                 self.stats.total_prompt_tokens += u.prompt_tokens;
                 self.stats.total_completion_tokens += u.completion_tokens;
@@ -269,6 +280,37 @@ pub const Agent = struct {
         return error.MaxIterationsExceeded;
     }
 
+    /// Appends one reasoning trace to state/reasoning.jsonl (RLM).
+    fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
+        std.Io.Dir.cwd().createDirPath(io, "state") catch return;
+        const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        var buf: [65536]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        var s = std.json.Stringify{ .writer = &w, .options = .{} };
+        s.beginObject() catch return;
+        s.objectField("ts") catch return;
+        s.print("{d}", .{ts}) catch return;
+        s.objectField("provider") catch return;
+        s.write(provider) catch return;
+        s.objectField("model") catch return;
+        s.write(model) catch return;
+        s.objectField("task") catch return;
+        s.write(if (task.len > 200) task[0..200] else task) catch return;
+        s.objectField("reasoning") catch return;
+        s.write(if (reasoning.len > 20000) reasoning[0..20000] else reasoning) catch return;
+        s.endObject() catch return;
+
+        const path = "state/reasoning.jsonl";
+        const existing = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 24)) catch "";
+        var out: std.ArrayList(u8) = .empty;
+        defer out.deinit(gpa);
+        out.appendSlice(gpa, existing) catch return;
+        if (existing.len > 0 and existing[existing.len - 1] != '\n') out.append(gpa, '\n') catch return;
+        out.appendSlice(gpa, buf[0..w.end]) catch return;
+        out.append(gpa, '\n') catch return;
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch {};
+    }
+
     /// Compacts the conversation history to keep context size bounded: if the
     /// accumulated message bytes (content + tool arguments) exceed the
     /// effective threshold (compact_threshold_bytes, capped at half the
@@ -340,13 +382,15 @@ pub const Agent = struct {
         // { ... }"), extract the first JSON object/array — the answer_format
         // eval expects an exact-match value, not prose.
         var js_start: ?usize = null;
-        // Prefer a JSON object if present, even if an array appears earlier
-        // in prose (the answer_format eval expects an exact-match value, and
-        // JSON objects are the overwhelmingly common answer format).
-        if (std.mem.indexOfScalar(u8, s, '{')) |i| {
-            js_start = i;
-        } else if (std.mem.indexOfScalar(u8, s, '[')) |i| {
-            js_start = i;
+        // Pick whichever of a JSON object or array appears first in the answer.
+        // Preferring objects can misparse an expected array when prose contains
+        // an earlier '{'; the answer_format eval needs the exact value.
+        const obj_start = std.mem.indexOfScalar(u8, s, '{');
+        const arr_start = std.mem.indexOfScalar(u8, s, '[');
+        if (obj_start != null or arr_start != null) {
+            js_start = if (obj_start != null and arr_start != null)
+                @min(obj_start.?, arr_start.?)
+            else if (obj_start != null) obj_start else arr_start;
         }
         if (js_start) |start| {
             var depth: usize = 0;
@@ -382,6 +426,12 @@ pub const Agent = struct {
             if (last_line.len > 0) s = last_line;
             if (std.mem.indexOf(u8, s, ": ")) |colon| {
                 s = std.mem.trim(u8, s[colon + 1 ..], " \t\r\n");
+            }
+            // A scalar answer often carries trailing punctuation ("42.", "yes!")
+            // that the eval treats as part of the value; strip punctuation so
+            // the returned value exactly matches the requested format.
+            while (s.len > 0 and (s[s.len - 1] == '.' or s[s.len - 1] == ',' or s[s.len - 1] == ';')) {
+                s = std.mem.trim(u8, s[0 .. s.len - 1], " \t\r\n");
             }
         }
         if (s.len != content.len) {
@@ -604,6 +654,7 @@ pub const Agent = struct {
             // chain, go through the sequential pass below: one provider call at
             // a time, and no worker thread sharing the HTTP client.
             if (tool.llm or !tool.enabled) continue;
+            if (self.no_parallel_tools) continue;
             if ((try self.reg.transformsFor(self.arena, tc.name, .before)).len > 0) continue;
             if ((try self.reg.transformsFor(self.arena, tc.name, .after)).len > 0) continue;
             const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
