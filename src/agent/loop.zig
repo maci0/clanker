@@ -829,7 +829,10 @@ pub const Agent = struct {
 
     /// Runs one transform module. Returns null when it declined to rewrite.
     fn runTransform(self: *Agent, tool: *const registry.Tool, input: []const u8) !?[]const u8 {
-        const wasm_bytes = try self.wasmBytes(tool.name, tool);
+        const wasm_bytes = self.wasmBytes(tool.name, tool) catch |err| {
+            log.log(.error_, "transform '{s}': cannot load {s}: {s}", .{ tool.name, tool.wasm, @errorName(err) });
+            return err;
+        };
 
         var sb = try self.sandboxFor(tool);
         // Transform modules are not cached in `self.modules`: they are keyed by
