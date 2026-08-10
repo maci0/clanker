@@ -535,24 +535,43 @@ pub const Agent = struct {
         // Threshold floors: compaction must never race the per-turn cap,
         // which would otherwise terminate the run before compaction runs.
         threshold = @max(threshold, max_per_turn_tokens);
-        if (estimated_tokens <= threshold) return;
-        // Need at least system + one middle + last 6 = 8 messages to compact.
-        if (messages.items.len <= 7) return;
+        const keep_start = compactionKeepStart(messages.items, estimated_tokens, threshold) orelse return;
         log.log(.info, "compacting conversation: {d} messages, ~{d} estimated tokens (threshold {d})", .{ messages.items.len, estimated_tokens, threshold });
-        // Never split a tool-call exchange: if the kept window would start
-        // with tool-result messages whose assistant tool_call message is being
-        // removed, extend the window backwards to include it. Providers reject
-        // tool messages that do not follow a matching tool_calls message.
-        var keep_start = messages.items.len - 6;
-        while (keep_start > 1 and messages.items[keep_start].role == .tool) keep_start -= 1;
         // Build a summary of the messages being removed (indices 1..keep_start-1).
         const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
             log.log(.warn, "compaction summary failed ({s}), using static placeholder", .{@errorName(err)});
             break :blk null;
         };
         const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
+        try compactMiddle(messages, self.arena, keep_start, placeholder);
+    }
+
+    /// Decides whether compaction should run and, if so, where the kept tail
+    /// window starts: returns null when the history fits the budget or is too
+    /// short to compact, otherwise the index such that messages[0] (the system
+    /// prompt) and messages[keep_start..] are preserved while the middle is
+    /// replaced by a summary. The window is extended backwards past tool-result
+    /// messages so a tool_call/tool-result exchange is never split (providers
+    /// reject tool messages with no matching tool_calls message). Pure decision
+    /// logic, split out of maybeCompactMessages so the unit test can exercise
+    /// it without a provider or an LLM call.
+    fn compactionKeepStart(messages: []const types.Message, estimated_tokens: usize, threshold: usize) ?usize {
+        if (estimated_tokens <= threshold) return null;
+        // Need at least system + one middle + last 6 = 8 messages to compact.
+        if (messages.len <= 7) return null;
+        var keep_start = messages.len - 6;
+        while (keep_start > 1 and messages[keep_start].role == .tool) keep_start -= 1;
+        return keep_start;
+    }
+
+    /// Replaces messages[1..keep_start] with a single synthetic user message
+    /// carrying `placeholder`, preserving the leading system message and the
+    /// recent tail verbatim. Split out of maybeCompactMessages so the
+    /// drop/preserve behavior is unit-testable without an LLM summarization
+    /// call.
+    fn compactMiddle(messages: *std.ArrayList(types.Message), arena: std.mem.Allocator, keep_start: usize, placeholder: []const u8) !void {
         const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
-        try messages.replaceRange(self.arena, 1, keep_start - 1, &new_mid);
+        try messages.replaceRange(arena, 1, keep_start - 1, &new_mid);
     }
 
     /// Produces a concise summary of a slice of conversation messages by
@@ -1523,4 +1542,74 @@ test "the parallel-tool stack reservation stays above the observed crash floor" 
     const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, W.run, .{&w});
     thread.join();
     try std.testing.expectEqual(@as(i32, 42), w.sum orelse return error.WorkerDidNotRun);
+}
+
+test "maybeCompactMessages drops the middle, keeps the system prompt and the recent tail" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // maybeCompactMessages itself needs a live provider (its threshold comes
+    // from provider.activeModel().context_window and the compaction path
+    // summarizes the dropped middle with an LLM call), so this test drives its
+    // two extracted pieces: compactionKeepStart (the budget/window decision)
+    // and compactMiddle (the drop/preserve rewrite). A regression in either —
+    // an inverted budget check, the wrong messages dropped, compaction
+    // silently disabled, or the system prompt evicted — fails here.
+    const filler = "x" ** 256;
+    var messages: std.ArrayList(types.Message) = .empty;
+    try messages.append(arena, .{ .role = .system, .content = "system prompt" });
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        try messages.append(arena, .{ .role = .user, .content = filler });
+        try messages.append(arena, .{ .role = .assistant, .content = filler });
+    }
+    const before_len = messages.items.len; // system + 4 user/assistant pairs
+    try std.testing.expect(before_len == 9);
+
+    const estimated = Agent.estimateMessageTokens(messages.items);
+    const threshold: usize = 16; // far below this history's estimated size
+    try std.testing.expect(estimated > threshold);
+
+    // Under budget: no compaction (an inverted budget check fails this).
+    try std.testing.expect(Agent.compactionKeepStart(messages.items, estimated, estimated + 1) == null);
+    // Too short to compact even when over budget: system + 6 messages.
+    try std.testing.expect(Agent.compactionKeepStart(messages.items[0..7], estimated, threshold) == null);
+
+    // Over budget with enough messages: keep system + summary + last 6.
+    const keep_start = Agent.compactionKeepStart(messages.items, estimated, threshold) orelse return error.TestExpectedCompaction;
+    try std.testing.expect(keep_start == 3);
+
+    try Agent.compactMiddle(&messages, arena, keep_start, "[test summary]");
+
+    // (a) The list shrank: the two dropped middle messages became one summary.
+    try std.testing.expect(messages.items.len == before_len - 1);
+    // (b) The system message is still first and unchanged.
+    try std.testing.expect(messages.items[0].role == .system);
+    try std.testing.expectEqualStrings("system prompt", messages.items[0].content.?);
+    // The summary sits where the dropped middle was.
+    try std.testing.expect(messages.items[1].role == .user);
+    try std.testing.expectEqualStrings("[test summary]", messages.items[1].content.?);
+    // (c) The most recent user/assistant turns are retained verbatim.
+    try std.testing.expect(messages.items[messages.items.len - 1].role == .assistant);
+    try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 1].content.?);
+    try std.testing.expect(messages.items[messages.items.len - 2].role == .user);
+    try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 2].content.?);
+}
+
+test "compactionKeepStart never splits a tool-call exchange" {
+    // If the kept window would begin with tool-result messages whose
+    // assistant tool_calls message is being dropped, the window must extend
+    // backwards to include it — providers reject orphaned tool messages.
+    var msgs: [9]types.Message = undefined;
+    msgs[0] = .{ .role = .system, .content = "sys" };
+    var i: usize = 1;
+    while (i < 9) : (i += 1) msgs[i] = .{ .role = .user, .content = "turn" };
+    // A tool exchange straddling the window boundary: assistant at index 2,
+    // tool results at 3 and 4; len - 6 = 3 lands on a tool message.
+    msgs[2] = .{ .role = .assistant, .content = "calls" };
+    msgs[3] = .{ .role = .tool, .content = "r1" };
+    msgs[4] = .{ .role = .tool, .content = "r2" };
+    const keep_start = Agent.compactionKeepStart(&msgs, 10_000, 16) orelse return error.TestExpectedCompaction;
+    try std.testing.expect(keep_start == 2);
 }
