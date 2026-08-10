@@ -423,6 +423,8 @@ pub const Agent = struct {
                     if (std.mem.startsWith(u8, content, "{\"ok\":false")) {
                         const kind: []const u8 = if (std.mem.indexOf(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
                         autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, kind, tc.name, "");
+                    } else {
+                        autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, "tool_call", tc.name, "");
                     }
                     try used_tools.append(self.ctx.gpa, tc.name);
                 }
