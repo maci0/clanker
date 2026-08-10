@@ -948,6 +948,19 @@ pub fn ckFsRead(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return fsReadImpl(h, bytes, path);
 }
 
+/// ck_fs_read_range(path, offset, length) — read a byte range from a file
+/// under the sandbox root. Returns the slice [offset, offset+length) of the
+/// file in the host arena. If the file is shorter than offset+length the
+/// returned data is truncated to what is available (which may be empty if
+/// offset >= file size). `length` is capped at max_fs_bytes.
+/// Enforces the same fs_prefixes policy as ck_fs_read.
+pub fn ckFsReadRange(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, offset: u32, length: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    return fsReadRangeImpl(h, bytes, path, offset, length);
+}
+
 fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
     const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
@@ -958,6 +971,33 @@ fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
     };
     defer h.sandbox.gpa.free(data);
     return h.writeResult(mem_bytes, data);
+}
+
+fn fsReadRangeImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, offset: u32, length: u32) u32 {
+    if (length == 0) return h.writeResult(mem_bytes, "");
+    const capped_len: usize = @min(@as(usize, length), h.sandbox.max_fs_bytes);
+    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+
+    var file = std.Io.Dir.cwd().openFile(h.sandbox.io, full, .{}) catch |err| switch (err) {
+        error.FileNotFound => return Err.not_found,
+        else => return Err.invalid,
+    };
+    defer file.close(h.sandbox.io);
+
+    // Get the file size via stat to handle offset >= size gracefully.
+    const stat = file.stat(h.sandbox.io) catch return Err.invalid;
+    if (@as(u64, offset) >= stat.size) return h.writeResult(mem_bytes, "");
+    const avail = stat.size - @as(u64, offset);
+    const to_read: usize = @intCast(@min(avail, capped_len));
+
+    // Seek to offset.
+    file.seekTo(h.sandbox.io, @as(u64, offset)) catch return Err.invalid;
+
+    const buf = h.sandbox.gpa.alloc(u8, to_read) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    const n = file.readAll(h.sandbox.io, buf) catch return Err.invalid;
+    return h.writeResult(mem_bytes, buf[0..n]);
 }
 
 /// ck_fs_append(path, data) — append data to a file under the sandbox root.
