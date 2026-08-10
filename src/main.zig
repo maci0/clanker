@@ -9,7 +9,6 @@ comptime {
     _ = @import("llm/types.zig");
     _ = @import("llm/providers.zig");
     _ = @import("llm/client.zig");
-    _ = @import("llm/mock_server.zig");
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
