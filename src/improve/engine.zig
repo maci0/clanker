@@ -37,7 +37,7 @@ pub const Options = struct {
 
 /// Directories/files copied into staging for the compile gate. Must be enough
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
-const staging_roots = [_][]const u8{ "src", "tool-src", "tests", "tool-bin", "build.zig", "build.zig.zon", "config.json" };
+const staging_roots = [_][]const u8{ "src", "tool-src", "tests", "tool-bin", "docs", "README.md", "build.zig", "build.zig.zon", "config.json" };
 
 const gate_evals = [_][]const u8{ "selfhost_build", "selfhost_tests", "selfhost_tools" };
 

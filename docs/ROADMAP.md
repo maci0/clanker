@@ -42,4 +42,3 @@
 - **Remaining evals/coverage gaps** — expand eval coverage to more modules.
 - **Peer group messaging with shared todos** — collaborative task management between agents.
 - **Other ideas** — e.g. more advanced sandbox policies, multi-tenant deployments.
-- [ ] **placeholder-test** — delete me

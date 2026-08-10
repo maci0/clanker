@@ -251,6 +251,35 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
     return h.writeResult(mem_bytes, response);
 }
 
+/// Lists the file names (not directories) under an allowed directory, as a
+/// JSON string array written to the host arena. Enforces the same
+/// fs_prefixes policy as ck_fs_read.
+pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+
+    var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
+    defer dir.close(h.sandbox.io);
+
+    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    var w: std.Io.Writer = .fixed(buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginArray() catch return Err.too_large;
+    var it = dir.iterate();
+    while (it.next(h.sandbox.io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (entry.name.len == 0) continue;
+        if (w.end + entry.name.len + 4 > h.sandbox.max_fs_bytes) return Err.too_large;
+        s.write(entry.name) catch return Err.too_large;
+    }
+    s.endArray() catch return Err.too_large;
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
 pub fn ckFsRead(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;

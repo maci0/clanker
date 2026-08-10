@@ -17,6 +17,7 @@ extern fn ck_random() u64;
 extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
+extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
@@ -159,6 +160,19 @@ pub const FsError = error{ SandboxDenied, NotFound, TooLarge, IoError };
 pub fn fsRead(path: []const u8) FsError![]const u8 {
     const p = sliceToMem(path);
     const rc = ck_fs_read(p.ptr, p.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
+/// Lists file names under an allowed directory (JSON string array).
+pub fn fsList(path: []const u8) FsError![]const u8 {
+    const p = sliceToMem(path);
+    const rc = ck_fs_list(p.ptr, p.len);
     return switch (rc) {
         0 => readResult() orelse error.IoError,
         1 => error.SandboxDenied,

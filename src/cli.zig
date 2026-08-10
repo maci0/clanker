@@ -13,6 +13,9 @@ const improve = @import("improve/engine.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
+const graph = @import("agent/graph.zig");
+const runtime = @import("sandbox/runtime.zig");
+const host = @import("sandbox/host.zig");
 const log = @import("util/log.zig");
 
 pub const Command = enum {
@@ -32,6 +35,7 @@ pub const Command = enum {
     phonebook,
     serve,
     repl,
+    graph,
 };
 
 pub const Options = struct {
@@ -145,6 +149,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .phonebook;
             } else if (std.mem.eql(u8, a, "serve")) {
                 opts.command = .serve;
+            } else if (std.mem.eql(u8, a, "graph")) {
+                opts.command = .graph;
             } else if (std.mem.eql(u8, a, "repl")) {
                 opts.command = .repl;
             } else {
@@ -167,6 +173,8 @@ pub fn parse(args: []const []const u8) !Options {
         } else if (opts.command == .providers_check and opts.provider == null) {
             opts.provider = a;
         } else if (opts.command == .run and opts.task == null) {
+            opts.task = a;
+        } else if (opts.command == .graph and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .notify and opts.peer == null) {
             opts.peer = a;
@@ -219,6 +227,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .phonebook => try cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
         .repl => try cmdRepl(init, opts),
+        .graph => try cmdGraph(init, opts),
     }
 }
 
@@ -468,11 +477,44 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
                 return;
             }
             if (std.mem.eql(u8, line, ":help")) {
-                try out_w.interface.writeAll("REPL commands: :quit  :help   (any other text is a task)\n");
+                try out_w.interface.writeAll("REPL commands: :quit  :help  /help  (any other text is a task)\n");
                 try out_w.interface.flush();
                 const rest1 = acc.items[nl + 1 ..];
                 std.mem.copyForwards(u8, acc.items[0..rest1.len], rest1);
                 acc.items.len = rest1.len;
+                continue;
+            }
+            if (line[0] == '/') {
+                // Slash commands: /quit|/exit leave the REPL, /goal runs the
+                // agent (which persists via the goal WASM tool), everything
+                // else dispatches to an internal cmd_<name> WASM tool.
+                // NOTE: `line` is a view into acc.items and must be fully
+                // consumed BEFORE the buffer is shifted below.
+                if (std.mem.eql(u8, line, "/quit") or std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "/exit")) {
+                    try out_w.interface.writeAll("\n");
+                    try out_w.interface.flush();
+                    return;
+                }
+                var goal_task: ?[]const u8 = null;
+                if (std.mem.startsWith(u8, line, "/goal")) {
+                    const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
+                    if (intent.len == 0) {
+                        try out_w.interface.writeAll("usage: /goal <intent>\n");
+                        try out_w.interface.flush();
+                    } else {
+                        goal_task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
+                    }
+                } else {
+                    try replSlashTool(io, gpa, arena, &cfg, init.environ_map, &reg, line, &out_w);
+                }
+                const slash_rest = acc.items[nl + 1 ..];
+                std.mem.copyForwards(u8, acc.items[0..slash_rest.len], slash_rest);
+                acc.items.len = slash_rest.len;
+                if (goal_task) |gt| {
+                    const owned = try arena.dupe(u8, gt);
+                    const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
+                    if (quit) return;
+                }
                 continue;
             }
             // Copy the task text into the arena BEFORE shifting the buffer:
@@ -485,6 +527,92 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
             if (quit) return;
         }
     }
+}
+
+/// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
+/// prints its `{"ok":true,"text":"..."}` output.
+fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, line: []const u8, out_w: *std.Io.File.Writer) !void {
+    const rest_start = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
+    const name = line[1..rest_start];
+    const args = std.mem.trimStart(u8, line[rest_start..], " ");
+
+    const tool_name = try std.fmt.allocPrint(arena, "cmd_{s}", .{name});
+    const tool = reg.get(tool_name) orelse {
+        try out_w.interface.writeAll("unknown command: /");
+        try out_w.interface.writeAll(name);
+        try out_w.interface.writeAll("   (try /help)\n");
+        try out_w.interface.flush();
+        return;
+    };
+
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+        try out_w.interface.writeAll("slash tool wasm missing (run zig build tools)\n");
+        try out_w.interface.flush();
+        return;
+    };
+    defer gpa.free(wasm_bytes);
+
+    var sb = host.Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = cfg.agent.sandbox_root,
+        .network_allow = tool.network_allow,
+        .environ_map = environ_map,
+    };
+    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
+        try out_w.interface.writeAll("slash tool load failed\n");
+        try out_w.interface.flush();
+        return;
+    };
+    defer mod.deinit();
+
+    var ibuf: [8192]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    try is.objectField("args");
+    try is.write(args);
+    try is.endObject();
+
+    const out = mod.executeTool(ibuf[0..iw.end]) catch {
+        try out_w.interface.writeAll("slash tool execution failed\n");
+        try out_w.interface.flush();
+        return;
+    };
+    defer gpa.free(out);
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{ .ignore_unknown_fields = true }) catch {
+        try out_w.interface.writeAll(out);
+        try out_w.interface.writeAll("\n");
+        try out_w.interface.flush();
+        return;
+    };
+    var text: []const u8 = "";
+    var ok = false;
+    if (parsed == .object) {
+        if (parsed.object.get("ok")) |k| {
+            if (k == .bool) ok = k.bool;
+        }
+        if (parsed.object.get("text")) |t| {
+            if (t == .string) text = t.string;
+        }
+    }
+    if (!ok) {
+        if (parsed == .object) {
+            if (parsed.object.get("error")) |e| {
+                if (e == .string) {
+                    try out_w.interface.writeAll("error: ");
+                    try out_w.interface.writeAll(e.string);
+                    try out_w.interface.writeAll("\n");
+                    try out_w.interface.flush();
+                    return;
+                }
+            }
+        }
+    }
+    try out_w.interface.writeAll(text);
+    try out_w.interface.writeAll("\n");
+    try out_w.interface.flush();
 }
 
 /// Streams REPL output: the model's content deltas land here (via
@@ -543,6 +671,59 @@ fn cmdSessions(init: std.process.Init) !void {
         try out.writeStreamingAll(io, "\t");
         try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{d}", .{m.updated}));
         try out.writeStreamingAll(io, "\n");
+    }
+}
+
+/// `clanker graph [run-id]` — list persisted execution graphs, or render one
+/// as an ASCII timeline of LLM calls and tool invocations.
+fn cmdGraph(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = std.Io.File.stdout();
+
+    if (opts.task) |run_id| {
+        var loaded = graph.load(io, gpa, run_id) catch |err| {
+            log.log(.error_, "cannot load run '{s}': {s}", .{ run_id, @errorName(err) });
+            return err;
+        };
+        defer graph.deinitLoaded(&loaded);
+        const g = &loaded.graph;
+
+        try out.writeStreamingAll(io, g.run_id);
+        try out.writeStreamingAll(io, " — ");
+        try out.writeStreamingAll(io, g.task);
+        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  ({s}, {d}ms, prompt={d} completion={d})\n", .{ g.provider, g.duration_ms, g.totalPromptTokens(), g.totalCompletionTokens() }));
+
+        var iter_note: u32 = 0;
+        for (g.nodes.items) |n| {
+            const new_iter = n.iteration != iter_note;
+            if (new_iter) {
+                iter_note = n.iteration;
+                if (iter_note > 1) try out.writeStreamingAll(io, "\n");
+                try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "iter {d}\n", .{n.iteration}));
+            }
+            switch (n.kind) {
+                .llm => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  llm  {s}  {d}/{d} tok, {d}ms\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms })),
+                .tool => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  tool {s}  {d} B{s}{s}\n", .{ n.label, n.result_bytes, if (n.ok) "" else " FAILED", if (n.detail.len > 0) try std.fmt.allocPrint(arena, " ({s})", .{n.detail}) else "" })),
+                .final => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  done {d} B, {s}, {d}ms\n", .{ n.result_bytes, n.detail, n.duration_ms })),
+            }
+        }
+        try out.writeStreamingAll(io, "\n");
+        return;
+    }
+
+    // No run-id: list persisted runs, newest first.
+    const runs = try graph.listRuns(io, gpa, arena);
+    for (runs) |id| {
+        var loaded = graph.load(io, gpa, id) catch continue;
+        try out.writeStreamingAll(io, id);
+        try out.writeStreamingAll(io, "\t");
+        try out.writeStreamingAll(io, loaded.graph.task);
+        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "\t{d}ms\t{d} node(s)\n", .{ loaded.graph.duration_ms, loaded.graph.nodes.items.len }));
+        graph.deinitLoaded(&loaded);
     }
 }
 
@@ -760,11 +941,11 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        handleConnection(io, gpa, &cfg, port, stream);
+        handleConnection(io, gpa, &cfg, init.environ_map, port, stream);
     }
 }
 
-fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
     defer stream.close(io);
     var total: std.ArrayList(u8) = .empty;
     defer total.deinit(gpa);
@@ -786,8 +967,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
-        if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
+        if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
+            handleWebui(io, gpa, cfg, environ_map, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
             handleAgentCard(io, gpa, cfg, port, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
+            handleStatus(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
@@ -796,6 +981,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 200, "OK", "{\"ok\":true}");
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, stream, body);
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
+            handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
             respond(stream, 404, "Not Found", "{\"error\":\"not found\"}");
         }
@@ -958,9 +1145,168 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Strea
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
+const RunRequestBody = struct {
+    task: []const u8 = "",
+};
+
+/// Renders the web UI by calling the internal `webui` WASM tool and serves the
+/// resulting HTML page.
+fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
+        return;
+    };
+    const tool = reg.get("webui") orelse {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found (run zig build tools)\"}");
+        return;
+    };
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui wasm missing (run zig build tools)\"}");
+        return;
+    };
+    defer gpa.free(wasm_bytes);
+
+    var sb = host.Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = cfg.agent.sandbox_root,
+        .network_allow = tool.network_allow,
+        .environ_map = environ_map,
+    };
+    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui load failed\"}");
+        return;
+    };
+    defer mod.deinit();
+    const out = mod.executeTool("{\"path\":\"/\"}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui render failed\"}");
+        return;
+    };
+    defer gpa.free(out);
+
+    // Output: {"ok":true,"content_type":"text/html","body":"..."}
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
+        return;
+    };
+    const body = switch (parsed) {
+        .object => |o| if (o.get("body")) |b| switch (b) {
+            .string => |s| s,
+            else => return respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad body\"}"),
+        } else return respond(stream, 500, "Internal Server Error", "{\"error\":\"webui no body\"}"),
+        else => return respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}"),
+    };
+    respondHtml(stream, 200, "OK", body);
+}
+
+/// Instance + configured peers, consumed by the web UI status panel.
+fn handleStatus(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    _ = io;
+    _ = gpa;
+    var buf: [1 << 16]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("instance") catch return;
+    s.beginObject() catch return;
+    s.objectField("name") catch return;
+    s.write(cfg.instance.name) catch return;
+    s.objectField("id") catch return;
+    s.write(cfg.instance.id) catch return;
+    s.endObject() catch return;
+    s.objectField("peers") catch return;
+    s.beginArray() catch return;
+    for (cfg.peers) |p| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(p.name) catch return;
+        s.objectField("url") catch return;
+        s.write(p.url) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// Runs one agent task synchronously and returns the final answer as JSON:
+/// {"ok":true,"content":"..."} or {"ok":false,"error":"..."}.
+fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const req = std.json.parseFromSliceLeaky(RunRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        return;
+    };
+    if (req.task.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");
+        return;
+    }
+
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map };
+    var provider = cfg.provider(null) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"no default provider\"}");
+        return;
+    };
+    var provider_copy = provider.*;
+    provider = &provider_copy;
+
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
+        return;
+    };
+    const tool_defs = reg.toToolDefs(arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tool defs failed\"}");
+        return;
+    };
+
+    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
+        return;
+    };
+    var messages: std.ArrayList(types.Message) = .empty;
+    var err_detail: ?[]const u8 = null;
+    const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+        const detail = err_detail orelse @errorName(err);
+        var ebuf: [8192]u8 = undefined;
+        const ebody = std.fmt.bufPrint(&ebuf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{detail}) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"run failed\"}");
+            return;
+        };
+        respond(stream, 500, "Internal Server Error", ebody);
+        return;
+    };
+
+    const content = resp.message.content orelse "";
+    var rbuf: [1 << 20]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&rbuf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("content") catch return;
+    s.write(content) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", rbuf[0..w.end]);
+}
+
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+    writeAllFd(stream.socket.handle, hdr);
+    writeAllFd(stream.socket.handle, body);
+}
+
+fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
+    var hbuf: [4096]u8 = undefined;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
     writeAllFd(stream.socket.handle, hdr);
     writeAllFd(stream.socket.handle, body);
 }

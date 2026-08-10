@@ -144,7 +144,9 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
     }
-    const max_tokens = params.max_tokens orelse params.provider.max_tokens;
+    // Clamp the requested output budget to fit the model's context window:
+    // never ask for more completion tokens than half the window.
+    const max_tokens = @min(params.max_tokens orelse params.provider.max_tokens, params.provider.context_window / 2);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
     try s.objectField("stream");
@@ -269,7 +271,9 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
     try s.beginObject();
     try s.objectField("model");
     try jstr(&s, params.provider.model);
-    const max_tokens = params.max_tokens orelse params.provider.max_tokens;
+    // Clamp the requested output budget to fit the model's context window:
+    // never ask for more completion tokens than half the window.
+    const max_tokens = @min(params.max_tokens orelse params.provider.max_tokens, params.provider.context_window / 2);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
 

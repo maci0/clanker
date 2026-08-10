@@ -26,7 +26,11 @@ pub const Provider = struct {
     /// Endpoint path override; defaults per kind (`/chat/completions`,
     /// `/v1/messages`).
     path: ?[]const u8 = null,
+    /// Per-request max output tokens (completion cap).
     max_tokens: u32 = 1024,
+    /// Total model context window in tokens (input + output). Used to size
+    /// conversation compaction and the improve context budget.
+    context_window: u32 = 131072,
     temperature: ?f64 = null,
     /// Keeps reasoning models' chain-of-thought short so `content` stays
     /// populated (e.g. DeepSeek v4: "low" | "medium").
@@ -183,6 +187,9 @@ pub const Config = struct {
         }
         if (obj.get("max_tokens")) |k| {
             p.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
+        }
+        if (obj.get("context_window")) |k| {
+            p.context_window = @intCast(try jsonInt(k, "context_window"));
         }
         if (obj.get("temperature")) |k| {
             p.temperature = try jsonFloat(k, "temperature");

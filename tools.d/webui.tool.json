@@ -1,0 +1,15 @@
+{
+  "name": "webui",
+  "description": "serve the clanker web UI (single-file htmx + Alpine page)",
+  "wasm": "zig-out/tools/webui.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string" }
+    },
+    "required": ["path"]
+  },
+  "network_allow": [],
+  "fs_prefixes": [],
+  "internal": true
+}

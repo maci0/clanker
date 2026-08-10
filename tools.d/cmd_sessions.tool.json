@@ -1,0 +1,8 @@
+{
+  "name": "cmd_sessions",
+  "description": "list saved sessions",
+  "wasm": "zig-out/tools/cmd_sessions.wasm",
+  "input_schema": { "type": "object", "properties": { "args": { "type": "string" } } },
+  "fs_prefixes": ["state/sessions/"],
+  "internal": true
+}

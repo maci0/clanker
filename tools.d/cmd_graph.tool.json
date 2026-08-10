@@ -1,0 +1,8 @@
+{
+  "name": "cmd_graph",
+  "description": "show the latest execution graph",
+  "wasm": "zig-out/tools/cmd_graph.wasm",
+  "input_schema": { "type": "object", "properties": { "args": { "type": "string" } } },
+  "fs_prefixes": ["state/runs/"],
+  "internal": true
+}

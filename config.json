@@ -6,38 +6,53 @@
       "base_url": "https://api.deepseek.com",
       "api_key_env": "DEEPSEEK_API_KEY",
       "model": "deepseek-v4-flash",
-      "max_tokens": 2048
+      "max_tokens": 2048,
+      "context_window": 1048576
     },
     "openai": {
       "kind": "openai_compat",
       "base_url": "https://api.openai.com/v1",
       "api_key_env": "OPENAI_API_KEY",
-      "model": "gpt-4o-mini"
+      "model": "gpt-4o-mini",
+      "context_window": 128000
     },
     "ollama": {
       "kind": "openai_compat",
       "base_url": "http://127.0.0.1:11434/v1",
-      "model": "qwen3.5"
+      "model": "qwen3.5",
+      "context_window": 32768
     },
     "anthropic": {
       "kind": "anthropic",
       "base_url": "https://api.anthropic.com",
       "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-sonnet-4-20250514"
+      "model": "claude-sonnet-4-20250514",
+      "context_window": 200000
     },
     "muse-spark": {
       "kind": "openai_compat",
       "base_url": "https://api.meta.ai/v1",
       "api_key_env": "META_AI_API_KEY",
       "model": "muse-spark-1.2-contributor",
-      "max_tokens": 16384
+      "max_tokens": 16384,
+      "context_window": 1048576
     },
     "muse-spark-1.1": {
       "kind": "openai_compat",
       "base_url": "https://openrouter.ai/api/v1",
       "api_key_env": "OPENROUTER_API_KEY",
       "model": "meta/muse-spark-1.1",
-      "max_tokens": 8192
+      "max_tokens": 8192,
+      "context_window": 163840
+    },
+    "kimi-k3": {
+      "kind": "openai_compat",
+      "base_url": "https://api.moonshot.ai/v1",
+      "api_key_env": "KIMI_API_KEY",
+      "model": "kimi-k3",
+      "max_tokens": 16384,
+      "reasoning_effort": "high",
+      "context_window": 1048576
     }
   },
   "agent": {
@@ -47,7 +62,8 @@
     "system_prompt_file": "skills/SYSTEM.md",
     "learnings_file": "state/learnings.md",
     "sandbox_root": ".",
-    "seed": 0
+    "seed": 0,
+    "compact_threshold_bytes": 0
   },
   "improve": {
     "min_delta": 0.05,

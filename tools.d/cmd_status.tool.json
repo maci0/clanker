@@ -1,0 +1,8 @@
+{
+  "name": "cmd_status",
+  "description": "show instance and peers",
+  "wasm": "zig-out/tools/cmd_status.wasm",
+  "input_schema": { "type": "object", "properties": { "args": { "type": "string" } } },
+  "fs_prefixes": ["config.json", "config.local.json"],
+  "internal": true
+}

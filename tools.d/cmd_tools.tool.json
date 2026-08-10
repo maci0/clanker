@@ -1,0 +1,8 @@
+{
+  "name": "cmd_tools",
+  "description": "list registered tools",
+  "wasm": "zig-out/tools/cmd_tools.wasm",
+  "input_schema": { "type": "object", "properties": { "args": { "type": "string" } } },
+  "fs_prefixes": ["tools.d/"],
+  "internal": true
+}

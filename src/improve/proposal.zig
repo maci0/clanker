@@ -31,6 +31,7 @@ pub const allowed_prefixes = [_][]const u8{
     "tools.d/",
     "tools/",
     "docs/",
+    "README.md",
     "AGENTS.md",
     "build.zig",
     "build.zig.zon",
