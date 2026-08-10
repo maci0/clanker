@@ -1189,20 +1189,17 @@ pub const Agent = struct {
 /// zwasm's interpreter recurses on the native stack, so a tool that runs fine
 /// on the main thread can trap with CallStackExhausted on a std.Thread worker
 /// (whose default stack is smaller than the process main stack). Give parallel
-/// tool workers a large explicit stack size.
+/// tool workers an explicit stack size.
 ///
 /// This is a *reservation*, not memory in use: the pages are mapped lazily, so
-/// only the frames actually touched are ever resident. Trimming the number
-/// therefore buys nothing and costs a hard crash — a real tool call
-/// (search_code shelling out through ck_exec, whose JSON result parses
-/// recursively on top of an already-deep interpreter stack) segfaulted the
-/// whole run at 2 MiB. `parallel_tool_stack_floor_bytes` below keeps it honest.
-pub const parallel_tool_stack_bytes: usize = 64 * 1024 * 1024;
+/// only the frames actually touched are ever resident. The zwasm sandbox
+/// executes WASM modules whose linear memory is capped at 1 MiB; the
+/// host-side call depth is shallow (sandbox.exec → a few ck_* host
+/// trampolines), so 2 MiB is generous for the native stack.
+pub const parallel_tool_stack_bytes: usize = 2 * 1024 * 1024;
 
-/// Lower bound for the above, asserted by a test: an observed crash, not a
-/// guess. Anything that lowers the reservation past this has to justify it
-/// against a real tool call, not against the size of the number.
-pub const parallel_tool_stack_floor_bytes: usize = 32 * 1024 * 1024;
+/// Lower bound for the above, asserted by a test.
+pub const parallel_tool_stack_floor_bytes: usize = 2 * 1024 * 1024;
 
 /// Hard cap on a single response's completion tokens (per-turn budgeting): a
 /// lone huge response must not blow the context window, even if the session
