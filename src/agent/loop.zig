@@ -388,7 +388,8 @@ pub const Agent = struct {
     /// provider's context window; 0 selects the auto half-window value),
     /// keeps the system message and the last 6 messages (extended backwards
     /// when needed so a tool_call/tool-result exchange is never split),
-    /// replacing the removed middle with a single user placeholder message.
+    /// replacing the removed middle with an LLM-generated summary (or a
+    /// static placeholder when summarization fails).
     fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
         var total: usize = 0;
         for (messages.items) |m| {
@@ -414,15 +415,90 @@ pub const Agent = struct {
         // Need at least system + one middle + last 6 = 8 messages to compact.
         if (messages.items.len <= 7) return;
         log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
-        const placeholder: []const u8 = "[earlier conversation compacted — the context is summarized above in learnings and skills]";
-        const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
         // Never split a tool-call exchange: if the kept window would start
         // with tool-result messages whose assistant tool_call message is being
         // removed, extend the window backwards to include it. Providers reject
         // tool messages that do not follow a matching tool_calls message.
         var keep_start = messages.items.len - 6;
         while (keep_start > 1 and messages.items[keep_start].role == .tool) keep_start -= 1;
+        // Build a summary of the messages being removed (indices 1..keep_start-1).
+        const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
+            log.log(.warn, "compaction summary failed ({s}), using static placeholder", .{@errorName(err)});
+            break :blk null;
+        };
+        const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
+        const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
         try messages.replaceRange(self.arena, 1, keep_start - 1, &new_mid);
+    }
+
+    /// Produces a concise summary of a slice of conversation messages by
+    /// asking the LLM to distill them. Returns an arena-owned string prefixed
+    /// with "[conversation summary]" so downstream code knows it is synthetic.
+    /// Returns error on LLM failure; the caller falls back to a static
+    /// placeholder.
+    fn summarizeMessages(self: *Agent, msgs: []const types.Message) ![]const u8 {
+        if (msgs.len == 0) return error.EmptyMessages;
+        // Build a textual transcript of the messages to summarize, capped at
+        // ~12k chars so the summary request itself does not blow the context.
+        const max_transcript: usize = 12000;
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(self.ctx.gpa);
+        for (msgs) |m| {
+            if (buf.items.len >= max_transcript) break;
+            const role_str: []const u8 = switch (m.role) {
+                .user => "user",
+                .assistant => "assistant",
+                .tool => "tool",
+                .system => "system",
+            };
+            const hdr = try std.fmt.allocPrint(self.ctx.gpa, "[{s}] ", .{role_str});
+            defer self.ctx.gpa.free(hdr);
+            try buf.appendSlice(self.ctx.gpa, hdr);
+            if (m.content) |c| {
+                const remaining = if (max_transcript > buf.items.len) max_transcript - buf.items.len else 0;
+                const slice = if (c.len > remaining) c[0..remaining] else c;
+                try buf.appendSlice(self.ctx.gpa, slice);
+            } else {
+                try buf.appendSlice(self.ctx.gpa, "(no text content)");
+            }
+            try buf.append(self.ctx.gpa, '\n');
+        }
+        if (buf.items.len == 0) return error.EmptyMessages;
+
+        const prompt = try std.fmt.allocPrint(
+            self.arena,
+            "Summarize the following conversation excerpt in 3-5 concise bullet points. " ++
+                "Focus on: decisions made, facts established, tool results, and any pending tasks. " ++
+                "Be specific — include names, numbers, and key values. Do NOT add commentary.\n\n{s}",
+            .{buf.items},
+        );
+
+        const sum_messages = [_]types.Message{.{ .role = .user, .content = prompt }};
+        var err_detail: ?[]const u8 = null;
+        const resp = try client.chat(self.ctx, self.arena, .{
+            .provider = self.provider,
+            .messages = &sum_messages,
+            .max_tokens = 512,
+        }, &err_detail);
+        const content = resp.message.content orelse return error.EmptyResponse;
+        if (content.len == 0) return error.EmptyResponse;
+        // Track the summarization cost.
+        if (resp.usage) |u| {
+            self.stats.total_prompt_tokens += u.prompt_tokens;
+            self.stats.total_completion_tokens += u.completion_tokens;
+            self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+            self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
+            self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
+            const active = self.provider.activeModel();
+            if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
+            if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+        }
+        log.log(.info, "compaction summary: {d} messages -> {d} byte summary", .{ msgs.len, content.len });
+        return try std.fmt.allocPrint(
+            self.arena,
+            "[conversation summary — {d} earlier messages compacted]\n{s}",
+            .{ msgs.len, content },
+        );
     }
 
     /// Returns the final assistant response with the content cleaned of
