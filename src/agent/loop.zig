@@ -700,16 +700,17 @@ pub const Agent = struct {
                     }
                 }
                 // Strip trailing punctuation (period, comma, etc.) when the
-                // remainder is a number OR a single word (no spaces), so an
-                // exact-match answer like "42." or "hello." becomes "42"/"hello"
-                // while a sentence like "hello world." keeps its period.
+                // remainder is a number OR has no internal period, so an
+                // exact-match answer like "42." or "hello." or "hello world."
+                // becomes "42"/"hello"/"hello world" while an abbreviation
+                // like "e.g." keeps its period.
                 var stripped = s;
                 while (stripped.len > 0) {
                     const ch = stripped[stripped.len - 1];
                     if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
                     stripped = stripped[0 .. stripped.len - 1];
                 }
-                if (stripped.len < s.len and (isNumericString(stripped) or std.mem.indexOfScalar(u8, stripped, ' ') == null)) {
+                if (stripped.len < s.len and (isNumericString(stripped) or std.mem.count(u8, stripped, ".") == 0)) {
                     s = std.mem.trim(u8, stripped, " \t\r\n");
                 }
             }
