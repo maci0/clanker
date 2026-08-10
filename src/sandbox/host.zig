@@ -471,7 +471,10 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     defer resp.deinit(h.sandbox.gpa);
     var tmp: [4096]u8 = undefined;
     while (true) {
-        const nr = std.posix.read(stream.socket.handle, &tmp) catch break;
+        const nr = std.posix.read(stream.socket.handle, &tmp) catch |err| {
+            log.log(.warn, "[docker] read failed: {s}", .{@errorName(err)});
+            return Err.network;
+        };
         if (nr == 0) break;
         resp.appendSlice(h.sandbox.gpa, tmp[0..nr]) catch return Err.too_large;
         if (resp.items.len > h.sandbox.max_http_bytes) return Err.too_large;
