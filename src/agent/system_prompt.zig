@@ -92,8 +92,14 @@ pub fn build(
         }
     }
 
-    // Tool catalog.
-    if (tool_defs.len > 0) {
+    // Tool catalog. Count non-internal tools first so the section header
+    // and usage trailer are not emitted (wasting prompt tokens) when every
+    // registered tool is internal and the list would render empty.
+    var visible_tools: usize = 0;
+    for (tool_defs) |t| {
+        if (!t.internal) visible_tools += 1;
+    }
+    if (visible_tools > 0) {
         try buf.appendSlice(arena, "## Available tools\n\n");
         for (tool_defs) |t| {
             if (t.internal) continue;
