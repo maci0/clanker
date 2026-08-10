@@ -13,6 +13,7 @@ const improve = @import("improve/engine.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
+const autolearn = @import("autolearn.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
@@ -38,6 +39,7 @@ pub const Command = enum {
     repl,
     graph,
     gate,
+    autolearn,
 };
 
 pub const Options = struct {
@@ -156,6 +158,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .serve;
             } else if (std.mem.eql(u8, a, "graph")) {
                 opts.command = .graph;
+            } else if (std.mem.eql(u8, a, "autolearn")) {
+                opts.command = .autolearn;
             } else if (std.mem.eql(u8, a, "repl")) {
                 opts.command = .repl;
             } else if (std.mem.eql(u8, a, "gate")) {
@@ -251,6 +255,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .serve => try cmdServe(init, opts),
         .repl => try cmdRepl(init, opts),
         .graph => try cmdGraph(init, opts),
+        .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
     }
 }
@@ -555,6 +560,27 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
     return arena.dupe(u8, buf[0..w.end]);
 }
 
+/// `clanker autolearn` — review usage observations, refresh the roadmap
+/// Autolearn section, and print the generated items.
+fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
+    _ = opts;
+    const io = init.io;
+    const gpa = init.gpa;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.autolearn) {
+        log.log(.error_, "autolearn module is disabled (modules.autolearn=false in config)", .{});
+        return error.ModuleDisabled;
+    }
+    const section = try autolearn.review(io, gpa, arena);
+    try autolearn.applyRoadmap(io, gpa, arena, section);
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
+    try out.writeStreamingAll(io, section);
+}
+
 // ---------------------------------------------------------------------- run --
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -669,8 +695,31 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
     var messages: std.ArrayList(types.Message) = .empty;
 
-    const created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    const sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
+    // Hot-reload: remember our own binary's path + mtime so the REPL can
+    // re-exec itself with a freshly built binary and continue the session
+    // (gated by modules.hot_reload).
+    const exe_path = try std.process.executablePathAlloc(io, gpa);
+    defer gpa.free(exe_path);
+    var start_mtime: i128 = 0;
+    if (cfg.modules.hot_reload) {
+        if (std.Io.Dir.cwd().statFile(io, exe_path, .{})) |st| start_mtime = st.mtime.nanoseconds else |_| {}
+    }
+
+    var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var sid: []const u8 = undefined;
+    if (opts.session) |sid_arg| {
+        // Resuming a hot-reloaded session: load its transcript.
+        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid_arg)) |s| {
+            created = s.created;
+            for (s.messages) |m| {
+                if (m.role == .system) continue;
+                try messages.append(arena, m);
+            }
+        } else |_| {}
+        sid = sid_arg;
+    } else {
+        sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
+    }
 
     var stdin_file = std.Io.File.stdin();
     var read_buf: [4096]u8 = undefined;
@@ -692,6 +741,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var tmp: [4096]u8 = undefined;
 
     while (true) {
+        if (cfg.modules.hot_reload and replHotReload(io, gpa, exe_path, start_mtime, sid, opts)) return;
         try out_w.interface.writeAll("\x1b[32mclanker> \x1b[0m");
         try out_w.interface.flush();
 
@@ -868,6 +918,53 @@ fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, c
     try out_w.interface.flush();
 }
 
+/// Re-execs the clanker binary if it was rebuilt since the REPL started,
+/// resuming the same session with the new build. Returns true when a
+/// successful exec happened (the current process is gone).
+fn replHotReload(io: std.Io, gpa: std.mem.Allocator, exe_path: []const u8, start_mtime: i128, sid: []const u8, opts: Options) bool {
+    const st1 = std.Io.Dir.cwd().statFile(io, exe_path, .{}) catch return false;
+    if (st1.mtime.nanoseconds == start_mtime) return false;
+    // The binary may be mid-write (e.g. clanker's own improve loop rebuilds
+    // it constantly). Exec'ing a half-written file kills the process silently,
+    // so only reload once the file has been stable for a moment AND looks like
+    // a valid ELF.
+    std.Io.sleep(io, .{ .nanoseconds = 400 * std.time.ns_per_ms }, .awake) catch {};
+    const st2 = std.Io.Dir.cwd().statFile(io, exe_path, .{}) catch return false;
+    if (st2.mtime.nanoseconds != st1.mtime.nanoseconds) return false; // still being written
+    {
+        const f = std.Io.Dir.cwd().openFile(io, exe_path, .{}) catch return false;
+        defer f.close(io);
+        var magic: [4]u8 = undefined;
+        const n = std.posix.read(f.handle, &magic) catch return false;
+        if (n < 4 or magic[0] != 0x7f or magic[1] != 'E' or magic[2] != 'L' or magic[3] != 'F') return false;
+    }
+
+    // Build the argv for: <exe> repl --session <sid> [--provider p] [--model m]
+    var argv: std.ArrayList(?[*:0]const u8) = .empty;
+    defer argv.deinit(gpa);
+    const exe_z = @as([*:0]const u8, @ptrCast(exe_path.ptr));
+    argv.append(gpa, exe_z) catch return false;
+    argv.append(gpa, "repl") catch return false;
+    argv.append(gpa, "--session") catch return false;
+    argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, sid) catch return false))) catch return false;
+    if (opts.provider) |p| {
+        argv.append(gpa, "--provider") catch return false;
+        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, p) catch return false))) catch return false;
+    }
+    if (opts.model) |m| {
+        argv.append(gpa, "--model") catch return false;
+        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, m) catch return false))) catch return false;
+    }
+    argv.append(gpa, null) catch return false;
+
+    std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated — restarting with the new build (session {s})\n", .{sid});
+    const path_z: [*:0]const u8 = @ptrCast(exe_path.ptr);
+    const argv_z: [*:null]const ?[*:0]const u8 = @ptrCast(argv.items.ptr);
+    _ = std.os.linux.execve(path_z, argv_z, @ptrCast(std.c.environ));
+    std.debug.print("[hot-reload] exec failed — continuing with the current build\n", .{});
+    return false;
+}
+
 /// Streams REPL output: the model's content deltas land here (via
 /// Agent.on_token) while the run is still in flight.
 var repl_out: ?*std.Io.File.Writer = null;
@@ -882,7 +979,30 @@ fn replDelta(delta: []const u8) void {
 /// Runs one REPL turn for `task` (arena-owned): appends the user message, runs
 /// the agent, prints the answer, appends the assistant message, and persists
 /// the session. Returns true if the loop should exit (only on :quit).
+const max_session_chars = 32 * 1024; // approx. token budget cap for the REPL transcript
+
+/// Drops oldest non-system messages until total content fits under `max_chars`
+/// so long REPL sessions auto-compact instead of exceeding the context window.
+fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) void {
+    var total: usize = 0;
+    for (messages.items) |m| {
+        total += if (m.content) |c| c.len else 0;
+    }
+    if (total <= max_chars) return;
+    var i: usize = 0;
+    while (i < messages.items.len and total > max_chars) {
+        const m = messages.items[i];
+        if (m.role != .system) {
+            total -|= if (m.content) |c| c.len else 0;
+            _ = messages.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
+    compactMessages(messages, max_session_chars);
     const gpa = a.ctx.gpa;
     // NOTE: a.run() appends the user task (and each assistant reply) to
     // `messages` itself; appending here would duplicate them in the
@@ -893,6 +1013,8 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const prev_prompt = a.stats.total_prompt_tokens;
     const prev_completion = a.stats.total_completion_tokens;
     const prev_cost = a.stats.cost;
+    const prev_cache_hit = a.stats.total_cache_hit_tokens;
+    const prev_cache_miss = a.stats.total_cache_miss_tokens;
     const resp = a.run(messages, task, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return false;
@@ -909,9 +1031,13 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const turn_prompt = a.stats.total_prompt_tokens -| prev_prompt;
     const turn_completion = a.stats.total_completion_tokens -| prev_completion;
     const turn_cost = a.stats.cost - prev_cost;
+    const turn_cache_hit = a.stats.total_cache_hit_tokens -| prev_cache_hit;
+    const turn_cache_miss = a.stats.total_cache_miss_tokens -| prev_cache_miss;
     const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(turn_completion)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
+    const cache_total = turn_cache_hit + turn_cache_miss;
+    const hit_rate: f64 = if (cache_total > 0) @as(f64, @floatFromInt(turn_cache_hit)) / @as(f64, @floatFromInt(cache_total)) * 100.0 else 0;
     const stats = if (turn_prompt + turn_completion > 0)
-        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ turn_prompt, turn_completion, ms, tps, turn_cost })
+        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 cache {d:.0}% \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ turn_prompt, turn_completion, ms, tps, hit_rate, turn_cost })
     else
         try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
     try out_w.interface.writeAll(stats);
