@@ -955,25 +955,29 @@ pub const Agent = struct {
                 results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
                 continue;
             };
-            // Tools that call the model, and tools wrapped in a transform
-            // chain, go through the sequential pass below: one provider call at
-            // a time, and no worker thread sharing the HTTP client.
+            // Tools that call the model stay on the sequential pass below:
+            // one provider call at a time, and no worker thread ever shares
+            // the HTTP client. Transform-wrapped tools ARE parallel-eligible:
+            // their before-transforms run on the main thread just below (the
+            // shared transform module cache is not thread-safe) and their
+            // after-transforms run on the main thread after the join.
             if (tool.llm or tool.sequential or !tool.enabled) continue;
             if (self.no_parallel_tools) continue;
-            if ((try self.reg.transformsFor(self.arena, tc.name, .before)).len > 0) continue;
-            if ((try self.reg.transformsFor(self.arena, tc.name, .after)).len > 0) continue;
             const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
                 results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool wasm missing: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
                 continue;
             };
 
+            // Run the before-transform chain on the main thread, rewriting
+            // this call's arguments before the worker ever sees them.
+            const eff_args = self.runChain(tc.name, .before, tc.arguments) catch tc.arguments;
             const worker = try self.ctx.gpa.create(ToolWorker);
             worker.* = .{
                 .ctx = self.ctx,
                 .cfg = self.cfg,
                 .tool = tool,
-                .arguments = tc.arguments,
+                .arguments = eff_args,
                 .wasm_bytes = wasm_bytes,
                 .subagent_runner = self.subagent_runner,
             };
@@ -988,8 +992,11 @@ pub const Agent = struct {
                 log.log(.error_, "tool '{s}' failed: {s}", .{ h.worker.tool.name, @errorName(e) });
                 results[h.slot] = std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ h.worker.tool.name, @errorName(e) }) catch "{{\"ok\":false,\"error\":\"tool execution failed\"}}";
             } else if (h.worker.out) |out| {
-                results[h.slot] = try self.arena.dupe(u8, out);
+                const owned = try self.arena.dupe(u8, out);
                 self.ctx.gpa.free(out);
+                // After-transforms run here, on the main thread after the
+                // join, so no worker ever touches the shared transform cache.
+                results[h.slot] = self.runChain(h.worker.tool.name, .after, owned) catch owned;
             } else {
                 results[h.slot] = "{\"ok\":false,\"error\":\"tool produced no output\"}";
             }
