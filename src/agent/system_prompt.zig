@@ -11,7 +11,7 @@ pub const PromptParts = struct {
     system_prompt_file: []const u8,
     skills_dir: []const u8,
     learnings_file: []const u8,
-    max_skill_bytes: usize = 64 * 1024,
+    max_skill_bytes: usize = 24 * 1024,
 };
 
 /// Builds the system prompt into `arena`-owned memory. Returns the prompt text.
@@ -52,6 +52,7 @@ pub fn build(
             if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
             if (std.mem.eql(u8, entry.name, "SYSTEM.md")) continue; // base already included
             const content = d.readFileAlloc(io, entry.name, arena, .limited(parts.max_skill_bytes)) catch continue;
+            if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;
             try buf.appendSlice(arena, "### ");
             try buf.appendSlice(arena, entry.name);
             try buf.appendSlice(arena, "\n\n");
@@ -65,7 +66,12 @@ pub fn build(
     if (learnings) |l| {
         if (l.len > 0) {
             try buf.appendSlice(arena, "## Learnings (persistent memory)\n\n");
-            try buf.appendSlice(arena, l);
+            if (l.len > 4096) {
+                try buf.appendSlice(arena, l[0..4096]);
+                try buf.appendSlice(arena, "...");
+            } else {
+                try buf.appendSlice(arena, l);
+            }
             try buf.appendSlice(arena, "\n\n");
         }
     }
