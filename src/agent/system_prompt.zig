@@ -57,12 +57,18 @@ pub fn build(
                 return std.mem.lessThan(u8, a, b);
             }
         }.lt);
-        // Emit the section header only when at least one skill file exists;
-        // otherwise an empty "## Skills" section just wastes prompt tokens.
-        if (names.items.len > 0) try buf.appendSlice(arena, "## Skills\n\n");
+        // Emit the section header lazily, right before the first skill that
+        // actually passes the content filter: .md files with <20 bytes of
+        // real content are skipped below, and a bare "## Skills" header with
+        // no skills under it just wastes prompt tokens.
+        var skills_header_done = false;
         for (names.items) |name| {
             const content = d.readFileAlloc(io, name, arena, .limited(parts.max_skill_bytes)) catch continue;
             if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;
+            if (!skills_header_done) {
+                try buf.appendSlice(arena, "## Skills\n\n");
+                skills_header_done = true;
+            }
             try buf.appendSlice(arena, "### ");
             try buf.appendSlice(arena, name);
             try buf.appendSlice(arena, "\n\n");
