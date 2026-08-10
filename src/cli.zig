@@ -28,6 +28,7 @@ pub const Command = enum {
     git,
     mcp,
     goal,
+    serve,
 };
 
 pub const Options = struct {
@@ -41,6 +42,7 @@ pub const Options = struct {
     iters: u32 = 3,
     dry_run: bool = false,
     verbose: bool = false,
+    port: u16 = 17921,
 };
 
 pub fn parse(args: []const []const u8) !Options {
@@ -95,6 +97,10 @@ pub fn parse(args: []const []const u8) !Options {
                 idx += 1;
                 if (idx >= args.len) return error.MissingArg;
                 opts.goal = args[idx];
+            } else if (std.mem.eql(u8, a, "--port")) {
+                idx += 1;
+                if (idx >= args.len) return error.MissingArg;
+                opts.port = std.fmt.parseInt(u16, args[idx], 10) catch return error.BadPort;
             } else {
                 return error.UnknownArg;
             }
@@ -128,6 +134,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .mcp;
             } else if (std.mem.eql(u8, a, "goal")) {
                 opts.command = .goal;
+            } else if (std.mem.eql(u8, a, "serve")) {
+                opts.command = .serve;
             } else if (std.mem.eql(u8, a, "repl")) {
                 return error.NotYetImplemented;
             } else {
@@ -191,6 +199,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .git => try cmdGit(init, opts),
         .mcp => try cmdMcp(init, opts),
         .goal => try cmdGoal(init, opts),
+        .serve => try cmdServe(init, opts),
     }
 }
 
@@ -507,4 +516,151 @@ fn cmdRevert(init: std.process.Init, opts: Options) !void {
     const id = opts.task orelse return error.MissingArg;
     var hist = history.History.init(gpa, io, std.Io.Dir.cwd(), "state");
     try hist.revert(id);
+}
+
+// ------------------------------------------------------------ serve ------
+
+fn cmdServe(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const port = opts.port;
+
+    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    defer server.socket.close(io);
+
+    log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
+
+    while (true) {
+        const stream = server.accept(io) catch |err| {
+            log.log(.error_, "accept error: {s}", .{@errorName(err)});
+            continue;
+        };
+        handleConnection(io, gpa, stream);
+    }
+}
+
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Stream) void {
+    defer stream.close(io);
+    var total: std.ArrayList(u8) = .empty;
+    defer total.deinit(gpa);
+    var tmp: [4096]u8 = undefined;
+    while (true) {
+        const n = std.posix.read(stream.socket.handle, &tmp) catch return;
+        if (n == 0) return;
+        total.appendSlice(gpa, tmp[0..n]) catch return;
+        if (total.items.len > (1 << 20)) return;
+        if (requestComplete(total.items)) break;
+    }
+    if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| {
+        const headers_raw = total.items[0..hdr_end];
+        const body = total.items[hdr_end + 4 ..];
+        var method: []const u8 = "";
+        var target: []const u8 = "";
+        if (std.mem.indexOf(u8, headers_raw, "\r\n")) |line_end| {
+            var it = std.mem.tokenizeAny(u8, headers_raw[0..line_end], " ");
+            method = it.next() orelse "";
+            target = it.next() orelse "";
+        }
+        if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
+            handleNotify(io, gpa, body) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+            respond(stream, 200, "OK", "{\"ok\":true}");
+        } else {
+            respond(stream, 404, "Not Found", "{\"error\":\"not found\"}");
+        }
+    } else {
+        respond(stream, 400, "Bad Request", "{}");
+    }
+}
+
+const NotifyRequestBody = struct {
+    from: ?[]const u8 = null,
+    kind: ?[]const u8 = null,
+    topic: ?[]const u8 = null,
+    payload: ?std.json.Value = null,
+    ts: ?i64 = null,
+};
+
+const NotificationRecord = struct {
+    from: []const u8,
+    kind: []const u8,
+    topic: []const u8,
+    payload: std.json.Value,
+    ts: i64,
+    received_at: i64,
+};
+
+fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = try std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true });
+    const from = parsed.from orelse "";
+    const kind = parsed.kind orelse "";
+    const topic = parsed.topic orelse "";
+    const ts = parsed.ts orelse 0;
+    const payload = parsed.payload orelse .null;
+    const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000));
+    const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at };
+
+    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
+    const file_path = "state/notifications.jsonl";
+    const maybe_existing = std.Io.Dir.cwd().readFileAlloc(io, file_path, gpa, .limited(1 << 20)) catch null;
+    defer if (maybe_existing) |e| gpa.free(e);
+    const existing = maybe_existing orelse &[_]u8{};
+
+    var line_buf: [1 << 20]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&line_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(record);
+    const line = line_buf[0..w.end];
+
+    var out_list = std.ArrayList(u8).empty;
+    defer out_list.deinit(gpa);
+    try out_list.appendSlice(gpa, existing);
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
+    try out_list.appendSlice(gpa, line);
+    try out_list.append(gpa, '\n');
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = out_list.items });
+}
+
+fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
+    var hbuf: [4096]u8 = undefined;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+    writeAllFd(stream.socket.handle, hdr);
+    writeAllFd(stream.socket.handle, body);
+}
+
+fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
+    var off: usize = 0;
+    while (off < bytes.len) {
+        const n = std.os.linux.write(fd, bytes[off..].ptr, bytes.len - off);
+        if (n > std.math.maxInt(usize) - 4096) return; // errno
+        off += n;
+    }
+}
+
+fn requestComplete(data: []const u8) bool {
+    if (std.mem.indexOf(u8, data, "\r\n\r\n")) |hdr_end| {
+        const content_length = parseContentLength(data[0..hdr_end]) orelse 0;
+        return data.len >= hdr_end + 4 + content_length;
+    }
+    return false;
+}
+
+fn parseContentLength(headers: []const u8) ?usize {
+    var lines = std.mem.splitSequence(u8, headers, "\r\n");
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t");
+        const prefix = "content-length:";
+        if (trimmed.len >= prefix.len and std.ascii.eqlIgnoreCase(trimmed[0..prefix.len], prefix)) {
+            const value = std.mem.trim(u8, trimmed[prefix.len..], " \t");
+            return std.fmt.parseInt(usize, value, 10) catch null;
+        }
+    }
+    return null;
 }
