@@ -128,6 +128,12 @@ pub const Agent = struct {
     /// Runs the agent on a task; returns the final assistant response.
     /// The full conversation transcript is appended to `messages` (arena).
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
+        // Each run() call is self-contained: `stats` counts only this run's
+        // tokens, so per-run logging, autolearn records, and the defer that
+        // folds `stats` into `session_stats` are all correct. Without this
+        // reset, a multi-turn REPL session accumulated prior runs' totals in
+        // `stats`, and `session_stats` double-counted them on every call.
+        self.stats = .{};
         const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
         var used_tools: std.ArrayList([]const u8) = .empty;
         defer used_tools.deinit(self.ctx.gpa);
@@ -315,8 +321,12 @@ pub const Agent = struct {
             // already returned above and are never sacrificed to the budget.)
             if (self.cfg.modules.token_budget) {
                 if (self.cfg.agent.max_total_tokens) |budget| {
-                    if (self.stats.total_tokens >= budget) {
-                        log.log(.warn, "token budget reached ({d} total tokens)", .{self.stats.total_tokens});
+                    // Session cap across runs (REPL): `stats` was reset to a
+                    // fresh per-run counter at the top of run(), so the true
+                    // session total is prior runs (session_stats) plus this
+                    // run's tokens so far.
+                    if (self.session_stats.total_tokens + self.stats.total_tokens >= budget) {
+                        log.log(.warn, "token budget reached ({d} total tokens)", .{self.session_stats.total_tokens + self.stats.total_tokens});
                         budget_hit = true;
                         break;
                     }
