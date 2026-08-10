@@ -517,7 +517,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
                 return;
             }
             if (std.mem.eql(u8, line, ":help")) {
-                try out_w.interface.writeAll("REPL commands: :quit  :help  /help  (any other text is a task)\n");
+                try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\n");
                 try out_w.interface.flush();
                 const rest1 = acc.items[nl + 1 ..];
                 std.mem.copyForwards(u8, acc.items[0..rest1.len], rest1);
@@ -580,7 +580,7 @@ fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, c
     const tool = reg.get(tool_name) orelse {
         try out_w.interface.writeAll("unknown command: /");
         try out_w.interface.writeAll(name);
-        try out_w.interface.writeAll("   (try /help)\n");
+        try out_w.interface.writeAll("   (try :help)\n");
         try out_w.interface.flush();
         return;
     };
