@@ -902,7 +902,10 @@ pub const Agent = struct {
             m
         else blk: {
             const m = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes);
-            try self.modules.put(self.arena, cache_key, m);
+            self.modules.put(self.arena, cache_key, m) catch {
+                m.deinit();
+                return error.OutOfMemory;
+            };
             break :blk m;
         };
 
@@ -1007,7 +1010,10 @@ pub const Agent = struct {
                 log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tc.name, @errorName(err) });
                 return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool load failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
             };
-            try self.modules.put(self.arena, tc.name, m);
+            self.modules.put(self.arena, tc.name, m) catch {
+                m.deinit();
+                return error.OutOfMemory;
+            };
             break :blk m;
         };
 
