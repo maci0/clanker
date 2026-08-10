@@ -44,6 +44,7 @@ Host functions write results into the host arena; the guest reads them back via 
 | `run"<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with `:help`/`:quit` and stateful sessions |
 | `sessions` | List persisted sessions |
+| `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `eval [name]` | Run evaluation(s) |
 | `improve-self` | Run the gated self-improvement loop |
@@ -134,6 +135,7 @@ All three are required for the self-improvement gates.
 - `clanker run "<task>"` — run the agent on a task.
 - `clanker run --goal <id> "<task>"` — run with an active goal.
 - `clanker sessions` — list saved sessions.
+- `clanker graph [run-id]` — list recorded runs, or render one as an ASCII timeline.
 - `clanker tools list` — list registered tools.
 - `clanker eval <name>` — run a specific evaluation.
 - `clanker improve-self "<instruction>"` — run the self-improvement loop.
@@ -264,6 +266,62 @@ The guest imports `env.ck_*` functions listed above. The host writes the tool re
 
 Tools are discovered by the registry (`src/tools/registry.zig`) from the configured `tools_dir` (default `tools.d`).
 
+## Tool catalog
+
+Every entry in `tools.d/` is one WASM module plus its descriptor. `internal: true` hides the tool from the model's tool list: it is reachable only through a REPL slash command or an HTTP route, never chosen by the agent. `fs_prefixes` is the complete filesystem authority the sandbox grants that tool; a tool with no prefixes cannot read or write anything.
+
+| Tool | Internal | Filesystem | Purpose |
+|------|----------|------------|---------|
+| `calculator` | | none | Arithmetic, either `{"a","b","op"}` or `{"expr": "2+3*4"}` (`+ - * / ^`, parentheses, standard precedence) |
+| `search_code` | | none | Search the project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
+| `fetch_web` | | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
+| `web_search` | | none | DuckDuckGo HTML search, up to 8 results with title, url, snippet |
+| `git` | | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`. Destructive verbs (`push`, `reset`, `rebase`, `checkout`, `clean`, `rm`, `fetch`, `merge`, `revert`, `stash`) are denied |
+| `docker` | | none | Query the local Docker daemon over its Unix socket |
+| `write_note` | | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
+| `edit_skill` | | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
+| `goal` | | `state/` | Design and persist a structured goal that steers later runs |
+| `cmd_help` | yes | none | Slash-command reference |
+| `cmd_tools` | yes | `tools.d/` | List registered tools |
+| `cmd_sessions` | yes | `state/sessions/` | List saved sessions |
+| `cmd_graph` | yes | `state/runs/` | Render the latest execution graph |
+| `cmd_status` | yes | `config.json`, `config.local.json` | Show this instance and its peers |
+| `format` | yes | none | Markdown to ANSI formatter used for REPL output |
+| `webui` | yes | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
+
+`tools.d/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
+
+## REPL slash commands
+
+A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the two handled in-process, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools.d/`.
+
+| Command | Runs as | Description |
+|---------|---------|-------------|
+| `/help` | `cmd_help` | List these commands |
+| `/tools` | `cmd_tools` | List registered tools |
+| `/sessions` | `cmd_sessions` | List saved sessions |
+| `/graph` | `cmd_graph` | Show the latest execution graph |
+| `/status` | `cmd_status` | Show instance and peers |
+| `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
+| `/quit`, `/exit`, `/q` | in-process | Leave the REPL |
+
+### `/graph`
+
+Every agent run records an execution graph and writes it to `state/runs/run-<timestamp>.json` on exit (`src/agent/graph.zig`), unless `modules.graphs` is `false`. `/graph` reads the lexically last of those files, which is the most recent run since the ids sort chronologically, and prints a header plus one line per node grouped by iteration:
+
+```
+run-1786365428 — summarize the config
+  (kimi-k3, 8421ms, prompt=3190 completion=412)
+iter 1
+  llm  kimi-k3  3190/180 tok, 5120ms
+  tool search_code  2048 B
+iter 2
+  llm  kimi-k3  3402/232 tok, 3301ms
+  done 512 B, stop
+```
+
+`llm` lines carry prompt/completion tokens and latency, `tool` lines the result size, and the closing `done` line the final answer size and stop reason. With no runs recorded yet it prints `(no runs yet — clanker run creates one)`. To read an older run, pass its id to the CLI: `clanker graph <run-id>`.
+
 ## CLI commands
 
 | Command | Description |
@@ -273,6 +331,7 @@ Tools are discovered by the registry (`src/tools/registry.zig`) from the configu
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Start an interactive REPL with streaming |
 | `sessions` | List saved sessions |
+| `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `eval [name]` | Run evals |
 | `improve-self "<instructions>"` | Run the self-improvement loop |
