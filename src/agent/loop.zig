@@ -208,8 +208,9 @@ pub const Agent = struct {
     /// accumulated message bytes (content + tool arguments) exceed the
     /// effective threshold (compact_threshold_bytes, capped at half the
     /// provider's context window; 0 selects the auto half-window value),
-    /// keeps the system message and the last 6 messages, replacing the
-    /// removed middle with a single user placeholder message.
+    /// keeps the system message and the last 6 messages (extended backwards
+    /// when needed so a tool_call/tool-result exchange is never split),
+    /// replacing the removed middle with a single user placeholder message.
     fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
         var total: usize = 0;
         for (messages.items) |m| {
@@ -232,7 +233,13 @@ pub const Agent = struct {
         log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
         const placeholder: []const u8 = "[earlier conversation compacted — the context is summarized above in learnings and skills]";
         const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
-        try messages.replaceRange(self.arena, 1, messages.items.len - 7, &new_mid);
+        // Never split a tool-call exchange: if the kept window would start
+        // with tool-result messages whose assistant tool_call message is being
+        // removed, extend the window backwards to include it. Providers reject
+        // tool messages that do not follow a matching tool_calls message.
+        var keep_start = messages.items.len - 6;
+        while (keep_start > 1 and messages.items[keep_start].role == .tool) keep_start -= 1;
+        try messages.replaceRange(self.arena, 1, keep_start - 1, &new_mid);
     }
 
     /// Returns the final assistant response with the content cleaned of

@@ -570,7 +570,9 @@ fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, c
         .io = io,
         .root_dir = cfg.agent.sandbox_root,
         .network_allow = tool.network_allow,
+        .fs_prefixes = tool.fs_prefixes,
         .environ_map = environ_map,
+        .seed = cfg.agent.seed,
     };
     const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
         try out_w.interface.writeAll("slash tool load failed\n");
@@ -946,7 +948,9 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
 
     const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
-    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    // reuse_address lets a restarted `clanker serve` rebind immediately even
+    // if a stale socket from a previous instance lingers (AddressInUse).
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
     defer server.socket.close(io);
 
     log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
