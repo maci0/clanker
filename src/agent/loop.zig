@@ -798,7 +798,10 @@ pub const Agent = struct {
             break :blk m;
         };
 
-        const out = mod.executeTool(tc.arguments) catch |err| {
+        // Run before-transforms on the arguments (input rewriting / validation).
+        const effective_args = self.runChain(tc.name, .before, tc.arguments) catch tc.arguments;
+
+        const out = mod.executeTool(effective_args) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ tc.name, @errorName(err) });
         };
@@ -811,7 +814,10 @@ pub const Agent = struct {
         // tool messages on the sequential path (use-after-free).
         const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
-        return owned;
+
+        // Run after-transforms on the result (output filtering / post-processing).
+        const transformed = self.runChain(tc.name, .after, owned) catch owned;
+        return transformed;
     }
 
     /// Executes a batch of tool calls, returning arena-owned results aligned
