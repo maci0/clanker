@@ -75,90 +75,16 @@ pub const Agent = struct {
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
 
-            // Detect duplicate names; if any duplicate (or a single call), execute sequentially.
-            var all_distinct = true;
-            outer: for (calls, 0..) |tc, i| {
-                for (calls[0..i]) |prev| {
-                    if (std.mem.eql(u8, tc.name, prev.name)) {
-                        all_distinct = false;
-                        break :outer;
-                    }
-                }
-            }
-
-            if (calls.len <= 1 or !all_distinct) {
-                for (calls) |tc| {
-                    const result = try self.executeTool(tc);
-                    try messages.append(self.arena, .{
-                        .role = .tool,
-                        .tool_call_id = tc.id,
-                        .content = result,
-                    });
-                }
-                continue;
-            }
-
-            // Parallel execution: preload wasm bytes, spawn one thread per call,
-            // then join and append results in original order.
-            const n = calls.len;
-            const tools = try self.ctx.gpa.alloc(*const registry.Tool, n);
-            defer self.ctx.gpa.free(tools);
-            const wasm_bytes_arr = try self.ctx.gpa.alloc(?[]u8, n);
-            @memset(wasm_bytes_arr, null);
-            defer {
-                for (wasm_bytes_arr) |b| {
-                    if (b) |bb| self.ctx.gpa.free(bb);
-                }
-                self.ctx.gpa.free(wasm_bytes_arr);
-            }
-
-            for (calls, 0..) |tc, i| {
-                const tool = self.reg.get(tc.name) orelse return error.UnknownTool;
-                tools[i] = tool;
-                const wasm_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}", .{tool.wasm});
-                defer self.ctx.gpa.free(wasm_path);
-                wasm_bytes_arr[i] = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, wasm_path, self.ctx.gpa, .limited(1 << 20)) catch |err| {
-                    log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, wasm_path, @errorName(err) });
-                    return error.ToolWasmMissing;
-                };
-            }
-
-            const workers = try self.ctx.gpa.alloc(ToolWorker, n);
-            defer self.ctx.gpa.free(workers);
-            const threads = try self.ctx.gpa.alloc(std.Thread, n);
-            defer self.ctx.gpa.free(threads);
-
-            var spawned: usize = 0;
-            for (calls, 0..) |tc, i| {
-                workers[i] = .{
-                    .ctx = self.ctx,
-                    .cfg = self.cfg,
-                    .tool = tools[i],
-                    .arguments = tc.arguments,
-                    .wasm_bytes = wasm_bytes_arr[i].?,
-                    .out = null,
-                    .err = null,
-                };
-                threads[i] = std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, ToolWorker.run, .{&workers[i]}) catch |err| {
-                    for (threads[0..spawned]) |t| t.join();
-                    return err;
-                };
-                spawned += 1;
-            }
-            for (threads) |t| t.join();
-            for (workers, 0..) |*w, i| {
-                if (w.err) |e| return e;
-                if (w.out) |out| {
-                    const owned = try self.arena.dupe(u8, out);
-                    self.ctx.gpa.free(out);
-                    try messages.append(self.arena, .{
-                        .role = .tool,
-                        .tool_call_id = calls[i].id,
-                        .content = owned,
-                    });
-                } else {
-                    return error.ToolExecutionFailed;
-                }
+            // Execute tool calls sequentially (parallel execution disabled:
+            // zwasm instantiations on separate threads trap with
+            // CallStackExhausted for batches of 2+ distinct tools).
+            for (calls) |tc| {
+                const result = try self.executeTool(tc);
+                try messages.append(self.arena, .{
+                    .role = .tool,
+                    .tool_call_id = tc.id,
+                    .content = result,
+                });
             }
         }
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
