@@ -835,7 +835,7 @@ pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
 
 // ------------------------------------------------------- ck_exec (shell-ish) --
 
-const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode", "zig" };
+const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode", "zig", "find", "cat", "wc", "head", "tail", "ls", "diff" };
 
 fn isWordChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == '-';
@@ -986,6 +986,19 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     }
     if (!allowed_cmd) return Err.denied;
 
+    // Optional cwd: resolve relative to sandbox root via safeJoin.
+    var exec_dir: std.Io.Dir = std.Io.Dir.cwd();
+    var exec_dir_opened = false;
+    if (obj.get("cwd")) |cwd_val| {
+        if (cwd_val == .string and cwd_val.string.len > 0) {
+            const full = safeJoin(h.sandbox, cwd_val.string) catch return Err.denied;
+            defer h.sandbox.gpa.free(full);
+            exec_dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{}) catch return Err.not_found;
+            exec_dir_opened = true;
+        }
+    }
+    defer if (exec_dir_opened) exec_dir.close(h.sandbox.io);
+
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(h.sandbox.gpa);
     argv.append(h.sandbox.gpa, cmd) catch return Err.invalid;
@@ -1015,7 +1028,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
 
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
-        .cwd = .{ .dir = std.Io.Dir.cwd() },
+        .cwd = .{ .dir = exec_dir },
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(8 * 1024),
     }) catch return Err.network;
