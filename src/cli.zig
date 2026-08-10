@@ -635,7 +635,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
 
     if (opts.session) |sid| {
-        const title = opts.task.?[0..@min(opts.task.?.len, 60)];
+        const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         if (!cfg.modules.sessions) return;
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
