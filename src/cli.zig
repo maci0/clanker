@@ -22,6 +22,7 @@ pub const Command = enum {
     eval,
     improve_self,
     revert,
+    git,
 };
 
 pub const Options = struct {
@@ -38,62 +39,92 @@ pub const Options = struct {
 pub fn parse(args: []const []const u8) !Options {
     var opts = Options{};
     var idx: usize = 1;
-
-    if (idx < args.len) {
-        const cmd = args[idx];
-        if (std.mem.eql(u8, cmd, "init")) {
-            opts.command = .init;
-        } else if (std.mem.eql(u8, cmd, "providers")) {
-            opts.command = .providers_check;
-            idx += 1;
-            if (idx >= args.len or !std.mem.eql(u8, args[idx], "check")) return error.BadSubcommand;
-        } else if (std.mem.eql(u8, cmd, "run")) {
-            opts.command = .run;
-        } else if (std.mem.eql(u8, cmd, "tools")) {
-            opts.command = .tools_list;
-            idx += 1;
-            if (idx >= args.len or !std.mem.eql(u8, args[idx], "list")) return error.BadSubcommand;
-        } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "-h") or std.mem.eql(u8, cmd, "--help")) {
-            opts.command = .help;
-        } else if (std.mem.eql(u8, cmd, "eval")) {
-            opts.command = .eval;
-        } else if (std.mem.eql(u8, cmd, "improve-self")) {
-            opts.command = .improve_self;
-        } else if (std.mem.eql(u8, cmd, "revert")) {
-            opts.command = .revert;
-        } else if (std.mem.eql(u8, cmd, "repl")) {
-            return error.NotYetImplemented;
-        } else {
-            return error.UnknownCommand;
-        }
-    }
-    idx += 1;
+    var cmd_seen = false;
+    var pending_sub: ?[]const u8 = null;
 
     while (idx < args.len) : (idx += 1) {
         const a = args[idx];
-        if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
-            opts.verbose = true;
-        } else if (std.mem.eql(u8, a, "--provider")) {
-            idx += 1;
-            if (idx >= args.len) return error.MissingArg;
-            opts.provider = args[idx];
-        } else if (std.mem.eql(u8, a, "--model")) {
-            idx += 1;
-            if (idx >= args.len) return error.MissingArg;
-            opts.model = args[idx];
-        } else if (std.mem.eql(u8, a, "--iters")) {
-            idx += 1;
-            if (idx >= args.len) return error.MissingArg;
-            opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch return error.BadIters;
-        } else if (std.mem.eql(u8, a, "--dry-run")) {
-            opts.dry_run = true;
-        } else if (opts.command == .eval and opts.eval_name == null and !std.mem.startsWith(u8, a, "-")) {
+
+        // Once git is the active command, every remaining token — including
+        // dash-prefixed ones like git's own flags/options — passes through to
+        // git verbatim, so `clanker git status --porcelain` keeps its args.
+        if (opts.command == .git) {
+            const joined = if (opts.task) |t| std.fmt.allocPrint(std.heap.page_allocator, "{s} {s}", .{ t, a }) catch t else a;
+            opts.task = joined;
+            continue;
+        }
+
+        // Help flags act as the help command regardless of position.
+        if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
+            if (cmd_seen) return error.UnknownArg;
+            opts.command = .help;
+            cmd_seen = true;
+            continue;
+        }
+
+        // Known global flags may appear anywhere.
+        if (a.len > 0 and a[0] == '-') {
+            if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
+                opts.verbose = true;
+            } else if (std.mem.eql(u8, a, "--dry-run")) {
+                opts.dry_run = true;
+            } else if (std.mem.eql(u8, a, "--provider")) {
+                idx += 1;
+                if (idx >= args.len) return error.MissingArg;
+                opts.provider = args[idx];
+            } else if (std.mem.eql(u8, a, "--model")) {
+                idx += 1;
+                if (idx >= args.len) return error.MissingArg;
+                opts.model = args[idx];
+            } else if (std.mem.eql(u8, a, "--iters")) {
+                idx += 1;
+                if (idx >= args.len) return error.MissingArg;
+                opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch return error.BadIters;
+            } else {
+                return error.UnknownArg;
+            }
+            continue;
+        }
+
+        // Non-flag token.
+        if (!cmd_seen) {
+            cmd_seen = true;
+            if (std.mem.eql(u8, a, "init")) {
+                opts.command = .init;
+            } else if (std.mem.eql(u8, a, "providers")) {
+                opts.command = .providers_check;
+                pending_sub = "check";
+            } else if (std.mem.eql(u8, a, "run")) {
+                opts.command = .run;
+            } else if (std.mem.eql(u8, a, "tools")) {
+                opts.command = .tools_list;
+                pending_sub = "list";
+            } else if (std.mem.eql(u8, a, "eval")) {
+                opts.command = .eval;
+            } else if (std.mem.eql(u8, a, "improve-self")) {
+                opts.command = .improve_self;
+            } else if (std.mem.eql(u8, a, "revert")) {
+                opts.command = .revert;
+            } else if (std.mem.eql(u8, a, "git")) {
+                opts.command = .git;
+            } else if (std.mem.eql(u8, a, "repl")) {
+                return error.NotYetImplemented;
+            } else {
+                return error.UnknownCommand;
+            }
+        } else if (pending_sub) |sub| {
+            if (std.mem.eql(u8, a, sub)) {
+                pending_sub = null;
+            } else {
+                return error.BadSubcommand;
+            }
+        } else if (opts.command == .eval and opts.eval_name == null) {
             opts.eval_name = a;
-        } else if (opts.command == .revert and opts.task == null and !std.mem.startsWith(u8, a, "-")) {
+        } else if (opts.command == .revert and opts.task == null) {
             opts.task = a;
-        } else if (opts.command == .improve_self and opts.task == null and !std.mem.startsWith(u8, a, "-")) {
+        } else if (opts.command == .improve_self and opts.task == null) {
             opts.task = a;
-        } else if (opts.command == .providers_check and opts.provider == null and !std.mem.startsWith(u8, a, "-")) {
+        } else if (opts.command == .providers_check and opts.provider == null) {
             opts.provider = a;
         } else if (opts.command == .run and opts.task == null) {
             opts.task = a;
@@ -102,6 +133,7 @@ pub fn parse(args: []const []const u8) !Options {
         }
     }
 
+    if (pending_sub != null) return error.BadSubcommand;
     if (opts.command == .run and opts.task == null) return error.MissingTask;
     return opts;
 }
@@ -131,6 +163,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .eval => try cmdEval(init, opts),
         .improve_self => try cmdImproveSelf(init, opts),
         .revert => try cmdRevert(init, opts),
+        .git => try cmdGit(init, opts),
     }
 }
 
@@ -325,6 +358,32 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
         .dry_run = opts.dry_run,
         .max_context_bytes = cfg.improve.max_context_bytes,
     });
+}
+
+fn cmdGit(init: std.process.Init, opts: Options) !void {
+    _ = opts;
+    // Convenience passthrough (unrestricted — this is the user's own shell).
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(init.gpa);
+    try argv.append(init.gpa, "git");
+    var it = init.minimal.args.iterate();
+    var seen_git = false;
+    while (it.next()) |arg| {
+        if (!seen_git) {
+            if (std.mem.eql(u8, arg, "git")) {
+                seen_git = true;
+                continue;
+            }
+            continue;
+        }
+        try argv.append(init.gpa, arg);
+    }
+    const result = try std.process.run(init.gpa, init.io, .{ .argv = argv.items });
+    defer init.gpa.free(result.stdout);
+    defer init.gpa.free(result.stderr);
+    try std.Io.File.stdout().writeStreamingAll(init.io, result.stdout);
+    try std.Io.File.stderr().writeStreamingAll(init.io, result.stderr);
+    if (result.term != .exited or result.term.exited != 0) return error.GitFailed;
 }
 
 fn cmdRevert(init: std.process.Init, opts: Options) !void {
