@@ -767,12 +767,49 @@ fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
     return h.writeResult(mem_bytes, data);
 }
 
+/// ck_fs_append(path, data) — append data to a file under the sandbox root.
+/// Creates the file if it doesn't exist. Enforces the same fs_prefixes
+/// policy as ck_fs_read / ck_fs_write.
+pub fn ckFsAppend(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    const data = sliceOf(bytes, data_ptr, data_len) orelse &.{};
+    return fsAppendImpl(h, path, data);
+}
+
 pub fn ckFsWrite(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
     const data = sliceOf(bytes, data_ptr, data_len) orelse &.{};
     return fsWriteImpl(h, path, data);
+}
+
+fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
+    if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
+    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+    // Open for appending; create the file if it doesn't exist.
+    var file = std.Io.Dir.cwd().openFile(h.sandbox.io, full, .{ .mode = .read_write }) catch |err| switch (err) {
+        error.FileNotFound => {
+            // Create the file and write the data as the initial content.
+            std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full, .data = data }) catch |e| switch (e) {
+                error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+                else => return Err.invalid,
+            };
+            return Err.ok;
+        },
+        else => return Err.invalid,
+    };
+    defer file.close(h.sandbox.io);
+    // Seek to end and write.
+    file.seekToEnd(h.sandbox.io) catch return Err.invalid;
+    file.writeAll(h.sandbox.io, data) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        else => return Err.invalid,
+    };
+    return Err.ok;
 }
 
 fn fsWriteImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
@@ -1114,6 +1151,28 @@ test "httpImpl rejects unknown method codes" {
         // Just verify the mapping doesn't crash
         _ = method;
     }
+}
+
+test "ckFsAppend uses safeJoin policy" {
+    // Verify the safeJoin policy that ckFsAppend relies on.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"logs/"},
+        .environ_map = undefined,
+    };
+    // Allowed prefix
+    const ok = try safeJoin(&sb, "logs/app.log");
+    defer std.testing.allocator.free(ok);
+    try std.testing.expectEqualStrings("/tmp/sandbox/logs/app.log", ok);
+    // Disallowed prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
+    // Traversal attempt
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "logs/../secrets/key"));
+    // Empty path
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
 test "ckFsMkdir rejects paths outside sandbox" {
