@@ -512,6 +512,18 @@ pub const Agent = struct {
                 }
             }
         }
+        // The fallback may pick a line that itself carries markdown emphasis
+        // or backticks (e.g. "The answer is: **42**" or "It's `42`");
+        // reapply the unwrap so the returned value is the exact-match answer.
+        while (s.len >= 4 and s[0] == '*' and s[1] == '*' and s[s.len - 1] == '*' and s[s.len - 2] == '*') {
+            s = std.mem.trim(u8, s[2 .. s.len - 2], " \t\r\n");
+        }
+        while (s.len >= 2 and ((s[0] == '*' and s[s.len - 1] == '*') or (s[0] == '_' and s[s.len - 1] == '_'))) {
+            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
+        }
+        if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
+            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
+        }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
         }
