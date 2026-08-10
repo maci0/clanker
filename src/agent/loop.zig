@@ -68,10 +68,11 @@ pub const Agent = struct {
     /// zwasm for AssemblyScript guests — cache and reuse instead of
     /// re-instantiating per call).
     modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
-    /// Loaded tool wasm bytes, keyed by the tool's wasm path (arena-owned):
+    /// Loaded tool wasm bytes, keyed by the tool's wasm path (gpa-owned):
     /// read from disk once per distinct path per session, then reused for
     /// every execution, worker spawn, and transform invocation so repeated
-    /// calls skip the filesystem read.
+    /// calls skip the filesystem read.  Allocated on gpa (not the per-run
+    /// arena) so the cache survives across turns in a multi-turn session.
     wasm_cache: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     /// Cumulative token usage across all LLM calls in this agent run.
     stats: RunStats = .{},
@@ -97,6 +98,17 @@ pub const Agent = struct {
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
+
+    /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
+    /// Agent is no longer needed (end of a REPL session / single-shot run).
+    pub fn deinit(self: *Agent) void {
+        var it = self.wasm_cache.iterator();
+        while (it.next()) |kv| {
+            self.ctx.gpa.free(kv.key_ptr.*);
+            self.ctx.gpa.free(kv.value_ptr.*);
+        }
+        self.wasm_cache.deinit(self.ctx.gpa);
+    }
 
     pub fn init(
         ctx: *client.Ctx,
@@ -172,6 +184,7 @@ pub const Agent = struct {
                 kv.value_ptr.*.deinit();
             }
             self.modules.clearRetainingCapacity();
+            // wasm_cache is gpa-owned and survives across turns; do NOT clear it here.
             const run_ms: u64 = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
             const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
             const prompt_total = self.stats.total_cache_hit_tokens + self.stats.total_cache_miss_tokens;
@@ -988,13 +1001,20 @@ pub const Agent = struct {
     }
 
     /// Returns the wasm bytes for `tool`, reading the file from disk only on
-    /// the first call for a given wasm path; the bytes are arena-allocated
+    /// the first call for a given wasm path; the bytes are gpa-allocated
     /// and cached so repeated tool calls, worker spawns, and transform runs
-    /// against the same module skip the filesystem.
+    /// against the same module skip the filesystem.  Using gpa (not the
+    /// per-run arena) lets the cache survive across turns in a multi-turn
+    /// session — the files are immutable during a session.
     fn wasmBytes(self: *Agent, tool: *const registry.Tool) ![]const u8 {
         if (self.wasm_cache.get(tool.wasm)) |bytes| return bytes;
-        const bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.arena, .limited(1 << 20));
-        try self.wasm_cache.put(self.arena, tool.wasm, bytes);
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20));
+        const key = try self.ctx.gpa.dupe(u8, tool.wasm);
+        self.wasm_cache.put(self.ctx.gpa, key, bytes) catch |err| {
+            self.ctx.gpa.free(bytes);
+            self.ctx.gpa.free(key);
+            return err;
+        };
         return bytes;
     }
 
@@ -1487,14 +1507,16 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "fake-wasm-bytes" });
     defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
 
-    // wasmBytes only touches ctx.io, arena, wasm_cache, and tool.wasm, so the
-    // rest of the Agent/Tool state can stay undefined for this test.
+    // wasmBytes only touches ctx.io, ctx.gpa, wasm_cache, and tool.wasm, so
+    // the rest of the Agent/Tool state can stay undefined for this test.
     var ctx: client.Ctx = undefined;
     ctx.io = io;
+    ctx.gpa = std.testing.allocator;
     var agent: Agent = undefined;
     agent.ctx = &ctx;
     agent.arena = arena_state.allocator();
     agent.wasm_cache = .empty;
+    defer agent.deinit();
 
     var tool: registry.Tool = undefined;
     tool.wasm = path;
