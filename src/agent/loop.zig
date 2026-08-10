@@ -372,6 +372,16 @@ pub const Agent = struct {
             return resp;
         };
         var s = std.mem.trim(u8, content, " \t\r\n");
+        // Unwrap markdown emphasis (bold/italic) so an exact-match answer like
+        // **42** becomes 42.
+        while (s.len >= 4 and s[0] == '*' and s[1] == '*' and s[s.len - 1] == '*' and s[s.len - 2] == '*') {
+            s = s[2 .. s.len - 2];
+            s = std.mem.trim(u8, s, " \t\r\n");
+        }
+        while (s.len >= 2 and ((s[0] == '*' and s[s.len - 1] == '*') or (s[0] == '_' and s[s.len - 1] == '_'))) {
+            s = s[1 .. s.len - 1];
+            s = std.mem.trim(u8, s, " \t\r\n");
+        }
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
@@ -459,6 +469,10 @@ pub const Agent = struct {
                     last_line = std.mem.trim(u8, last_line["The output is:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
                     last_line = std.mem.trim(u8, last_line["The result is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "The value is:")) {
+                    last_line = std.mem.trim(u8, last_line["The value is:".len..], " \t\r\n");
+                } else if (std.mem.startsWith(u8, last_line, "Sure,")) {
+                    last_line = std.mem.trim(u8, last_line["Sure,".len..], " \t\r\n");
                 }
 
                 s = last_line;
