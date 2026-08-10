@@ -759,7 +759,7 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
 
-    const evals = try scorers.Eval.loadAll(arena, io, "evals");
+    const evals = try scorers.Eval.loadAll(arena, io, "eval-tasks");
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
 
     var r = eval_runner.Runner{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg, .reg = &reg };

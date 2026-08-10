@@ -114,7 +114,7 @@ elif [ ${#POSITIONAL[@]} -gt 0 ]; then
     die "unexpected extra arguments: ${POSITIONAL[*]:1} (put the instruction in quotes, or use --instruction-file)"
   fi
 else
-  INSTRUCTION="Review the clanker codebase (src/, tool-src/, tools.d/, evals/, skills/) for bugs, dead code, and token-efficiency improvements. Use your search_code and git tools to investigate, then propose and implement the highest-impact fixes. Keep the docs in sync with the code: update docs/README.md, docs/ROADMAP.md, and AGENTS.md whenever a change affects behavior, commands, config, or architecture (mark roadmap items done, reflect new features). Every change must pass the full gate (zig build, zig build test, zig build tools, zig fmt, lint). Persist learnings with write_note."
+  INSTRUCTION="Review the clanker codebase (src/, tool-src/, tools.d/, eval-tasks/, skills/) for bugs, dead code, and token-efficiency improvements. Use your search_code and git tools to investigate, then propose and implement the highest-impact fixes. Keep the docs in sync with the code: update docs/README.md, docs/ROADMAP.md, and AGENTS.md whenever a change affects behavior, commands, config, or architecture (mark roadmap items done, reflect new features). Every change must pass the full gate (zig build, zig build test, zig build tools, zig fmt, lint). Persist learnings with write_note."
 fi
 [ -n "$INSTRUCTION" ] || die "empty instruction"
 

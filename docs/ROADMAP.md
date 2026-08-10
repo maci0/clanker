@@ -39,6 +39,6 @@
 ## Planned
 
 - **Plugin manifest SDK** — a formal manifest format for third-party tool plugins.
-- **Remaining evals/coverage gaps** — expand eval coverage to more modules.
+- **Remaining eval coverage** — add more eval tasks (eval-tasks/) and graded examples.
 - **Peer group messaging with shared todos** — collaborative task management between agents.
 - **Other ideas** — e.g. more advanced sandbox policies, multi-tenant deployments.

@@ -19,13 +19,13 @@ pub const Proposal = struct {
 };
 
 /// Prefixes a file path must match to be part of the modifiable surface.
-/// Deliberately excludes the evaluation machinery (evals/, improve/,
-/// tools/builder.zig) so a single improvement pass cannot weaken its own gate.
+/// Deliberately excludes the evaluation machinery (eval-tasks/, src/evals/,
+/// src/improve/, src/tools/builder.zig) so a single improvement pass cannot
+/// weaken its own gate.
 pub const allowed_prefixes = [_][]const u8{
     "src/",
     "tool-src/",
     "tool-bin/",
-    "webui/",
     "skills/",
     "tests/",
     "tools.d/",
@@ -45,7 +45,7 @@ pub fn validatePath(path: []const u8) bool {
             if (std.mem.startsWith(u8, path, "src/evals/")) return false;
             if (std.mem.startsWith(u8, path, "src/improve/")) return false;
             if (std.mem.eql(u8, path, "src/tools/builder.zig")) return false;
-            if (std.mem.startsWith(u8, path, "evals/")) return false;
+            if (std.mem.startsWith(u8, path, "eval-tasks/")) return false;
             if (std.mem.startsWith(u8, path, "tools.d/") and !std.mem.endsWith(u8, path, ".tool.json")) return false;
             if (std.mem.startsWith(u8, path, "tools/") and !std.mem.endsWith(u8, path, ".tool.json")) return false;
             return true;
@@ -130,7 +130,7 @@ test "validatePath" {
     try std.testing.expect(!validatePath("src/evals/runner.zig"));
     try std.testing.expect(!validatePath("src/improve/engine.zig"));
     try std.testing.expect(!validatePath("src/tools/builder.zig"));
-    try std.testing.expect(!validatePath("evals/math.task.json"));
+    try std.testing.expect(!validatePath("eval-tasks/math.task.json"));
     try std.testing.expect(!validatePath("state/foo"));
     try std.testing.expect(!validatePath("tools.d/calculator.wasm"));
     try std.testing.expect(!validatePath("../etc/passwd"));

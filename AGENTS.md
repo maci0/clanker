@@ -29,10 +29,14 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:
-  clanker cannot modify `src/improve/`, `src/evals/`, or
-  `src/tools/builder.zig` in a single pass (anti-cheat boundary).
-- `tool-src/zig/` — WASM tool sources (Zig); `tool-src/ts/` — AssemblyScript sources; `tools.d/` — descriptors; `tool-bin/` — built AS wasm (guest ABI: exports scratch/host_arena/run,
-  imports env.ck_*). Prefer implementing functionality as WASM tools.
+  clanker cannot modify `src/improve/`, `src/evals/`, `src/tools/builder.zig`,
+  or `eval-tasks/` in a single pass (anti-cheat boundary).
+- `tool-src/zig/` — WASM tool sources (Zig); `tool-src/ts/` — AssemblyScript
+  sources; `tools.d/` — descriptors; `tool-bin/` — committed AS build output
+  (built via `npm run build` in `tool-src/ts/`; guest ABI: exports
+  scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
+  output (`zig build tools`), gitignored. Prefer implementing functionality as
+  WASM tools.
 
 ## Tool ABI
 

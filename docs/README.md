@@ -227,7 +227,7 @@ The history is stored in `state/history/` and can be reverted with `clanker reve
 
 ### Evals and gates (`src/evals/`, `src/gate/checks.zig`)
 
-Deterministic evals live in `src/evals/` and run with `clanker eval`. The gates are used both for self-improvement and CI. They include:
+Deterministic evals live in `src/evals/` (harness) with task definitions in `eval-tasks/*.task.json`, and run with `clanker eval`. The gates are used both for self-improvement and CI. They include:
 - `selfhost_build`: `zig build`
 - `selfhost_tests`: `zig build test`
 - `selfhost_tools`: `zig build tools`
