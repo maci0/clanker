@@ -476,13 +476,18 @@ pub const Agent = struct {
                 }
 
                 s = last_line;
-                // Strip trailing punctuation (period, comma, etc.) so an
-                // exact-match answer like "42." becomes "42".
-                while (s.len > 0) {
-                    const ch = s[s.len - 1];
+                // Strip trailing punctuation (period, comma, etc.) only when
+                // the remainder is a number, so an exact-match answer like
+                // "42." becomes "42" while a sentence like "hello world."
+                // keeps its period.
+                var stripped = s;
+                while (stripped.len > 0) {
+                    const ch = stripped[stripped.len - 1];
                     if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
-                    s = s[0 .. s.len - 1];
-                    s = std.mem.trim(u8, s, " \t\r\n");
+                    stripped = stripped[0 .. stripped.len - 1];
+                }
+                if (stripped.len < s.len and isNumericString(stripped)) {
+                    s = std.mem.trim(u8, stripped, " \t\r\n");
                 }
             }
         }
@@ -820,3 +825,25 @@ const ToolWorker = struct {
         self.out = out;
     }
 };
+
+fn isNumericString(s: []const u8) bool {
+    if (s.len == 0) return false;
+    var i: usize = 0;
+    if (s[0] == '-') {
+        i = 1;
+        if (i >= s.len) return false;
+    }
+    var saw_digit = false;
+    var saw_dot = false;
+    while (i < s.len) : (i += 1) {
+        const ch = s[i];
+        if (ch >= '0' and ch <= '9') {
+            saw_digit = true;
+        } else if (ch == '.' and !saw_dot) {
+            saw_dot = true;
+        } else {
+            return false;
+        }
+    }
+    return saw_digit;
+}
