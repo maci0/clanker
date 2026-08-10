@@ -1032,6 +1032,12 @@ const ToolWorker = struct {
         defer threaded.deinit();
         const io = threaded.io();
 
+        // Scratch arena for sandbox fields that need serialization
+        // (config_json), mirroring what host.sandboxFor does with the
+        // caller's arena on the sequential path.
+        var arena_state = std.heap.ArenaAllocator.init(self.ctx.gpa);
+        defer arena_state.deinit();
+
         var sb = host.Sandbox{
             .gpa = self.ctx.gpa,
             .io = io,
@@ -1042,6 +1048,8 @@ const ToolWorker = struct {
             .seed = self.cfg.agent.seed,
             .subagent_runner = self.subagent_runner,
             .cfg = self.cfg,
+            .state_dir = self.cfg.agent.state_dir,
+            .config_json = try std.fmt.allocPrint(arena_state.allocator(), "{f}", .{std.json.fmt(self.tool.config, .{})}),
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ self.tool.name, self.arguments });
