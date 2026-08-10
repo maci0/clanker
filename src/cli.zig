@@ -13,12 +13,23 @@ const improve = @import("improve/engine.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
-const autolearn = @import("autolearn.zig");
+const autolearn = @import("agent/autolearn.zig");
+const subagent = @import("agent/subagent.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
+const chatrooms = @import("peers/chatrooms.zig");
+const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
+const atomic_write = @import("util/atomic_write.zig");
 const gate_checks = @import("gate/checks.zig");
+
+// Web UI vendor assets: served as plain static files (not routed through the
+// WASM "webui" tool — its shared output buffer, lib.zig's out_cap, is 64 KiB,
+// far smaller than these). Vendored rather than CDN-loaded so the page has
+// zero runtime network dependencies and needs no change to the webui CSP.
+const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
+const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
 
 pub const Command = enum {
     help,
@@ -34,6 +45,8 @@ pub const Command = enum {
     mcp,
     goal,
     notify,
+    chat,
+    stats,
     phonebook,
     serve,
     repl,
@@ -53,6 +66,11 @@ pub const Options = struct {
     goal: ?[]const u8 = null,
     peer: ?[]const u8 = null,
     message: ?[]const u8 = null,
+    /// Sub-command for `chat`: "send", "history", "rooms" (default) or
+    /// "subscribe". `room` holds the room name; `message` holds the text (send),
+    /// an `after` ts (history) or an on/off token (subscribe).
+    chat_sub: []const u8 = "rooms",
+    room: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
     iters: u32 = 3,
     dry_run: bool = false,
@@ -152,6 +170,11 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .goal;
             } else if (std.mem.eql(u8, a, "notify")) {
                 opts.command = .notify;
+            } else if (std.mem.eql(u8, a, "chat")) {
+                opts.command = .chat;
+                pending_sub = "";
+            } else if (std.mem.eql(u8, a, "stats")) {
+                opts.command = .stats;
             } else if (std.mem.eql(u8, a, "phonebook")) {
                 opts.command = .phonebook;
             } else if (std.mem.eql(u8, a, "serve")) {
@@ -173,6 +196,9 @@ pub fn parse(args: []const []const u8) !Options {
             } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models"))) {
                 opts.providers_sub = a;
                 pending_sub = null; // sub consumed; next token is the provider name
+            } else if (opts.command == .chat and sub.len == 0 and (std.mem.eql(u8, a, "send") or std.mem.eql(u8, a, "history") or std.mem.eql(u8, a, "rooms") or std.mem.eql(u8, a, "subscribe"))) {
+                opts.chat_sub = a;
+                pending_sub = null; // sub consumed; next tokens are room etc.
             } else {
                 return error.BadSubcommand;
             }
@@ -194,6 +220,10 @@ pub fn parse(args: []const []const u8) !Options {
             opts.peer = a;
         } else if (opts.command == .notify and opts.message == null) {
             opts.message = a;
+        } else if (opts.command == .chat and opts.room == null) {
+            opts.room = a;
+        } else if (opts.command == .chat and opts.message == null) {
+            opts.message = a;
         } else {
             return error.UnknownArg;
         }
@@ -202,6 +232,11 @@ pub fn parse(args: []const []const u8) !Options {
     if (pending_sub != null) return error.BadSubcommand;
     if (opts.command == .run and opts.task == null) return error.MissingTask;
     if (opts.command == .notify and (opts.peer == null or opts.message == null)) return error.MissingArg;
+    if (opts.command == .chat) {
+        const needs_room = !std.mem.eql(u8, opts.chat_sub, "rooms");
+        if (needs_room and opts.room == null) return error.MissingArg;
+        if (std.mem.eql(u8, opts.chat_sub, "send") and opts.message == null) return error.MissingArg;
+    }
     return opts;
 }
 
@@ -230,6 +265,11 @@ const usage_text =
     \\  clanker mcp                     serve tools over MCP (stdio)
     \\  clanker serve [--port N]        HTTP API + web UI (default port 17921)
     \\  clanker notify <peer> "<message>" send a notification to a peer
+    \\  clanker chat send <room> "<text>"  send a message to a chatroom
+    \\  clanker chat history <room> [after]  read chatroom history (newest first)
+    \\  clanker chat rooms              list chatrooms + subscriptions
+    \\  clanker chat subscribe <room> [on]  join/leave a chatroom (on = true/false)
+    \\  clanker stats                   token usage per provider/model
     \\  clanker phonebook               list peer agent cards
     \\  clanker git <args...>           passthrough to git (e.g. clanker git status)
     \\  clanker --verbose               enable debug logging
@@ -251,6 +291,8 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .mcp => try cmdMcp(init, opts),
         .goal => try cmdGoal(init, opts),
         .notify => try cmdNotify(init, opts),
+        .chat => try cmdChat(init, opts),
+        .stats => try cmdStats(init),
         .phonebook => try cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
         .repl => try cmdRepl(init, opts),
@@ -324,7 +366,14 @@ fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8
         const sub = std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_path, entry.name }) catch continue;
         switch (entry.kind) {
             .directory => {
-                if (std.mem.eql(u8, entry.name, ".git") or std.mem.eql(u8, entry.name, "zig-cache") or std.mem.eql(u8, entry.name, "zig-out") or std.mem.eql(u8, entry.name, "state")) continue;
+                // Only this project's own sources are gated. Dot-directories
+                // cover .git and .zig-cache (whose generated options.zig and
+                // dependencies.zig are not formatted, and are not ours to
+                // format); zig-pkg is 1800 files of fetched dependencies.
+                if (entry.name.len > 0 and entry.name[0] == '.') continue;
+                if (std.mem.eql(u8, entry.name, "zig-out") or
+                    std.mem.eql(u8, entry.name, "zig-pkg") or
+                    std.mem.eql(u8, entry.name, "state")) continue;
                 try walkZig(io, arena, list, sub);
             },
             .file => {
@@ -378,7 +427,7 @@ fn cmdInit(init: std.process.Init) !void {
         error.FileNotFound => {
             const ident = try friendlyInstanceName(arena, io);
             const content = try std.fmt.allocPrint(arena, local_template, .{ ident.name, ident.id });
-            try dir.writeFile(io, .{ .sub_path = local, .data = content });
+            try atomic_write.writeFile(io, dir, local, content);
             log.log(.info, "wrote {s} (instance '{s}')", .{ local, ident.name });
         },
         else => return err,
@@ -593,7 +642,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
@@ -607,6 +656,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const tool_defs = try reg.toToolDefs(arena);
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
+    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
     if (opts.session) |sid| {
@@ -656,15 +706,53 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
     compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
+
+    // Answer text streams to stdout as it arrives (identical bytes to the
+    // old at-once write, just delivered incrementally); on a real terminal
+    // the wait for the LLM/tools is covered by a spinner + tool status line
+    // on stderr, so piping stdout to a file or another process still gets
+    // clean, tool-free content.
+    const stdout_file = std.Io.File.stdout();
+    var out_buf: [4096]u8 = undefined;
+    var out_w = stdout_file.writer(io, &out_buf);
+    run_out = &out_w;
+    run_stdout_color = stdout_file.isTty(io) catch false;
+    a.on_token = &runDelta;
+
+    const stderr_file = std.Io.File.stderr();
+    var err_buf: [1024]u8 = undefined;
+    var err_w: std.Io.File.Writer = undefined;
+    if ((stderr_file.isTty(io) catch false) and cfg.modules.streaming) {
+        err_w = stderr_file.writer(io, &err_buf);
+        repl_out = &err_w;
+        repl_io = io;
+        a.on_tool_call = &replToolCall;
+        a.on_tool_result = &replToolResult;
+    }
+
+    repl_answer_started = false;
+    replShowThinking();
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
+        replClearThinking();
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return err;
     };
+    replClearThinking();
 
-    if (resp.message.content) |c| {
-        try std.Io.File.stdout().writeStreamingAll(io, c);
-        try std.Io.File.stdout().writeStreamingAll(io, "\n");
+    const streamed = a.on_token != null and cfg.modules.streaming;
+    if (!streamed) {
+        if (run_stdout_color) try out_w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m");
+        if (resp.message.content) |c| {
+            if (run_stdout_color) {
+                run_md.feed(&out_w.interface, c);
+            } else {
+                try out_w.interface.writeAll(c);
+            }
+        }
     }
+    if (run_stdout_color) run_md.flush(&out_w.interface);
+    try out_w.interface.writeAll("\n");
+    try out_w.interface.flush();
 
     if (opts.session) |sid| {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
@@ -686,7 +774,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
@@ -700,17 +788,11 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const tool_defs = try reg.toToolDefs(arena);
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
+    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
 
-    // Hot-reload: remember our own binary's path + mtime so the REPL can
-    // re-exec itself with a freshly built binary and continue the session
-    // (gated by modules.hot_reload).
     const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
-    var start_mtime: i128 = 0;
-    if (cfg.modules.hot_reload) {
-        if (std.Io.Dir.cwd().statFile(io, exe_path, .{})) |st| start_mtime = st.mtime.nanoseconds else |_| {}
-    }
 
     var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     var sid: []const u8 = undefined;
@@ -726,6 +808,13 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
         sid = sid_arg;
     } else {
         sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
+    }
+
+    // Hot-reload: a background thread watches the binary and re-execs into
+    // `repl --session <sid>` (resuming this exact session) once a rebuild
+    // lands and it's safe to do so (see HotReload doc comment).
+    if (cfg.modules.hot_reload) {
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildReplArgvTail(arena, sid, opts));
     }
 
     const stdin_file = std.Io.File.stdin();
@@ -755,7 +844,6 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var tmp: [4096]u8 = undefined;
 
     while (true) {
-        if (cfg.modules.hot_reload and replHotReload(io, gpa, exe_path, start_mtime, sid, opts)) return;
         try out_w.interface.writeAll("\x1b[32mclanker> \x1b[0m");
         try out_w.interface.flush();
 
@@ -1005,54 +1093,211 @@ fn persistModules(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, 
         s.endObject() catch return;
         s.endObject() catch return;
     }
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "config.local.json", .data = w.buffer[0..w.end] }) catch {};
+    atomic_write.writeFile(io, std.Io.Dir.cwd(), "config.local.json", w.buffer[0..w.end]) catch |err| log.log(.warn, "failed to persist config.local.json: {s}", .{@errorName(err)});
 }
 
-/// Re-execs the clanker binary if it was rebuilt since the REPL started,
-/// resuming the same session with the new build. Returns true when a
-/// successful exec happened (the current process is gone).
-fn replHotReload(io: std.Io, gpa: std.mem.Allocator, exe_path: []const u8, start_mtime: i128, sid: []const u8, opts: Options) bool {
+/// True if `exe_path`'s mtime differs from `start_mtime` and the file has
+/// settled into a stable, valid ELF. The binary may be mid-write (e.g.
+/// clanker's own improve loop rebuilds it constantly); exec'ing a
+/// half-written file kills the process silently, so this only reports an
+/// update once the file has been stable for a moment AND looks like a valid
+/// ELF. Shared by the REPL and `clanker serve` hot-reload checks.
+fn binaryUpdated(io: std.Io, exe_path: []const u8, start_mtime: i128) bool {
     const st1 = std.Io.Dir.cwd().statFile(io, exe_path, .{}) catch return false;
     if (st1.mtime.nanoseconds == start_mtime) return false;
-    // The binary may be mid-write (e.g. clanker's own improve loop rebuilds
-    // it constantly). Exec'ing a half-written file kills the process silently,
-    // so only reload once the file has been stable for a moment AND looks like
-    // a valid ELF.
     std.Io.sleep(io, .{ .nanoseconds = 400 * std.time.ns_per_ms }, .awake) catch {};
     const st2 = std.Io.Dir.cwd().statFile(io, exe_path, .{}) catch return false;
     if (st2.mtime.nanoseconds != st1.mtime.nanoseconds) return false; // still being written
-    {
-        const f = std.Io.Dir.cwd().openFile(io, exe_path, .{}) catch return false;
-        defer f.close(io);
-        var magic: [4]u8 = undefined;
-        const n = std.posix.read(f.handle, &magic) catch return false;
-        if (n < 4 or magic[0] != 0x7f or magic[1] != 'E' or magic[2] != 'L' or magic[3] != 'F') return false;
-    }
+    const f = std.Io.Dir.cwd().openFile(io, exe_path, .{}) catch return false;
+    defer f.close(io);
+    var magic: [4]u8 = undefined;
+    const n = std.posix.read(f.handle, &magic) catch return false;
+    return n >= 4 and magic[0] == 0x7f and magic[1] == 'E' and magic[2] == 'L' and magic[3] == 'F';
+}
 
-    // Build the argv for: <exe> repl --session <sid> [--provider p] [--model m]
+/// Replaces the current process image with `exe_path argv_tail...`. On
+/// success this never returns (the process is gone); on failure it returns
+/// so the caller can log and keep running on the current build.
+fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const []const u8) void {
     var argv: std.ArrayList(?[*:0]const u8) = .empty;
     defer argv.deinit(gpa);
-    const exe_z = @as([*:0]const u8, @ptrCast(exe_path.ptr));
-    argv.append(gpa, exe_z) catch return false;
-    argv.append(gpa, "repl") catch return false;
-    argv.append(gpa, "--session") catch return false;
-    argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, sid) catch return false))) catch return false;
-    if (opts.provider) |p| {
-        argv.append(gpa, "--provider") catch return false;
-        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, p) catch return false))) catch return false;
+    const exe_z: [*:0]const u8 = exe_path.ptr;
+    argv.append(gpa, exe_z) catch return;
+    for (argv_tail) |a| {
+        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, a) catch return))) catch return;
     }
-    if (opts.model) |m| {
-        argv.append(gpa, "--model") catch return false;
-        argv.append(gpa, @as([*:0]const u8, @ptrCast(gpa.dupeZ(u8, m) catch return false))) catch return false;
+    argv.append(gpa, null) catch return;
+    // Mark every fd above stderr close-on-exec. The re-exec'd image reopens
+    // everything it needs (listener via reuse_address, inotify, sockets), so
+    // an inherited fd is purely a leak: one listener per reload until EMFILE.
+    // SETFD only acts at exec time, so if the execve below fails the current
+    // image keeps running with nothing closed.
+    const nofile = std.posix.getrlimit(.NOFILE) catch std.posix.rlimit{ .cur = 1024, .max = 1024 };
+    // ponytail: linear fcntl sweep; parse /proc/self/fd if the limit is ever huge
+    const fd_max: i32 = @intCast(@min(nofile.cur, 65536));
+    var fd: i32 = 3;
+    while (fd < fd_max) : (fd += 1) {
+        _ = std.os.linux.fcntl(@intCast(fd), std.os.linux.F.SETFD, std.os.linux.FD_CLOEXEC);
     }
-    argv.append(gpa, null) catch return false;
-
-    std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated — restarting with the new build (session {s})\n", .{sid});
-    const path_z: [*:0]const u8 = @ptrCast(exe_path.ptr);
+    const path_z: [*:0]const u8 = exe_path.ptr;
     const argv_z: [*:null]const ?[*:0]const u8 = @ptrCast(argv.items.ptr);
     _ = std.os.linux.execve(path_z, argv_z, @ptrCast(std.c.environ));
-    std.debug.print("[hot-reload] exec failed — continuing with the current build\n", .{});
-    return false;
+}
+
+/// Watches the running binary for a rebuild and restarts the process with
+/// `argv_tail` once it's safe to do so. "Safe" means not mid-request/
+/// mid-turn: `begin()`/`end()` bracket the unsafe window (wrap exactly the
+/// `a.run()` turn in the REPL, or exactly `handleConnection` in `serve`) so
+/// a reload never drops a client mid-response or loses an in-progress REPL
+/// turn before its session save — sessions always resume cleanly because
+/// nothing that mutates them is ever interrupted.
+///
+/// While idle (the common case: blocked in `accept()` or the stdin read),
+/// the watcher thread restarts immediately on the inotify event instead of
+/// waiting for the next request/line to arrive and poll for it.
+const HotReload = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    /// Owned by this struct, not the caller: the watcher thread is detached and
+    /// outlives `cmdRepl`/`cmdServe`, whose `exe_path` is freed on return.
+    exe_path: [:0]const u8,
+    start_mtime: i128,
+    argv_tail: []const []const u8,
+    /// Held shared for the whole unsafe window. A flag plus a check would be a
+    /// race: the watcher could read "not busy" and then exec while `begin()`
+    /// runs. Taking the lock makes "is it safe to exec" and "start the turn"
+    /// one atomic decision.
+    ///
+    /// A reader-writer lock rather than a plain mutex because `serve` now runs
+    /// one thread per connection: any number of requests may be in flight at
+    /// once (shared), while the watcher's exec needs all of them finished
+    /// (exclusive).
+    turn: std.Io.RwLock = .init,
+    /// Set by the watcher when a rebuild lands mid-turn; `end()` checks it so a
+    /// rebuild is never missed, only deferred to the end of the turn.
+    pending: std.atomic.Value(bool) = .init(false),
+
+    fn begin(self: *HotReload) void {
+        self.turn.lockSharedUncancelable(self.io);
+    }
+
+    fn end(self: *HotReload) void {
+        self.turn.unlockShared(self.io);
+        if (!self.pending.load(.acquire)) return;
+        // Only the request that leaves the server idle performs the deferred
+        // reload; with concurrent connections the others are still mid-
+        // response. Failing to take it leaves `pending` set, so the next
+        // request to finish retries.
+        if (!self.turn.tryLock(self.io)) return;
+        defer self.turn.unlock(self.io);
+        if (!self.pending.swap(false, .acq_rel)) return;
+        self.restartIfUpdated();
+    }
+
+    fn restartIfUpdated(self: *HotReload) void {
+        if (!binaryUpdated(self.io, self.exe_path, self.start_mtime)) return;
+        std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
+        execSelf(self.gpa, self.exe_path, self.argv_tail);
+        std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
+    }
+
+    /// Blocks forever watching the binary's directory for `CLOSE_WRITE` /
+    /// `MOVED_TO` on its basename (covers both write-in-place and
+    /// atomic-rename-replace build outputs). Run on its own thread; returns
+    /// (silently giving up) if inotify is unavailable, e.g. an overlay/
+    /// network filesystem that doesn't support it — the process just never
+    /// gets an idle-triggered reload in that case.
+    fn watch(self: *HotReload) void {
+        const dir_path = std.fs.path.dirname(self.exe_path) orelse ".";
+        const base_name = std.fs.path.basename(self.exe_path);
+
+        var dir_buf: [std.fs.max_path_bytes:0]u8 = undefined;
+        const dir_z = std.fmt.bufPrintZ(&dir_buf, "{s}", .{dir_path}) catch return;
+
+        const init_rc = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC);
+        if (@as(isize, @bitCast(init_rc)) < 0) return;
+        const fd: i32 = @intCast(init_rc);
+        defer _ = std.os.linux.close(fd);
+
+        const watch_rc = std.os.linux.inotify_add_watch(fd, dir_z, std.os.linux.IN.CLOSE_WRITE | std.os.linux.IN.MOVED_TO);
+        if (@as(isize, @bitCast(watch_rc)) < 0) return;
+
+        var buf: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
+        while (true) {
+            const n = std.posix.read(fd, &buf) catch return;
+            if (n == 0) return;
+            var relevant = false;
+            var i: usize = 0;
+            while (i + @sizeOf(std.os.linux.inotify_event) <= n) {
+                const ev: *const std.os.linux.inotify_event = @ptrCast(@alignCast(&buf[i]));
+                if (ev.getName()) |name| {
+                    if (std.mem.eql(u8, name, base_name)) relevant = true;
+                }
+                i += @sizeOf(std.os.linux.inotify_event) + ev.len;
+            }
+            if (!relevant) continue;
+            if (!binaryUpdated(self.io, self.exe_path, self.start_mtime)) continue;
+            // Never exec inside a turn: if one is running, defer to `end()`.
+            if (!self.turn.tryLock(self.io)) {
+                self.pending.store(true, .release);
+                // The turn may have ended between the failed tryLock and the
+                // store above, in which case end() already ran its pending
+                // check and found nothing: retry once so that reload is not
+                // stranded until the next event.
+                if (!self.turn.tryLock(self.io)) continue;
+                if (!self.pending.swap(false, .acq_rel)) {
+                    self.turn.unlock(self.io);
+                    continue;
+                }
+            }
+            defer self.turn.unlock(self.io);
+            std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
+            execSelf(self.gpa, self.exe_path, self.argv_tail);
+            std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
+        }
+    }
+
+    /// Spawns the watcher thread; returns null (caller keeps running on the
+    /// current build with no hot-reload) if it could not be started.
+    fn start(arena: std.mem.Allocator, io: std.Io, gpa: std.mem.Allocator, exe_path: []const u8, argv_tail: []const []const u8) ?*HotReload {
+        const st = std.Io.Dir.cwd().statFile(io, exe_path, .{}) catch return null;
+        const self = arena.create(HotReload) catch return null;
+        // Copied, and deliberately never freed: the watcher thread is detached
+        // and reads this until the process is replaced or exits.
+        const owned_path = arena.dupeZ(u8, exe_path) catch return null;
+        self.* = .{ .io = io, .gpa = gpa, .exe_path = owned_path, .start_mtime = st.mtime.nanoseconds, .argv_tail = argv_tail };
+        _ = std.Thread.spawn(.{}, HotReload.watch, .{self}) catch return null;
+        return self;
+    }
+};
+
+/// Shared by `cmdRepl` and `cmdServe` (mutually exclusive: only one command
+/// runs per process), matching the `repl_out`/`repl_io`-style globals
+/// already used for other REPL cross-cutting state.
+var hot_reload_active: ?*HotReload = null;
+
+fn buildReplArgvTail(arena: std.mem.Allocator, sid: []const u8, opts: Options) ![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(arena, "repl");
+    try argv.append(arena, "--session");
+    try argv.append(arena, sid);
+    if (opts.provider) |p| {
+        try argv.append(arena, "--provider");
+        try argv.append(arena, p);
+    }
+    if (opts.model) |m| {
+        try argv.append(arena, "--model");
+        try argv.append(arena, m);
+    }
+    return argv.items;
+}
+
+fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(arena, "serve");
+    try argv.append(arena, "--port");
+    try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
+    return argv.items;
 }
 
 /// Streams REPL output: the model's content deltas land here (via
@@ -1105,9 +1350,97 @@ fn replClearThinking() void {
     w.interface.writeAll("\r\x1b[K") catch {};
 }
 
+/// Renders the same markdown subset as the `format` WASM tool (bold,
+/// italic, inline code, fenced blocks, "- " bullets) straight into ANSI as
+/// content streams in, one delta at a time. A marker can split across two
+/// deltas (e.g. "**" arriving as two separate one-byte chunks), so up to 2
+/// bytes are held back whenever the tail of a chunk could still be the start
+/// of a longer marker, and resolved once the next chunk arrives.
+const MdStream = struct {
+    in_fence: bool = false,
+    in_bold: bool = false,
+    in_italic: bool = false,
+    in_code: bool = false,
+    at_line_start: bool = true,
+    hold: [2]u8 = undefined,
+    hold_len: usize = 0,
+
+    fn at(self: *const MdStream, chunk: []const u8, idx: usize) u8 {
+        return if (idx < self.hold_len) self.hold[idx] else chunk[idx - self.hold_len];
+    }
+
+    fn feed(self: *MdStream, w: *std.Io.Writer, chunk: []const u8) void {
+        const total = self.hold_len + chunk.len;
+        var i: usize = 0;
+        while (i < total) {
+            const remaining = total - i;
+            const c = self.at(chunk, i);
+            if (c == '`' and remaining < 3) break; // could still become ```
+            if (c == '`' and self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
+                self.in_fence = !self.in_fence;
+                w.writeAll(if (self.in_fence) "\x1b[2m" else "\x1b[0m") catch {};
+                i += 3;
+                self.at_line_start = false;
+                continue;
+            }
+            if (c == '*' and remaining < 2) break; // could still become **
+            if (c == '*' and self.at(chunk, i + 1) == '*') {
+                self.in_bold = !self.in_bold;
+                w.writeAll(if (self.in_bold) "\x1b[1m" else "\x1b[0m") catch {};
+                i += 2;
+                self.at_line_start = false;
+                continue;
+            }
+            if (c == '`') {
+                self.in_code = !self.in_code;
+                w.writeAll(if (self.in_code) "\x1b[36m" else "\x1b[0m") catch {};
+                i += 1;
+                self.at_line_start = false;
+                continue;
+            }
+            if (c == '*') {
+                self.in_italic = !self.in_italic;
+                w.writeAll(if (self.in_italic) "\x1b[3m" else "\x1b[0m") catch {};
+                i += 1;
+                self.at_line_start = false;
+                continue;
+            }
+            if (self.at_line_start and c == '-' and remaining < 2) break; // could still become "- "
+            if (self.at_line_start and c == '-' and self.at(chunk, i + 1) == ' ') {
+                w.writeAll("\xe2\x80\xa2 ") catch {};
+                i += 2;
+                self.at_line_start = false;
+                continue;
+            }
+            w.writeAll(&[_]u8{c}) catch {};
+            self.at_line_start = (c == '\n');
+            i += 1;
+        }
+        const left = total - i;
+        var j: usize = 0;
+        while (j < left) : (j += 1) self.hold[j] = self.at(chunk, i + j);
+        self.hold_len = left;
+    }
+
+    /// Flushes any still-held bytes as literal text (no more input is
+    /// coming, so a trailing lone "*" or "`" was never a real marker) and
+    /// closes any formatting left open, then resets for the next turn.
+    fn flush(self: *MdStream, w: *std.Io.Writer) void {
+        if (self.hold_len > 0) {
+            w.writeAll(self.hold[0..self.hold_len]) catch {};
+        }
+        if (self.in_code) w.writeAll("\x1b[0m") catch {};
+        if (self.in_italic) w.writeAll("\x1b[0m") catch {};
+        if (self.in_bold) w.writeAll("\x1b[0m") catch {};
+        if (self.in_fence) w.writeAll("\x1b[0m") catch {};
+        self.* = .{};
+    }
+};
+
 /// True once the current turn's assistant text has started streaming, so the
 /// colored "›" gutter is only printed once, right before the first token.
 var repl_answer_started = false;
+var repl_md: MdStream = .{};
 
 fn replDelta(delta: []const u8) void {
     replClearThinking();
@@ -1116,7 +1449,7 @@ fn replDelta(delta: []const u8) void {
         repl_answer_started = true;
         w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
     }
-    w.interface.writeAll(delta) catch {};
+    repl_md.feed(&w.interface, delta);
     w.interface.flush() catch {};
 }
 
@@ -1146,6 +1479,29 @@ fn replToolResult(ms: u64) void {
     w.interface.writeAll(line) catch return;
     w.interface.flush() catch {};
     replShowThinking();
+}
+
+/// `clanker run`'s stdout content writer: kept separate from `repl_out`
+/// (which, in `run`, points at stderr for the spinner/tool-status line) so
+/// streamed answer bytes never share a stream with status noise — piping
+/// stdout stays byte-identical to a plain, non-streamed run.
+var run_out: ?*std.Io.File.Writer = null;
+var run_stdout_color = false;
+var run_md: MdStream = .{};
+
+fn runDelta(delta: []const u8) void {
+    replClearThinking();
+    const w = run_out orelse return;
+    if (run_stdout_color and !repl_answer_started) {
+        repl_answer_started = true;
+        w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
+    }
+    if (run_stdout_color) {
+        run_md.feed(&w.interface, delta);
+    } else {
+        w.interface.writeAll(delta) catch {};
+    }
+    w.interface.flush() catch {};
 }
 
 /// Runs one REPL turn for `task` (arena-owned): appends the user message, runs
@@ -1179,6 +1535,11 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) v
 }
 
 fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
+    // A hot-reload must never interrupt a turn in progress (would lose the
+    // response before its session save below); see HotReload's doc comment.
+    if (hot_reload_active) |hr| hr.begin();
+    defer if (hot_reload_active) |hr| hr.end();
+
     compactMessages(messages, max_turn_tokens);
     const gpa = a.ctx.gpa;
     // NOTE: a.run() appends the user task (and each assistant reply) to
@@ -1206,8 +1567,9 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const content = resp.message.content orelse "";
     if (!streamed) {
         try out_w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m");
-        try out_w.interface.writeAll(content);
+        repl_md.feed(&out_w.interface, content);
     }
+    repl_md.flush(&out_w.interface);
     try out_w.interface.writeAll("\n\n");
     // Dim turn stats (tokens + wall time) so each turn reports its cost.
     const turn_prompt = a.stats.total_prompt_tokens -| prev_prompt;
@@ -1241,102 +1603,99 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
 }
 
 fn cmdSessions(init: std.process.Init) !void {
-    const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     if (!cfg.modules.sessions) {
         log.log(.error_, "sessions module is disabled...", .{});
         return error.ModuleDisabled;
     }
-    const metas = try session.listSessions(io, init.gpa, arena, std.Io.Dir.cwd());
-    const out = std.Io.File.stdout();
-    for (metas) |m| {
-        try out.writeStreamingAll(io, m.id);
-        try out.writeStreamingAll(io, "\t");
-        try out.writeStreamingAll(io, m.title);
-        try out.writeStreamingAll(io, "\t");
-        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{d}", .{m.updated}));
-        try out.writeStreamingAll(io, "\n");
-    }
+    try printInternalTool(init, &cfg, "cmd_sessions", "");
 }
 
 /// `clanker graph [run-id]` — list persisted execution graphs, or render one
 /// as an ASCII timeline of LLM calls and tool invocations.
-fn cmdGraph(init: std.process.Init, opts: Options) !void {
-    const io = init.io;
-    const gpa = init.gpa;
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
+/// Runs an internal `cmd_*` WASM tool and returns its `text` (arena-owned).
+/// The CLI subcommands that render persisted state go through here, so the
+/// plugin is the single implementation and the CLI is only a caller.
+fn toolText(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    tool_name: []const u8,
+    args: []const u8,
+) ![]const u8 {
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    const tool = reg.get(tool_name) orelse {
+        log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
+        return error.UnknownTool;
+    };
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+        log.log(.error_, "'{s}' wasm missing: {s} (run `zig build tools`)", .{ tool_name, tool.wasm });
+        return error.ToolWasmMissing;
+    };
+    defer gpa.free(wasm_bytes);
+
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    var sb = try host.sandboxFor(gpa, io, arena, environ_map, cfg, tool, &ctx);
+    const mod = try runtime.ToolModule.load(gpa, io, &sb, wasm_bytes);
+    defer mod.deinit();
+
+    var ibuf: [8192]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    try is.objectField("args");
+    try is.write(args);
+    try is.endObject();
+
+    const raw = try mod.executeTool(ibuf[0..iw.end]);
+    defer gpa.free(raw);
+
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+    if (parsed != .object) return error.ToolBadOutput;
+    var ok = false;
+    if (parsed.object.get("ok")) |k| {
+        if (k == .bool) ok = k.bool;
+    }
+    if (!ok) {
+        const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+        log.log(.error_, "{s}: {s}", .{ tool_name, detail });
+        return error.ToolFailed;
+    }
+    const text = parsed.object.get("text") orelse return error.ToolBadOutput;
+    if (text != .string) return error.ToolBadOutput;
+    return text.string;
+}
+
+/// Prints an internal tool's text to stdout, newline-terminated.
+fn printInternalTool(init: std.process.Init, cfg: *const config.Config, tool_name: []const u8, args: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(init.gpa);
     defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const text = try toolText(init.io, init.gpa, arena_state.allocator(), cfg, init.environ_map, tool_name, args);
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(init.io, text);
+    if (!std.mem.endsWith(u8, text, "\n")) try out.writeStreamingAll(init.io, "\n");
+}
+
+fn cmdGraph(init: std.process.Init, opts: Options) !void {
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     if (!cfg.modules.graphs) {
         log.log(.error_, "graphs module is disabled...", .{});
         return error.ModuleDisabled;
     }
-    const out = std.Io.File.stdout();
-
-    if (opts.task) |run_id| {
-        var loaded = graph.load(io, gpa, run_id) catch |err| {
-            log.log(.error_, "cannot load run '{s}': {s}", .{ run_id, @errorName(err) });
-            return err;
-        };
-        defer graph.deinitLoaded(&loaded);
-        const g = &loaded.graph;
-
-        try out.writeStreamingAll(io, g.run_id);
-        try out.writeStreamingAll(io, " — ");
-        try out.writeStreamingAll(io, g.task);
-        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  ({s}, {d}ms, prompt={d} completion={d})\n", .{ g.provider, g.duration_ms, g.totalPromptTokens(), g.totalCompletionTokens() }));
-
-        var iter_note: u32 = 0;
-        for (g.nodes.items) |n| {
-            const new_iter = n.iteration != iter_note;
-            if (new_iter) {
-                iter_note = n.iteration;
-                if (iter_note > 1) try out.writeStreamingAll(io, "\n");
-                try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "iter {d}\n", .{n.iteration}));
-            }
-            switch (n.kind) {
-                .llm => {
-                    const ntps: f64 = if (n.duration_ms > 0) @as(f64, @floatFromInt(n.completion_tokens)) / (@as(f64, @floatFromInt(n.duration_ms)) / 1000.0) else 0;
-                    try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  llm  {s}  {d}/{d} tok, {d}ms ({d:.1} tok/s)\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms, ntps }));
-                },
-                .tool => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  tool {s}  {d} B{s}{s}\n", .{ n.label, n.result_bytes, if (n.ok) "" else " FAILED", if (n.detail.len > 0) try std.fmt.allocPrint(arena, " ({s})", .{n.detail}) else "" })),
-                .final => try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "  done {d} B, {s}, {d}ms\n", .{ n.result_bytes, n.detail, n.duration_ms })),
-            }
-        }
-        try out.writeStreamingAll(io, "\n");
-        return;
-    }
-
-    // No run-id: list persisted runs, newest first.
-    const runs = try graph.listRuns(io, gpa, arena);
-    for (runs) |id| {
-        var loaded = graph.load(io, gpa, id) catch continue;
-        try out.writeStreamingAll(io, id);
-        try out.writeStreamingAll(io, "\t");
-        try out.writeStreamingAll(io, loaded.graph.task);
-        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "\t{d}ms\t{d} node(s)\n", .{ loaded.graph.duration_ms, loaded.graph.nodes.items.len }));
-        graph.deinitLoaded(&loaded);
-    }
+    // No run id lists the recorded runs; a run id renders that one. Both are
+    // implemented once, in the cmd_graph plugin.
+    try printInternalTool(init, &cfg, "cmd_graph", opts.task orelse "list");
 }
 
 fn cmdToolsList(init: std.process.Init, opts: Options) !void {
     _ = opts;
-    const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const out = std.Io.File.stdout();
-    var names = reg.tools.iterator();
-    var count: usize = 0;
-    while (names.next()) |kv| {
-        count += 1;
-        try out.writeStreamingAll(io, kv.key_ptr.*);
-        try out.writeStreamingAll(io, "\n");
-    }
-    const summary = try std.fmt.allocPrint(arena, "{d} tool(s) registered\n", .{count});
-    try out.writeStreamingAll(io, summary);
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    try printInternalTool(init, &cfg, "cmd_tools", "");
 }
 
 fn cmdEval(init: std.process.Init, opts: Options) !void {
@@ -1344,7 +1703,7 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
@@ -1353,7 +1712,7 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
 
-    const evals = try scorers.Eval.loadAll(arena, io, "eval-tasks");
+    const evals = try scorers.Eval.loadAll(arena, io, "evals");
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
 
     var r = eval_runner.Runner{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg, .reg = &reg };
@@ -1382,7 +1741,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider = try cfg.provider(opts.provider);
     var provider_copy = provider.*;
@@ -1497,7 +1856,105 @@ fn cmdMcp(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "mcp module is disabled...", .{});
         return error.ModuleDisabled;
     }
-    try mcp.serve(io, gpa, arena, &cfg);
+    try mcp.serve(io, gpa, arena, &cfg, init.environ_map);
+}
+
+fn cmdChat(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.chatrooms or !cfg.chatrooms.on) {
+        log.log(.error_, "chatrooms module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
+    const base = std.Io.Dir.cwd();
+    const state_dir = cfg.agent.state_dir;
+    const out = std.Io.File.stdout();
+
+    if (std.mem.eql(u8, opts.chat_sub, "rooms")) {
+        const rooms = try chatrooms.listRooms(base, io, gpa, arena, state_dir);
+        const subs = try chatrooms.subscribedRooms(base, io, arena, state_dir, &cfg);
+        try out.writeStreamingAll(io, "room\tmsgs\tlast_ts\tlast_from\tlast_text\n");
+        var buf: [16 * 1024]u8 = undefined;
+        for (rooms) |r| {
+            const line = std.fmt.bufPrint(&buf, "{s}\t{d}\t{d}\t{s}\t{s}\n", .{ r.room, r.messages, r.last_ts, r.last_from, r.last_text }) catch continue;
+            try out.writeStreamingAll(io, line);
+        }
+        try out.writeStreamingAll(io, "subscribed: ");
+        var first = true;
+        for (subs) |s| {
+            if (!first) try out.writeStreamingAll(io, ", ");
+            try out.writeStreamingAll(io, s);
+            first = false;
+        }
+        try out.writeStreamingAll(io, "\n");
+    } else if (std.mem.eql(u8, opts.chat_sub, "send")) {
+        const msg = try chatrooms.sendMessage(base, io, gpa, arena, state_dir, &cfg, opts.room.?, opts.message.?);
+        const line = try std.fmt.allocPrint(arena, "sent to #{s} as {s} (ts {d}, id {s})\n", .{ msg.room, msg.from, msg.ts, msg.id });
+        try out.writeStreamingAll(io, line);
+    } else if (std.mem.eql(u8, opts.chat_sub, "history")) {
+        const after: i64 = if (opts.message) |m| (std.fmt.parseInt(i64, m, 10) catch 0) else 0;
+        const msgs = try chatrooms.readHistory(base, io, gpa, arena, state_dir, opts.room.?, after, 50);
+        var buf: [16 * 1024]u8 = undefined;
+        for (msgs) |m| {
+            const line = std.fmt.bufPrint(&buf, "[{d}] {s}: {s}\n", .{ m.ts, m.from, m.text }) catch continue;
+            try out.writeStreamingAll(io, line);
+        }
+        if (msgs.len == 0) try out.writeStreamingAll(io, "(no messages)\n");
+    } else if (std.mem.eql(u8, opts.chat_sub, "subscribe")) {
+        const on = if (opts.message) |m|
+            (std.mem.eql(u8, m, "true") or std.mem.eql(u8, m, "on") or std.mem.eql(u8, m, "1") or std.mem.eql(u8, m, "yes"))
+        else
+            true;
+        try chatrooms.subscribe(base, io, gpa, arena, state_dir, opts.room.?, on);
+        const line = try std.fmt.allocPrint(arena, "{s} {s}\n", .{ if (on) "subscribed to" else "unsubscribed from", opts.room.? });
+        try out.writeStreamingAll(io, line);
+    } else {
+        return error.BadSubcommand;
+    }
+}
+
+fn cmdStats(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    if (!cfg.modules.token_stats) {
+        log.log(.error_, "token_stats module is disabled...", .{});
+        return error.ModuleDisabled;
+    }
+    const base = std.Io.Dir.cwd();
+    const state_dir = cfg.agent.state_dir;
+    const stats = try token_stats.aggregate(base, io, gpa, arena, state_dir);
+    const total = token_stats.totals(stats);
+    const out = std.Io.File.stdout();
+
+    if (stats.len == 0) {
+        try out.writeStreamingAll(io, "no token usage recorded yet (run an agent task first)\n");
+        return;
+    }
+
+    var buf: [2048]u8 = undefined;
+    try out.writeStreamingAll(io, "provider        model                 calls   prompt  complet   total  cache%  tok/s       cost$\n");
+    for (stats) |st| {
+        const line = std.fmt.bufPrint(&buf, "{s:<15} {s:<20} {d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
+            st.provider,          st.model,
+            st.calls,             st.prompt_tokens,
+            st.completion_tokens, st.total_tokens,
+            st.cacheHitRate(),    st.tokensPerSec(),
+            st.cost,
+        }) catch continue;
+        try out.writeStreamingAll(io, line);
+    }
+    const tline = std.fmt.bufPrint(&buf, "{s:<15} {s:<20} {d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
+        "totals",                "",
+        total.calls,             total.prompt_tokens,
+        total.completion_tokens, total.total_tokens,
+        total.cacheHitRate(),    total.tokensPerSec(),
+        total.cost,
+    }) catch return;
+    try out.writeStreamingAll(io, tline);
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
@@ -1553,13 +2010,95 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // Bare clickable URL (no log prefix) so terminals render it as a link.
     std.debug.print("http://127.0.0.1:{d}/webui\n", .{port});
 
+    // Hot-reload: a background thread watches the binary and re-execs into
+    // `serve --port <port>` once a rebuild lands and no request is in
+    // flight (see HotReload doc comment). `reuse_address` on the listen
+    // socket above lets the new process rebind immediately.
+    const exe_path = try std.process.executablePathAlloc(io, gpa);
+    defer gpa.free(exe_path);
+    if (cfg.modules.hot_reload) {
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port));
+    }
+
     while (true) {
         const stream = server.accept(io) catch |err| {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        handleConnection(io, gpa, &cfg, init.environ_map, port, stream);
+        serveConnection(io, gpa, &cfg, init.environ_map, port, stream);
     }
+}
+
+/// Everything a connection thread needs; heap-allocated because the thread
+/// outlives the accept-loop iteration that spawned it.
+const Connection = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    port: u16,
+    stream: std.Io.net.Stream,
+};
+
+/// One accepted connection previously ran to completion inside the accept
+/// loop, so a single `/api/run` — an agent turn that can take minutes — stalled
+/// every other client, including a `/api/status` poll from the same page. Each
+/// connection now gets its own detached thread.
+///
+/// The shared state this exposes is deliberately small: `cfg` is read-only for
+/// the lifetime of the process, `environ_map` is only read (writes happen once
+/// at startup in dotenv.load), `gpa` and the `Io` implementation are threadsafe
+/// per std.process.Init, and the two pieces of genuinely mutable server state —
+/// the streaming socket and the gzip cache — are made per-thread and mutex-
+/// guarded respectively.
+const max_connection_threads = 64;
+var connection_threads = std.atomic.Value(u32).init(0);
+
+fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+    // A bound, so a flood of slow clients cannot make the process spawn
+    // threads without limit. Over it, say so and close rather than queueing:
+    // a client that waits behind 64 in-flight agent turns has already lost.
+    const in_flight = connection_threads.fetchAdd(1, .acq_rel);
+    if (in_flight >= max_connection_threads) {
+        _ = connection_threads.fetchSub(1, .acq_rel);
+        respond(stream, 503, "Service Unavailable", "{\"error\":\"too many concurrent connections\"}");
+        stream.close(io);
+        return;
+    }
+
+    const conn = gpa.create(Connection) catch {
+        _ = connection_threads.fetchSub(1, .acq_rel);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, stream);
+        return;
+    };
+    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .stream = stream };
+
+    const thread = std.Thread.spawn(.{}, connectionThread, .{conn}) catch {
+        // Out of threads: serving it on the accept loop is slower than a
+        // dedicated thread but still correct, and beats dropping the client.
+        gpa.destroy(conn);
+        _ = connection_threads.fetchSub(1, .acq_rel);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, stream);
+        return;
+    };
+    thread.detach();
+}
+
+fn connectionThread(conn: *Connection) void {
+    defer {
+        const gpa = conn.gpa;
+        gpa.destroy(conn);
+        _ = connection_threads.fetchSub(1, .acq_rel);
+    }
+    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.stream);
+}
+
+fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+    // A hot-reload must never fire mid-request (would drop the client
+    // mid-response); see HotReload's doc comment.
+    if (hot_reload_active) |hr| hr.begin();
+    defer if (hot_reload_active) |hr| hr.end();
+    handleConnection(io, gpa, cfg, environ_map, port, stream);
 }
 
 fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
@@ -1584,27 +2123,50 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
-        const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui");
+        const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui") or
+            std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, target, "/webui/vendor/hljs.min.js");
         const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify");
+        const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/message");
+        const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/chat/messages");
+        const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/chat/rooms");
+        const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
             respond(stream, 404, "Not Found", "{\"error\":\"a2a module disabled\"}");
         } else if (is_notify and !cfg.modules.peers) {
             respond(stream, 404, "Not Found", "{\"error\":\"peers module disabled\"}");
+        } else if ((is_chat_message or is_chat_messages or is_chat_rooms) and !cfg.modules.chatrooms) {
+            respond(stream, 404, "Not Found", "{\"error\":\"chatrooms module disabled\"}");
+        } else if (is_stats and !cfg.modules.token_stats) {
+            respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js")) {
+            respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw));
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/hljs.min.js")) {
+            respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw));
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
             handleStatus(cfg, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
+            handleRuns(io, gpa, cfg, environ_map, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
                 return;
             };
             respond(stream, 200, "OK", "{\"ok\":true}");
+        } else if (is_chat_message) {
+            handleChatMessage(io, gpa, cfg, body, stream);
+        } else if (is_chat_messages) {
+            handleChatMessages(io, gpa, cfg, target, stream);
+        } else if (is_chat_rooms) {
+            handleChatRooms(io, gpa, cfg, stream);
+        } else if (is_stats) {
+            handleStats(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
@@ -1674,7 +2236,162 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
     try out_list.appendSlice(gpa, line);
     try out_list.append(gpa, '\n');
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = out_list.items });
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), file_path, out_list.items);
+}
+
+const ChatMessageBody = struct {
+    room: ?[]const u8 = null,
+    from: ?[]const u8 = null,
+    text: ?[]const u8 = null,
+    ts: ?i64 = null,
+    id: ?[]const u8 = null,
+};
+
+/// POST /api/chat/message — a peer clanker delivering a chatroom message.
+/// Appends it only when this instance subscribes to the room and answers
+/// {"ok":true,"subscribed":bool} so the sender knows delivery succeeded.
+fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatMessageBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"error\":\"missing room\"}");
+        return;
+    };
+    const text = parsed.text orelse "";
+    if (text.len > chatrooms.max_text_len) {
+        respond(stream, 400, "Bad Request", "{\"error\":\"text too long\"}");
+        return;
+    }
+    const msg = chatrooms.Message{
+        .room = room,
+        .from = parsed.from orelse "unknown",
+        .text = text,
+        .ts = parsed.ts orelse 0,
+        .id = parsed.id orelse "peer",
+    };
+    const accepted = chatrooms.receive(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg) catch false;
+    var buf: [64]u8 = undefined;
+    const body_out = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"subscribed\":{}}}", .{accepted}) catch return;
+    respond(stream, 200, "OK", body_out);
+}
+
+/// GET /api/chat/messages?room=dev&after=123 — room history (newest first).
+fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var room: []const u8 = "";
+    var after: i64 = 0;
+    if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+        var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
+        while (params.next()) |pair| {
+            if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
+                const k = pair[0..eq];
+                const v = pair[eq + 1 ..];
+                if (std.mem.eql(u8, k, "room")) room = v;
+                if (std.mem.eql(u8, k, "after")) after = std.fmt.parseInt(i64, v, 10) catch 0;
+            }
+        }
+    }
+    if (room.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"error\":\"missing room\"}");
+        return;
+    }
+    const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, after, 50) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    var buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("messages") catch return;
+    s.beginArray() catch return;
+    for (msgs) |m| {
+        s.beginObject() catch return;
+        s.objectField("room") catch return;
+        s.write(m.room) catch return;
+        s.objectField("from") catch return;
+        s.write(m.from) catch return;
+        s.objectField("text") catch return;
+        s.write(m.text) catch return;
+        s.objectField("ts") catch return;
+        s.print("{d}", .{m.ts}) catch return;
+        s.objectField("id") catch return;
+        s.write(m.id) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// GET /api/chat/rooms — room stats + this instance's subscriptions.
+fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rooms = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    const subs = chatrooms.subscribedRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch &[_][]const u8{};
+    var buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("rooms") catch return;
+    s.beginArray() catch return;
+    for (rooms) |r| {
+        s.beginObject() catch return;
+        s.objectField("room") catch return;
+        s.write(r.room) catch return;
+        s.objectField("messages") catch return;
+        s.print("{d}", .{r.messages}) catch return;
+        s.objectField("last_ts") catch return;
+        s.print("{d}", .{r.last_ts}) catch return;
+        s.objectField("last_from") catch return;
+        s.write(r.last_from) catch return;
+        s.objectField("last_text") catch return;
+        s.write(r.last_text) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.objectField("subscribed") catch return;
+    s.beginArray() catch return;
+    for (subs) |sub| s.write(sub) catch return;
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// GET /api/stats — aggregated token usage per provider/model.
+fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const stats = token_stats.aggregate(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    respond(stream, 200, "OK", json_out);
 }
 
 fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
@@ -1780,17 +2497,64 @@ const RunRequestBody = struct {
     /// When true, the answer is streamed back as plain text chunks as the
     /// agent produces it (Connection: close terminates the stream).
     stream: bool = false,
+    /// Optional session id: when set (and modules.sessions is on), the prior
+    /// transcript is loaded before the turn and the updated transcript is
+    /// saved after, so the web UI can hold a real multi-turn conversation
+    /// instead of one-shot, context-free requests.
+    session: []const u8 = "",
 };
 
-/// Module-level socket for streaming /api/run output. The serve loop is
-/// single-threaded (one connection handled to completion at a time), so a
-/// single module-level writer is safe.
-var run_stream_socket: ?std.posix.fd_t = null;
+/// Socket for streaming /api/run output. The agent's `on_token`/`on_tool_call`
+/// hooks are bare function pointers with no context argument, so the
+/// destination has to live outside the call. `threadlocal` rather than a plain
+/// global because each connection runs on its own thread: two concurrent
+/// streaming runs would otherwise write into whichever socket was assigned
+/// last, splicing one client's answer into the other's response.
+threadlocal var run_stream_socket: ?std.posix.fd_t = null;
 
 fn runStreamDelta(delta: []const u8) void {
     if (run_stream_socket) |fd| {
         writeAllFd(fd, delta);
     }
+}
+
+/// Out-of-band control lines in the /api/run stream are prefixed with this
+/// byte (never valid at the start of a UTF-8 text run) so the client can tell
+/// "tool ran" / "turn finished" events apart from literal answer text without
+/// a second connection or a heavier framing format.
+const stream_event_prefix = "\x01";
+
+fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) void {
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.writeAll(stream_event_prefix) catch return;
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("type") catch return;
+    s.write(event_type) catch return;
+    inline for (@typeInfo(@TypeOf(extra)).@"struct".fields) |f| {
+        s.objectField(f.name) catch return;
+        s.write(@field(extra, f.name)) catch return;
+    }
+    s.endObject() catch return;
+    w.writeAll("\n") catch return;
+    writeAllFd(fd, buf[0..w.end]);
+}
+
+fn runStreamToolCall(calls: []const types.ToolCall) void {
+    const fd = run_stream_socket orelse return;
+    var names_buf: [512]u8 = undefined;
+    var names_w: std.Io.Writer = .fixed(&names_buf);
+    for (calls, 0..) |tc, i| {
+        if (i > 0) names_w.writeAll(", ") catch break;
+        names_w.writeAll(tc.name) catch break;
+    }
+    writeStreamEvent(fd, "tool_call", .{ .names = names_buf[0..names_w.end] });
+}
+
+fn runStreamToolResult(ms: u64) void {
+    const fd = run_stream_socket orelse return;
+    writeStreamEvent(fd, "tool_result", .{ .ms = ms });
 }
 
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
@@ -1847,6 +2611,57 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
     respondHtml(stream, 200, "OK", body);
 }
 
+/// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
+/// graph. Both are answered by the cmd_graph plugin's json modes, so reading
+/// `state/runs/` stays on the plugin side of the split.
+fn handleRuns(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    target: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    if (!cfg.modules.graphs) {
+        respond(stream, 404, "Not Found", "{\"error\":\"graphs module disabled\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/api/runs".len..];
+    var args: []const u8 = "json";
+    if (rest.len > 1 and rest[0] == '/') {
+        const id = rest[1..];
+        // Run ids are `run-<digits>`; anything else is refused before it can
+        // reach the filesystem as a path fragment.
+        if (!std.mem.startsWith(u8, id, "run-") or id.len > 64) {
+            respond(stream, 400, "Bad Request", "{\"error\":\"bad run id\"}");
+            return;
+        }
+        for (id["run-".len..]) |c| {
+            if (!std.ascii.isDigit(c)) {
+                respond(stream, 400, "Bad Request", "{\"error\":\"bad run id\"}");
+                return;
+            }
+        }
+        args = std.fmt.allocPrint(arena, "json {s}", .{id}) catch {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+            return;
+        };
+    } else if (rest.len != 0) {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        return;
+    }
+
+    const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"graph read failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", body);
+}
+
 /// Instance + configured peers, consumed by the web UI status panel.
 fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     var buf: [1 << 16]u8 = undefined;
@@ -1891,7 +2706,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map };
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
     var provider = cfg.provider(null) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"no default provider\"}");
         return;
@@ -1913,8 +2728,24 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
     };
+    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
+
+    // Optional conversation continuity: a session id turns this from a
+    // one-shot, context-free request into a real multi-turn chat, mirroring
+    // `clanker run --session` / the REPL.
+    const has_session = cfg.modules.sessions and req.session.len > 0;
+    var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    if (has_session) {
+        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
+            created = s.created;
+            for (s.messages) |m| {
+                if (m.role == .system) continue;
+                messages.append(arena, m) catch {};
+            }
+        } else |_| {}
+    }
 
     if (req.stream) {
         // Streaming mode: send headers up front, then the agent's tokens as
@@ -1924,11 +2755,12 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
         a.on_token = &runStreamDelta;
+        a.on_tool_call = &runStreamToolCall;
+        a.on_tool_result = &runStreamToolResult;
+        const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, req.task, &err_detail) catch |err| {
             const detail = err_detail orelse @errorName(err);
-            writeAllFd(stream.socket.handle, "\n[error: ");
-            writeAllFd(stream.socket.handle, detail);
-            writeAllFd(stream.socket.handle, "]\n");
+            writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
             return;
         };
         // When modules.streaming is off the agent never invokes on_token,
@@ -1937,12 +2769,27 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         if (!cfg.modules.streaming) {
             if (resp.message.content) |c| writeAllFd(stream.socket.handle, c);
         }
-        // Otherwise the answer was already streamed via runStreamDelta; append a small
-        // stats trailer, then the trailing newline + Connection: close
-        // terminate the client-side stream.
-        var tbuf: [256]u8 = undefined;
-        const trailer = std.fmt.bufPrint(&tbuf, "\n[done: {d} prompt + {d} completion tokens]\n", .{ a.stats.total_prompt_tokens, a.stats.total_completion_tokens }) catch "\n[done]\n";
-        writeAllFd(stream.socket.handle, trailer);
+        if (has_session) {
+            const title = req.task[0..@min(req.task.len, 60)];
+            const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+            session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
+                .id = req.session,
+                .title = title,
+                .messages = messages.items,
+                .created = created,
+                .updated = updated,
+            }) catch {};
+        }
+        const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+        // Otherwise the answer was already streamed via runStreamDelta; a
+        // structured "done" event carries the turn's stats, then the
+        // trailing Connection: close ends the client-side stream.
+        writeStreamEvent(stream.socket.handle, "done", .{
+            .prompt_tokens = a.stats.total_prompt_tokens,
+            .completion_tokens = a.stats.total_completion_tokens,
+            .cost = a.stats.cost,
+            .ms = ms,
+        });
         return;
     }
 
@@ -1966,6 +2813,18 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
         return;
     };
+
+    if (has_session) {
+        const title = req.task[0..@min(req.task.len, 60)];
+        const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
+            .id = req.session,
+            .title = title,
+            .messages = messages.items,
+            .created = created,
+            .updated = updated,
+        }) catch {};
+    }
 
     const content = resp.message.content orelse "";
     var rbuf: [1 << 20]u8 = undefined;
@@ -2001,6 +2860,113 @@ fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body:
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, webui_csp }) catch return;
     writeAllFd(stream.socket.handle, hdr);
     writeAllFd(stream.socket.handle, body);
+}
+
+/// A gzipped vendor asset, compressed on first request and kept for the rest of
+/// the process. The inputs are embedded at build time and identical for every
+/// visitor, so compressing per request would burn CPU for the same bytes; the
+/// buffer is intentionally never freed, being a two-entry cache that lives as
+/// long as the server. A failed attempt (OOM, or output that didn't shrink) is
+/// remembered too, so it is not retried on every hit.
+const GzipCache = struct {
+    /// Connection threads race for this. Whoever moves it out of `idle`
+    /// compresses; anyone arriving meanwhile serves the file uncompressed for
+    /// that one request instead of blocking behind a ~100ms compression. A
+    /// lock would be the other option, but nothing here is worth waiting for:
+    /// the identity encoding is always a correct answer.
+    state: std.atomic.Value(State) = .init(.idle),
+    /// Only read after `state` reads `.ready`, which is stored with release
+    /// ordering after this is written.
+    body: []const u8 = &.{},
+
+    const State = enum(u8) { idle, compressing, ready, failed };
+};
+
+var gzip_d3dag: GzipCache = .{};
+var gzip_hljs: GzipCache = .{};
+
+fn gzipCached(gpa: std.mem.Allocator, cache: *GzipCache, raw: []const u8) ?[]const u8 {
+    switch (cache.state.load(.acquire)) {
+        .ready => return cache.body,
+        .failed, .compressing => return null,
+        .idle => {},
+    }
+    if (cache.state.cmpxchgStrong(.idle, .compressing, .acq_rel, .acquire) != null) return null;
+
+    const compressed = gzipAlloc(gpa, raw) orelse {
+        cache.state.store(.failed, .release);
+        return null;
+    };
+    // Published in this order so a thread that reads `.ready` is guaranteed to
+    // see the finished slice.
+    cache.body = compressed;
+    cache.state.store(.ready, .release);
+    return compressed;
+}
+
+fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8) ?[]const u8 {
+    // Sized to the input: a compressed form that needs more room than the
+    // original is not worth serving, and running out of space here just means
+    // falling back to the identity encoding.
+    const dest = gpa.alloc(u8, raw.len) catch return null;
+    const window = gpa.alloc(u8, std.compress.flate.max_window_len) catch {
+        gpa.free(dest);
+        return null;
+    };
+    defer gpa.free(window);
+
+    var out: std.Io.Writer = .fixed(dest);
+    var compress = std.compress.flate.Compress.init(&out, window, .gzip, .default) catch {
+        gpa.free(dest);
+        return null;
+    };
+    compress.writer.writeAll(raw) catch {
+        gpa.free(dest);
+        return null;
+    };
+    compress.finish() catch {
+        gpa.free(dest);
+        return null;
+    };
+
+    return dest[0..out.end];
+}
+
+/// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). These
+/// never change without a rebuild, so they get a long, immutable cache
+/// lifetime instead of the no-cache posture of the rest of the API, and are
+/// gzipped when the client asks — they are the two largest bodies this server
+/// sends, and the page is routinely opened from another machine on the LAN.
+fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool) void {
+    var hbuf: [4096]u8 = undefined;
+    const gzipped = if (accepts_gzip) gzipCached(gpa, cache, body) else null;
+    const out = gzipped orelse body;
+    const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: public, max-age=31536000, immutable\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
+    writeAllFd(stream.socket.handle, hdr);
+    writeAllFd(stream.socket.handle, out);
+}
+
+/// True when the request's Accept-Encoding lists gzip. Scoped to that header's
+/// own line so a request target that happens to contain "gzip" cannot flip it.
+fn acceptsGzip(headers_raw: []const u8) bool {
+    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
+    while (lines.next()) |line| {
+        if (!std.ascii.startsWithIgnoreCase(line, "accept-encoding:")) continue;
+        var values = std.mem.tokenizeAny(u8, line["accept-encoding:".len..], " ,;");
+        while (values.next()) |v| {
+            if (std.ascii.eqlIgnoreCase(v, "gzip")) return true;
+        }
+    }
+    return false;
+}
+
+test "acceptsGzip only matches the header's own line" {
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: gzip, deflate\r\n"));
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\naccept-encoding:gzip\r\n"));
+    try std.testing.expect(!acceptsGzip("GET /gzip.js HTTP/1.1\r\nHost: x\r\n"));
+    try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, zstd\r\n"));
+    try std.testing.expect(!acceptsGzip(""));
 }
 
 fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
@@ -2112,4 +3078,48 @@ test "compactMessages drops oldest non-system messages over token budget" {
     try messages.append(allocator, .{ .role = .user, .content = "cccc" });
     compactMessages(&messages, 2);
     try std.testing.expect(messages.items.len == 2);
+}
+
+fn mdStreamRender(allocator: std.mem.Allocator, chunks: []const []const u8) ![]u8 {
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+    var md: MdStream = .{};
+    for (chunks) |c| md.feed(&w.writer, c);
+    md.flush(&w.writer);
+    return allocator.dupe(u8, w.written());
+}
+
+test "MdStream renders bold, italic, inline code, and bullets" {
+    const allocator = std.testing.allocator;
+    const out = try mdStreamRender(allocator, &.{"**bold** *italic* `code` and:\n- one\n- two"});
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings(
+        "\x1b[1mbold\x1b[0m \x1b[3mitalic\x1b[0m \x1b[36mcode\x1b[0m and:\n\xe2\x80\xa2 one\n\xe2\x80\xa2 two",
+        out,
+    );
+}
+
+test "MdStream resolves a marker split across two feeds" {
+    const allocator = std.testing.allocator;
+    // "**bold**" fed one byte at a time must match the whole-chunk render.
+    var chunks: [8][]const u8 = undefined;
+    const text = "**bold**";
+    for (text, 0..) |_, i| chunks[i] = text[i .. i + 1];
+    const out = try mdStreamRender(allocator, &chunks);
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("\x1b[1mbold\x1b[0m", out);
+}
+
+test "MdStream flushes a trailing unterminated marker as literal text" {
+    const allocator = std.testing.allocator;
+    const out = try mdStreamRender(allocator, &.{"looks like a footnote*"});
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("looks like a footnote*", out);
+}
+
+test "MdStream only treats a leading dash-space as a bullet at line start" {
+    const allocator = std.testing.allocator;
+    const out = try mdStreamRender(allocator, &.{"a - b\n- c"});
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("a - b\n\xe2\x80\xa2 c", out);
 }
