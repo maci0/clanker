@@ -13,6 +13,9 @@ const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const config_mod = @import("../config.zig");
+const registry = @import("../tools/registry.zig");
+const chatrooms_mod = @import("../peers/chatrooms.zig");
+const token_stats = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
 
 /// Model access for tools whose descriptor sets `"llm": true` (a translate or
@@ -44,6 +47,17 @@ pub const Err = struct {
 };
 
 /// Per-tool sandbox policy, owned by the harness.
+/// Runs a nested sub-agent. The harness wires this in when modules.subagents
+/// is enabled; tools call it via ck_subagent.
+pub const SubagentRunner = *const fn (
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config_mod.Config,
+    task: []const u8,
+    provider_name: ?[]const u8,
+) anyerror![]const u8;
+
 pub const Sandbox = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -59,6 +73,10 @@ pub const Sandbox = struct {
     environ_map: *std.process.Environ.Map,
     /// Deterministic seed for the tool RNG (from agent.seed).
     seed: u64 = 0,
+    /// Optional nested sub-agent runner (subagent tool).
+    subagent_runner: ?SubagentRunner = null,
+    /// Effective config, for host functions that need it (subagent runner).
+    cfg: ?*const config_mod.Config = null,
     /// Non-null only for tools that declared the llm capability. A tool holding
     /// this runs sequentially: one provider call per tool call, never from the
     /// parallel worker pool.
@@ -66,7 +84,98 @@ pub const Sandbox = struct {
     /// The tool descriptor's `config` object, serialized. Returned verbatim by
     /// `ck_config` so a plugin can read its own settings.
     config_json: []const u8 = "{}",
+    /// Commands allowed through ck_exec for this tool. Empty falls back to the
+    /// harness default set below.
+    exec_allow: []const []const u8 = &.{},
+    /// Directory (relative to `state_base_dir`) holding the harness state:
+    /// chatroom logs, subscriptions, cursor. Defaults to "state".
+    state_dir: []const u8 = "state",
+    /// Base directory for harness state; null = the process cwd. Tests point
+    /// this at a temp dir so chatroom logs never touch the real checkout.
+    state_base_dir: ?std.Io.Dir = null,
 };
+
+/// A plugin may aim ck_llm at its own backend with
+/// `"config": {"provider": "kimi-k3", "model": "..."}`; anything it leaves out
+/// falls back to the configured default.
+fn pluginProvider(
+    arena: std.mem.Allocator,
+    cfg: *const config_mod.Config,
+    tool: *const registry.Tool,
+) !*const config_mod.Provider {
+    const want_provider = pluginStr(tool.config, "provider");
+    const want_model = pluginStr(tool.config, "model");
+    const base = cfg.provider(want_provider) catch blk: {
+        log.log(.warn, "plugin '{s}': unknown provider, using the default", .{tool.name});
+        break :blk try cfg.provider(null);
+    };
+    if (want_model == null) return base;
+    const copy = try arena.create(config_mod.Provider);
+    copy.* = base.*;
+    copy.default_model = want_model.?;
+    return copy;
+}
+
+pub fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
+    if (cfg_value != .object) return null;
+    const v = cfg_value.object.get(key) orelse return null;
+    return if (v == .string and v.string.len > 0) v.string else null;
+}
+
+fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
+    if (cfg_value != .object) return null;
+    const v = cfg_value.object.get(key) orelse return null;
+    return if (v == .integer and v.integer > 0) @intCast(v.integer) else null;
+}
+
+/// The single place a tool's sandbox policy is assembled from its descriptor.
+/// Every caller (agent loop, parallel workers, CLI, MCP) goes through here:
+/// hand-rolled Sandbox literals drift, and a missed field is a silently
+/// missing capability or a silently missing restriction.
+pub fn sandboxFor(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config_mod.Config,
+    tool: *const registry.Tool,
+    /// Supplied by callers that can spend tokens. Without it a tool declaring
+    /// `"llm": true` still loads, but ck_llm is denied.
+    llm_ctx: ?*client.Ctx,
+) !Sandbox {
+    var net = tool.network_allow;
+    if (tool.network_from_config.len > 0) {
+        const extra = try config_mod.configuredHosts(cfg, arena, tool.network_from_config);
+        if (extra.len > 0) {
+            var list: std.ArrayList([]const u8) = .empty;
+            try list.appendSlice(arena, tool.network_allow);
+            try list.appendSlice(arena, extra);
+            net = try list.toOwnedSlice(arena);
+        }
+    }
+    var llm_access: ?LlmAccess = null;
+    if (tool.llm) {
+        if (llm_ctx) |ctx| llm_access = .{
+            .ctx = ctx,
+            .provider = try pluginProvider(arena, cfg, tool),
+            .max_tokens = pluginU32(tool.config, "max_tokens") orelse 1024,
+        };
+    }
+
+    return .{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = cfg.agent.sandbox_root,
+        .network_allow = net,
+        .llm = llm_access,
+        .exec_allow = tool.exec_allow,
+        .fs_prefixes = tool.fs_prefixes,
+        .environ_map = environ_map,
+        .seed = cfg.agent.seed,
+        .cfg = cfg,
+        .config_json = try std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(tool.config, .{})}),
+    };
+}
 
 /// Per-module execution context; passed to host functions via
 /// `defineFuncCtx` and recovered with `Caller.data(Host)`.
@@ -139,14 +248,55 @@ pub fn ckRandom(caller: *zwasm.Caller) u64 {
     return h.rng.random().int(u64);
 }
 
-/// ck_llm(prompt) -> completion text in the host arena. One shot, no tools and
-/// no conversation: a transform plugin asks the model to rewrite something and
-/// gets a string back.
+/// A parsed ck_llm JSON request object. Every field is optional; a value that
+/// is missing, empty, or the wrong type stays null and the caller falls back
+/// to the tool's configured defaults (an explicitly empty "prompt" string is
+/// kept so the caller can reject it).
+const CkLlmRequest = struct {
+    prompt: ?[]const u8 = null,
+    max_tokens: ?u32 = null,
+    provider: ?[]const u8 = null,
+    model: ?[]const u8 = null,
+    system: ?[]const u8 = null,
+};
+
+/// Parses `raw` as a ck_llm request object. Returns null when `raw` is not a
+/// JSON object — the caller then treats it as a bare prompt.
+fn parseCkLlmRequest(arena: std.mem.Allocator, raw: []const u8) ?CkLlmRequest {
+    const v = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
+    if (v != .object) return null;
+    var req: CkLlmRequest = .{};
+    if (v.object.get("prompt")) |p| {
+        if (p == .string) req.prompt = p.string;
+    }
+    if (v.object.get("max_tokens")) |m| {
+        // Reject out-of-u32-range values instead of panicking in @intCast.
+        if (m == .integer and m.integer > 0 and m.integer <= std.math.maxInt(u32)) req.max_tokens = @intCast(m.integer);
+    }
+    if (v.object.get("provider")) |pn| {
+        if (pn == .string and pn.string.len > 0) req.provider = pn.string;
+    }
+    if (v.object.get("model")) |mn| {
+        if (mn == .string and mn.string.len > 0) req.model = mn.string;
+    }
+    if (v.object.get("system")) |sp| {
+        if (sp == .string and sp.string.len > 0) req.system = sp.string;
+    }
+    return req;
+}
+
+/// ck_llm(request) -> completion text in the host arena. The request is either
+/// a bare prompt or a JSON object:
+/// `{"prompt": "...", "provider": "<name>", "model": "<name>", "system": "...", "max_tokens": N}`.
+/// Naming a provider (and optionally a model) is what lets a plugin reach a
+/// backend other than the one it was configured with (the `providers` tool
+/// pings each configured provider this way) without reimplementing the chat
+/// protocol in the guest; "system" prepends a system message to the call.
 pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
-    const prompt = sliceOf(bytes, ptr, len) orelse return Err.invalid;
-    if (prompt.len == 0) return Err.invalid;
+    const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (raw.len == 0) return Err.invalid;
 
     const access = h.sandbox.llm orelse {
         log.log(.warn, "[llm] denied: tool descriptor does not set \"llm\": true", .{});
@@ -155,12 +305,52 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
-    const messages = [_]types.Message{.{ .role = .user, .content = prompt }};
+    const arena = arena_state.allocator();
+
+    var prompt: []const u8 = raw;
+    var provider = access.provider;
+    var max_tokens = access.max_tokens;
+    var system: ?[]const u8 = null;
+    if (parseCkLlmRequest(arena, raw)) |req| {
+        if (req.prompt) |p| prompt = p;
+        if (req.max_tokens) |m| max_tokens = m;
+        if (req.system) |s| system = s;
+        if (req.provider) |pn| {
+            const cfg = h.sandbox.cfg orelse {
+                log.log(.warn, "[llm] provider override needs config", .{});
+                return Err.invalid;
+            };
+            provider = cfg.provider(pn) catch {
+                log.log(.warn, "[llm] unknown provider '{s}'", .{pn});
+                return Err.invalid;
+            };
+        }
+        // Model override: copy the (possibly provider-overridden) provider and
+        // swap its default model, mirroring pluginProvider.
+        if (req.model) |mn| {
+            const copy = arena.create(config_mod.Provider) catch return Err.invalid;
+            copy.* = provider.*;
+            copy.default_model = mn;
+            provider = copy;
+        }
+    }
+    if (prompt.len == 0) return Err.invalid;
+
+    const messages: []const types.Message = if (system) |sys| blk: {
+        const msgs = arena.alloc(types.Message, 2) catch return Err.invalid;
+        msgs[0] = .{ .role = .system, .content = sys };
+        msgs[1] = .{ .role = .user, .content = prompt };
+        break :blk msgs;
+    } else blk: {
+        const msgs = arena.alloc(types.Message, 1) catch return Err.invalid;
+        msgs[0] = .{ .role = .user, .content = prompt };
+        break :blk msgs;
+    };
     var err_detail: ?[]const u8 = null;
-    const resp = client.chat(access.ctx, arena_state.allocator(), .{
-        .provider = access.provider,
-        .messages = &messages,
-        .max_tokens = access.max_tokens,
+    const resp = client.chat(access.ctx, arena, .{
+        .provider = provider,
+        .messages = messages,
+        .max_tokens = max_tokens,
     }, &err_detail) catch |err| {
         log.log(.warn, "[llm] call failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
         return Err.network;
@@ -265,6 +455,173 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         return h.writeResult(bytes, body);
     }
     return Err.invalid;
+}
+
+const ChatOp = struct {
+    op: ?[]const u8 = null,
+    room: ?[]const u8 = null,
+    text: ?[]const u8 = null,
+    after: ?i64 = null,
+    on: ?bool = null,
+};
+
+/// ck_chat(op_json) — chatroom operations for the chat_* tools.
+/// Input:  {"op":"send|history|rooms|subscribe", "room":..., "text":...,
+///          "after":..., "on":...}
+/// Output (in the host arena):
+///   send:      {"ok":true,"ts":...,"id":"..."}
+///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...]}
+///   rooms:     {"ok":true,"rooms":[{room,messages,last_ts,last_from,last_text}],
+///               "subscribed":["dev"]}
+///   subscribe: {"ok":true,"rooms":["dev",...]}
+/// The fan-out, subscription filter, and persistence all live host-side so
+/// the WASM module stays thin; the descriptor config pins which op a tool is.
+pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const input = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+
+    const cfg = h.sandbox.cfg orelse {
+        log.log(.warn, "[chat] denied: no config in sandbox", .{});
+        return Err.denied;
+    };
+    if (!cfg.modules.chatrooms) {
+        log.log(.warn, "[chat] denied: chatrooms module disabled", .{});
+        return Err.denied;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const parsed = std.json.parseFromSliceLeaky(ChatOp, arena, input, .{ .ignore_unknown_fields = true }) catch {
+        log.log(.warn, "[chat] json parse failed: '{s}'", .{input});
+        return Err.invalid;
+    };
+    const op = parsed.op orelse return Err.invalid;
+
+    var out_buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&out_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
+    const state_dir = h.sandbox.state_dir;
+
+    if (std.mem.eql(u8, op, "send")) {
+        const room = parsed.room orelse return Err.invalid;
+        const text = parsed.text orelse return Err.invalid;
+        if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
+        const msg = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
+            log.log(.warn, "[chat] send failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("ts") catch return Err.too_large;
+        s.print("{d}", .{msg.ts}) catch return Err.too_large;
+        s.objectField("id") catch return Err.too_large;
+        s.write(msg.id) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "history")) {
+        const room = parsed.room orelse return Err.invalid;
+        const after = parsed.after orelse 0;
+        const msgs = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, 20) catch return Err.invalid;
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("messages") catch return Err.too_large;
+        s.beginArray() catch return Err.too_large;
+        for (msgs) |m| {
+            s.beginObject() catch return Err.too_large;
+            s.objectField("room") catch return Err.too_large;
+            s.write(m.room) catch return Err.too_large;
+            s.objectField("from") catch return Err.too_large;
+            s.write(m.from) catch return Err.too_large;
+            s.objectField("text") catch return Err.too_large;
+            s.write(if (m.text.len > 600) m.text[0..600] else m.text) catch return Err.too_large;
+            s.objectField("ts") catch return Err.too_large;
+            s.print("{d}", .{m.ts}) catch return Err.too_large;
+            s.objectField("id") catch return Err.too_large;
+            s.write(m.id) catch return Err.too_large;
+            s.endObject() catch return Err.too_large;
+        }
+        s.endArray() catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "rooms")) {
+        const rooms = chatrooms_mod.listRooms(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch return Err.invalid;
+        const subs = chatrooms_mod.subscribedRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("rooms") catch return Err.too_large;
+        s.beginArray() catch return Err.too_large;
+        for (rooms) |r| {
+            s.beginObject() catch return Err.too_large;
+            s.objectField("room") catch return Err.too_large;
+            s.write(r.room) catch return Err.too_large;
+            s.objectField("messages") catch return Err.too_large;
+            s.print("{d}", .{r.messages}) catch return Err.too_large;
+            s.objectField("last_ts") catch return Err.too_large;
+            s.print("{d}", .{r.last_ts}) catch return Err.too_large;
+            s.objectField("last_from") catch return Err.too_large;
+            s.write(r.last_from) catch return Err.too_large;
+            s.objectField("last_text") catch return Err.too_large;
+            s.write(r.last_text) catch return Err.too_large;
+            s.endObject() catch return Err.too_large;
+        }
+        s.endArray() catch return Err.too_large;
+        s.objectField("subscribed") catch return Err.too_large;
+        s.beginArray() catch return Err.too_large;
+        for (subs) |sub| s.write(sub) catch return Err.too_large;
+        s.endArray() catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "subscribe")) {
+        const room = parsed.room orelse return Err.invalid;
+        const on = parsed.on orelse true;
+        chatrooms_mod.subscribe(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, on) catch return Err.invalid;
+        const subs = chatrooms_mod.subscribedRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("rooms") catch return Err.too_large;
+        s.beginArray() catch return Err.too_large;
+        for (subs) |sub| s.write(sub) catch return Err.too_large;
+        s.endArray() catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    }
+    log.log(.warn, "[chat] unknown op '{s}'", .{op});
+    return Err.invalid;
+}
+
+/// ck_stats() — aggregate token usage per provider/model from the global
+/// token-usage log (state/token_stats.jsonl). Returns
+/// {"ok":true,"stats":[{provider,model,calls,...}],"totals":{...}} in the
+/// host arena. Backs the model_stats tool.
+pub fn ckStats(caller: *zwasm.Caller) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+
+    const cfg = h.sandbox.cfg orelse return Err.denied;
+    if (!cfg.modules.token_stats) {
+        log.log(.warn, "[stats] denied: token_stats module disabled", .{});
+        return Err.denied;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
+    const state_dir = h.sandbox.state_dir;
+
+    const stats = token_stats.aggregate(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
+        log.log(.warn, "[stats] aggregate failed: {s}", .{@errorName(err)});
+        return Err.invalid;
+    };
+    const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch return Err.too_large;
+    return h.writeResult(bytes, json_out);
 }
 
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8) u32 {
@@ -422,11 +779,20 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
 }
 
 /// Arguments that are never allowed for sandboxed commands.
+///
+/// The shell-operator tokens here are defense in depth, not the primary
+/// guard: ckExec below runs argv directly via std.process.run, never through
+/// a shell, so none of these can actually be interpreted as operators no
+/// matter what they contain. "|" is deliberately absent even so — it's
+/// ordinary regex alternation syntax, the single most common character in a
+/// search pattern for the exact tools (rg, ast-grep, semcode) this allowlist
+/// exists to let through, and blocking it only breaks the tool it's meant to
+/// protect without closing any real hole.
 const exec_deny_tokens = [_][]const u8{
     "push",   "reset",  "rebase",    "checkout", "clean",   "rm",            "fetch",
     "merge",  "revert", "stash",     "remote",   "tag",     "filter-branch", "gc",
     "repack", "prune",  "submodule", "-f",       "--force", "--exec",        "&&",
-    "||",     ";",      "|",         ">",        "<",       "`",
+    "||",     ";",      ">",         "<",        "`",
 };
 
 /// Looks up a symbol in the Zig standard library source and returns up to 40
@@ -448,6 +814,64 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     return h.writeResult(bytes, res.stdout);
 }
 
+/// Delegates a task to a nested sub-agent run (see subagent tool).
+pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
+    const runner = h.sandbox.subagent_runner orelse return Err.not_found;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, json_input, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const task = switch (obj.get("task") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    var provider_name: ?[]const u8 = null;
+    if (obj.get("provider")) |p| {
+        if (p == .string and p.string.len > 0) provider_name = p.string;
+    }
+    const cfg = h.sandbox.cfg orelse return Err.not_found;
+    // Run the nested agent on its own thread with a large stack: nesting a
+    // second zwasm interpreter on the caller's stack (which may itself be a
+    // tool worker already running zwasm) overflows the native stack.
+    const SubagentCall = struct {
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        environ_map: *std.process.Environ.Map,
+        cfg: *const config_mod.Config,
+        task: []const u8,
+        provider_name: ?[]const u8,
+        runner: SubagentRunner,
+        result: ?[]const u8 = null,
+        err: ?anyerror = null,
+        fn run(self: *@This()) void {
+            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name) catch |e| {
+                self.err = e;
+                return;
+            };
+        }
+    };
+    var call = SubagentCall{
+        .io = h.sandbox.io,
+        .gpa = h.sandbox.gpa,
+        .environ_map = h.sandbox.environ_map,
+        .cfg = cfg,
+        .task = task,
+        .provider_name = provider_name,
+        .runner = runner,
+    };
+    const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
+    th.join();
+    if (call.err != null) return Err.invalid;
+    const result = call.result orelse "";
+    const rc = h.writeResult(bytes, result);
+    if (result.len > 0) h.sandbox.gpa.free(@constCast(result));
+    return rc;
+}
+
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -464,7 +888,8 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         else => return Err.invalid,
     };
     var allowed_cmd = false;
-    for (exec_cmds) |c| {
+    const allowed = if (h.sandbox.exec_allow.len > 0) h.sandbox.exec_allow else &exec_cmds;
+    for (allowed) |c| {
         if (std.mem.eql(u8, cmd, c)) {
             allowed_cmd = true;
             break;
@@ -572,6 +997,29 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
 
 // ------------------------------------------------------------------- tests --
 
+test "exec_deny_tokens does not block regex alternation but still blocks real danger" {
+    for (exec_deny_tokens) |t| {
+        try std.testing.expect(!std.mem.eql(u8, t, "|"));
+    }
+    var has_rm = false;
+    var has_force = false;
+    for (exec_deny_tokens) |t| {
+        if (std.mem.eql(u8, t, "rm")) has_rm = true;
+        if (std.mem.eql(u8, t, "--force")) has_force = true;
+    }
+    try std.testing.expect(has_rm);
+    try std.testing.expect(has_force);
+}
+
+test "argDenied matches operator tokens anywhere, word tokens only at boundaries" {
+    try std.testing.expect(argDenied("a|b|c", "|"));
+    try std.testing.expect(argDenied("rm", "rm"));
+    try std.testing.expect(!argDenied("gcc", "gc"));
+    try std.testing.expect(argDenied("gc", "gc"));
+    try std.testing.expect(argDenied("-force", "-f"));
+    try std.testing.expect(argDenied("--force", "--force"));
+}
+
 test "safeJoin rejects escapes" {
     var sb = Sandbox{
         .gpa = std.testing.allocator,
@@ -595,4 +1043,44 @@ test "safeJoin rejects escapes" {
     defer std.testing.allocator.free(dir);
     try std.testing.expectEqualStrings("/tmp/sandbox/notes", dir);
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notesx"));
+}
+
+test "parseCkLlmRequest extracts prompt, model, system, provider, max_tokens" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const req = parseCkLlmRequest(arena, "{\"prompt\":\"hi\",\"model\":\"m1\",\"system\":\"be brief\",\"provider\":\"p1\",\"max_tokens\":64}") orelse return error.TestUnexpectedNull;
+    try std.testing.expectEqualStrings("hi", req.prompt.?);
+    try std.testing.expectEqualStrings("m1", req.model.?);
+    try std.testing.expectEqualStrings("be brief", req.system.?);
+    try std.testing.expectEqualStrings("p1", req.provider.?);
+    try std.testing.expectEqual(@as(u32, 64), req.max_tokens.?);
+}
+
+test "parseCkLlmRequest returns null for bare prompts and non-object JSON" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expect(parseCkLlmRequest(arena, "just a plain prompt") == null);
+    try std.testing.expect(parseCkLlmRequest(arena, "[1,2,3]") == null);
+    try std.testing.expect(parseCkLlmRequest(arena, "42") == null);
+}
+
+test "parseCkLlmRequest ignores malformed and out-of-range fields" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const req = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":-5,\"model\":\"\",\"provider\":7}") orelse return error.TestUnexpectedNull;
+    try std.testing.expectEqualStrings("x", req.prompt.?);
+    try std.testing.expect(req.max_tokens == null);
+    try std.testing.expect(req.model == null);
+    try std.testing.expect(req.provider == null);
+    try std.testing.expect(req.system == null);
+
+    // A max_tokens beyond u32 range must be ignored, not panic @intCast.
+    const big = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":9000000000}") orelse return error.TestUnexpectedNull;
+    try std.testing.expect(big.max_tokens == null);
 }
