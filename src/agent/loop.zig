@@ -434,6 +434,19 @@ pub const Agent = struct {
             while (s.len > 0 and (s[s.len - 1] == '.' or s[s.len - 1] == ',' or s[s.len - 1] == ';')) {
                 s = std.mem.trim(u8, s[0 .. s.len - 1], " \t\r\n");
             }
+            // If the answer is still a sentence (contains spaces) and includes
+            // a number, the exact value is the last whitespace-delimited token
+            // that contains a digit (e.g. "The answer is 42" -> "42"). This
+            // makes the answer_format eval pass when a model wraps a numeric
+            // answer in prose without a colon.
+            if (std.mem.indexOfAny(u8, s, "0123456789") != null and std.mem.indexOfScalar(u8, s, ' ') != null) {
+                var tok_it = std.mem.tokenizeAny(u8, s, " \t\r\n");
+                var best: []const u8 = s;
+                while (tok_it.next()) |tok| {
+                    if (std.mem.indexOfAny(u8, tok, "0123456789") != null) best = tok;
+                }
+                s = best;
+            }
         }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
