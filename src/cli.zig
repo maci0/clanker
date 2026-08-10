@@ -654,6 +654,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         }
         if (!goal_found) log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
     }
+    compactMessages(&messages, max_session_chars);
     var err_detail: ?[]const u8 = null;
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
