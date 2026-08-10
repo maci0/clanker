@@ -1054,18 +1054,13 @@ pub const Agent = struct {
             // hits the sequential fallback (executeTool / executeToolOnWorker)
             // which DOES read self.modules; pre-compiling here avoids a
             // redundant recompilation on that path.
-            const uses_modules_cache = self.no_parallel_tools or tool.llm or tool.sequential;
-            // Count how many times this tool name appears in the batch: if
-            // more than once, the duplicate will take the sequential fallback
-            // path and benefit from a cached module.
-            var name_count: usize = 0;
-            for (calls) |other| {
-                if (std.mem.eql(u8, other.name, tc.name)) {
-                    name_count += 1;
-                    if (name_count > 1) break;
-                }
-            }
-            if ((uses_modules_cache or name_count > 1) and !self.modules.contains(tc.name)) {
+            // Pre-compile every tool module unconditionally: even parallel-
+            // eligible tools benefit when the same tool name appears in a
+            // later iteration's batch (sequential fallback for duplicates)
+            // or when no_parallel_tools flips mid-session. The compiled
+            // module is immutable and reused by executeTool's cache lookup,
+            // eliminating redundant WASM parse+validate on repeat calls.
+            if (!self.modules.contains(tc.name)) {
                 const sbp = self.sandboxPtrFor(tool) catch continue;
                 const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
                     log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
