@@ -13,7 +13,15 @@ pub fn apply(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, changes: []co
     for (changes) |c| {
         const current = base.readFileAlloc(io, c.file, gpa, .limited(1 << 24)) catch |err| switch (err) {
             error.FileNotFound => {
-                // New file: create with the given content regardless of old text.
+                // New file: create the parent directory (it may not exist in
+                // the staging tree, e.g. tools/ is not copied), then write.
+                const dir = dirOf(c.file);
+                if (dir.len > 0) {
+                    base.createDirPath(io, dir) catch |perr| switch (perr) {
+                        error.PathAlreadyExists => {},
+                        else => return perr,
+                    };
+                }
                 try base.writeFile(io, .{ .sub_path = c.file, .data = c.new });
                 continue;
             },
@@ -37,4 +45,9 @@ pub fn apply(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, changes: []co
         }
         try base.writeFile(io, .{ .sub_path = c.file, .data = out.items });
     }
+}
+
+fn dirOf(path: []const u8) []const u8 {
+    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
+    return "";
 }
