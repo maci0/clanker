@@ -751,17 +751,13 @@ pub const Agent = struct {
                 }
             }
             if (end > 0) {
-                // When the JSON object/array is the entire trimmed answer, the
-                // user explicitly asked for that exact value; do NOT unwrap it.
-                // Only unwrap when the JSON was embedded in prose (the model
-                // wrapped a bare value like 42 in {"answer": 42}).
-                const json_was_whole = (end - start) == s.len;
                 s = s[start..end];
-                _ = json_was_whole;
-                // Do NOT unwrap JSON objects/arrays even when embedded in
-                // prose: if the user asked for a JSON value, the extracted
-                // JSON is the exact-match answer. Unwrapping would turn a
-                // requested object into a bare field (answer_format eval).
+                // If the model wrapped a bare value in {"answer": ...}, unwrap
+                // to the exact value. Only triggers when an "answer" field is
+                // present, so a user-requested JSON object is never altered.
+                if (unwrapJsonAnswer(self.arena, s)) |unwrapped| {
+                    s = unwrapped;
+                }
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
