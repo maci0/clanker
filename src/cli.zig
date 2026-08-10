@@ -290,6 +290,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             }
         } else {
             log.log(.info, "no existing session '{s}', starting fresh", .{sid});
+            created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         }
     }
     var err_detail: ?[]const u8 = null;
