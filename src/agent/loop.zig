@@ -220,6 +220,14 @@ pub const Agent = struct {
         var budget_hit = false;
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
+
+            // Log estimated prompt tokens before each LLM call for visibility
+            // into context usage and to aid compaction tuning.
+            const est_prompt_tokens = Agent.estimateMessageTokens(messages.items);
+            const ctx_window = self.provider.activeModel().context_window;
+            const utilization: f64 = if (ctx_window > 0) @as(f64, @floatFromInt(est_prompt_tokens)) / @as(f64, @floatFromInt(ctx_window)) * 100.0 else 0;
+            log.log(.info, "LLM call: ~{d} estimated prompt tokens ({d:.0}% of {d} context window)", .{ est_prompt_tokens, utilization, ctx_window });
+
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const resp = if (self.on_token) |cb| blk: {
                 if (!self.cfg.modules.streaming) break :blk try client.chat(self.ctx, self.arena, .{
@@ -420,50 +428,64 @@ pub const Agent = struct {
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch {};
     }
 
-    /// Compacts the conversation history to keep context size bounded: if the
-    /// accumulated message bytes (content + tool arguments) exceed the
-    /// effective threshold (compact_threshold_bytes, capped at half the
-    /// provider's context window; 0 selects the auto half-window value),
-    /// keeps the system message and the last 6 messages (extended backwards
-    /// when needed so a tool_call/tool-result exchange is never split),
-    /// replacing the removed middle with an LLM-generated summary (or a
-    /// static placeholder when summarization fails).
-    fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
+    /// Estimates the number of LLM tokens for a text string using the
+    /// chars/4 heuristic (conservative approximation of BPE tokenization).
+    /// Used for compaction thresholds and pre-call logging so decisions
+    /// track actual model context limits instead of arbitrary byte counts.
+    fn estimateTokens(text: []const u8) usize {
+        return @max(text.len / 4, if (text.len > 0) @as(usize, 1) else 0);
+    }
+
+    /// Estimates the total token count across all messages in the conversation.
+    fn estimateMessageTokens(messages: []const types.Message) usize {
         var total: usize = 0;
-        for (messages.items) |m| {
-            if (m.content) |c| total += c.len;
+        for (messages) |m| {
+            // Per-message overhead (role, separators) ~4 tokens.
+            total += 4;
+            if (m.content) |c| total += estimateTokens(c);
             if (m.tool_calls) |calls| {
-                for (calls) |tc| total += tc.arguments.len;
+                for (calls) |tc| {
+                    total += estimateTokens(tc.arguments);
+                    total += estimateTokens(tc.name);
+                }
             }
         }
-        // Effective context budget: never exceed half the provider's context
-        // window (room for input plus output), and honor an explicit byte cap.
-        // compact_threshold_bytes == 0 means "auto" = half the context window.
-        // Estimate bytes per token (common heuristic: ~4) so the byte-based
-        // compaction threshold matches the provider's token context size;
-        // otherwise a large token window would set a byte threshold too small
-        // and cause premature compaction.
-        const bytes_per_token: usize = 4;
-        const ctx_budget = self.provider.activeModel().context_window * bytes_per_token / 2;
+        return total;
+    }
+
+    /// Compacts the conversation history to keep context size bounded: if the
+    /// estimated token count of accumulated messages exceeds the effective
+    /// threshold (derived from the provider's context window and optional
+    /// compact_threshold_bytes / token budget), keeps the system message and
+    /// the last 6 messages (extended backwards when needed so a tool_call/
+    /// tool-result exchange is never split), replacing the removed middle with
+    /// an LLM-generated summary (or a static placeholder when summarization
+    /// fails).
+    fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
+        const estimated_tokens = estimateMessageTokens(messages.items);
+        // Effective context budget in tokens: never exceed half the provider's
+        // context window (room for input plus output), and honor an explicit
+        // byte cap converted to tokens.
+        const ctx_budget_tokens = self.provider.activeModel().context_window / 2;
         // When token budgeting is enabled, also respect the session cap so
         // compaction kicks in before the per-session token budget is hit
         // (token budget is enforced in run() after each LLM call).
-        var threshold = if (self.cfg.agent.compact_threshold_bytes == 0)
-            ctx_budget
+        var threshold: usize = if (self.cfg.agent.compact_threshold_bytes == 0)
+            ctx_budget_tokens
         else
-            @min(self.cfg.agent.compact_threshold_bytes, ctx_budget);
+            @min(self.cfg.agent.compact_threshold_bytes / 4, ctx_budget_tokens);
         if (self.cfg.modules.token_budget) {
             if (self.cfg.agent.max_total_tokens) |budget_tokens| {
-                threshold = @min(threshold, budget_tokens * bytes_per_token / 2);
+                threshold = @min(threshold, budget_tokens / 2);
             }
         }
         // Threshold floors: compaction must never race the per-turn cap,
         // which would otherwise terminate the run before compaction runs.
-        threshold = @max(threshold, max_per_turn_tokens * bytes_per_token);
-        if (total <= threshold) return;
+        threshold = @max(threshold, max_per_turn_tokens);
+        if (estimated_tokens <= threshold) return;
         // Need at least system + one middle + last 6 = 8 messages to compact.
         if (messages.items.len <= 7) return;
-        log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
+        log.log(.info, "compacting conversation: {d} messages, ~{d} estimated tokens (threshold {d})", .{ messages.items.len, estimated_tokens, threshold });
         // Never split a tool-call exchange: if the kept window would start
         // with tool-result messages whose assistant tool_call message is being
         // removed, extend the window backwards to include it. Providers reject
