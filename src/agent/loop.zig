@@ -26,6 +26,32 @@ pub const RunStats = struct {
     /// Estimated USD cost for this run (from the active model's
     /// cost_per_1k_input / cost_per_1k_output).
     cost: f64 = 0,
+
+    /// Formats a human-readable summary of the stats into `buf`.
+    pub fn formatSummary(self: *const RunStats, buf: []u8) []const u8 {
+        const prompt_total = self.total_cache_hit_tokens + self.total_cache_miss_tokens;
+        const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
+        var w: std.Io.Writer = .fixed(buf);
+        w.print(
+            "Session stats:\n" ++
+                "  prompt tokens:     {d}\n" ++
+                "  completion tokens: {d}\n" ++
+                "  total tokens:      {d}\n" ++
+                "  cache hit:         {d} ({d:.0}%)\n" ++
+                "  cache miss:        {d}\n" ++
+                "  estimated cost:    ${d:.4}\n",
+            .{
+                self.total_prompt_tokens,
+                self.total_completion_tokens,
+                self.total_tokens,
+                self.total_cache_hit_tokens,
+                hit_rate,
+                self.total_cache_miss_tokens,
+                self.cost,
+            },
+        ) catch {};
+        return buf[0..w.end];
+    }
 };
 
 pub const Agent = struct {
@@ -68,6 +94,9 @@ pub const Agent = struct {
     /// the wall-clock time spent executing them (e.g. the REPL prints
     /// "done in Nms" under the tool status line).
     on_tool_result: ?*const fn (u64) void = null,
+    /// Cumulative session-level stats across multiple runs (e.g. REPL).
+    /// Updated at the end of each run() call so callers can inspect totals.
+    session_stats: RunStats = .{},
 
     pub fn init(
         ctx: *client.Ctx,
@@ -115,6 +144,14 @@ pub const Agent = struct {
             const prompt_total = self.stats.total_cache_hit_tokens + self.stats.total_cache_miss_tokens;
             const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.stats.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
             log.log(.info, "run tokens: prompt={d} completion={d} total={d} ({d:.1} tok/s) cache={d} hit/{d} miss ({d:.0}%) cost=${d:.4}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens, tps, self.stats.total_cache_hit_tokens, self.stats.total_cache_miss_tokens, hit_rate, self.stats.cost });
+            // Accumulate into session-level stats so callers (REPL /stats) can
+            // inspect totals across all runs without re-parsing logs.
+            self.session_stats.total_prompt_tokens += self.stats.total_prompt_tokens;
+            self.session_stats.total_completion_tokens += self.stats.total_completion_tokens;
+            self.session_stats.total_tokens += self.stats.total_tokens;
+            self.session_stats.total_cache_hit_tokens += self.stats.total_cache_hit_tokens;
+            self.session_stats.total_cache_miss_tokens += self.stats.total_cache_miss_tokens;
+            self.session_stats.cost += self.stats.cost;
             if (self.cfg.modules.autolearn and run_ms > 0) {
                 autolearn.recordRun(self.ctx.io, self.ctx.gpa, self.arena, .{
                     .provider = self.provider.name,
