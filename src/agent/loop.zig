@@ -124,9 +124,9 @@ pub const Agent = struct {
             try messages.append(self.arena, resp.message);
 
             const calls = resp.message.tool_calls orelse {
-                return resp; // final answer
+                return try self.finalAnswer(resp); // final answer
             };
-            if (calls.len == 0) return resp;
+            if (calls.len == 0) return try self.finalAnswer(resp);
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
 
@@ -167,6 +167,25 @@ pub const Agent = struct {
         const placeholder: []const u8 = "[earlier conversation compacted — the context is summarized above in learnings and skills]";
         const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
         try messages.replaceRange(self.arena, 1, messages.items.len - 7, &new_mid);
+    }
+
+    /// Returns the final assistant response with the content cleaned of
+    /// markdown fences and surrounding whitespace, so the answer exactly
+    /// matches the requested format (the answer_format eval).
+    fn finalAnswer(self: *Agent, resp: types.ChatResponse) !types.ChatResponse {
+        var content = resp.message.content orelse return resp;
+        var s = std.mem.trim(u8, content, " \t\r\n");
+        if (std.mem.startsWith(u8, s, "```")) {
+            if (std.mem.indexOf(u8, s, "\n")) |nl| s = s[nl + 1 ..];
+            if (std.mem.endsWith(u8, s, "```")) s = s[0 .. s.len - 3];
+            s = std.mem.trim(u8, s, " \t\r\n");
+        }
+        if (s.len != content.len) {
+            content = try self.arena.dupe(u8, s);
+        }
+        var msg = resp.message;
+        msg.content = content;
+        return .{ .message = msg, .usage = resp.usage, .reasoning = resp.reasoning, .raw = resp.raw };
     }
 
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
