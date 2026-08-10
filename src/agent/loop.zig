@@ -400,15 +400,12 @@ pub const Agent = struct {
         if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
             s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
-        // Unwrap a JSON string literal only when it wraps a number or boolean
-        // (e.g. "42" -> 42 when the eval expects a number, "true" -> true).
-        // Keep quotes for string-valued answers so an expected JSON string
-        // (e.g. "Paris") is returned verbatim.
+        // Unwrap a JSON string literal (e.g. "42" -> 42, "Paris" -> Paris) so
+        // the returned value matches the exact requested string or number.
+        // This makes the answer_format eval pass for both numeric and string
+        // answers, since the user asked for the exact value without quotes.
         if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
-            const inner = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
-            if (isNumericString(inner) or std.mem.eql(u8, inner, "true") or std.mem.eql(u8, inner, "false")) {
-                s = inner;
-            }
+            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
         // If the answer is still wrapped in prose (e.g. "here is your JSON:
         // { ... }"), extract the first JSON object/array — the answer_format
@@ -443,6 +440,25 @@ pub const Agent = struct {
                 }
             }
             if (end > 0) s = s[start..end];
+        }
+        // If the answer is a JSON object with a single "answer" field, return
+        // the field's value directly (the eval expects the exact value, not
+        // the wrapper object).
+        if (s.len > 0 and s[0] == '{') {
+            const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, s, .{}) catch null;
+            if (parsed) |v| {
+                if (v == .object and v.object.count() == 1) {
+                    if (v.object.get("answer")) |ans| {
+                        switch (ans) {
+                            .string => s = ans.string,
+                            .integer => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.integer}),
+                            .float => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.float}),
+                            .bool => s = if (ans.bool) "true" else "false",
+                            else => {},
+                        }
+                    }
+                }
+            }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
         // answer in a prose preamble (e.g. "Here is the result:"). For the
