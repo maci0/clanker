@@ -12,6 +12,13 @@ const host = @import("../sandbox/host.zig");
 const system_prompt = @import("system_prompt.zig");
 const log = @import("../util/log.zig");
 
+/// Cumulative token usage across all LLM calls in a single agent run.
+pub const RunStats = struct {
+    total_prompt_tokens: u64 = 0,
+    total_completion_tokens: u64 = 0,
+    total_tokens: u64 = 0,
+};
+
 pub const Agent = struct {
     ctx: *client.Ctx,
     arena: std.mem.Allocator,
@@ -26,6 +33,8 @@ pub const Agent = struct {
     /// zwasm for AssemblyScript guests — cache and reuse instead of
     /// re-instantiating per call).
     modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
+    /// Cumulative token usage across all LLM calls in this agent run.
+    stats: RunStats = .{},
 
     pub fn init(
         ctx: *client.Ctx,
@@ -49,6 +58,7 @@ pub const Agent = struct {
             .tool_defs = tool_defs,
             .max_iterations = cfg.agent.max_iterations,
             .system_prompt_text = prompt_text,
+            .stats = .{},
         };
     }
 
@@ -63,6 +73,7 @@ pub const Agent = struct {
                 kv.value_ptr.*.deinit();
             }
             self.modules.clearRetainingCapacity();
+            log.log(.info, "run tokens: prompt={d} completion={d} total={d}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens });
         }
         try messages.append(self.arena, .{ .role = .system, .content = self.system_prompt_text });
         try messages.append(self.arena, .{ .role = .user, .content = task });
@@ -74,6 +85,12 @@ pub const Agent = struct {
                 .messages = messages.items,
                 .tools = self.tool_defs,
             }, err_detail);
+
+            if (resp.usage) |u| {
+                self.stats.total_prompt_tokens += u.prompt_tokens;
+                self.stats.total_completion_tokens += u.completion_tokens;
+                self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+            }
 
             try messages.append(self.arena, resp.message);
 
