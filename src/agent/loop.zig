@@ -84,15 +84,16 @@ pub const Agent = struct {
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
 
-            // Execute tool calls sequentially (parallel execution disabled:
-            // zwasm instantiations on separate threads trap with
-            // CallStackExhausted for batches of 2+ distinct tools).
-            for (calls) |tc| {
-                const result = try self.executeTool(tc);
+            // Execute tool calls in parallel for distinct tool names (each on
+            // a worker thread with a large stack); a tool name repeated in the
+            // same batch falls back to sequential execution because the zwasm
+            // module is stateful and the cached instance is reused.
+            const results = try self.executeCalls(calls);
+            for (calls, results) |tc, content| {
                 try messages.append(self.arena, .{
                     .role = .tool,
                     .tool_call_id = tc.id,
-                    .content = result,
+                    .content = content,
                 });
             }
         }
@@ -153,6 +154,92 @@ pub const Agent = struct {
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
         return owned;
     }
+
+    /// Executes a batch of tool calls, returning arena-owned results aligned
+    /// with `calls`. Distinct tool names run in parallel on worker threads;
+    /// duplicate names fall back to sequential execution (zwasm modules are
+    /// stateful).
+    fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]const []const u8 {
+        const results = try self.arena.alloc([]const u8, calls.len);
+        @memset(results, "");
+
+        // ---- parallel pass: one worker per distinct tool name ----
+        var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+        defer seen.deinit(self.ctx.gpa);
+        var handles: std.ArrayList(WorkerHandle) = .empty;
+        defer {
+            // Join + free anything not yet handled (e.g. on error return).
+            for (handles.items) |h| h.thread.join();
+            for (handles.items) |h| {
+                self.ctx.gpa.free(h.wasm_bytes);
+                self.ctx.gpa.destroy(h.worker);
+            }
+            handles.deinit(self.ctx.gpa);
+        }
+
+        for (calls, 0..) |tc, i| {
+            if (seen.contains(tc.name)) continue; // duplicate -> sequential pass
+            try seen.put(self.ctx.gpa, tc.name, {});
+
+            const tool = self.reg.get(tc.name) orelse {
+                results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
+                continue;
+            };
+            const wasm_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}", .{tool.wasm});
+            defer self.ctx.gpa.free(wasm_path);
+            const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, wasm_path, self.ctx.gpa, .limited(1 << 20)) catch |err| {
+                log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, wasm_path, @errorName(err) });
+                return error.ToolWasmMissing;
+            };
+
+            const worker = try self.ctx.gpa.create(ToolWorker);
+            worker.* = .{
+                .ctx = self.ctx,
+                .cfg = self.cfg,
+                .tool = tool,
+                .arguments = tc.arguments,
+                .wasm_bytes = wasm_bytes,
+            };
+            const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
+            try handles.append(self.ctx.gpa, .{ .slot = i, .thread = thread, .worker = worker, .wasm_bytes = wasm_bytes });
+        }
+
+        // Join every worker and move its output into the matching slot.
+        for (handles.items) |h| h.thread.join();
+        for (handles.items) |h| {
+            if (h.worker.err) |e| {
+                log.log(.error_, "tool '{s}' failed: {s}", .{ h.worker.tool.name, @errorName(e) });
+                return error.ToolExecutionFailed;
+            }
+            const out = h.worker.out.?;
+            results[h.slot] = try self.arena.dupe(u8, out);
+            self.ctx.gpa.free(out);
+            self.ctx.gpa.free(h.wasm_bytes);
+            self.ctx.gpa.destroy(h.worker);
+        }
+        handles.clearRetainingCapacity();
+
+        // ---- sequential fallback: duplicate tool names (stateful modules) --
+        for (calls, 0..) |tc, i| {
+            if (results[i].len == 0) {
+                results[i] = try self.executeTool(tc);
+            }
+        }
+        return results;
+    }
+};
+
+/// zwasm's interpreter recurses on the native stack, so a tool that runs fine
+/// on the main thread can trap with CallStackExhausted on a std.Thread worker
+/// (whose default stack is smaller than the process main stack). Give parallel
+/// tool workers a large explicit stack size.
+const parallel_tool_stack_bytes: usize = 64 * 1024 * 1024;
+
+const WorkerHandle = struct {
+    slot: usize,
+    thread: std.Thread,
+    worker: *ToolWorker,
+    wasm_bytes: []u8,
 };
 
 const ToolWorker = struct {
