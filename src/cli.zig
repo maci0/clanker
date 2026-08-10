@@ -274,7 +274,12 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
+    try verifyGates(gpa, io, arena);
+}
 
+/// Runs all deterministic gates (build, test, tools, fmt, lint) against the
+/// current checkout. Throws error.GateFailed on the first failure.
+fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
     log.log(.info, "build: {s}", .{if (build.ok) "PASS" else "FAIL"});
@@ -678,7 +683,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
 
     var provider = try cfg.provider(opts.provider);
@@ -799,6 +804,23 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
                     try out_w.interface.flush();
                     return;
                 }
+                if (std.mem.startsWith(u8, line, "/autolearn")) {
+                    const arg = std.mem.trimStart(u8, line["/autolearn".len..], " ");
+                    if (std.mem.eql(u8, arg, "on") or std.mem.eql(u8, arg, "off")) {
+                        const on = std.mem.eql(u8, arg, "on");
+                        cfg.modules.autolearn = on;
+                        persistModules(io, gpa, arena, &cfg);
+                        try out_w.interface.writeAll(if (on) "autolearn enabled\n" else "autolearn disabled\n");
+                        try out_w.interface.flush();
+                    } else {
+                        try out_w.interface.writeAll(if (cfg.modules.autolearn) "autolearn is ON\n" else "autolearn is OFF\n");
+                        try out_w.interface.flush();
+                    }
+                    const al_rest = acc.items[nl + 1 ..];
+                    std.mem.copyForwards(u8, acc.items[0..al_rest.len], al_rest);
+                    acc.items.len = al_rest.len;
+                    continue;
+                }
                 var goal_task: ?[]const u8 = null;
                 if (std.mem.startsWith(u8, line, "/goal")) {
                     const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
@@ -809,7 +831,14 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
                         goal_task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
                     }
                 } else {
+                    const toggled = std.mem.startsWith(u8, line, "/plugins ");
                     try replSlashTool(io, gpa, arena, &cfg, init.environ_map, &reg, line, &out_w);
+                    if (toggled) {
+                        // /plugins rewrote state/plugins.json; reload so the
+                        // next turn's tool catalog reflects it without a restart.
+                        reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+                        a.tool_defs = try reg.toToolDefs(arena);
+                    }
                 }
                 const slash_rest = acc.items[nl + 1 ..];
                 std.mem.copyForwards(u8, acc.items[0..slash_rest.len], slash_rest);
@@ -919,6 +948,53 @@ fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, c
     try out_w.interface.writeAll(text);
     try out_w.interface.writeAll("\n");
     try out_w.interface.flush();
+}
+
+/// Writes the effective modules set (from the merged cfg) into
+/// config.local.json so runtime toggles like `/autolearn on|off` survive
+/// restarts. Local modules fully override the base, so we persist the whole
+/// effective set.
+fn persistModules(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config) void {
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, "config.local.json", arena, .limited(1 << 20)) catch return;
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    const wbuf = gpa.alloc(u8, 1 << 20) catch return;
+    defer gpa.free(wbuf);
+    var w: std.Io.Writer = .fixed(wbuf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    if (root == .object) {
+        s.beginObject() catch return;
+        var it = root.object.iterator();
+        while (it.next()) |kv| {
+            if (std.mem.eql(u8, kv.key_ptr.*, "modules")) continue;
+            s.objectField(kv.key_ptr.*) catch return;
+            s.write(kv.value_ptr.*) catch return;
+        }
+        s.objectField("modules") catch return;
+        s.beginObject() catch return;
+        const fields = [_]struct { key: []const u8, v: bool }{
+            .{ .key = "mcp", .v = cfg.modules.mcp },
+            .{ .key = "peers", .v = cfg.modules.peers },
+            .{ .key = "a2a", .v = cfg.modules.a2a },
+            .{ .key = "webui", .v = cfg.modules.webui },
+            .{ .key = "graphs", .v = cfg.modules.graphs },
+            .{ .key = "sessions", .v = cfg.modules.sessions },
+            .{ .key = "goal", .v = cfg.modules.goal },
+            .{ .key = "token_budget", .v = cfg.modules.token_budget },
+            .{ .key = "streaming", .v = cfg.modules.streaming },
+            .{ .key = "dotenv", .v = cfg.modules.dotenv },
+            .{ .key = "hot_reload", .v = cfg.modules.hot_reload },
+            .{ .key = "autolearn", .v = cfg.modules.autolearn },
+        };
+        for (fields) |f| {
+            s.objectField(f.key) catch return;
+            s.write(f.v) catch return;
+        }
+        s.endObject() catch return;
+        s.endObject() catch return;
+    }
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "config.local.json", .data = w.buffer[0..w.end] }) catch {};
 }
 
 /// Re-execs the clanker binary if it was rebuilt since the REPL started,
@@ -1221,6 +1297,11 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
         .dry_run = opts.dry_run,
         .max_context_bytes = cfg.improve.max_context_bytes,
     });
+    // Verify that any applied improvement still passes all deterministic gates
+    // (build/test/tools/fmt/lint). In dry-run no changes are written, so skip.
+    if (!opts.dry_run) {
+        try verifyGates(gpa, io, arena);
+    }
 }
 
 fn cmdGoal(init: std.process.Init, opts: Options) !void {
