@@ -204,8 +204,20 @@ const usage_text =
     \\  clanker providers check [name]  verify provider connectivity
     \\  clanker run "<task>"            run the agent on a task
     \\  clanker run --goal <id> "<task>"  run with an active goal
+    \\  clanker run --session <id> "<task>"  continue a saved session
+    \\  clanker repl                    interactive multi-turn chat (streams tokens)
+    \\  clanker sessions                list saved sessions
+    \\  clanker tools list              list registered WASM tools
+    \\  clanker eval [name]             run eval tasks (all, or one by name)
+    \\  clanker improve-self [--iters N] [--dry-run] "<instructions>"  self-improvement loop
+    \\  clanker revert <id>             revert a previously applied improvement
+    \\  clanker goal "<intent>"         design and persist a structured goal
+    \\  clanker graph [run-id]          list runs or render one as an ASCII timeline
+    \\  clanker mcp                     serve tools over MCP (stdio)
+    \\  clanker serve [--port N]        HTTP API + web UI (default port 17921)
     \\  clanker notify <peer> "<message>" send a notification to a peer
     \\  clanker phonebook               list peer agent cards
+    \\  clanker git <args...>           passthrough to git (e.g. clanker git status)
     \\  clanker --verbose               enable debug logging
     \\
 ;
@@ -275,12 +287,13 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
 
     var it = cfg.providers.iterator();
-    var checked_any = false;
+    var found_any = false;
     while (it.next()) |kv| {
         const name = kv.key_ptr.*;
         if (opts.provider) |want| {
             if (!std.mem.eql(u8, want, name)) continue;
         }
+        found_any = true;
         const p = kv.value_ptr.*;
 
         if (p.api_key_env) |env_name| {
@@ -304,9 +317,8 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         const tok = if (resp.usage) |u| u.total_tokens else 0;
         log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok)", .{ name, p.model, ms, tok });
-        checked_any = true;
     }
-    if (opts.provider != null and !checked_any) return error.UnknownProvider;
+    if (opts.provider != null and !found_any) return error.UnknownProvider;
 }
 
 // ---------------------------------------------------------------------- run --

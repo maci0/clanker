@@ -396,10 +396,8 @@ pub const Agent = struct {
                 results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
                 continue;
             };
-            const wasm_path = try std.fmt.allocPrint(self.ctx.gpa, "{s}", .{tool.wasm});
-            defer self.ctx.gpa.free(wasm_path);
-            const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, wasm_path, self.ctx.gpa, .limited(1 << 20)) catch |err| {
-                log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, wasm_path, @errorName(err) });
+            const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
+                log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
                 return error.ToolWasmMissing;
             };
 
