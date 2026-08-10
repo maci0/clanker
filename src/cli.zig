@@ -11,6 +11,7 @@ const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
 const improve = @import("improve/engine.zig");
 const history = @import("improve/history.zig");
+const session = @import("agent/session.zig");
 const log = @import("util/log.zig");
 
 pub const Command = enum {
@@ -18,6 +19,7 @@ pub const Command = enum {
     init,
     providers_check,
     run,
+    sessions,
     tools_list,
     eval,
     improve_self,
@@ -30,6 +32,7 @@ pub const Options = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     task: ?[]const u8 = null,
+    session: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
     iters: u32 = 3,
     dry_run: bool = false,
@@ -80,6 +83,10 @@ pub fn parse(args: []const []const u8) !Options {
                 idx += 1;
                 if (idx >= args.len) return error.MissingArg;
                 opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch return error.BadIters;
+            } else if (std.mem.eql(u8, a, "--session")) {
+                idx += 1;
+                if (idx >= args.len) return error.MissingArg;
+                opts.session = args[idx];
             } else {
                 return error.UnknownArg;
             }
@@ -96,6 +103,8 @@ pub fn parse(args: []const []const u8) !Options {
                 pending_sub = "check";
             } else if (std.mem.eql(u8, a, "run")) {
                 opts.command = .run;
+            } else if (std.mem.eql(u8, a, "sessions")) {
+                opts.command = .sessions;
             } else if (std.mem.eql(u8, a, "tools")) {
                 opts.command = .tools_list;
                 pending_sub = "list";
@@ -159,6 +168,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .init => try cmdInit(init),
         .providers_check => try cmdProvidersCheck(init, opts),
         .run => try cmdRun(init, opts),
+        .sessions => try cmdSessions(init),
         .tools_list => try cmdToolsList(init, opts),
         .eval => try cmdEval(init, opts),
         .improve_self => try cmdImproveSelf(init, opts),
@@ -266,6 +276,15 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
     var messages: std.ArrayList(types.Message) = .empty;
+    var created: i64 = 0;
+    if (opts.session) |sid| {
+        const s = try session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid);
+        created = s.created;
+        for (s.messages) |m| {
+            if (m.role == .system) continue;
+            try messages.append(arena, m);
+        }
+    }
     var err_detail: ?[]const u8 = null;
     const resp = a.run(&messages, opts.task.?, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
@@ -275,6 +294,33 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     if (resp.message.content) |c| {
         try std.Io.File.stdout().writeStreamingAll(io, c);
         try std.Io.File.stdout().writeStreamingAll(io, "\n");
+    }
+
+    if (opts.session) |sid| {
+        const title = try std.fmt.allocPrint(arena, "{s}", .{opts.task.?[0..@min(opts.task.?.len, 60)]});
+        const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
+            .id = sid,
+            .title = title,
+            .messages = messages.items,
+            .created = created,
+            .updated = updated,
+        });
+    }
+}
+
+fn cmdSessions(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const metas = try session.listSessions(io, init.gpa, arena, std.Io.Dir.cwd());
+    const out = std.Io.File.stdout();
+    for (metas) |m| {
+        try out.writeStreamingAll(io, m.id);
+        try out.writeStreamingAll(io, "\t");
+        try out.writeStreamingAll(io, m.title);
+        try out.writeStreamingAll(io, "\t");
+        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{d}", .{m.updated}));
+        try out.writeStreamingAll(io, "\n");
     }
 }
 
