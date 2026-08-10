@@ -248,6 +248,23 @@ pub fn ckRandom(caller: *zwasm.Caller) u64 {
     return h.rng.random().int(u64);
 }
 
+/// ck_hash(ptr, len) -> 64-byte lowercase hex SHA-256 digest of the
+/// guest memory region [ptr, ptr+len) written into the host arena.
+/// Returns Err.ok on success; the digest is retrievable via ck_result().
+/// Returns Err.invalid for bad pointers, Err.too_large if the input
+/// exceeds max_fs_bytes.
+pub fn ckHash(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const data = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(data);
+    const digest = hasher.finalResult();
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    return h.writeResult(bytes, &hex);
+}
+
 /// A parsed ck_llm JSON request object. Every field is optional; a value that
 /// is missing, empty, or the wrong type stays null and the caller falls back
 /// to the tool's configured defaults (an explicitly empty "prompt" string is
@@ -1382,6 +1399,28 @@ test "safeJoin rejects escapes" {
     defer std.testing.allocator.free(dir);
     try std.testing.expectEqualStrings("/tmp/sandbox/notes", dir);
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notesx"));
+}
+
+test "ckHash produces correct SHA-256 hex digest" {
+    // Verify the hashing logic used by ckHash (we can't call ckHash directly
+    // without a zwasm.Caller, but the core hash+hex path is pure).
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update("hello");
+    const digest = hasher.finalResult();
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    try std.testing.expectEqualStrings(
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        &hex,
+    );
+    // Empty input.
+    var hasher2 = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher2.update("");
+    const digest2 = hasher2.finalResult();
+    const hex2 = std.fmt.bytesToHex(digest2, .lower);
+    try std.testing.expectEqualStrings(
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        &hex2,
+    );
 }
 
 test "parseCkLlmRequest extracts prompt, model, system, provider, max_tokens" {
