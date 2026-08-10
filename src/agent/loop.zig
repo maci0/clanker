@@ -407,11 +407,22 @@ pub const Agent = struct {
         // and cause premature compaction.
         const bytes_per_token: usize = 4;
         const ctx_budget = self.provider.activeModel().context_window * bytes_per_token / 2;
-        const threshold = if (self.cfg.agent.compact_threshold_bytes == 0)
+        // When token budgeting is enabled, also respect the session cap so
+        // compaction kicks in before the per-session token budget is hit
+        // (token budget is enforced in run() after each LLM call).
+        var threshold = if (self.cfg.agent.compact_threshold_bytes == 0)
             ctx_budget
         else
             @min(self.cfg.agent.compact_threshold_bytes, ctx_budget);
+        if (self.cfg.modules.token_budget) {
+            if (self.cfg.agent.max_total_tokens) |budget_tokens| {
+                threshold = @min(threshold, budget_tokens * bytes_per_token / 2);
+            }
+        }
         if (total <= threshold) return;
+        // Threshold floors: compaction must never race the per-turn cap,
+        // which would otherwise terminate the run before compaction runs.
+        threshold = @max(threshold, max_per_turn_tokens * bytes_per_token);
         // Need at least system + one middle + last 6 = 8 messages to compact.
         if (messages.items.len <= 7) return;
         log.log(.info, "compacting conversation: {d} messages, {d} bytes", .{ messages.items.len, total });
