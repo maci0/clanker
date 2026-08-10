@@ -206,9 +206,7 @@ pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     try s.objectField("cmd");
     try s.write(cmd);
     try s.objectField("args");
-    try s.beginArray();
-    for (args) |a| try s.write(a);
-    try s.endArray();
+    try s.write(args);
     try s.endObject();
     try buf.appendSlice(std.heap.wasm_allocator, w.buffer[0..w.end]);
 
