@@ -1,0 +1,14 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+zig-pkg/
+
+# AssemblyScript toolchain and its build output
+as-tools/node_modules/
+tools-as/*.wasm
+
+# Runtime state (logs, history, improvements) — never commit
+state/
+
+# User-local configuration (API keys live in env vars anyway)
+config.local.json

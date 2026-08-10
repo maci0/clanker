@@ -1,0 +1,23 @@
+{
+  "name": "edit_skill",
+  "description": "Write or replace a skill file (markdown) in the skills/ directory. The next system prompt includes all skill files, so this tool lets you improve your own instructions. Input: {\"path\": \"skills/<name>.md\", \"content\": \"...\"}. Returns {\"ok\": true, \"path\": \"...\"}.",
+  "wasm": "zig-out/tools/edit_skill.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "content"
+    ]
+  },
+  "fs_prefixes": [
+    "skills/"
+  ]
+}

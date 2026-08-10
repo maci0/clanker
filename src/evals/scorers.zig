@@ -1,0 +1,185 @@
+//! Eval task model and scoring. Evals are the verification harness the
+//! self-improvement engine gates on — including "selfhost" evals that build
+//! and test clanker itself.
+
+const std = @import("std");
+const json = std.json;
+
+pub const Criterion = union(enum) {
+    /// The response must contain all listed substrings.
+    includes: []const []const u8,
+    /// The response must parse as JSON and contain the given key with a
+    /// matching string value.
+    json_key: struct { key: []const u8, value: []const u8 },
+};
+
+pub const Kind = enum {
+    /// Run a prompt through the agent and score the answer.
+    task,
+    /// `zig build` must succeed in the project.
+    selfhost_build,
+    /// `zig build test` must pass in the project.
+    selfhost_tests,
+    /// `zig build tools` must succeed.
+    selfhost_tools,
+};
+
+pub const Eval = struct {
+    name: []const u8,
+    description: []const u8 = "",
+    kind: Kind = .task,
+    /// Prompt for `.task` evals.
+    prompt: []const u8 = "",
+    /// Criteria for `.task` evals.
+    criteria: []const Criterion = &.{},
+    /// Expected tool-call names the agent should invoke (in order of use).
+    requires_tool: ?[]const u8 = null,
+
+    pub fn loadAll(arena: std.mem.Allocator, io: std.Io, evals_dir: []const u8) ![]Eval {
+        var out: std.ArrayList(Eval) = .empty;
+        var dir = std.Io.Dir.cwd().openDir(io, evals_dir, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return &.{},
+            else => return err,
+        };
+        defer dir.close(io);
+        var it = dir.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".task.json")) continue;
+            const raw = dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
+            const eval = parse(arena, raw) catch continue;
+            try out.append(arena, eval);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    pub fn parse(arena: std.mem.Allocator, raw: []const u8) !Eval {
+        const v = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.EvalNotObject,
+        };
+        var e = Eval{ .name = try strField(obj, "name") };
+        if (obj.get("description")) |d| e.description = try strVal(d);
+        if (obj.get("kind")) |k| {
+            const ks = try strVal(k);
+            e.kind = if (std.mem.eql(u8, ks, "task")) .task else if (std.mem.eql(u8, ks, "selfhost_build")) .selfhost_build else if (std.mem.eql(u8, ks, "selfhost_tests")) .selfhost_tests else if (std.mem.eql(u8, ks, "selfhost_tools")) .selfhost_tools else return error.UnknownEvalKind;
+        }
+        if (obj.get("prompt")) |p| e.prompt = try strVal(p);
+        if (obj.get("requires_tool")) |p| e.requires_tool = try strVal(p);
+        if (obj.get("criteria")) |c| {
+            switch (c) {
+                .array => |arr| {
+                    var list: std.ArrayList(Criterion) = .empty;
+                    for (arr.items) |item| {
+                        const co = switch (item) {
+                            .object => |o| o,
+                            else => continue,
+                        };
+                        if (co.get("includes")) |inc| {
+                            switch (inc) {
+                                .array => |ia| {
+                                    var subs: std.ArrayList([]const u8) = .empty;
+                                    for (ia.items) |s| switch (s) {
+                                        .string => |ss| try subs.append(arena, ss),
+                                        else => {},
+                                    };
+                                    try list.append(arena, .{ .includes = try subs.toOwnedSlice(arena) });
+                                },
+                                else => {},
+                            }
+                        } else if (co.get("json_key")) |jk| {
+                            const jo = switch (jk) {
+                                .object => |o| o,
+                                else => continue,
+                            };
+                            try list.append(arena, .{ .json_key = .{ .key = try strField(jo, "key"), .value = try strField(jo, "value") } });
+                        }
+                    }
+                    e.criteria = try list.toOwnedSlice(arena);
+                },
+                else => {},
+            }
+        }
+        return e;
+    }
+
+    fn strField(obj: json.ObjectMap, key: []const u8) ![]const u8 {
+        return strVal(obj.get(key) orelse return error.MissingField);
+    }
+
+    fn strVal(v: json.Value) ![]const u8 {
+        return switch (v) {
+            .string => |s| s,
+            else => error.FieldNotString,
+        };
+    }
+};
+
+// ----------------------------------------------------------------- scorers --
+
+/// Scores a completed task answer against the eval's criteria. 1.0 = pass.
+pub fn scoreAnswer(answer: []const u8, criteria: []const Criterion) f64 {
+    if (criteria.len == 0) return if (answer.len > 0) 1.0 else 0.0;
+    var satisfied: usize = 0;
+    for (criteria) |c| {
+        if (criterionSatisfied(answer, c)) satisfied += 1;
+    }
+    return @as(f64, @floatFromInt(satisfied)) / @as(f64, @floatFromInt(criteria.len));
+}
+
+fn criterionSatisfied(answer: []const u8, c: Criterion) bool {
+    return switch (c) {
+        .includes => |subs| blk: {
+            for (subs) |s| {
+                if (std.mem.indexOf(u8, answer, s) == null) break :blk false;
+            }
+            break :blk true;
+        },
+        .json_key => |jk| blk: {
+            const v = json.parseFromSliceLeaky(json.Value, std.heap.page_allocator, answer, .{}) catch break :blk false;
+            switch (v) {
+                .object => |o| {
+                    if (o.get(jk.key)) |val| {
+                        switch (val) {
+                            .string => |s| break :blk std.mem.eql(u8, s, jk.value),
+                            .bool => |b| break :blk std.mem.eql(u8, if (b) "true" else "false", jk.value),
+                            .integer => |i| {
+                                var num_buf: [32]u8 = undefined;
+                                const num = std.fmt.bufPrint(&num_buf, "{d}", .{i}) catch break :blk false;
+                                break :blk std.mem.eql(u8, num, jk.value);
+                            },
+                            else => break :blk false,
+                        }
+                    }
+                    break :blk false;
+                },
+                else => break :blk false,
+            }
+        },
+    };
+}
+
+// ------------------------------------------------------------------- tests --
+
+test "scorers" {
+    const criteria = [_]Criterion{
+        .{ .includes = &.{"true"} },
+        .{ .json_key = .{ .key = "ok", .value = "true" } },
+    };
+    try std.testing.expectEqual(@as(f64, 1.0), scoreAnswer("{\"ok\": true}", &criteria));
+    try std.testing.expectEqual(@as(f64, 0.5), scoreAnswer("true", &criteria));
+    try std.testing.expectEqual(@as(f64, 0.0), scoreAnswer("nope", &criteria));
+}
+
+test "eval parse" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const e = try Eval.parse(arena,
+        \\{"name":"math","kind":"task","prompt":"what is 2+2?","criteria":[{"includes":["4"]}]}
+    );
+    try std.testing.expectEqualStrings("math", e.name);
+    try std.testing.expectEqual(Kind.task, e.kind);
+    try std.testing.expectEqual(@as(usize, 1), e.criteria.len);
+}

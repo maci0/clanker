@@ -1,0 +1,17 @@
+{
+  "name": "calc_ts",
+  "description": "Arithmetic tool written in AssemblyScript (TypeScript compiled to WebAssembly). Input: {\"expr\": \"17*23\"} \u2014 a plain arithmetic expression with + - * / operators. Returns the decimal result. A pure-WASM alternative to calculator.",
+  "wasm": "tools-as/calc_ts.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "expr": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "expr"
+    ]
+  },
+  "network_allow": []
+}

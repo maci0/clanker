@@ -1,0 +1,1 @@
+{"name": "answer_format", "kind": "task", "prompt": "Say exactly: clanker online", "criteria": [{"includes": ["clanker online"]}]}

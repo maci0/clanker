@@ -1,0 +1,45 @@
+{
+  "default_provider": "deepseek",
+  "providers": {
+    "deepseek": {
+      "kind": "openai_compat",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-v4-flash",
+      "max_tokens": 2048
+    },
+    "openai": {
+      "kind": "openai_compat",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "model": "gpt-4o-mini"
+    },
+    "ollama": {
+      "kind": "openai_compat",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "model": "qwen3.5"
+    },
+    "anthropic": {
+      "kind": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-sonnet-4-20250514"
+    }
+  },
+  "agent": {
+    "max_iterations": 12,
+    "tools_dir": "tools",
+    "skills_dir": "skills",
+    "system_prompt_file": "skills/SYSTEM.md",
+    "learnings_file": "state/learnings.md",
+    "sandbox_root": "."
+  },
+  "improve": {
+    "min_delta": 0.05,
+    "default_iters": 3,
+    "max_staged_bytes": 262144,
+    "max_tool_source_bytes": 65536,
+    "max_skill_bytes": 32768,
+    "max_proposal_bytes": 524288
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "fetch_web",
+  "description": "HTTP GET a URL and return its body (truncated). The host must be allowlisted for this tool. Input: {\"url\": \"https://...\"}. Returns {\"ok\": true, \"bytes\": N, \"body\": \"...\"}.",
+  "wasm": "zig-out/tools/fetch_web.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "url"
+    ]
+  },
+  "network_allow": [
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "wttr.in",
+    "example.com"
+  ]
+}

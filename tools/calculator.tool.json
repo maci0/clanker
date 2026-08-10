@@ -1,0 +1,32 @@
+{
+  "name": "calculator",
+  "description": "Evaluate arithmetic. Input either {\"a\": number, \"b\": number, \"op\": \"+|-|*|/|^\"} or {\"expr\": \"2+3*4\"} (operators + - * / ^, parentheses, standard precedence). Returns {\"ok\": true, \"result\": number}.",
+  "wasm": "zig-out/tools/calculator.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "a": {
+        "type": "number"
+      },
+      "b": {
+        "type": "number"
+      },
+      "op": {
+        "type": "string",
+        "enum": [
+          "+",
+          "-",
+          "*",
+          "/",
+          "^"
+        ]
+      }
+    },
+    "required": [
+      "a",
+      "b",
+      "op"
+    ]
+  },
+  "network_allow": []
+}

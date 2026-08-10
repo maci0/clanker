@@ -1,0 +1,13 @@
+{
+  "name": "calculator",
+  "kind": "task",
+  "prompt": "Calculate 17 * 23 using the calculator tool, then reply with only the number.",
+  "requires_tool": "calculator",
+  "criteria": [
+    {
+      "includes": [
+        "391"
+      ]
+    }
+  ]
+}

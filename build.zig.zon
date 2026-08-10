@@ -1,0 +1,22 @@
+.{
+    .name = .clanker,
+    .version = "0.1.0",
+    .fingerprint = 0xc5ac33d9f78ac6fb, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zwasm = .{
+            .url = "https://github.com/clojurewasm/zwasm/archive/refs/tags/v2.4.1.tar.gz",
+            .hash = "zwasm-2.4.1-FT1Fv0J0jQDowvbJuWRyBg6N0aX7lj52ldrm7T7HWzBr",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tools-src",
+        "vendor",
+        "tests",
+        "skills",
+        "evals",
+    },
+}
