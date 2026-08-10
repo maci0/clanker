@@ -507,6 +507,22 @@ pub const Agent = struct {
                 }
 
                 s = last_line;
+                // If the answer is a number or boolean at the start of the line
+                // followed by extra prose (e.g. "42. I hope this helps"), extract
+                // just the leading value so the exact-match answer is preserved.
+                {
+                    const lead = std.mem.trim(u8, s, " \t\r\n");
+                    if (lead.len > 0 and (isNumericString(lead) or std.mem.eql(u8, lead, "true") or std.mem.eql(u8, lead, "false"))) {
+                        s = lead;
+                    } else if (lead.len > 0 and (std.ascii.isDigit(lead[0]) or (lead[0] == '-' and lead.len > 1 and std.ascii.isDigit(lead[1])))) {
+                        var i: usize = 0;
+                        if (lead[0] == '-') i = 1;
+                        while (i < lead.len and (std.ascii.isDigit(lead[i]) or lead[i] == '.' or lead[i] == ',')) i += 1;
+                        if (i > 0) s = std.mem.trim(u8, lead[0..i], " \t\r\n");
+                    } else if (std.mem.startsWith(u8, lead, "true") or std.mem.startsWith(u8, lead, "false")) {
+                        s = if (std.mem.startsWith(u8, lead, "true")) "true" else "false";
+                    }
+                }
                 // Strip trailing punctuation (period, comma, etc.) when the
                 // remainder is a number OR a single word (no spaces), so an
                 // exact-match answer like "42." or "hello." becomes "42"/"hello"
