@@ -1294,3 +1294,37 @@ test "parseCkLlmRequest ignores malformed and out-of-range fields" {
     const big = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":9000000000}") orelse return error.TestUnexpectedNull;
     try std.testing.expect(big.max_tokens == null);
 }
+
+test "Host.writeResult enforces the arena cap and memory bounds" {
+    var host = Host{
+        .sandbox = undefined,
+        .rng = std.Random.DefaultPrng.init(0),
+    };
+    var mem: [host_arena_cap + 64]u8 = undefined;
+
+    // A payload at or under the cap passes through and is recorded as (ptr, len).
+    const short = "hello sandbox";
+    try std.testing.expectEqual(Err.ok, host.writeResult(&mem, short));
+    try std.testing.expectEqual(@as(u32, 0), host.result_ptr);
+    try std.testing.expectEqual(@as(u32, short.len), host.result_len);
+    try std.testing.expectEqualStrings(short, mem[host.result_ptr .. host.result_ptr + host.result_len]);
+    try std.testing.expectEqual(@as(u32, short.len), host.arena_cur);
+
+    // A payload longer than host_arena_cap is rejected without moving the cursor.
+    const oversized = [_]u8{0} ** (host_arena_cap + 1);
+    const cur_before = host.arena_cur;
+    try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, &oversized));
+    try std.testing.expectEqual(cur_before, host.arena_cur);
+
+    // A write that would run past the end of the guest memory is rejected.
+    host.arena_base = @intCast(mem.len - 4);
+    host.arena_cur = host.arena_base;
+    try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, "0123456789"));
+    try std.testing.expectEqual(host.arena_base, host.arena_cur);
+
+    // Cumulative arena use beyond host_arena_cap is rejected even when the
+    // backing memory itself is large enough to hold the payload.
+    host.arena_base = 0;
+    host.arena_cur = host_arena_cap;
+    try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, "x"));
+}
