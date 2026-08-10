@@ -1078,7 +1078,9 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     const topic = parsed.topic orelse "";
     const ts = parsed.ts orelse 0;
     const payload = parsed.payload orelse .null;
-    const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000));
+    // Seconds since epoch, matching the `ts` field cmdNotify sends and the
+    // units used for session created/updated timestamps elsewhere.
+    const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at };
 
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
