@@ -956,8 +956,9 @@ pub const Agent = struct {
                     log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
                     continue;
                 };
-                self.modules.put(self.arena, tc.name, m) catch {
+                self.modules.put(self.arena, tc.name, m) catch |err| {
                     m.deinit();
+                    log.log(.warn, "tool '{s}': cache insert failed: {s}", .{ tc.name, @errorName(err) });
                     continue;
                 };
             }
