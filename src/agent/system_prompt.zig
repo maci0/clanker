@@ -42,7 +42,6 @@ pub fn build(
     var dir = std.Io.Dir.cwd().openDir(io, parts.skills_dir, .{ .iterate = true }) catch null;
     if (dir) |*d| {
         defer d.close(io);
-        try buf.appendSlice(arena, "## Skills\n\n");
         var names: std.ArrayList([]const u8) = .empty;
         var it = d.iterate();
         while (it.next(io) catch null) |entry| {
@@ -58,6 +57,9 @@ pub fn build(
                 return std.mem.lessThan(u8, a, b);
             }
         }.lt);
+        // Emit the section header only when at least one skill file exists;
+        // otherwise an empty "## Skills" section just wastes prompt tokens.
+        if (names.items.len > 0) try buf.appendSlice(arena, "## Skills\n\n");
         for (names.items) |name| {
             const content = d.readFileAlloc(io, name, arena, .limited(parts.max_skill_bytes)) catch continue;
             if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;

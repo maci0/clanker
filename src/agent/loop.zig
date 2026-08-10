@@ -98,8 +98,11 @@ pub const Agent = struct {
         // Multi-turn callers (the REPL) reuse one message list across runs:
         // prepend the system prompt only once, otherwise every turn would
         // duplicate it and waste a large chunk of the context window.
+        // A resumed session's message list may be non-empty but lack a
+        // leading system message; the system prompt must be INSERTED at the
+        // front (not appended after prior turns) so providers see it first.
         if (messages.items.len == 0 or messages.items[0].role != .system) {
-            try messages.append(self.arena, .{ .role = .system, .content = self.system_prompt_text });
+            try messages.insert(self.arena, 0, .{ .role = .system, .content = self.system_prompt_text });
         }
         try messages.append(self.arena, .{ .role = .user, .content = task });
 
