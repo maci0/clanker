@@ -10,7 +10,19 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const protocol = @import("protocol.zig");
+const client = @import("../llm/client.zig");
+const types = @import("../llm/types.zig");
+const config_mod = @import("../config.zig");
 const zwasm = @import("zwasm");
+
+/// Model access for tools whose descriptor sets `"llm": true` (a translate or
+/// summarize transform needs one). The harness hands over the same provider
+/// the agent itself is running on; `ck_llm` is denied when this is null.
+pub const LlmAccess = struct {
+    ctx: *client.Ctx,
+    provider: *const config_mod.Provider,
+    max_tokens: u32 = 1024,
+};
 
 /// The guest reserves this many bytes for the host arena (must match
 /// tools-src/lib.zig).
@@ -18,6 +30,10 @@ pub const host_arena_cap = 64 * 1024;
 pub const scratch_cap = 64 * 1024;
 
 /// Error codes returned by ck_* host functions.
+/// Zig standard library directory (set at startup from build_options).
+/// Used by the std_api tool to look up symbol signatures.
+pub var zig_lib_dir: []const u8 = "";
+
 pub const Err = struct {
     pub const ok: u32 = 0;
     pub const denied: u32 = 1;
@@ -43,6 +59,13 @@ pub const Sandbox = struct {
     environ_map: *std.process.Environ.Map,
     /// Deterministic seed for the tool RNG (from agent.seed).
     seed: u64 = 0,
+    /// Non-null only for tools that declared the llm capability. A tool holding
+    /// this runs sequentially: one provider call per tool call, never from the
+    /// parallel worker pool.
+    llm: ?LlmAccess = null,
+    /// The tool descriptor's `config` object, serialized. Returned verbatim by
+    /// `ck_config` so a plugin can read its own settings.
+    config_json: []const u8 = "{}",
 };
 
 /// Per-module execution context; passed to host functions via
@@ -114,6 +137,42 @@ pub fn ckNow(caller: *zwasm.Caller) u64 {
 pub fn ckRandom(caller: *zwasm.Caller) u64 {
     const h = getHost(caller);
     return h.rng.random().int(u64);
+}
+
+/// ck_llm(prompt) -> completion text in the host arena. One shot, no tools and
+/// no conversation: a transform plugin asks the model to rewrite something and
+/// gets a string back.
+pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const prompt = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (prompt.len == 0) return Err.invalid;
+
+    const access = h.sandbox.llm orelse {
+        log.log(.warn, "[llm] denied: tool descriptor does not set \"llm\": true", .{});
+        return Err.denied;
+    };
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const messages = [_]types.Message{.{ .role = .user, .content = prompt }};
+    var err_detail: ?[]const u8 = null;
+    const resp = client.chat(access.ctx, arena_state.allocator(), .{
+        .provider = access.provider,
+        .messages = &messages,
+        .max_tokens = access.max_tokens,
+    }, &err_detail) catch |err| {
+        log.log(.warn, "[llm] call failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
+        return Err.network;
+    };
+    return h.writeResult(bytes, resp.message.content orelse "");
+}
+
+/// ck_config() -> this tool's `config` object from its descriptor, as JSON.
+pub fn ckConfig(caller: *zwasm.Caller) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    return h.writeResult(bytes, h.sandbox.config_json);
 }
 
 pub fn ckResult(caller: *zwasm.Caller) u64 {
@@ -227,8 +286,8 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         return Err.denied;
     }
 
-    var client: std.http.Client = .{ .allocator = h.sandbox.gpa, .io = h.sandbox.io };
-    defer client.deinit();
+    var http: std.http.Client = .{ .allocator = h.sandbox.gpa, .io = h.sandbox.io };
+    defer http.deinit();
 
     const resp_buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_http_bytes) catch return Err.too_large;
     defer h.sandbox.gpa.free(resp_buf);
@@ -238,7 +297,7 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         0 => .GET,
         else => .POST,
     };
-    const result = client.fetch(.{
+    const result = http.fetch(.{
         .location = .{ .url = url },
         .method = req_method,
         .payload = if (req_method == .POST) body else null,
@@ -330,7 +389,7 @@ pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
 
 // ------------------------------------------------------- ck_exec (shell-ish) --
 
-const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode" };
+const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode", "zig" };
 
 fn isWordChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == '-';
@@ -369,6 +428,25 @@ const exec_deny_tokens = [_][]const u8{
     "repack", "prune",  "submodule", "-f",       "--force", "--exec",        "&&",
     "||",     ";",      "|",         ">",        "<",       "`",
 };
+
+/// Looks up a symbol in the Zig standard library source and returns up to 40
+/// matching lines (signatures + doc comments). Powers the std_api tool so the
+/// agent can verify Zig 0.16 APIs before proposing patches.
+pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const sym = sliceOf(bytes, sym_ptr, sym_len) orelse return Err.invalid;
+    if (sym.len == 0 or zig_lib_dir.len == 0) return Err.not_found;
+
+    const std_dir = std.fmt.allocPrint(h.sandbox.gpa, "{s}/std", .{zig_lib_dir}) catch return Err.invalid;
+    defer h.sandbox.gpa.free(std_dir);
+    const argv = [_][]const u8{ "rg", "-n", "-F", "--max-count", "40", sym, std_dir };
+    const res = std.process.run(h.sandbox.gpa, h.sandbox.io, .{ .argv = &argv }) catch return Err.invalid;
+    defer h.sandbox.gpa.free(res.stdout);
+    defer h.sandbox.gpa.free(res.stderr);
+    if (res.stdout.len == 0) return Err.not_found;
+    return h.writeResult(bytes, res.stdout);
+}
 
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const h = getHost(caller);
@@ -479,6 +557,13 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
                 allowed = true;
                 break;
             }
+            // A prefix of "state/runs/" also authorizes "state/runs" itself,
+            // otherwise a tool allowed to read inside a directory cannot list
+            // the directory to find out what is in it.
+            if (p.len > 1 and p[p.len - 1] == '/' and std.mem.eql(u8, sub_path, p[0 .. p.len - 1])) {
+                allowed = true;
+                break;
+            }
         }
         if (!allowed) return error.PathOutsideSandbox;
     }
@@ -504,4 +589,10 @@ test "safeJoin rejects escapes" {
     const ok = try safeJoin(&sb, "notes/foo.txt");
     defer std.testing.allocator.free(ok);
     try std.testing.expectEqualStrings("/tmp/sandbox/notes/foo.txt", ok);
+
+    // The prefix's own directory is listable; a sibling sharing its name is not.
+    const dir = try safeJoin(&sb, "notes");
+    defer std.testing.allocator.free(dir);
+    try std.testing.expectEqualStrings("/tmp/sandbox/notes", dir);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "notesx"));
 }

@@ -21,7 +21,10 @@ extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
+extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
+extern fn ck_config() u32;
 extern fn ck_result() u64;
+extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
 
 const scratch_cap = 64 * 1024;
 const host_arena_cap = 64 * 1024;
@@ -117,6 +120,17 @@ pub fn logInfo(msg: []const u8) void {
     log(1, msg);
 }
 
+/// Looks up a symbol in the Zig standard library source (host-side rg).
+pub fn stdApi(symbol: []const u8) FsError![]const u8 {
+    const p = sliceToMem(symbol);
+    const rc = ck_std_api(p.ptr, p.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        2 => error.NotFound,
+        else => error.IoError,
+    };
+}
+
 /// Seconds since the Unix epoch.
 pub fn nowSeconds() f64 {
     return @as(f64, @floatFromInt(ck_now())) / 1e9;
@@ -152,6 +166,30 @@ pub fn httpPost(url: []const u8, body: []const u8) HttpError![]const u8 {
         4 => error.NetworkError,
         else => error.InvalidArg,
     };
+}
+
+pub const LlmError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
+
+/// One-shot model call on the harness's active provider. Requires `"llm": true`
+/// in this tool's descriptor; denied otherwise. No tools, no history: a prompt
+/// in, completion text out.
+pub fn llm(prompt: []const u8) LlmError![]const u8 {
+    const p = sliceToMem(prompt);
+    const rc = ck_llm(p.ptr, p.len);
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        3 => error.TooLarge,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
+}
+
+/// This tool's own `config` object from its descriptor, as a JSON string
+/// ("{}" when the descriptor has none).
+pub fn config() []const u8 {
+    if (ck_config() != 0) return "{}";
+    return readResult() orelse "{}";
 }
 
 pub const FsError = error{ SandboxDenied, NotFound, TooLarge, IoError };

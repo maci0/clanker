@@ -48,6 +48,9 @@ Provider `kind` is either `openai_compat` or `anthropic`. See the full field lis
 - **`/goal`** – persistent structured goals steering agent runs
 - **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/tools`, `/sessions`, `/graph`, `/status`) served by internal WASM tools
 - **Execution graphs** – every run is recorded to `state/runs/`; replay it with `/graph` or `clanker graph <run-id>`
+- **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on
+- **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
+- **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
 - **Token budget** – `compact_threshold_bytes` and `max_total_tokens` controls
 - **Web UI** – internal WASM tool served at `GET /`
 

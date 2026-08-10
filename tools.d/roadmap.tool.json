@@ -1,0 +1,8 @@
+{
+  "name": "roadmap",
+  "description": "read the roadmap; list planned (unchecked) items",
+  "wasm": "zig-out/tools/roadmap.wasm",
+  "input_schema": { "type": "object", "properties": {"list":{"type":"string","enum":["planned","all"]}}, "required": [] },
+  "fs_prefixes": ["docs/"],
+  "network_allow": []
+}

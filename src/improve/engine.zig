@@ -350,7 +350,7 @@ pub const Engine = struct {
 
         // Gather candidate files with a relevance score (keyword hits).
         var cands: std.ArrayList(Candidate) = .empty;
-        try collectCandidates(self, "tools-src", keywords.items, &cands, 96 * 1024);
+        try collectCandidates(self, "tool-src", keywords.items, &cands, 96 * 1024);
         try collectCandidates(self, "src", keywords.items, &cands, 96 * 1024);
         try collectCandidates(self, "tests", keywords.items, &cands, 96 * 1024);
         for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {
@@ -431,11 +431,11 @@ pub const Engine = struct {
 
     fn isStopword(w: []const u8) bool {
         const stopwords = [_][]const u8{
-            "make", "tool", "accept", "single", "string", "input", "like", "with",
-            "addition", "existing", "fields", "evaluating", "using", "these", "those",
-            "other", "should", "could", "would", "value", "number", "first", "second",
-            "change", "changes", "feature", "implement", "support", "please", "need",
-            "needs", "make", "also", "into",
+            "make",     "tool",     "accept",    "single",     "string", "input", "like",   "with",
+            "addition", "existing", "fields",    "evaluating", "using",  "these", "those",  "other",
+            "should",   "could",    "would",     "value",      "number", "first", "second", "change",
+            "changes",  "feature",  "implement", "support",    "please", "need",  "needs",  "make",
+            "also",     "into",
         };
         for (stopwords) |s| {
             if (std.mem.eql(u8, w, s)) return true;

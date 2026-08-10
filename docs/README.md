@@ -23,6 +23,8 @@ Guest tools export `scratch`, `host_arena`, and `run`; they import `env.ck_*` ho
 - `ck_getenv` – read an environment variable
 - `ck_exec` – run a subprocess
 - `ck_docker` – invoke Docker
+- `ck_llm` – one-shot model call (requires `"llm": true` in the descriptor)
+- `ck_config` – this tool's own `config` object from its descriptor
 - `ck_result` – read back the host-written result from the host arena
 
 Host functions write results into the host arena; the guest reads them back via `ck_result`. Tools compile to `wasm32-freestanding` (not `wasip1`).
@@ -209,6 +211,8 @@ Tools run in a WebAssembly sandbox using the zwasm runtime. The guest exports `s
 | `ck_getenv` | Read an environment variable |
 | `ck_exec` | Execute a command in the sandbox |
 | `ck_docker` | Run a Docker container (if allowed) |
+| `ck_llm` | One-shot model call; denied unless the descriptor sets `"llm": true` |
+| `ck_config` | Return this tool's `config` object from its descriptor |
 | `ck_result` | Write the tool result into the host arena |
 
 Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools.d/*.tool.json` control network and filesystem access.
@@ -285,11 +289,54 @@ Every entry in `tools.d/` is one WASM module plus its descriptor. `internal: tru
 | `cmd_tools` | yes | `tools.d/` | List registered tools |
 | `cmd_sessions` | yes | `state/sessions/` | List saved sessions |
 | `cmd_graph` | yes | `state/runs/` | Render the latest execution graph |
+| `cmd_plugins` | yes | `tools.d/`, `state/` | List plugins, toggle the optional ones |
+| `translate` | yes | none | Transform plugin (off by default): translates tool results via `ck_llm` |
 | `cmd_status` | yes | `config.json`, `config.local.json` | Show this instance and its peers |
 | `format` | yes | none | Markdown to ANSI formatter used for REPL output |
 | `webui` | yes | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
 
 `tools.d/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
+
+## Plugins
+
+Every tool is a WASM plugin; the descriptor decides how much of the harness it gets.
+
+| Descriptor key | Meaning |
+|----------------|---------|
+| `internal` | Hidden from the model's tool catalog (slash commands, the web UI, transforms) |
+| `enabled` | Default on/off state; ships `false` for anything that spends tokens on its own |
+| `llm` | May call the model through `ck_llm`; forces sequential execution |
+| `config` | Free-form settings object, returned to the guest by `ck_config` |
+| `transform` | Marks the tool as a chain link: `{ "phase": "before"\|"after", "tools": ["*"], "order": 50 }` |
+| `fs_prefixes` / `network_allow` | Filesystem and network authority |
+
+### Switching plugins on and off
+
+`/plugins` in the REPL lists every tool with its state; `/plugins off <name>` and `/plugins on <name>` toggle one. The choice is written to `state/plugins.json` (`{"disabled": [...], "enabled": [...]}`, machine-local, gitignored) and the running REPL reloads its registry immediately.
+
+Core tools cannot be switched off: those are the `internal` tools with no `transform`, since they back the REPL slash commands and the HTTP routes. Transforms are internal too, but toggling them is the point, so they stay switchable.
+
+### Transform chains
+
+A transform plugin wraps other tools instead of being called by the model. `before` transforms rewrite the arguments going into a tool; `after` transforms rewrite the result coming out, in ascending `order`, before it reaches the agent. Each transform receives:
+
+```json
+{ "tool": "fetch_web", "phase": "after", "payload": "<the tool's JSON>", "prior": ["redact"] }
+```
+
+so a chained plugin knows which tool it is wrapping and which transforms already ran. It answers `{"ok": true, "payload": "<rewritten>"}`, or anything else to decline. A transform that errors, denies, or returns no payload is skipped with a warning and the original payload continues down the chain: a broken filter never takes the tool with it.
+
+### Calling the model from a plugin
+
+A descriptor with `"llm": true` may call `ck_llm(prompt)` and get completion text back. Without it the call is denied. By default the plugin borrows the provider the agent is running on; `config` can aim it elsewhere:
+
+```json
+"config": { "provider": "kimi-k3", "model": "kimi-k2.7-code", "max_tokens": 2048 }
+```
+
+The harness reads `provider`, `model`, and `max_tokens` to build that call; every other key is the plugin's own and reaches it verbatim through `ck_config`.
+
+The shipped `translate` plugin combines all of it: an `after` transform on every tool, off by default, that asks its configured model to translate the human-readable text in a tool result into `config.lang` before the next layer sees it. It validates that the answer is still JSON and declines rather than passing on corrupted output.
 
 ## REPL slash commands
 
@@ -301,6 +348,7 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/tools` | `cmd_tools` | List registered tools |
 | `/sessions` | `cmd_sessions` | List saved sessions |
 | `/graph` | `cmd_graph` | Show the latest execution graph |
+| `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
 | `/status` | `cmd_status` | Show instance and peers |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
 | `/quit`, `/exit`, `/q` | in-process | Leave the REPL |

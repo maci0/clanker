@@ -1,0 +1,8 @@
+{
+  "name": "context7",
+  "description": "fetch library documentation from context7.com (markdown + code examples) for a GitHub org/repo, optionally filtered by topic. E.g. org=ziglang repo=zig topic=std.http to get Zig std docs.",
+  "wasm": "zig-out/tools/context7.wasm",
+  "input_schema": { "type": "object", "properties": { "org": { "type": "string" }, "repo": { "type": "string" }, "topic": { "type": "string" }, "max_chars": { "type": "integer" } }, "required": ["org", "repo"] },
+  "network_allow": ["context7.com"],
+  "fs_prefixes": []
+}

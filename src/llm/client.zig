@@ -337,10 +337,19 @@ pub fn chatStream(
     var usage_out: ?types.Usage = null;
     if (stream_usage) |su| {
         if (su.total_tokens > 0) {
+            var hit = su.prompt_cache_hit_tokens;
+            if (hit == 0) hit = su.cached_tokens;
+            if (hit == 0) {
+                if (su.prompt_tokens_details) |d| hit = d.cached_tokens;
+            }
+            var miss = su.prompt_cache_miss_tokens;
+            if (miss == 0 and su.prompt_tokens > hit) miss = su.prompt_tokens - hit;
             usage_out = .{
                 .prompt_tokens = su.prompt_tokens,
                 .completion_tokens = su.completion_tokens,
                 .total_tokens = su.total_tokens,
+                .prompt_cache_hit_tokens = hit,
+                .prompt_cache_miss_tokens = miss,
             };
         }
     }
@@ -362,6 +371,10 @@ const StreamUsage = struct {
     prompt_tokens: u32 = 0,
     completion_tokens: u32 = 0,
     total_tokens: u32 = 0,
+    prompt_cache_hit_tokens: u32 = 0,
+    prompt_cache_miss_tokens: u32 = 0,
+    cached_tokens: u32 = 0,
+    prompt_tokens_details: ?struct { cached_tokens: u32 = 0 } = null,
 };
 
 const StreamFunction = struct {

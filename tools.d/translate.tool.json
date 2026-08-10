@@ -1,0 +1,14 @@
+{
+  "name": "translate",
+  "description": "transform plugin: translates the text in tool results before they reach the next layer",
+  "wasm": "zig-out/tools/translate.wasm",
+  "input_schema": { "type": "object", "properties": { "tool": { "type": "string" }, "phase": { "type": "string" }, "payload": { "type": "string" } } },
+  "internal": true,
+  "enabled": false,
+  "llm": true,
+  "transform": { "phase": "after", "tools": ["*"], "order": 50 },
+  "config": {
+    "lang": "en",
+    "max_tokens": 2048
+  }
+}

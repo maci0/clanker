@@ -1,0 +1,8 @@
+{
+  "name": "learnings",
+  "description": "read persisted learnings (state/learnings.md)",
+  "wasm": "zig-out/tools/learnings.wasm",
+  "input_schema": { "type": "object", "properties": {"type":"object"}, "required": [] },
+  "fs_prefixes": ["state/learnings.md"],
+  "network_allow": []
+}

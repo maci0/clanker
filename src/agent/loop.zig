@@ -10,6 +10,7 @@ const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
+const autolearn = @import("../autolearn.zig");
 const log = @import("../util/log.zig");
 
 /// Cumulative token usage across all LLM calls in a single agent run.
@@ -17,6 +18,10 @@ pub const RunStats = struct {
     total_prompt_tokens: u64 = 0,
     total_completion_tokens: u64 = 0,
     total_tokens: u64 = 0,
+    /// Prompt tokens served from the provider cache (cumulative).
+    total_cache_hit_tokens: u64 = 0,
+    /// Prompt tokens not served from cache (cumulative).
+    total_cache_miss_tokens: u64 = 0,
     /// Estimated USD cost for this run (from the active model's
     /// cost_per_1k_input / cost_per_1k_output).
     cost: f64 = 0,
@@ -43,6 +48,14 @@ pub const Agent = struct {
     /// REPL renders tokens live). Tool-call flows still assemble a normal
     /// ChatResponse internally.
     on_token: ?*const fn ([]const u8) void = null,
+    /// Optional hook fired right before a batch of tool calls executes (e.g.
+    /// the REPL prints a "running: ..." status line to cover the otherwise
+    /// silent gap between tool dispatch and the next streamed token).
+    on_tool_call: ?*const fn ([]const types.ToolCall) void = null,
+    /// Optional hook fired right after a batch of tool calls finishes, with
+    /// the wall-clock time spent executing them (e.g. the REPL prints
+    /// "done in Nms" under the tool status line).
+    on_tool_result: ?*const fn (u64) void = null,
 
     pub fn init(
         ctx: *client.Ctx,
@@ -74,6 +87,8 @@ pub const Agent = struct {
     /// The full conversation transcript is appended to `messages` (arena).
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
         const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
+        var used_tools: std.ArrayList([]const u8) = .empty;
+        defer used_tools.deinit(self.ctx.gpa);
         // Free cached tool modules (zwasm engines/linkers) when the agent
         // finishes, whether we return a final answer, bail out, or error out.
         defer {
@@ -84,7 +99,22 @@ pub const Agent = struct {
             self.modules.clearRetainingCapacity();
             const run_ms: u64 = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
             const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
-            log.log(.info, "run tokens: prompt={d} completion={d} total={d} ({d:.1} tok/s) cost=${d:.4}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens, tps, self.stats.cost });
+            const prompt_total = self.stats.total_cache_hit_tokens + self.stats.total_cache_miss_tokens;
+            const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.stats.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
+            log.log(.info, "run tokens: prompt={d} completion={d} total={d} ({d:.1} tok/s) cache={d} hit/{d} miss ({d:.0}%) cost=${d:.4}", .{ self.stats.total_prompt_tokens, self.stats.total_completion_tokens, self.stats.total_tokens, tps, self.stats.total_cache_hit_tokens, self.stats.total_cache_miss_tokens, hit_rate, self.stats.cost });
+            if (self.cfg.modules.autolearn and run_ms > 0) {
+                autolearn.recordRun(self.ctx.io, self.ctx.gpa, self.arena, .{
+                    .provider = self.provider.name,
+                    .model = self.provider.activeModelName(),
+                    .task = if (task.len > 120) task[0..120] else task,
+                    .prompt_tokens = self.stats.total_prompt_tokens,
+                    .completion_tokens = self.stats.total_completion_tokens,
+                    .cache_hit = self.stats.total_cache_hit_tokens,
+                    .cache_miss = self.stats.total_cache_miss_tokens,
+                    .duration_ms = run_ms,
+                    .tools = used_tools.items,
+                });
+            }
         }
         // Execution graph: record every LLM call and tool invocation, then
         // persist it to state/runs/<run-id>.json on every exit path.
@@ -147,6 +177,8 @@ pub const Agent = struct {
                 self.stats.total_prompt_tokens += u.prompt_tokens;
                 self.stats.total_completion_tokens += u.completion_tokens;
                 self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+                self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
+                self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
                 const active = self.provider.activeModel();
                 if (active.cost_per_1m_input) |ci| self.stats.cost += @as(f64, @floatFromInt(u.prompt_tokens)) / 1_000_000.0 * ci;
                 if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
@@ -196,13 +228,26 @@ pub const Agent = struct {
             }
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
+            if (self.on_tool_call) |cb| cb(calls);
+            const tool_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
             // Execute tool calls in parallel for distinct tool names (each on
             // a worker thread with a large stack); a tool name repeated in the
             // same batch falls back to sequential execution because the zwasm
             // module is stateful and the cached instance is reused.
             const results = try self.executeCalls(calls);
+            if (self.on_tool_result) |cb| {
+                const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+                cb(tool_ms);
+            }
             for (calls, results) |tc, content| {
+                if (self.cfg.modules.autolearn) {
+                    if (std.mem.startsWith(u8, content, "{\"ok\":false")) {
+                        const kind: []const u8 = if (std.mem.indexOf(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
+                        autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, kind, tc.name, "");
+                    }
+                    try used_tools.append(self.ctx.gpa, tc.name);
+                }
                 try g.add(self.ctx.gpa, .{
                     .kind = .tool,
                     .iteration = iteration + 1,
@@ -327,19 +372,10 @@ pub const Agent = struct {
         return ans;
     }
 
-    /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
-    fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
-        const tool = self.reg.get(tc.name) orelse {
-            log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
-            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
-        };
-
-        const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
-            log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
-            return error.ToolWasmMissing;
-        };
-        defer self.ctx.gpa.free(wasm_bytes);
-
+    /// Builds the sandbox policy for one tool: filesystem and network from the
+    /// descriptor, plus the plugin's own `config` object and, when it declared
+    /// the llm capability, a provider to call.
+    fn sandboxFor(self: *Agent, tool: *const registry.Tool) !host.Sandbox {
         var sb = host.Sandbox{
             .gpa = self.ctx.gpa,
             .io = self.ctx.io,
@@ -348,7 +384,130 @@ pub const Agent = struct {
             .fs_prefixes = tool.fs_prefixes,
             .environ_map = self.ctx.environ_map,
             .seed = self.cfg.agent.seed,
+            .config_json = try std.fmt.allocPrint(self.arena, "{f}", .{std.json.fmt(tool.config, .{})}),
         };
+        if (tool.llm) sb.llm = .{
+            .provider = try self.pluginProvider(tool),
+            .ctx = self.ctx,
+            .max_tokens = pluginU32(tool.config, "max_tokens") orelse 1024,
+        };
+        return sb;
+    }
+
+    /// A plugin may aim `ck_llm` at its own backend: `"config": {"provider":
+    /// "kimi-k3", "model": "kimi-k2.7-code"}`. Anything it leaves out falls
+    /// back to the provider the agent itself is running on.
+    fn pluginProvider(self: *Agent, tool: *const registry.Tool) !*const config.Provider {
+        const want_provider = pluginStr(tool.config, "provider");
+        const want_model = pluginStr(tool.config, "model");
+        if (want_provider == null and want_model == null) return self.provider;
+
+        const base = if (want_provider) |name|
+            self.cfg.provider(name) catch blk: {
+                log.log(.warn, "plugin '{s}': unknown provider '{s}', using the agent's", .{ tool.name, name });
+                break :blk self.provider;
+            }
+        else
+            self.provider;
+
+        const copy = try self.arena.create(config.Provider);
+        copy.* = base.*;
+        if (want_model) |m| copy.default_model = m;
+        return copy;
+    }
+
+    fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
+        if (cfg_value != .object) return null;
+        const v = cfg_value.object.get(key) orelse return null;
+        return if (v == .string) v.string else null;
+    }
+
+    fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
+        if (cfg_value != .object) return null;
+        const v = cfg_value.object.get(key) orelse return null;
+        return if (v == .integer and v.integer > 0) @intCast(v.integer) else null;
+    }
+
+    /// Passes `payload` through every enabled transform plugin registered for
+    /// `tool_name` in this phase, in `order`. Each transform receives the name
+    /// of the tool it is wrapping and the transforms already applied, so a
+    /// chained plugin knows who called it.
+    ///
+    /// A transform that fails, denies, or answers without a payload is skipped
+    /// with a warning: a broken filter must not take the tool down with it.
+    fn runChain(
+        self: *Agent,
+        tool_name: []const u8,
+        phase: registry.Transform.Phase,
+        payload: []const u8,
+    ) ![]const u8 {
+        const chain = try self.reg.transformsFor(self.arena, tool_name, phase);
+        var current: []const u8 = payload;
+        if (chain.len == 0) return current;
+
+        var applied: std.ArrayList([]const u8) = .empty;
+        for (chain) |t| {
+            const input = try std.fmt.allocPrint(self.arena, "{f}", .{std.json.fmt(.{
+                .tool = tool_name,
+                .phase = @tagName(phase),
+                .payload = current,
+                .prior = applied.items,
+            }, .{})});
+
+            const next = self.runTransform(t, input) catch |err| {
+                log.log(.warn, "transform '{s}' on '{s}' failed: {s}; passing the payload through", .{ t.name, tool_name, @errorName(err) });
+                continue;
+            } orelse continue;
+
+            log.log(.info, "transform '{s}' rewrote {s} of '{s}' ({d} -> {d} bytes)", .{ t.name, @tagName(phase), tool_name, current.len, next.len });
+            current = next;
+            try applied.append(self.arena, t.name);
+        }
+        return current;
+    }
+
+    /// Runs one transform module. Returns null when it declined to rewrite.
+    fn runTransform(self: *Agent, tool: *const registry.Tool, input: []const u8) !?[]const u8 {
+        const wasm_bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20));
+        defer self.ctx.gpa.free(wasm_bytes);
+
+        var sb = try self.sandboxFor(tool);
+        // Transform modules are not cached in `self.modules`: they are keyed by
+        // the wrapped tool there, and a stale module would carry another call's
+        // state into this one.
+        const mod = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes);
+        defer mod.deinit();
+
+        const out = try mod.executeTool(input);
+        defer self.ctx.gpa.free(out);
+
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, out, .{ .ignore_unknown_fields = true }) catch return null;
+        if (parsed != .object) return null;
+        if (parsed.object.get("ok")) |ok| {
+            if (ok == .bool and !ok.bool) return null;
+        }
+        const p = parsed.object.get("payload") orelse return null;
+        return if (p == .string) p.string else null;
+    }
+
+    /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
+    fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
+        const tool = self.reg.get(tc.name) orelse {
+            log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
+        };
+        if (!tool.enabled) {
+            log.log(.warn, "agent called disabled plugin '{s}'", .{tc.name});
+            return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plugin disabled: {s}\"}}", .{tc.name});
+        }
+
+        const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
+            log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
+            return error.ToolWasmMissing;
+        };
+        defer self.ctx.gpa.free(wasm_bytes);
+
+        var sb = try self.sandboxFor(tool);
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ tc.name, tc.arguments });
         const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
@@ -364,7 +523,8 @@ pub const Agent = struct {
             break :blk m;
         };
 
-        const out = mod.executeTool(tc.arguments) catch |err| {
+        const args = try self.runChain(tc.name, .before, tc.arguments);
+        const out = mod.executeTool(args) catch |err| {
             log.log(.error_, "tool '{s}' failed: {s}", .{ tc.name, @errorName(err) });
             return error.ToolExecutionFailed;
         };
@@ -373,7 +533,7 @@ pub const Agent = struct {
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
 
         // Arena-own the result for the conversation history.
-        const owned = try self.arena.dupe(u8, out);
+        const owned = try self.runChain(tc.name, .after, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
         return owned;
     }
@@ -408,6 +568,12 @@ pub const Agent = struct {
                 results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"unknown tool: {s}\"}}", .{tc.name});
                 continue;
             };
+            // Tools that call the model, and tools wrapped in a transform
+            // chain, go through the sequential pass below: one provider call at
+            // a time, and no worker thread sharing the HTTP client.
+            if (tool.llm or !tool.enabled) continue;
+            if ((try self.reg.transformsFor(self.arena, tc.name, .before)).len > 0) continue;
+            if ((try self.reg.transformsFor(self.arena, tc.name, .after)).len > 0) continue;
             const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
                 return error.ToolWasmMissing;

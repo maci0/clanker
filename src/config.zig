@@ -128,6 +128,10 @@ pub const Modules = struct {
     token_budget: bool = true,
     streaming: bool = true,
     dotenv: bool = true,
+    /// REPL self-restart when the binary is rebuilt.
+    hot_reload: bool = true,
+    /// Record usage patterns / missing tools and feed them into the roadmap.
+    autolearn: bool = true,
 };
 
 pub const Config = struct {
@@ -422,6 +426,8 @@ pub const Config = struct {
             .{ .key = "token_budget", .ptr = &m.token_budget },
             .{ .key = "streaming", .ptr = &m.streaming },
             .{ .key = "dotenv", .ptr = &m.dotenv },
+            .{ .key = "hot_reload", .ptr = &m.hot_reload },
+            .{ .key = "autolearn", .ptr = &m.autolearn },
         };
         for (fields) |f| {
             if (obj.get(f.key)) |val| {

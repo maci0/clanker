@@ -2,6 +2,8 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
+const autolearn = @import("autolearn.zig");
+const host = @import("sandbox/host.zig");
 const config = @import("config.zig");
 
 // Zig 0.16 only runs test blocks in the root file; reference every module
@@ -21,6 +23,7 @@ comptime {
     _ = @import("agent/session.zig");
     _ = @import("agent/graph.zig");
     _ = @import("util/dotenv.zig");
+    _ = @import("autolearn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
@@ -31,8 +34,32 @@ comptime {
     _ = @import("mcp/server.zig");
 }
 
+/// Resolves the Zig standard library directory at startup (via `zig env`),
+/// used by the std_api tool to look up symbol signatures.
+fn resolveZigLibDir(io: std.Io, gpa: std.mem.Allocator) void {
+    const argv = [_][]const u8{ "zig", "env" };
+    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
+    defer gpa.free(res.stdout);
+    defer gpa.free(res.stderr);
+    // zig env prints Zig struct syntax: .lib_dir = "/path/to/lib"
+    var it = std.mem.splitScalar(u8, res.stdout, '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.indexOf(u8, trimmed, ".lib_dir =")) |idx| {
+            const rest = trimmed[idx + ".lib_dir =".len ..];
+            const after = std.mem.trimStart(u8, rest, " \t\"");
+            var end: usize = after.len;
+            if (std.mem.indexOfScalar(u8, after, '"')) |q| end = q;
+            const dir = after[0..end];
+            if (dir.len > 0) host.zig_lib_dir = gpa.dupe(u8, dir) catch return;
+            return;
+        }
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
+    resolveZigLibDir(init.io, gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
     // (existing real env vars always win). Gated by the modules.dotenv flag.

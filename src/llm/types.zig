@@ -48,6 +48,11 @@ pub const Usage = struct {
     prompt_tokens: u32 = 0,
     completion_tokens: u32 = 0,
     total_tokens: u32 = 0,
+    /// Prompt tokens served from the provider's prompt cache.
+    prompt_cache_hit_tokens: u32 = 0,
+    /// Prompt tokens NOT served from cache (computed when the provider only
+    /// reports hits: prompt_tokens - hit).
+    prompt_cache_miss_tokens: u32 = 0,
 };
 
 pub const ChatResponse = struct {

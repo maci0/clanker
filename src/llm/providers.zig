@@ -202,9 +202,22 @@ const OpenAIError = struct {
     type: ?[]const u8 = null,
 };
 
+const OpenAIUsage = struct {
+    prompt_tokens: u32 = 0,
+    completion_tokens: u32 = 0,
+    total_tokens: u32 = 0,
+    // DeepSeek
+    prompt_cache_hit_tokens: u32 = 0,
+    prompt_cache_miss_tokens: u32 = 0,
+    // Moonshot / Kimi
+    cached_tokens: u32 = 0,
+    // OpenAI-compatible
+    prompt_tokens_details: ?struct { cached_tokens: u32 = 0 } = null,
+};
+
 const OpenAIResponse = struct {
     choices: []const OpenAIChoice = &.{},
-    usage: ?types.Usage = null,
+    usage: ?OpenAIUsage = null,
     @"error": ?OpenAIError = null,
 };
 
@@ -220,6 +233,23 @@ fn parseOpenAI(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
 
     // The parsed slices point into `body` (gpa-owned, freed after this
     // function returns); deep-copy everything we keep into the arena.
+    var usage_out: ?types.Usage = null;
+    if (parsed.usage) |u| {
+        var hit = u.prompt_cache_hit_tokens;
+        if (hit == 0) hit = u.cached_tokens;
+        if (hit == 0) {
+            if (u.prompt_tokens_details) |d| hit = d.cached_tokens;
+        }
+        var miss = u.prompt_cache_miss_tokens;
+        if (miss == 0 and u.prompt_tokens > hit) miss = u.prompt_tokens - hit;
+        usage_out = .{
+            .prompt_tokens = u.prompt_tokens,
+            .completion_tokens = u.completion_tokens,
+            .total_tokens = u.total_tokens,
+            .prompt_cache_hit_tokens = hit,
+            .prompt_cache_miss_tokens = miss,
+        };
+    }
     var msg_out = types.Message{ .role = .assistant, .content = null };
     if (msg.content) |c| msg_out.content = try arena.dupe(u8, c);
     if (msg.tool_calls) |calls| {
@@ -241,7 +271,7 @@ fn parseOpenAI(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
     }
     return .{
         .message = msg_out,
-        .usage = parsed.usage,
+        .usage = usage_out,
         .finish_reason = finish_reason,
         .reasoning = reasoning,
         .raw = try arena.dupe(u8, body),
@@ -416,6 +446,8 @@ const AnthropicResponse = struct {
     usage: ?struct {
         input_tokens: u32 = 0,
         output_tokens: u32 = 0,
+        cache_read_input_tokens: u32 = 0,
+        cache_creation_input_tokens: u32 = 0,
     } = null,
     @"error": ?struct {
         message: ?[]const u8 = null,
@@ -460,7 +492,9 @@ fn parseAnthropic(arena: std.mem.Allocator, body: []const u8) !types.ChatRespons
 
     var usage: ?types.Usage = null;
     if (parsed.usage) |u| {
-        usage = .{ .prompt_tokens = u.input_tokens, .completion_tokens = u.output_tokens, .total_tokens = u.input_tokens + u.output_tokens };
+        const hit = u.cache_read_input_tokens;
+        const miss = if (u.input_tokens > hit) u.input_tokens - hit else 0;
+        usage = .{ .prompt_tokens = u.input_tokens, .completion_tokens = u.output_tokens, .total_tokens = u.input_tokens + u.output_tokens, .prompt_cache_hit_tokens = hit, .prompt_cache_miss_tokens = miss };
     }
 
     return .{
