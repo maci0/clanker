@@ -240,6 +240,12 @@ pub const Agent = struct {
             s = s[1 .. s.len - 1];
             s = std.mem.trim(u8, s, " \t\r\n");
         }
+        // Also strip surrounding single quotes (some models wrap plain-text
+        // answers in single quotes, which also fails exact-match evals).
+        if (s.len >= 2 and s[0] == '\'' and s[s.len - 1] == '\'') {
+            s = s[1 .. s.len - 1];
+            s = std.mem.trim(u8, s, " \t\r\n");
+        }
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
