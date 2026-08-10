@@ -1298,6 +1298,15 @@ fn isNumericString(s: []const u8) bool {
     return saw_digit;
 }
 
+test "isNumericString accepts ints, negatives, and single-dot floats only" {
+    try std.testing.expect(isNumericString("42") == true);
+    try std.testing.expect(isNumericString("-3.14") == true);
+    try std.testing.expect(isNumericString("") == false);
+    try std.testing.expect(isNumericString("-") == false);
+    try std.testing.expect(isNumericString("1.2.3") == false);
+    try std.testing.expect(isNumericString("12a") == false);
+}
+
 /// Extracts the exact-match answer from a JSON object: prefers an "answer"
 /// field when present, falls back to the sole value when the object has
 /// exactly one key, otherwise returns null (the object is kept as-is).
