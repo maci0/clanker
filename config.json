@@ -24,6 +24,20 @@
       "base_url": "https://api.anthropic.com",
       "api_key_env": "ANTHROPIC_API_KEY",
       "model": "claude-sonnet-4-20250514"
+    },
+    "muse-spark": {
+      "kind": "openai_compat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "model": "meta/muse-spark-1.2",
+      "max_tokens": 8192
+    },
+    "muse-spark-1.1": {
+      "kind": "openai_compat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "model": "meta/muse-spark-1.1",
+      "max_tokens": 8192
     }
   },
   "agent": {
