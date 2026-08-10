@@ -256,6 +256,25 @@ pub const Agent = struct {
                 cb(tool_ms);
             }
             for (calls, results) |tc, content| {
+                // Multimodal: a tool result of the form {"ok":true,"image":{mime,b64}}
+                // (e.g. from the image tool) is attached to the conversation so
+                // the model can see it on the next turn.
+                if (self.cfg.modules.multimodal) {
+                    if (std.mem.indexOf(u8, content, "\"image\":{\"mime\":")) |_| {
+                        const img = std.json.parseFromSliceLeaky(ImageResult, self.arena, content, .{ .ignore_unknown_fields = true }) catch null;
+                        if (img) |im| {
+                            if (im.image) |iv| {
+                                try messages.append(self.arena, .{
+                                    .role = .user,
+                                    .content = try std.fmt.allocPrint(self.arena, "[attached image: {s}]", .{tc.name}),
+                                    .images = try self.arena.alloc(types.ImagePart, 1),
+                                });
+                                const last = &messages.items[messages.items.len - 1];
+                                last.images.?[0] = .{ .mime = iv.mime, .b64 = iv.b64 };
+                            }
+                        }
+                    }
+                }
                 if (self.cfg.modules.autolearn) {
                     if (std.mem.startsWith(u8, content, "{\"ok\":false")) {
                         const kind: []const u8 = if (std.mem.indexOf(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
@@ -280,6 +299,13 @@ pub const Agent = struct {
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
     }
+
+    const ImageResult = struct {
+        image: ?struct {
+            mime: []const u8 = "",
+            b64: []const u8 = "",
+        } = null,
+    };
 
     /// Appends one reasoning trace to state/reasoning.jsonl (RLM).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
@@ -483,66 +509,68 @@ pub const Agent = struct {
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
             while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
             if (last_line.len > 0) {
-                // Strip a leading "Answer:"/"Result:"/"The answer is" and other
-                // common preamble prefixes so an exact-match answer (e.g.
-                // "The answer is 42") becomes "42".
-                if (std.mem.startsWith(u8, last_line, "Answer:")) {
-                    last_line = std.mem.trim(u8, last_line["Answer:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Result:")) {
-                    last_line = std.mem.trim(u8, last_line["Result:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "The answer is")) {
-                    var after = last_line["The answer is".len..];
-                    // Skip an optional colon (e.g. "The answer is: 42").
-                    if (after.len > 0 and after[0] == ':') after = after[1..];
-                    last_line = std.mem.trim(u8, after, " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Here is the answer:")) {
-                    last_line = std.mem.trim(u8, last_line["Here is the answer:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Here is your answer:")) {
-                    last_line = std.mem.trim(u8, last_line["Here is your answer:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Here is your result:")) {
-                    last_line = std.mem.trim(u8, last_line["Here is your result:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Here is the result:")) {
-                    last_line = std.mem.trim(u8, last_line["Here is the result:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "The correct answer is:")) {
-                    last_line = std.mem.trim(u8, last_line["The correct answer is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Correct answer:")) {
-                    last_line = std.mem.trim(u8, last_line["Correct answer:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "The output is:")) {
-                    last_line = std.mem.trim(u8, last_line["The output is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
-                    last_line = std.mem.trim(u8, last_line["The result is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "The value is:")) {
-                    last_line = std.mem.trim(u8, last_line["The value is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "Sure,")) {
-                    last_line = std.mem.trim(u8, last_line["Sure,".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "answer:")) {
-                    last_line = std.mem.trim(u8, last_line["answer:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "result:")) {
-                    last_line = std.mem.trim(u8, last_line["result:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "here is the answer:")) {
-                    last_line = std.mem.trim(u8, last_line["here is the answer:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "the answer is")) {
-                    var after = last_line["the answer is".len..];
-                    if (after.len > 0 and after[0] == ':') after = after[1..];
-                    last_line = std.mem.trim(u8, after, " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "the output is:")) {
-                    last_line = std.mem.trim(u8, last_line["the output is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "the result is:")) {
-                    last_line = std.mem.trim(u8, last_line["the result is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "the value is:")) {
-                    last_line = std.mem.trim(u8, last_line["the value is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "sure, here you go:")) {
-                    last_line = std.mem.trim(u8, last_line["sure, here you go:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "here you go:")) {
-                    last_line = std.mem.trim(u8, last_line["here you go:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "here is:")) {
-                    last_line = std.mem.trim(u8, last_line["here is:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "here:")) {
-                    last_line = std.mem.trim(u8, last_line["here:".len..], " \t\r\n");
-                } else if (std.mem.startsWith(u8, last_line, "output:")) {
-                    last_line = std.mem.trim(u8, last_line["output:".len..], " \t\r\n");
+                // Strip common preamble prefixes repeatedly (e.g. "Here is your
+                // answer: The result is 42") so the exact-match answer survives.
+                while (true) {
+                    var stripped: ?[]const u8 = null;
+                    if (std.mem.startsWith(u8, last_line, "Answer:")) {
+                        stripped = last_line["Answer:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "Result:")) {
+                        stripped = last_line["Result:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "The answer is")) {
+                        stripped = last_line["The answer is".len..];
+                        if (stripped.?.len > 0 and stripped.?[0] == ':') stripped = stripped.?[1..];
+                    } else if (std.mem.startsWith(u8, last_line, "Here is the answer:")) {
+                        stripped = last_line["Here is the answer:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "Here is your answer:")) {
+                        stripped = last_line["Here is your answer:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "Here is your result:")) {
+                        stripped = last_line["Here is your result:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "Here is the result:")) {
+                        stripped = last_line["Here is the result:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "The correct answer is:")) {
+                        stripped = last_line["The correct answer is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "Correct answer:")) {
+                        stripped = last_line["Correct answer:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "The output is:")) {
+                        stripped = last_line["The output is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "The result is:")) {
+                        stripped = last_line["The result is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "The value is:")) {
+                        stripped = last_line["The value is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "Sure,")) {
+                        stripped = last_line["Sure,".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "answer:")) {
+                        stripped = last_line["answer:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "result:")) {
+                        stripped = last_line["result:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "here is the answer:")) {
+                        stripped = last_line["here is the answer:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "the answer is")) {
+                        stripped = last_line["the answer is".len..];
+                        if (stripped.?.len > 0 and stripped.?[0] == ':') stripped = stripped.?[1..];
+                    } else if (std.mem.startsWith(u8, last_line, "the output is:")) {
+                        stripped = last_line["the output is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "the result is:")) {
+                        stripped = last_line["the result is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "the value is:")) {
+                        stripped = last_line["the value is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "sure, here you go:")) {
+                        stripped = last_line["sure, here you go:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "here you go:")) {
+                        stripped = last_line["here you go:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "here is:")) {
+                        stripped = last_line["here is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "here:")) {
+                        stripped = last_line["here:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "output:")) {
+                        stripped = last_line["output:".len..];
+                    }
+                    if (stripped) |s2| {
+                        last_line = std.mem.trim(u8, s2, " \t\r\n");
+                        if (last_line.len == 0) break;
+                    } else break;
                 }
-
                 s = last_line;
                 // If the answer is a number or boolean at the start of the line
                 // followed by extra prose (e.g. "42. I hope this helps"), extract
