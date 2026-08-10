@@ -1026,9 +1026,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
-            handleAgentCard(io, gpa, cfg, port, stream);
+            handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
-            handleStatus(io, gpa, cfg, stream);
+            handleStatus(cfg, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
@@ -1036,7 +1036,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             };
             respond(stream, 200, "OK", "{\"ok\":true}");
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
-            handleA2AMessage(io, gpa, stream, body);
+            handleA2AMessage(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
@@ -1107,8 +1107,7 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file_path, .data = out_list.items });
 }
 
-fn handleAgentCard(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
-    _ = io;
+fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1144,8 +1143,7 @@ fn handleAgentCard(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8) void {
-    _ = io;
+fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1280,9 +1278,7 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 }
 
 /// Instance + configured peers, consumed by the web UI status panel.
-fn handleStatus(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
-    _ = io;
-    _ = gpa;
+fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     var buf: [1 << 16]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
