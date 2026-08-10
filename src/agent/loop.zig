@@ -707,7 +707,9 @@ pub const Agent = struct {
         payload: []const u8,
     ) ![]const u8 {
         const chain = try self.reg.transformsFor(self.arena, tool_name, phase);
-        var current = try self.arena.dupe(u8, payload);
+        // Const-qualified: each step's replacement comes back from
+        // runTransform as []const u8, and a []u8 here cannot hold it.
+        var current: []const u8 = try self.arena.dupe(u8, payload);
         if (chain.len == 0) return current;
 
         var applied: std.ArrayList([]const u8) = .empty;
@@ -1038,4 +1040,14 @@ test "unwrapJsonAnswer returns null for multi-key object without answer" {
 
     const json = "{\"a\":1,\"b\":2}";
     try std.testing.expect(unwrapJsonAnswer(arena, json) == null);
+}
+
+test "the transform chain type-checks before anything calls it" {
+    // Zig only analyzes referenced functions, so runChain/runTransform — which
+    // have no call site yet — could carry a type error indefinitely and then
+    // fail the build of whatever change finally wires them in, with the error
+    // pointing at code that change never touched. Referencing them here forces
+    // the analysis now.
+    _ = &Agent.runChain;
+    _ = &Agent.runTransform;
 }
