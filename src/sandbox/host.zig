@@ -1328,3 +1328,28 @@ test "Host.writeResult enforces the arena cap and memory bounds" {
     host.arena_cur = host_arena_cap;
     try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, "x"));
 }
+
+test "writeExecResult serializes exit code and output streams as JSON" {
+    var buf: [1024]u8 = undefined;
+
+    // Success path: code 0 -> ok=true, stdout carried through, empty stderr.
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeExecResult(&w, 0, "hello out", "");
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w.end], .{});
+    defer parsed.deinit();
+    const obj = parsed.value.object;
+    try std.testing.expect(obj.get("ok").?.bool);
+    try std.testing.expectEqual(@as(i64, 0), obj.get("code").?.integer);
+    try std.testing.expectEqualStrings("hello out", obj.get("stdout").?.string);
+    try std.testing.expectEqualStrings("", obj.get("stderr").?.string);
+
+    // Failure path: nonzero code -> ok=false, stderr carried through.
+    var w2: std.Io.Writer = .fixed(&buf);
+    try writeExecResult(&w2, 3, "", "boom");
+    const parsed2 = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w2.end], .{});
+    defer parsed2.deinit();
+    const obj2 = parsed2.value.object;
+    try std.testing.expect(!obj2.get("ok").?.bool);
+    try std.testing.expectEqual(@as(i64, 3), obj2.get("code").?.integer);
+    try std.testing.expectEqualStrings("boom", obj2.get("stderr").?.string);
+}
