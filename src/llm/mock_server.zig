@@ -9,6 +9,10 @@ pub const Mode = enum {
     openai_tool_call,
     openai_stream,
     anthropic_text,
+    /// Anthropic/Vertex SSE carrying a tool call that takes no arguments, and
+    /// ending without the terminating blank line (as a truncated or
+    /// close-delimited stream does).
+    anthropic_stream,
     error_401,
 };
 
@@ -174,6 +178,23 @@ pub const MockServer = struct {
                 @as(u16, 200),
                 @as([]const u8, "OK"),
                 @as([]const u8, "application/json"),
+            },
+            .anthropic_stream => .{
+                \\data: {"type":"message_start","message":{"usage":{"input_tokens":40,"cache_read_input_tokens":10,"output_tokens":1}}}
+                \\
+                \\data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+                \\
+                \\data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Checking the roadmap"}}
+                \\
+                \\data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_mock","name":"roadmap","input":{}}}
+                \\
+                \\data: {"type":"content_block_stop","index":1}
+                \\
+                \\data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":35}}
+                ,
+                @as(u16, 200),
+                @as([]const u8, "OK"),
+                @as([]const u8, "text/event-stream"),
             },
             .error_401 => .{
                 \\{"error":{"message":"Invalid API key provided","type":"invalid_request_error"}}

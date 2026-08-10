@@ -5,7 +5,8 @@
 //!   2. ask the model for an exact-match patch proposal (JSON),
 //!   3. validate the proposal (paths/sizes),
 //!   4. apply it to a staging copy of the project,
-//!   5. gate: `zig build` + `zig build test` + `zig build tools` in staging,
+//!   5. gate: `zig build` + `zig build tools` + `zig build test` in staging
+//!      (tools first: the sandbox tests load the .wasm artifacts it builds),
 //!   6. on green: snapshot the originals, promote to the live tree, log it;
 //!      on failure: record and feed the error tail back for a retry.
 
@@ -23,6 +24,7 @@ const patch_apply = @import("../patch/apply.zig");
 const gate_checks = @import("../gate/checks.zig");
 const peers = @import("../peers/notify.zig");
 const log = @import("../util/log.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 
 pub const Options = struct {
     instructions: []const u8,
@@ -37,9 +39,11 @@ pub const Options = struct {
 
 /// Directories/files copied into staging for the compile gate. Must be enough
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
-const staging_roots = [_][]const u8{ "src", "tool-src", "tests", "tool-bin", "docs", "README.md", "build.zig", "build.zig.zon", "config.json" };
+const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "README.md", "build.zig", "build.zig.zon", "config.json" };
 
-const gate_evals = [_][]const u8{ "selfhost_build", "selfhost_tests", "selfhost_tools" };
+/// Ordered by dependency: the tools build produces the .wasm artifacts the
+/// sandbox tests load, so it must run before them.
+const gate_evals = [_][]const u8{ "selfhost_build", "selfhost_tools", "selfhost_tests" };
 
 pub const Engine = struct {
     ctx: *client.Ctx,
@@ -192,21 +196,25 @@ pub const Engine = struct {
             return .failed;
         }
 
-        var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
-        defer test_gate.deinit(self.ctx.gpa);
-        if (!test_gate.ok) {
-            const tail = errorTail(self.arena, test_gate.detail);
-            log.log(.error_, "staging tests failed:", .{});
-            log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
-            return .failed;
-        }
-
+        // Tools before tests: the sandbox tests load zig-out/tools/*.wasm from
+        // the working directory, and a fresh staging dir has none until this
+        // gate builds them. Running tests first failed every proposal on a
+        // missing artifact rather than on its own merits.
         var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer tools.deinit(self.ctx.gpa);
         if (!tools.ok) {
             const tail = errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
+            log.log(.error_, "{s}", .{tail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            return .failed;
+        }
+
+        var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
+        defer test_gate.deinit(self.ctx.gpa);
+        if (!test_gate.ok) {
+            const tail = errorTail(self.arena, test_gate.detail);
+            log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
             return .failed;
@@ -242,11 +250,13 @@ pub const Engine = struct {
             defer self.ctx.gpa.free(src);
             const data = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, src, self.ctx.gpa, .limited(1 << 24));
             defer self.ctx.gpa.free(data);
-            // Create parent dirs for new files (e.g. new modules in fresh subdirs).
-            if (dirName2(c.file).len > 0) {
-                std.Io.Dir.cwd().createDirPath(self.ctx.io, dirName2(c.file)) catch {};
-            }
-            try std.Io.Dir.cwd().writeFile(self.ctx.io, .{ .sub_path = c.file, .data = data });
+            // Atomic: promotion writes real source files into the live
+            // tree, one per proposal.changes entry; a crash or kill
+            // mid-write here must never leave a half-written file that
+            // can't even `zig build` (the state/history snapshot above is
+            // the recovery path for a half-promoted *set* of files, but
+            // each individual file write still has to be all-or-nothing).
+            try atomic_write.writeFile(self.ctx.io, std.Io.Dir.cwd(), c.file, data);
         }
 
         // Git strategy: commit the promoted change so history, diff review and
@@ -350,7 +360,7 @@ pub const Engine = struct {
 
         // Gather candidate files with a relevance score (keyword hits).
         var cands: std.ArrayList(Candidate) = .empty;
-        try collectCandidates(self, "tool-src", keywords.items, &cands, 96 * 1024);
+        try collectCandidates(self, "tools/zig", keywords.items, &cands, 96 * 1024);
         try collectCandidates(self, "src", keywords.items, &cands, 96 * 1024);
         try collectCandidates(self, "tests", keywords.items, &cands, 96 * 1024);
         for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {
@@ -471,8 +481,25 @@ fn changedPaths(gpa: std.mem.Allocator, changes: []const proposal_mod.Change) []
 }
 
 fn errorTail(arena: std.mem.Allocator, s: []const u8) []const u8 {
-    if (s.len <= 1500) return s;
-    return arena.dupe(u8, s[s.len - 1500 ..]) catch s[s.len - 1500 ..];
+    const max = 1500;
+    if (s.len <= max) return s;
+    // This excerpt is the only thing the model sees about why its patch was
+    // rejected. Zig prints the diagnosis first and build-runner noise last
+    // ("referenced by", "Build Summary", "failed command"), so a plain tail
+    // keeps the noise and drops the cause — anchor the window on the first
+    // `error:` line instead, with a few lines of lead-in for the location.
+    if (std.mem.indexOf(u8, s, "error:")) |hit| {
+        var start = hit;
+        var back: usize = 0;
+        while (start > 0 and back < 3) {
+            start -= 1;
+            if (s[start] == '\n') back += 1;
+        }
+        if (s[start] == '\n') start += 1;
+        const end = @min(s.len, start + max);
+        return arena.dupe(u8, s[start..end]) catch s[start..end];
+    }
+    return arena.dupe(u8, s[s.len - max ..]) catch s[s.len - max ..];
 }
 
 /// Finds the LAST {...} block in `text` that contains a "changes" field
@@ -662,3 +689,35 @@ const improve_user_fmt =
     \\Produce the patch proposal JSON now. Your response must be ONLY the JSON
     \\object — no markdown fences, no prose.
 ;
+
+test "errorTail keeps the diagnosis, not the build-runner noise" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "compiling\n");
+    try buf.appendSlice(std.testing.allocator, "src/agent/loop.zig:795:39: error: cast discards const qualifier\n");
+    // Zig's trailing noise is longer than the excerpt budget, so a plain tail
+    // would contain none of the line above.
+    for (0..200) |_| try buf.appendSlice(std.testing.allocator, "referenced by: executeCalls: src/agent/loop.zig:899:50\n");
+    try buf.appendSlice(std.testing.allocator, "Build Summary: 2/4 steps succeeded\n");
+
+    const tail = errorTail(arena, buf.items);
+    try std.testing.expect(tail.len <= 1500);
+    try std.testing.expect(std.mem.indexOf(u8, tail, "error: cast discards const qualifier") != null);
+}
+
+test "errorTail falls back to the end when nothing looks like an error" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const long = try arena.alloc(u8, 4000);
+    @memset(long, 'x');
+    long[3999] = 'Z';
+    const tail = errorTail(arena, long);
+    try std.testing.expectEqual(@as(usize, 1500), tail.len);
+    try std.testing.expectEqual(@as(u8, 'Z'), tail[tail.len - 1]);
+}

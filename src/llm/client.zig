@@ -6,12 +6,18 @@ const types = @import("types.zig");
 const providers = @import("providers.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
+const vertex_token = @import("vertex_token.zig");
 const mock_server = @import("mock_server.zig");
+const token_stats = @import("../stats/tokens.zig");
 
 pub const Ctx = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
+    /// Effective config, when the caller has one. Enables global token-usage
+    /// recording (modules.token_stats); null callers (e.g. a provider ping)
+    /// simply don't record.
+    cfg: ?*const config.Config = null,
 };
 
 /// Response body cap for chat completions (8 MiB).
@@ -31,20 +37,30 @@ pub fn chat(
     err_detail: *?[]const u8,
 ) !types.ChatResponse {
     const provider = params.provider;
+    const llm_t0 = std.Io.Timestamp.now(ctx.io, .awake);
 
-    const api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
+    var api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
         ctx.environ_map.get(env_name)
     else
         null;
-    if (provider.api_key_env != null and api_key == null) {
-        log.log(.error_, "API key missing: set env var {s} (provider '{s}')", .{ provider.api_key_env.?, provider.name });
+    // Vertex takes a GCP access token. An env var still wins (handy for a
+    // short-lived token pasted in by hand); otherwise it is minted from the
+    // service account and cached until it nears expiry.
+    if (provider.kind == .vertex_anthropic and api_key == null and provider.service_account_file.len > 0) {
+        api_key = try vertex_token.get(ctx.io, ctx.gpa, provider.service_account_file);
+    }
+    if (api_key == null and (provider.api_key_env != null or provider.kind == .vertex_anthropic)) {
+        log.log(.error_, "no credential for provider '{s}': set {s} or service_account_file", .{
+            provider.name,
+            provider.api_key_env orelse "an API key env var",
+        });
         return error.MissingApiKey;
     }
 
     const body = try providers.buildRequest(ctx.gpa, params);
     defer ctx.gpa.free(body);
 
-    const url = try endpointUrl(ctx.gpa, provider);
+    const url = try endpointUrl(ctx.gpa, provider, true);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -79,7 +95,53 @@ pub fn chat(
         return error.ApiError;
     }
 
-    return providers.parseResponse(arena, provider.kind, outcome.body);
+    // Parse from an arena copy: the parsers keep slices into the body (and the
+    // response carries `raw`), while `outcome.body` is gpa-owned and freed on
+    // the way out of this function.
+    const body_owned = try arena.dupe(u8, outcome.body);
+    const resp = try providers.parseResponse(arena, provider.kind, body_owned);
+    const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+    recordUsage(ctx, arena, provider, resp.usage, ms);
+    return resp;
+}
+
+/// Input-token cost, discounting the prefix served from the prompt cache: a
+/// cache read bills at about a tenth of the input rate, so charging every
+/// prompt token at full price overstates a cached run's cost by ~10x on the
+/// cached span.
+pub fn promptCost(u: types.Usage, per_1m_input: f64) f64 {
+    const hit: f64 = @floatFromInt(u.prompt_cache_hit_tokens);
+    const uncached: f64 = @floatFromInt(u.prompt_tokens - @min(u.prompt_cache_hit_tokens, u.prompt_tokens));
+    return (uncached + hit * 0.1) / 1_000_000.0 * per_1m_input;
+}
+
+/// Records one completion in the global token-usage log (best-effort). The
+/// caller supplies `duration_ms`; 0 means "unknown" (chat() times the whole
+/// call via `llm_t0` where the retry loop hides the true duration).
+fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Provider, usage: ?types.Usage, duration_ms: u64) void {
+    const cfg = ctx.cfg orelse return;
+    if (!cfg.modules.token_stats) return;
+    const u = usage orelse return;
+    if (u.total_tokens == 0 and u.prompt_tokens == 0 and u.completion_tokens == 0) return;
+
+    const active = provider.activeModel();
+    var cost: f64 = 0;
+    if (active.cost_per_1m_input) |ci| cost += promptCost(u, ci);
+    if (active.cost_per_1m_output) |co| cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+
+    const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(ctx.io, .real).nanoseconds, 1_000_000_000));
+    token_stats.append(std.Io.Dir.cwd(), ctx.io, ctx.gpa, arena, cfg.agent.state_dir, .{
+        .ts = ts,
+        .provider = provider.name,
+        .model = provider.activeModelName(),
+        .prompt_tokens = u.prompt_tokens,
+        .completion_tokens = u.completion_tokens,
+        .total_tokens = u.total_tokens,
+        .cache_hit = u.prompt_cache_hit_tokens,
+        .cache_miss = u.prompt_cache_miss_tokens,
+        .cost = cost,
+        .duration_ms = duration_ms,
+    });
 }
 
 fn doFetch(
@@ -117,6 +179,11 @@ fn doFetch(
             }
             extra[extra_len] = .{ .name = "anthropic-version", .value = "2023-06-01" };
             extra_len += 1;
+        },
+        // Vertex authenticates with a GCP OAuth bearer token, and carries the
+        // anthropic version in the body rather than a header.
+        .vertex_anthropic => {
+            if (bearer) |b| headers.authorization = .{ .override = b };
         },
     }
 
@@ -163,13 +230,23 @@ pub fn chatStream(
     on_delta: *const fn ([]const u8) void,
 ) !types.ChatResponse {
     const provider = params.provider;
+    const llm_t0 = std.Io.Timestamp.now(ctx.io, .awake);
 
-    const api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
+    var api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
         ctx.environ_map.get(env_name)
     else
         null;
-    if (provider.api_key_env != null and api_key == null) {
-        log.log(.error_, "API key missing: set env var {s} (provider '{s}')", .{ provider.api_key_env.?, provider.name });
+    // Vertex takes a GCP access token. An env var still wins (handy for a
+    // short-lived token pasted in by hand); otherwise it is minted from the
+    // service account and cached until it nears expiry.
+    if (provider.kind == .vertex_anthropic and api_key == null and provider.service_account_file.len > 0) {
+        api_key = try vertex_token.get(ctx.io, ctx.gpa, provider.service_account_file);
+    }
+    if (api_key == null and (provider.api_key_env != null or provider.kind == .vertex_anthropic)) {
+        log.log(.error_, "no credential for provider '{s}': set {s} or service_account_file", .{
+            provider.name,
+            provider.api_key_env orelse "an API key env var",
+        });
         return error.MissingApiKey;
     }
 
@@ -178,7 +255,7 @@ pub fn chatStream(
     const body = try providers.buildRequest(ctx.gpa, p);
     defer ctx.gpa.free(body);
 
-    const url = try endpointUrl(ctx.gpa, provider);
+    const url = try endpointUrl(ctx.gpa, provider, true);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -210,6 +287,11 @@ pub fn chatStream(
             extra[extra_len] = .{ .name = "anthropic-version", .value = "2023-06-01" };
             extra_len += 1;
         },
+        // Vertex authenticates with a GCP OAuth bearer token, and carries the
+        // anthropic version in the body rather than a header.
+        .vertex_anthropic => {
+            if (bearer) |b| headers.authorization = .{ .override = b };
+        },
     }
 
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
@@ -221,6 +303,9 @@ pub fn chatStream(
     defer req.deinit();
 
     req.transfer_encoding = .{ .content_length = body.len };
+    if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
+        std.debug.print("---STREAM REQ---\n{s}\n---END---\n", .{body});
+    }
     var body_writer = try req.sendBodyUnflushed(&.{});
     try body_writer.writer.writeAll(body);
     try body_writer.end();
@@ -230,7 +315,14 @@ pub fn chatStream(
     var response = try req.receiveHead(&redirect_buffer);
 
     if (@intFromEnum(response.head.status) >= 400) {
-        const reader = response.reader(&.{});
+        // The client advertises gzip, and providers compress error bodies too:
+        // the raw reader hands back binary, so the one line that says what is
+        // wrong with the request arrives as garbage. Decompress it like the
+        // success path does (a no-op on identity-encoded bodies).
+        var err_transfer_buffer: [8192]u8 = undefined;
+        var err_decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+        var err_decompress: std.http.Decompress = undefined;
+        const reader = response.readerDecompressing(&err_transfer_buffer, &err_decompress, &err_decompress_buffer);
         var ebuf: [16384]u8 = undefined;
         var err_body: std.ArrayList(u8) = .empty;
         defer err_body.deinit(ctx.gpa);
@@ -261,19 +353,38 @@ pub fn chatStream(
         call_args.deinit(ctx.gpa);
     }
 
-    const reader = response.reader(&.{});
+    // Anthropic and Vertex stream a different event vocabulary from OpenAI:
+    // typed events (content_block_delta, message_delta) instead of choices[].
+    const anthropic_family = provider.kind == .anthropic or provider.kind == .vertex_anthropic;
+
+    // std.http.Client advertises gzip, and Vertex takes it up on the SSE
+    // stream: a raw reader would hand back compressed bytes and every frame
+    // would silently fail to parse. The decompressing reader is a no-op when
+    // the response is identity-encoded, so it is correct for both.
+    var transfer_buffer: [8192]u8 = undefined;
+    var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, &decompress_buffer);
     var buf: [8192]u8 = undefined;
     var sse: std.ArrayList(u8) = .empty;
     defer sse.deinit(ctx.gpa);
     var sse_done = false;
     var stream_usage: ?StreamUsage = null;
+    var finish_reason: ?[]const u8 = null;
+    var at_eof = false;
     while (!sse_done) {
         const n = reader.readSliceShort(&buf) catch |err| {
             log.log(.error_, "stream read failed: {s}", .{@errorName(err)});
             break;
         };
-        if (n == 0) break;
-        try sse.appendSlice(ctx.gpa, buf[0..n]);
+        if (n == 0) {
+            // A stream that ends without the terminating blank line still has
+            // a complete last frame in the buffer; dropping it loses that
+            // frame's stop_reason and output-token count.
+            if (sse.items.len == 0) break;
+            try sse.appendSlice(ctx.gpa, "\n\n");
+            at_eof = true;
+        } else try sse.appendSlice(ctx.gpa, buf[0..n]);
         // Process complete frames (data: ... blank line). `frame` is a view
         // into sse.items, so handle it fully before the buffer is shifted.
         while (std.mem.indexOf(u8, sse.items, "\n\n")) |frame_end| {
@@ -288,6 +399,10 @@ pub fn chatStream(
                     frame_done = true;
                     break;
                 }
+                if (anthropic_family) {
+                    try handleAnthropicEvent(ctx, arena, chunk_arena, payload, on_delta, &content, &call_ids, &call_names, &call_args, &stream_usage, &finish_reason);
+                    continue;
+                }
                 const chunk = std.json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch continue;
                 // The final chunk may carry usage with an empty choices list;
                 // capture it before the choices guard.
@@ -296,6 +411,7 @@ pub fn chatStream(
                 }
                 if (chunk.choices.len == 0) continue;
                 const choice = chunk.choices[0];
+                if (choice.finish_reason) |fr| finish_reason = try arena.dupe(u8, fr);
                 if (choice.delta.content) |c| {
                     if (c.len > 0) {
                         try content.appendSlice(ctx.gpa, c);
@@ -330,6 +446,7 @@ pub fn chatStream(
                 break;
             }
         }
+        if (at_eof) break;
     }
 
     var msg = types.Message{ .role = .assistant };
@@ -353,18 +470,161 @@ pub fn chatStream(
             };
         }
     }
-    if (call_args.items.len > 0) {
-        for (call_args.items, 0..) |*args_list, i| {
-            if (args_list.items.len == 0) continue;
-            try calls.append(arena, .{
-                .id = call_ids.items[i],
-                .name = call_names.items[i],
-                .arguments = try arena.dupe(u8, args_list.items),
-            });
-        }
-        msg.tool_calls = try calls.toOwnedSlice(arena);
+    const collected = try collectStreamCalls(arena, &calls, call_ids.items, call_names.items, call_args.items);
+    if (collected.len > 0) msg.tool_calls = collected;
+    const resp = types.ChatResponse{ .message = msg, .usage = usage_out, .finish_reason = finish_reason };
+    const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+    recordUsage(ctx, arena, provider, resp.usage, ms);
+    return resp;
+}
+
+/// Turns the per-block-index streaming accumulators into tool calls.
+///
+/// A tool that takes no arguments streams a name but never an argument
+/// fragment, so the call is keyed on the name: keying on the fragments would
+/// drop it, and the agent loop would read the empty turn as a final answer and
+/// stop mid-task. Slots with no name were never a tool block and are skipped.
+fn collectStreamCalls(
+    arena: std.mem.Allocator,
+    calls: *std.ArrayList(types.ToolCall),
+    ids: []const []const u8,
+    names: []const []const u8,
+    args: []const std.ArrayList(u8),
+) ![]types.ToolCall {
+    for (args, 0..) |args_list, i| {
+        if (names[i].len == 0) continue;
+        try calls.append(arena, .{
+            .id = ids[i],
+            .name = names[i],
+            .arguments = if (args_list.items.len > 0) try arena.dupe(u8, args_list.items) else "{}",
+        });
     }
-    return .{ .message = msg, .usage = usage_out };
+    return calls.toOwnedSlice(arena);
+}
+
+// ------------------------------------------------- anthropic SSE events --
+
+/// One frame of an Anthropic (and Vertex) stream. Only the fields the harness
+/// consumes are declared; everything else is ignored.
+const AnthropicEvent = struct {
+    type: []const u8 = "",
+    index: usize = 0,
+    message: ?struct {
+        usage: ?AnthropicUsage = null,
+    } = null,
+    content_block: ?struct {
+        type: []const u8 = "",
+        id: ?[]const u8 = null,
+        name: ?[]const u8 = null,
+    } = null,
+    delta: ?struct {
+        type: []const u8 = "",
+        text: ?[]const u8 = null,
+        partial_json: ?[]const u8 = null,
+        /// Only on `message_delta`: "end_turn", "tool_use", "max_tokens", ...
+        stop_reason: ?[]const u8 = null,
+    } = null,
+    usage: ?AnthropicUsage = null,
+};
+
+const AnthropicUsage = struct {
+    input_tokens: u32 = 0,
+    output_tokens: u32 = 0,
+    cache_read_input_tokens: u32 = 0,
+    cache_creation_input_tokens: u32 = 0,
+};
+
+/// Folds one Anthropic stream event into the accumulating response.
+///
+/// The shape differs from OpenAI in three ways that matter: text arrives as
+/// `content_block_delta` with a `text_delta`, tool arguments arrive as
+/// `input_json_delta` fragments that must be concatenated per block index, and
+/// usage is split across `message_start` (input) and `message_delta` (output).
+fn handleAnthropicEvent(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    chunk_arena: std.mem.Allocator,
+    payload: []const u8,
+    on_delta: *const fn ([]const u8) void,
+    content: *std.ArrayList(u8),
+    call_ids: *std.ArrayList([]const u8),
+    call_names: *std.ArrayList([]const u8),
+    call_args: *std.ArrayList(std.ArrayList(u8)),
+    stream_usage: *?StreamUsage,
+    finish_reason: *?[]const u8,
+) !void {
+    const ev = std.json.parseFromSliceLeaky(AnthropicEvent, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
+        // Dropping a frame silently hides truncated or re-framed streams as
+        // "the model said nothing"; the payload is the only clue left.
+        log.log(.debug, "unparseable stream frame ({d} bytes): {s}", .{ payload.len, payload });
+        return;
+    };
+
+    if (std.mem.eql(u8, ev.type, "message_start")) {
+        if (ev.message) |m| {
+            if (m.usage) |u| mergeAnthropicUsage(stream_usage, u);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, ev.type, "content_block_start")) {
+        const block = ev.content_block orelse return;
+        if (!std.mem.eql(u8, block.type, "tool_use")) return;
+        while (call_args.items.len <= ev.index) {
+            try call_args.append(ctx.gpa, .empty);
+            try call_ids.append(ctx.gpa, "");
+            try call_names.append(ctx.gpa, "");
+        }
+        if (block.id) |id| call_ids.items[ev.index] = try arena.dupe(u8, id);
+        if (block.name) |name| call_names.items[ev.index] = try arena.dupe(u8, name);
+        return;
+    }
+
+    if (std.mem.eql(u8, ev.type, "content_block_delta")) {
+        const d = ev.delta orelse return;
+        if (d.text) |text| {
+            if (text.len > 0) {
+                try content.appendSlice(ctx.gpa, text);
+                on_delta(text);
+            }
+            return;
+        }
+        if (d.partial_json) |frag| {
+            if (frag.len == 0) return;
+            while (call_args.items.len <= ev.index) {
+                try call_args.append(ctx.gpa, .empty);
+                try call_ids.append(ctx.gpa, "");
+                try call_names.append(ctx.gpa, "");
+            }
+            try call_args.items[ev.index].appendSlice(ctx.gpa, frag);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, ev.type, "message_delta")) {
+        if (ev.usage) |u| mergeAnthropicUsage(stream_usage, u);
+        // The stop reason only ever arrives here; without it the agent loop
+        // cannot tell "end_turn" from "max_tokens" (a truncated answer).
+        if (ev.delta) |d| {
+            if (d.stop_reason) |sr| finish_reason.* = try arena.dupe(u8, sr);
+        }
+        return;
+    }
+}
+
+/// Anthropic reports input tokens once at the start and output tokens at the
+/// end, so the two halves are merged rather than overwritten. `input_tokens`
+/// excludes cache reads, which the harness counts as prompt tokens.
+fn mergeAnthropicUsage(stream_usage: *?StreamUsage, u: AnthropicUsage) void {
+    var acc = stream_usage.* orelse StreamUsage{};
+    if (u.input_tokens > 0 or u.cache_read_input_tokens > 0 or u.cache_creation_input_tokens > 0) {
+        acc.prompt_tokens = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;
+        acc.prompt_cache_hit_tokens = u.cache_read_input_tokens;
+        acc.prompt_cache_miss_tokens = u.input_tokens + u.cache_creation_input_tokens;
+    }
+    if (u.output_tokens > 0) acc.completion_tokens = u.output_tokens;
+    acc.total_tokens = acc.prompt_tokens + acc.completion_tokens;
+    stream_usage.* = acc;
 }
 
 const StreamUsage = struct {
@@ -395,6 +655,7 @@ const StreamDelta = struct {
 
 const StreamChoice = struct {
     delta: StreamDelta = .{},
+    finish_reason: ?[]const u8 = null,
 };
 
 const StreamChunk = struct {
@@ -409,10 +670,29 @@ fn isRetryable(status: std.http.Status) bool {
     };
 }
 
-fn endpointUrl(gpa: std.mem.Allocator, provider: *const config.Provider) ![]u8 {
+fn endpointUrl(gpa: std.mem.Allocator, provider: *const config.Provider, streaming: bool) ![]u8 {
+    // Vertex addresses the model in the path, so the URL cannot be a constant:
+    // .../locations/<region>/publishers/anthropic/models/<model>:rawPredict
+    if (provider.kind == .vertex_anthropic) {
+        if (provider.project.len == 0 or provider.location.len == 0) return error.VertexProjectMissing;
+        var owned_base: ?[]u8 = null;
+        defer if (owned_base) |b| gpa.free(b);
+        const base = if (provider.base_url.len > 0) std.mem.trimEnd(u8, provider.base_url, "/") else blk: {
+            owned_base = try std.fmt.allocPrint(gpa, "https://{s}-aiplatform.googleapis.com", .{provider.location});
+            break :blk owned_base.?;
+        };
+        // Streaming is a different verb on Vertex, not a body flag.
+        const verb = if (streaming) "streamRawPredict" else "rawPredict";
+        return std.fmt.allocPrint(
+            gpa,
+            "{s}/v1/projects/{s}/locations/{s}/publishers/anthropic/models/{s}:{s}",
+            .{ base, provider.project, provider.location, provider.activeModelName(), verb },
+        );
+    }
     const path = provider.path orelse switch (provider.kind) {
         .openai_compat => "/chat/completions",
         .anthropic => "/v1/messages",
+        .vertex_anthropic => unreachable,
     };
     const base = std.mem.trimEnd(u8, provider.base_url, "/");
     var norm_path: ?[]u8 = null;
@@ -426,13 +706,13 @@ fn endpointUrl(gpa: std.mem.Allocator, provider: *const config.Provider) ![]u8 {
 // ------------------------------------------------------------------- tests --
 
 test "endpoint url building" {
-    const mock = config.Provider{ .name = "m", .base_url = "https://api.deepseek.com/", .model = "x" };
-    const url1 = try endpointUrl(std.testing.allocator, &mock);
+    const mock = config.Provider{ .name = "m", .base_url = "https://api.deepseek.com/", .default_model = "x" };
+    const url1 = try endpointUrl(std.testing.allocator, &mock, false);
     defer std.testing.allocator.free(url1);
     try std.testing.expectEqualStrings("https://api.deepseek.com/chat/completions", url1);
 
-    const anthropic = config.Provider{ .name = "a", .kind = .anthropic, .base_url = "https://api.anthropic.com", .model = "x" };
-    const url2 = try endpointUrl(std.testing.allocator, &anthropic);
+    const anthropic = config.Provider{ .name = "a", .kind = .anthropic, .base_url = "https://api.anthropic.com", .default_model = "x" };
+    const url2 = try endpointUrl(std.testing.allocator, &anthropic, false);
     defer std.testing.allocator.free(url2);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url2);
 }
@@ -449,14 +729,12 @@ test "streaming chat assembles SSE deltas" {
     defer env.deinit();
     try env.put("MOCK_API_KEY", "test-key");
 
-    const provider = config.Provider{
-        .name = "mock-stream",
-        .base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port}),
-        .api_key_env = "MOCK_API_KEY",
-        .model = "mock",
-        .max_tokens = 64,
-    };
-    defer std.testing.allocator.free(provider.base_url);
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "mock-stream", base_url, .openai_compat, "mock", .{ .max_tokens = 64 });
+    provider.api_key_env = "MOCK_API_KEY";
 
     var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -485,4 +763,269 @@ test "streaming chat assembles SSE deltas" {
     }
     try std.testing.expectEqualStrings("Hello from the mock stream", resp.message.content orelse "");
     try std.testing.expectEqualStrings("Hello from the mock stream", Sink.collected.items);
+}
+
+test "anthropic stream events fold into text, tool calls and usage" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var ctx = Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+
+    var content: std.ArrayList(u8) = .empty;
+    defer content.deinit(ctx.gpa);
+    var ids: std.ArrayList([]const u8) = .empty;
+    defer ids.deinit(ctx.gpa);
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(ctx.gpa);
+    var args: std.ArrayList(std.ArrayList(u8)) = .empty;
+    defer {
+        for (args.items) |*a| a.deinit(ctx.gpa);
+        args.deinit(ctx.gpa);
+    }
+    var usage: ?StreamUsage = null;
+
+    const Noop = struct {
+        fn onDelta(_: []const u8) void {}
+    };
+
+    // Frames taken from the Messages streaming docs, tool-use example.
+    const frames = [_][]const u8{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":472,"cache_read_input_tokens":8,"output_tokens":2}}}
+        ,
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+        ,
+        \\{"type":"ping"}
+        ,
+        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Okay"}}
+        ,
+        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", checking"}}
+        ,
+        \\{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01T1","name":"get_weather","input":{}}}
+        ,
+        \\{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"location\":"}}
+        ,
+        \\{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" \"SF\"}"}}
+        ,
+        \\{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ignored"}}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":89}}
+        ,
+        \\{"type":"message_stop"}
+        ,
+    };
+    var finish_reason: ?[]const u8 = null;
+    for (frames) |f| {
+        try handleAnthropicEvent(&ctx, arena, arena, f, &Noop.onDelta, &content, &ids, &names, &args, &usage, &finish_reason);
+    }
+
+    try std.testing.expectEqualStrings("tool_use", finish_reason.?);
+    try std.testing.expectEqualStrings("Okay, checking", content.items);
+    try std.testing.expectEqual(@as(usize, 2), args.items.len);
+    try std.testing.expectEqualStrings("toolu_01T1", ids.items[1]);
+    try std.testing.expectEqualStrings("get_weather", names.items[1]);
+    try std.testing.expectEqualStrings("{\"location\": \"SF\"}", args.items[1].items);
+
+    const u = usage.?;
+    // input + cache_read are both prompt tokens; output comes from message_delta.
+    try std.testing.expectEqual(@as(u32, 480), u.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 8), u.prompt_cache_hit_tokens);
+    try std.testing.expectEqual(@as(u32, 89), u.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 569), u.total_tokens);
+}
+
+test "a no-argument tool call survives the stream" {
+    // Regression: keying tool calls on argument fragments dropped calls to
+    // tools that take no input (the model streamed a name and an empty
+    // `input`, never an input_json_delta). The agent loop then saw a turn with
+    // no tool calls and no text and stopped, reporting an empty final answer.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var ctx = Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+
+    var content: std.ArrayList(u8) = .empty;
+    defer content.deinit(ctx.gpa);
+    var ids: std.ArrayList([]const u8) = .empty;
+    defer ids.deinit(ctx.gpa);
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(ctx.gpa);
+    var args: std.ArrayList(std.ArrayList(u8)) = .empty;
+    defer {
+        for (args.items) |*a| a.deinit(ctx.gpa);
+        args.deinit(ctx.gpa);
+    }
+    var usage: ?StreamUsage = null;
+    var finish_reason: ?[]const u8 = null;
+
+    const Noop = struct {
+        fn onDelta(_: []const u8) void {}
+    };
+
+    const frames = [_][]const u8{
+        \\{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}
+        ,
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_09","name":"roadmap","input":{}}}
+        ,
+        \\{"type":"content_block_stop","index":0}
+        ,
+        \\{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":35}}
+        ,
+    };
+    for (frames) |f| {
+        try handleAnthropicEvent(&ctx, arena, arena, f, &Noop.onDelta, &content, &ids, &names, &args, &usage, &finish_reason);
+    }
+
+    var calls: std.ArrayList(types.ToolCall) = .empty;
+    defer calls.deinit(arena);
+    const collected = try collectStreamCalls(arena, &calls, ids.items, names.items, args.items);
+
+    try std.testing.expectEqual(@as(usize, 1), collected.len);
+    try std.testing.expectEqualStrings("roadmap", collected[0].name);
+    try std.testing.expectEqualStrings("toolu_09", collected[0].id);
+    // Empty arguments must still be valid JSON for the next request body.
+    try std.testing.expectEqualStrings("{}", collected[0].arguments);
+    try std.testing.expectEqualStrings("tool_use", finish_reason.?);
+}
+
+test "collectStreamCalls skips block indices that were never tool blocks" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Index 0 is the assistant's text block: no name, so it is not a call.
+    const ids = [_][]const u8{ "", "toolu_1" };
+    const names = [_][]const u8{ "", "history" };
+    var args = [_]std.ArrayList(u8){ .empty, .empty };
+    try args[1].appendSlice(arena, "{\"n\":3}");
+
+    var calls: std.ArrayList(types.ToolCall) = .empty;
+    defer calls.deinit(arena);
+    const collected = try collectStreamCalls(arena, &calls, &ids, &names, &args);
+
+    try std.testing.expectEqual(@as(usize, 1), collected.len);
+    try std.testing.expectEqualStrings("history", collected[0].name);
+    try std.testing.expectEqualStrings("{\"n\":3}", collected[0].arguments);
+}
+
+test "openai stream chunks carry the finish reason" {
+    const chunk = "{\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}";
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = try std.json.parseFromSliceLeaky(StreamChunk, arena, chunk, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("stop", parsed.choices[0].finish_reason.?);
+}
+
+test "vertex endpoint url carries project, location, model and verb" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var provider = try config.Provider.single(arena, "vertex-opus", "", .vertex_anthropic, "claude-opus-4-6", .{});
+    provider.project = "my-project";
+    provider.location = "us-east5";
+
+    const streaming = try endpointUrl(std.testing.allocator, &provider, true);
+    defer std.testing.allocator.free(streaming);
+    try std.testing.expectEqualStrings(
+        "https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/anthropic/models/claude-opus-4-6:streamRawPredict",
+        streaming,
+    );
+
+    const blocking = try endpointUrl(std.testing.allocator, &provider, false);
+    defer std.testing.allocator.free(blocking);
+    try std.testing.expect(std.mem.endsWith(u8, blocking, ":rawPredict"));
+
+    // A provider missing the GCP coordinates must fail loudly, not build a
+    // URL with empty path segments.
+    var bare = try config.Provider.single(arena, "vertex-bad", "", .vertex_anthropic, "claude-opus-4-6", .{});
+    try std.testing.expectError(error.VertexProjectMissing, endpointUrl(std.testing.allocator, &bare, true));
+}
+
+test "vertex stream: no-arg tool call and a frame with no trailing blank line" {
+    // End-to-end over the real client path: the last frame arrives without the
+    // terminating blank line (a close-delimited stream), and the tool call
+    // carries no arguments. Both used to be dropped, which the agent loop then
+    // read as an empty final answer.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .anthropic_stream);
+    defer mock.stop();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_VERTEX_TOKEN", "test-token");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "vertex-mock", base_url, .vertex_anthropic, "claude-opus-4-6", .{
+        .context_window = 1_048_576,
+        .max_tokens = 4096,
+    });
+    provider.api_key_env = "MOCK_VERTEX_TOKEN";
+    provider.project = "p";
+    provider.location = "us-east5";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const messages = [_]types.Message{.{ .role = .user, .content = "what next?" }};
+    const Noop = struct {
+        fn cb(_: []const u8) void {}
+    };
+    var err_detail: ?[]const u8 = null;
+    const resp = try chatStream(&ctx, arena, .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail, Noop.cb);
+
+    try std.testing.expectEqualStrings("Checking the roadmap", resp.message.content orelse "");
+    const calls = resp.message.tool_calls orelse return error.ToolCallDropped;
+    try std.testing.expectEqual(@as(usize, 1), calls.len);
+    try std.testing.expectEqualStrings("roadmap", calls[0].name);
+    try std.testing.expectEqualStrings("{}", calls[0].arguments);
+    // stop_reason and output tokens live in that unterminated last frame.
+    try std.testing.expectEqualStrings("tool_use", resp.finish_reason.?);
+    try std.testing.expectEqual(@as(u32, 35), resp.usage.?.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 50), resp.usage.?.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 10), resp.usage.?.prompt_cache_hit_tokens);
+
+    // The request must target Vertex's streaming verb, not the Anthropic path.
+    const captured = mock.lastCaptured().?;
+    try std.testing.expect(std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
+    try std.testing.expect(std.mem.indexOf(u8, captured.body, "\"stream\":true") != null);
+}
+
+test "cached prompt tokens are billed at the cache-read rate" {
+    // 1000 prompt tokens, 800 of them served from cache: 200 at full rate plus
+    // 800 at a tenth, not 1000 at full rate.
+    const u = types.Usage{
+        .prompt_tokens = 1000,
+        .completion_tokens = 0,
+        .total_tokens = 1000,
+        .prompt_cache_hit_tokens = 800,
+        .prompt_cache_miss_tokens = 200,
+    };
+    try std.testing.expectApproxEqAbs(@as(f64, 0.00140), promptCost(u, 5.0), 1e-9);
+
+    // No cache: unchanged from the plain rate.
+    const cold = types.Usage{ .prompt_tokens = 1000, .completion_tokens = 0, .total_tokens = 1000 };
+    try std.testing.expectApproxEqAbs(@as(f64, 0.005), promptCost(cold, 5.0), 1e-9);
 }

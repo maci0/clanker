@@ -29,7 +29,18 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
         .warn => "WARN",
         .error_ => "ERROR",
     };
-    std.debug.print("[{s}] ", .{prefix});
-    std.debug.print(fmt, args);
-    std.debug.print("\n", .{});
+    // One write per line: tools run on worker threads and the model's tokens
+    // stream to stdout at the same time, so a line split across several prints
+    // interleaves with them mid-word.
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.print("[{s}] ", .{prefix}) catch {};
+    w.print(fmt, args) catch {};
+    w.writeByte('\n') catch {
+        // Message longer than the buffer: keep the truncated head and still
+        // terminate the line.
+        buf[buf.len - 1] = '\n';
+        w.end = buf.len;
+    };
+    std.debug.print("{s}", .{buf[0..w.end]});
 }
