@@ -1035,11 +1035,23 @@ pub const Agent = struct {
             // Pre-compile the primary tool module so executeTool (sequential
             // path) finds it already in self.modules and skips recompilation.
             // Parallel-eligible tools never read self.modules — their worker
-            // (and the duplicate-name fallback, executeToolOnWorker) loads a
-            // fresh module from the cached wasm bytes — so compiling one here
-            // would be discarded work on every batch.
+            // loads a fresh module from the cached wasm bytes — but when the
+            // same tool name appears more than once in a batch, the duplicate
+            // hits the sequential fallback (executeTool / executeToolOnWorker)
+            // which DOES read self.modules; pre-compiling here avoids a
+            // redundant recompilation on that path.
             const uses_modules_cache = self.no_parallel_tools or tool.llm or tool.sequential;
-            if (uses_modules_cache and !self.modules.contains(tc.name)) {
+            // Count how many times this tool name appears in the batch: if
+            // more than once, the duplicate will take the sequential fallback
+            // path and benefit from a cached module.
+            var name_count: usize = 0;
+            for (calls) |other| {
+                if (std.mem.eql(u8, other.name, tc.name)) {
+                    name_count += 1;
+                    if (name_count > 1) break;
+                }
+            }
+            if ((uses_modules_cache or name_count > 1) and !self.modules.contains(tc.name)) {
                 const sbp = self.sandboxPtrFor(tool) catch continue;
                 const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
                     log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
