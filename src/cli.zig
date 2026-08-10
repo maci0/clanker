@@ -11,6 +11,7 @@ const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
 const improve = @import("improve/engine.zig");
 const history = @import("improve/history.zig");
+const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
 const log = @import("util/log.zig");
 
@@ -25,6 +26,8 @@ pub const Command = enum {
     improve_self,
     revert,
     git,
+    mcp,
+    goal,
 };
 
 pub const Options = struct {
@@ -33,6 +36,7 @@ pub const Options = struct {
     model: ?[]const u8 = null,
     task: ?[]const u8 = null,
     session: ?[]const u8 = null,
+    goal: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
     iters: u32 = 3,
     dry_run: bool = false,
@@ -87,6 +91,10 @@ pub fn parse(args: []const []const u8) !Options {
                 idx += 1;
                 if (idx >= args.len) return error.MissingArg;
                 opts.session = args[idx];
+            } else if (std.mem.eql(u8, a, "--goal")) {
+                idx += 1;
+                if (idx >= args.len) return error.MissingArg;
+                opts.goal = args[idx];
             } else {
                 return error.UnknownArg;
             }
@@ -116,6 +124,10 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .revert;
             } else if (std.mem.eql(u8, a, "git")) {
                 opts.command = .git;
+            } else if (std.mem.eql(u8, a, "mcp")) {
+                opts.command = .mcp;
+            } else if (std.mem.eql(u8, a, "goal")) {
+                opts.command = .goal;
             } else if (std.mem.eql(u8, a, "repl")) {
                 return error.NotYetImplemented;
             } else {
@@ -129,6 +141,8 @@ pub fn parse(args: []const []const u8) !Options {
             }
         } else if (opts.command == .eval and opts.eval_name == null) {
             opts.eval_name = a;
+        } else if (opts.command == .goal and opts.task == null) {
+            opts.task = a;
         } else if (opts.command == .revert and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .improve_self and opts.task == null) {
@@ -158,6 +172,7 @@ const usage_text =
     \\  clanker init                    create config.local.json + state/
     \\  clanker providers check [name]  verify provider connectivity
     \\  clanker run "<task>"            run the agent on a task
+    \\  clanker run --goal <id> "<task>"  run with an active goal
     \\  clanker --verbose               enable debug logging
     \\
 ;
@@ -174,6 +189,8 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .improve_self => try cmdImproveSelf(init, opts),
         .revert => try cmdRevert(init, opts),
         .git => try cmdGit(init, opts),
+        .mcp => try cmdMcp(init, opts),
+        .goal => try cmdGoal(init, opts),
     }
 }
 
@@ -293,8 +310,34 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         }
     }
+    var task_text = opts.task.?;
+    if (opts.goal) |goal_id| {
+        const goals_raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch null;
+        if (goals_raw) |raw| {
+            const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch null;
+            if (parsed) |root| {
+                if (root == .array) {
+                    for (root.array.items) |item| {
+                        if (item == .object) {
+                            const obj = item.object;
+                            if (obj.get("id")) |idv| {
+                                if (idv == .string and std.mem.eql(u8, idv.string, goal_id)) {
+                                    const objective = if (obj.get("objective")) |v| if (v == .string) v.string else "" else "";
+                                    const completion = if (obj.get("completion_criterion")) |v| if (v == .string) v.string else "" else "";
+                                    const boundaries = if (obj.get("boundaries")) |v| if (v == .string) v.string else "" else "";
+                                    const goal_section = try std.fmt.allocPrint(arena, "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n", .{ objective, completion, boundaries });
+                                    task_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ goal_section, opts.task.? });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     var err_detail: ?[]const u8 = null;
-    const resp = a.run(&messages, opts.task.?, &err_detail) catch |err| {
+    const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return err;
     };
@@ -412,6 +455,24 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
         .dry_run = opts.dry_run,
         .max_context_bytes = cfg.improve.max_context_bytes,
     });
+}
+
+fn cmdGoal(init: std.process.Init, opts: Options) !void {
+    const arena = init.arena.allocator();
+    const intent = opts.task orelse return error.MissingTask;
+    const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
+    var goal_opts = opts;
+    goal_opts.task = task;
+    try cmdRun(init, goal_opts);
+}
+
+fn cmdMcp(init: std.process.Init, opts: Options) !void {
+    _ = opts;
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    try mcp.serve(io, gpa, arena, &cfg);
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
