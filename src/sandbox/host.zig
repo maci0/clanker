@@ -742,6 +742,101 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
+/// ck_fs_find(dir_path, pattern) — recursively find files under a sandbox
+/// directory whose names match a simple glob pattern. The pattern supports
+/// '*' (matches any sequence of non-'/' chars) and '?' (matches exactly one
+/// non-'/' char); everything else is a literal match. Returns a JSON string
+/// array of relative paths (relative to the sandbox root) in the host arena.
+/// Enforces the same fs_prefixes policy as ck_fs_read.
+/// Returns Err.not_found when the directory does not exist.
+pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const dir_path = sliceOf(bytes, dir_ptr, dir_len) orelse return Err.invalid;
+    const pattern = sliceOf(bytes, pat_ptr, pat_len) orelse return Err.invalid;
+    if (pattern.len == 0) return Err.invalid;
+    const full = safeJoin(h.sandbox, dir_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+
+    var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
+    defer dir.close(h.sandbox.io);
+
+    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    var w: std.Io.Writer = .fixed(buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginArray() catch return Err.too_large;
+
+    fsFindRecurse(h, &s, dir, dir_path, pattern, 0) catch return Err.too_large;
+
+    s.endArray() catch return Err.too_large;
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
+const fs_find_max_depth: u32 = 12;
+
+fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32) !void {
+    if (depth > fs_find_max_depth) return;
+    var it = dir.iterate();
+    while (it.next(h.sandbox.io) catch null) |entry| {
+        if (entry.name.len == 0) continue;
+        const rel = std.fmt.allocPrint(h.sandbox.gpa, "{s}{s}{s}", .{
+            prefix,
+            if (prefix.len > 0) "/" else "",
+            entry.name,
+        }) catch return error.OutOfMemory;
+        defer h.sandbox.gpa.free(rel);
+
+        if (entry.kind == .directory) {
+            var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
+            defer sub.close(h.sandbox.io);
+            try fsFindRecurse(h, s, sub, rel, pattern, depth + 1);
+        } else if (entry.kind == .file) {
+            if (globMatch(pattern, entry.name)) {
+                try s.write(rel);
+            }
+        }
+    }
+}
+
+/// Simple glob match: '*' matches zero or more non-'/' chars, '?' matches
+/// exactly one non-'/' char, everything else is literal (case-sensitive).
+pub fn globMatch(pattern: []const u8, name: []const u8) bool {
+    var pi: usize = 0;
+    var ni: usize = 0;
+    var star_p: ?usize = null;
+    var star_n: usize = 0;
+    while (ni < name.len or pi < pattern.len) {
+        if (pi < pattern.len and pattern[pi] == '*') {
+            star_p = pi;
+            star_n = ni;
+            pi += 1;
+            continue;
+        }
+        if (ni < name.len and pi < pattern.len) {
+            if (pattern[pi] == '?' and name[ni] != '/') {
+                pi += 1;
+                ni += 1;
+                continue;
+            }
+            if (pattern[pi] == name[ni]) {
+                pi += 1;
+                ni += 1;
+                continue;
+            }
+        }
+        if (star_p) |sp| {
+            pi = sp + 1;
+            star_n += 1;
+            if (star_n > name.len) return false;
+            ni = star_n;
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 /// ck_fs_stat(path) — stat a path under the sandbox root.
 /// Returns a JSON object in the host arena:
 ///   {"exists":true,"kind":"file","size":1234}
@@ -1219,6 +1314,34 @@ test "argDenied matches operator tokens anywhere, word tokens only at boundaries
     try std.testing.expect(argDenied("gc", "gc"));
     try std.testing.expect(argDenied("-force", "-f"));
     try std.testing.expect(argDenied("--force", "--force"));
+}
+
+test "globMatch handles basic patterns" {
+    // Exact match
+    try std.testing.expect(globMatch("foo.zig", "foo.zig"));
+    try std.testing.expect(!globMatch("foo.zig", "bar.zig"));
+    // Star wildcard
+    try std.testing.expect(globMatch("*.zig", "foo.zig"));
+    try std.testing.expect(globMatch("*.zig", ".zig"));
+    try std.testing.expect(!globMatch("*.zig", "foo.txt"));
+    try std.testing.expect(globMatch("foo.*", "foo.txt"));
+    try std.testing.expect(globMatch("foo.*", "foo."));
+    try std.testing.expect(globMatch("*", "anything"));
+    try std.testing.expect(globMatch("*", ""));
+    // Question mark wildcard
+    try std.testing.expect(globMatch("?.zig", "a.zig"));
+    try std.testing.expect(!globMatch("?.zig", "ab.zig"));
+    try std.testing.expect(!globMatch("?.zig", ".zig"));
+    // Mixed
+    try std.testing.expect(globMatch("test_*.zig", "test_foo.zig"));
+    try std.testing.expect(!globMatch("test_*.zig", "best_foo.zig"));
+    // Multiple stars
+    try std.testing.expect(globMatch("*foo*", "xfooy"));
+    try std.testing.expect(globMatch("*foo*", "foo"));
+    try std.testing.expect(!globMatch("*foo*", "bar"));
+    // Empty pattern matches only empty name
+    try std.testing.expect(globMatch("", ""));
+    try std.testing.expect(!globMatch("", "x"));
 }
 
 test "ckFsStat uses safeJoin policy" {
