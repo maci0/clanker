@@ -354,7 +354,18 @@ pub const Agent = struct {
     /// markdown fences and surrounding whitespace, so the answer exactly
     /// matches the requested format (the answer_format eval).
     fn finalAnswer(self: *Agent, resp: types.ChatResponse) !types.ChatResponse {
-        var content = resp.message.content orelse return resp;
+        var content = resp.message.content orelse blk: {
+            if (resp.reasoning) |r| {
+                var last_line: []const u8 = r;
+                var line_it = std.mem.tokenizeScalar(u8, r, '\n');
+                while (line_it.next()) |line| {
+                    const trimmed = std.mem.trim(u8, line, " \t\r\n");
+                    if (trimmed.len > 0) last_line = trimmed;
+                }
+                if (last_line.len > 0) break :blk last_line;
+            }
+            return resp;
+        };
         var s = std.mem.trim(u8, content, " \t\r\n");
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
