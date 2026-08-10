@@ -735,8 +735,16 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
 
     // Stream the model's tokens to stdout as they arrive.
     repl_out = &out_w;
+    repl_io = io;
     a.on_token = &replDelta;
     a.on_tool_call = &replToolCall;
+    a.on_tool_result = &replToolResult;
+
+    try out_w.interface.print(
+        "\x1b[1;35m\xe2\x9a\xa1 clanker\x1b[0m \x1b[2mrepl \xc2\xb7 {s}/{s}\x1b[0m\n\x1b[2mtype a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave\x1b[0m\n\n",
+        .{ provider.name, provider.activeModelName() },
+    );
+    try out_w.interface.flush();
 
     // Accumulate raw stdin and split on newlines: readSliceShort can return
     // several lines at once (piped input), and each task line must be copied
@@ -1051,31 +1059,65 @@ fn replHotReload(io: std.Io, gpa: std.mem.Allocator, exe_path: []const u8, start
 /// Agent.on_token) while the run is still in flight.
 var repl_out: ?*std.Io.File.Writer = null;
 
-/// True while the dim "…" thinking placeholder is on screen, covering the
-/// otherwise silent gap between submitting a turn and the first streamed
-/// token or tool-call status line.
+/// Braille spinner frames, animated on a background thread while waiting on
+/// the LLM or a tool: covers the otherwise silent gap with visible motion.
+const spinner_frames = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
+const spinner_interval_ns = 80 * std.time.ns_per_ms;
+
+var spinner_thread: ?std.Thread = null;
+var spinner_stop = std.atomic.Value(bool).init(false);
+/// Set once in cmdRepl; the spinner thread needs an Io handle to sleep with
+/// (std.Thread has no sleep of its own in std.Io-based Zig).
+var repl_io: std.Io = undefined;
+/// True while the spinner is on screen; only touched from the REPL's single
+/// main thread (show/clear calls never overlap with the spinner thread,
+/// which is always joined before the writer is touched again).
 var repl_thinking_shown = false;
 
+fn spinnerLoop() callconv(.c) void {
+    var i: usize = 0;
+    while (!spinner_stop.load(.acquire)) {
+        const w = repl_out orelse return;
+        w.interface.print("\r\x1b[35m{s}\x1b[0m \x1b[2mworking\xe2\x80\xa6\x1b[0m", .{spinner_frames[i % spinner_frames.len]}) catch return;
+        w.interface.flush() catch {};
+        i += 1;
+        std.Io.sleep(repl_io, .{ .nanoseconds = spinner_interval_ns }, .awake) catch return;
+    }
+}
+
 fn replShowThinking() void {
-    const w = repl_out orelse return;
-    w.interface.writeAll("\x1b[2m\xe2\x80\xa6\x1b[0m") catch return;
-    w.interface.flush() catch {};
+    if (repl_thinking_shown) return;
     repl_thinking_shown = true;
+    spinner_stop.store(false, .release);
+    spinner_thread = std.Thread.spawn(.{}, spinnerLoop, .{}) catch {
+        repl_thinking_shown = false;
+        return;
+    };
 }
 
 fn replClearThinking() void {
     if (!repl_thinking_shown) return;
     repl_thinking_shown = false;
+    spinner_stop.store(true, .release);
+    if (spinner_thread) |t| t.join();
+    spinner_thread = null;
     const w = repl_out orelse return;
     w.interface.writeAll("\r\x1b[K") catch {};
 }
 
+/// True once the current turn's assistant text has started streaming, so the
+/// colored "›" gutter is only printed once, right before the first token.
+var repl_answer_started = false;
+
 fn replDelta(delta: []const u8) void {
     replClearThinking();
-    if (repl_out) |w| {
-        w.interface.writeAll(delta) catch {};
-        w.interface.flush() catch {};
+    const w = repl_out orelse return;
+    if (!repl_answer_started) {
+        repl_answer_started = true;
+        w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
     }
+    w.interface.writeAll(delta) catch {};
+    w.interface.flush() catch {};
 }
 
 /// Prints a compact status line naming the tool(s) about to run, covering
@@ -1089,6 +1131,19 @@ fn replToolCall(calls: []const types.ToolCall) void {
         w.interface.writeAll(tc.name) catch {};
     }
     w.interface.writeAll("\x1b[0m\n") catch return;
+    w.interface.flush() catch {};
+    replShowThinking();
+}
+
+/// Prints the elapsed time for the tool batch that just finished, dim and
+/// indented under the tool status line, then resumes the spinner while the
+/// next LLM call is in flight.
+fn replToolResult(ms: u64) void {
+    replClearThinking();
+    const w = repl_out orelse return;
+    var buf: [48]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, "\x1b[2m    \xe2\x86\xb3 {d}ms\x1b[0m\n", .{ms}) catch return;
+    w.interface.writeAll(line) catch return;
     w.interface.flush() catch {};
     replShowThinking();
 }
@@ -1136,6 +1191,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const prev_cost = a.stats.cost;
     const prev_cache_hit = a.stats.total_cache_hit_tokens;
     const prev_cache_miss = a.stats.total_cache_miss_tokens;
+    repl_answer_started = false;
     replShowThinking();
     const resp = a.run(messages, task, &err_detail) catch |err| {
         replClearThinking();
@@ -1148,6 +1204,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const streamed = a.on_token != null and a.cfg.modules.streaming;
     const content = resp.message.content orelse "";
     if (!streamed) {
+        try out_w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m");
         try out_w.interface.writeAll(content);
     }
     try out_w.interface.writeAll("\n\n");
