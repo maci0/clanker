@@ -102,6 +102,14 @@ pub const Agent = struct {
                 self.stats.total_prompt_tokens += u.prompt_tokens;
                 self.stats.total_completion_tokens += u.completion_tokens;
                 self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+
+                // Per-turn token budgeting: a single runaway response must
+                // not blow the context window even when the session total is
+                // still under budget (session cap is cfg.agent.max_total_tokens).
+                if (u.completion_tokens > max_per_turn_tokens) {
+                    log.log(.warn, "per-turn token budget exceeded ({d} > {d} completion tokens); stopping run", .{ u.completion_tokens, max_per_turn_tokens });
+                    return error.PerTurnTokenBudgetExceeded;
+                }
             }
 
             if (self.cfg.agent.max_total_tokens) |budget| {
@@ -288,6 +296,12 @@ pub const Agent = struct {
 /// (whose default stack is smaller than the process main stack). Give parallel
 /// tool workers a large explicit stack size.
 const parallel_tool_stack_bytes: usize = 64 * 1024 * 1024;
+
+/// Hard cap on a single response's completion tokens (per-turn budgeting): a
+/// lone huge response must not blow the context window, even if the session
+/// total is still under budget. Complements cfg.agent.max_total_tokens and
+/// the byte-based history compaction in maybeCompactMessages.
+const max_per_turn_tokens: u32 = 32768;
 
 const WorkerHandle = struct {
     slot: usize,
