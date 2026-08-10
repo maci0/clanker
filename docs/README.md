@@ -1,4 +1,92 @@
-# clanker
+# clanker — Reference Documentation
+
+## Architecture
+
+- **src/agent/loop.zig** – the agent loop: think (LLM chat) → act (execute WASM tool calls) → observe (feed results back), with stateful sessions and token statistics.
+- **src/llm/** – OpenAI-compatible and Anthropic providers, including `deepseek`, `kimi-k3` (at `api.moonshot.ai/v1` with reasoning), and `muse-spark`.
+- **src/sandbox/** – zwasm runtime with `ck_*` host functions and a sandbox policy.
+- **src/improve/** – gated self-improvement engine that proposes patches, stages them, and promotes on green gates.
+- **src/evals/** + **src/gate/checks.zig** – deterministic gates (`zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint).
+- **src/mcp/server.zig** – stdio JSON-RPC Model Context Protocol server.
+- **src/peers/notify.zig** + `phonebook` command – peer notifications and agent-card discovery.
+- **src/patch/apply.zig** – exact-match patch application.
+
+## WASM Tool ABI
+
+Guest tools export `scratch`, `host_arena`, and `run`; they import `env.ck_*` host functions:
+
+- `ck_log` – write a log line
+- `ck_now` – current timestamp
+- `ck_random` – random bytes
+- `ck_http` – outbound HTTP request
+- `ck_fs_read` / `ck_fs_write` – sandboxed file access
+- `ck_getenv` – read an environment variable
+- `ck_exec` – run a subprocess
+- `ck_docker` – invoke Docker
+- `ck_result` – read back the host-written result from the host arena
+
+Host functions write results into the host arena; the guest reads them back via `ck_result`. Tools compile to `wasm32-freestanding` (not `wasip1`).
+
+## Tool Layout
+
+- `tool-src/zig/` – Zig tool sources
+- `tool-src/ts/` – AssemblyScript sources
+- `tools.d/*.tool.json` – tool descriptors, with optional `internal: true` flag
+- `zig-out/tools/` – built WASM modules
+- `tool-bin/` – committed AssemblyScript artifacts
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `init` | Create `config.local.json` + `state/` |
+| `providers check [name]` | Verify provider connectivity |
+| `run"<task>"` | Run the agent on a task |
+| `repl` | Interactive REPL with `:help`/`:quit` and stateful sessions |
+| `sessions` | List persisted sessions |
+| `tools list` | List registered tools |
+| `eval [name]` | Run evaluation(s) |
+| `improve-self` | Run the gated self-improvement loop |
+| `revert <id>` | Revert a previous promotion |
+| `git` | Git passthrough |
+| `mcp` | Start the MCP server |
+| `goal <intent>` | Design and persist a structured goal |
+| `notify <peer> "<message>"` | Send a peer notification |
+| `phonebook` | List peer agent cards |
+| `serve` | Start the HTTP server |
+
+## Configuration
+
+`config.json` (and optional `config.local.json` override) supports:
+
+- `providers` – provider definitions (e.g., `deepseek`, `kimi-k3`, `muse-spark`) with `kind`, `base_url`, `api_key_env`, `model`, `max_tokens`
+- `agent` – `max_iterations`, `compact_threshold_bytes`, `max_total_tokens`, `tools_dir`
+- `peers` – list of peer `{name, url}`
+- `instance` – `name` and `id` for this instance
+- `notify` – `topic` for notifications
+- `improve` – `min_delta`, `max_context_bytes`
+
+## HTTP Serve Endpoints
+
+- `GET /` – web UI via the internal `webui` WASM tool
+- `GET /.well-known/agent.json` – A2A agent card
+- `GET /api/status` – instance + peers status
+- `POST /api/notify` – receive peer notifications
+- `POST /api/a2a/message` – A2A message handling
+- `POST /api/run` – run an agent task synchronously
+
+## Streaming
+
+`client.chatStream` parses Server-Sent Events (SSE) with tool-call accumulation. The agent exposes an `on_token` hook; the REPL attaches to it for live token output during a run.
+
+## Self-Improvement Loop
+
+1. Model proposes a JSON patch (summary, rationale, exact-match changes).
+2. Changes are applied to a staging copy of the project.
+3. Gates run in staging: `zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint.
+4. On success, the changes are promoted to the live tree, a git commit is created (`clanker: <summary> [imp-<id>]`), and peers are notified.
+5. On failure, the error tail is fed back for a retry.
+
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It wraps LLM APIs and executes tools as WebAssembly modules via the zwasm sandbox. The agent can modify its own source code through a gated improvement loop, then commit the changes with git.
 
