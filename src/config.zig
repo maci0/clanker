@@ -362,6 +362,8 @@ pub const Config = struct {
         };
         var a = Agent{};
         if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
+        if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
+        if (obj.get("max_total_tokens")) |k| a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
         if (obj.get("tools_dir")) |k| a.tools_dir = try jsonStr(k, "tools_dir");
         if (obj.get("skills_dir")) |k| a.skills_dir = try jsonStr(k, "skills_dir");
         if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");

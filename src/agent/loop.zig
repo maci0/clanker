@@ -322,6 +322,12 @@ pub const Agent = struct {
             }
             s = std.mem.trim(u8, body, " \t\r\n");
         }
+        // Unwrap a single-backtick inline code wrapper (markdown formatting
+        // around a plain answer) so the returned value exactly matches the
+        // requested format.
+        if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
+            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
+        }
         // If the answer is still wrapped in prose (e.g. "here is your JSON:
         // { ... }"), extract the first JSON object/array — the answer_format
         // eval expects an exact-match value, not prose.
