@@ -511,31 +511,12 @@ pub const Agent = struct {
             }
             if (end > 0) s = s[start..end];
         }
-        // If the answer is a JSON object, extract the "answer" field if present
+        // If the answer is a JSON object, extract an "answer" field if present
         // (even alongside other metadata), or the sole value otherwise, so the
         // returned value matches the exact requested format (answer_format).
         if (s.len > 0 and s[0] == '{') {
-            const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, s, .{}) catch null;
-            if (parsed) |v| {
-                if (v == .object) {
-                    // Only unwrap an object when it contains exactly one key.
-                    // This preserves multi-field JSON objects requested by the
-                    // user (so the exact answer format is not broken by pulling
-                    // out an "answer" field), while still handling the common
-                    // {"answer": ...} or single-value response shapes.
-                    if (v.object.count() == 1) {
-                        var it = v.object.iterator();
-                        const entry = it.next().?;
-                        const ans = entry.value_ptr.*;
-                        switch (ans) {
-                            .string => s = ans.string,
-                            .integer => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.integer}),
-                            .float => s = try std.fmt.allocPrint(self.arena, "{d}", .{ans.float}),
-                            .bool => s = if (ans.bool) "true" else "false",
-                            else => {},
-                        }
-                    }
-                }
+            if (unwrapJsonAnswer(self.arena, s)) |exact| {
+                s = exact;
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
@@ -1003,4 +984,59 @@ fn isNumericString(s: []const u8) bool {
         }
     }
     return saw_digit;
+}
+
+/// Extracts the exact-match answer from a JSON object: prefers an "answer"
+/// field when present, falls back to the sole value when the object has
+/// exactly one key, otherwise returns null (the object is kept as-is).
+fn unwrapJsonAnswer(arena: std.mem.Allocator, json_str: []const u8) ?[]const u8 {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_str, .{}) catch return null;
+    if (parsed != .object) return null;
+    var chosen: ?std.json.Value = null;
+    if (parsed.object.get("answer")) |a| {
+        chosen = a;
+    } else if (parsed.object.count() == 1) {
+        var it = parsed.object.iterator();
+        const entry = it.next().?;
+        chosen = entry.value_ptr.*;
+    }
+    if (chosen) |ans| {
+        switch (ans) {
+            .string => return ans.string,
+            .integer => return std.fmt.allocPrint(arena, "{d}", .{ans.integer}) catch null,
+            .float => return std.fmt.allocPrint(arena, "{d}", .{ans.float}) catch null,
+            .bool => return if (ans.bool) "true" else "false",
+            else => return null,
+        }
+    }
+    return null;
+}
+
+test "unwrapJsonAnswer prefers a top-level answer field" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const json = "{\"answer\":42,\"status\":\"ok\"}";
+    const result = unwrapJsonAnswer(arena, json) orelse return error.TestUnexpectedNull;
+    try std.testing.expectEqualStrings("42", result);
+}
+
+test "unwrapJsonAnswer falls back to sole key when no answer field" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const json = "{\"value\":7}";
+    const result = unwrapJsonAnswer(arena, json) orelse return error.TestUnexpectedNull;
+    try std.testing.expectEqualStrings("7", result);
+}
+
+test "unwrapJsonAnswer returns null for multi-key object without answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const json = "{\"a\":1,\"b\":2}";
+    try std.testing.expect(unwrapJsonAnswer(arena, json) == null);
 }
