@@ -400,10 +400,15 @@ pub const Agent = struct {
         if (s.len >= 2 and s[0] == '`' and s[s.len - 1] == '`') {
             s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
-        // Unwrap a JSON string literal (e.g. the model returned "\"42\"" when
-        // the answer_format eval expects 42) so the value exactly matches.
+        // Unwrap a JSON string literal only when it wraps a number or boolean
+        // (e.g. "42" -> 42 when the eval expects a number, "true" -> true).
+        // Keep quotes for string-valued answers so an expected JSON string
+        // (e.g. "Paris") is returned verbatim.
         if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
-            s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
+            const inner = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
+            if (isNumericString(inner) or std.mem.eql(u8, inner, "true") or std.mem.eql(u8, inner, "false")) {
+                s = inner;
+            }
         }
         // If the answer is still wrapped in prose (e.g. "here is your JSON:
         // { ... }"), extract the first JSON object/array — the answer_format
