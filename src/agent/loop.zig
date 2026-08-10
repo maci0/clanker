@@ -449,7 +449,10 @@ pub const Agent = struct {
                 } else if (std.mem.startsWith(u8, last_line, "Result:")) {
                     last_line = std.mem.trim(u8, last_line["Result:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "The answer is")) {
-                    last_line = std.mem.trim(u8, last_line["The answer is".len..], " \t\r\n");
+                    var after = last_line["The answer is".len..];
+                    // Skip an optional colon (e.g. "The answer is: 42").
+                    if (after.len > 0 and after[0] == ':') after = after[1..];
+                    last_line = std.mem.trim(u8, after, " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "Here is the answer:")) {
                     last_line = std.mem.trim(u8, last_line["Here is the answer:".len..], " \t\r\n");
                 } else if (std.mem.startsWith(u8, last_line, "The output is:")) {
