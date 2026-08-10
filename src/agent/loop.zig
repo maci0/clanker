@@ -732,6 +732,12 @@ pub const Agent = struct {
                 }
             }
         }
+        // If the cleaning stripped everything (e.g. a response that was only
+        // prose/markdown), fall back to the trimmed original so we never
+        // return an empty answer that would fail an exact-match eval.
+        if (s.len == 0) {
+            s = std.mem.trim(u8, content, " \t\r\n");
+        }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
         }
