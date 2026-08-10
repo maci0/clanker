@@ -435,7 +435,15 @@ pub const Agent = struct {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
             while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
-            if (last_line.len > 0) s = last_line;
+            if (last_line.len > 0) {
+                // Strip trailing punctuation (.,;:!?) that would break an
+                // exact-match answer (e.g. "42." -> "42"). Quote-wrapped
+                // answers are handled above.
+                var end = last_line.len;
+                while (end > 0 and std.mem.indexOfScalar(u8, ".,;:!?", last_line[end - 1]) != null) end -= 1;
+                if (end < last_line.len) last_line = last_line[0..end];
+                s = std.mem.trim(u8, last_line, " \t\r\n");
+            }
         }
         if (s.len != content.len) {
             content = try self.arena.dupe(u8, s);
