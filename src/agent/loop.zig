@@ -965,12 +965,6 @@ pub const Agent = struct {
 
     /// Runs one transform module. Returns null when it declined to rewrite.
     fn runTransform(self: *Agent, tool: *const registry.Tool, input: []const u8) !?[]const u8 {
-        const wasm_bytes = self.wasmBytes(tool) catch |err| {
-            log.log(.error_, "transform '{s}': cannot load {s}: {s}", .{ tool.name, tool.wasm, @errorName(err) });
-            return err;
-        };
-
-        const sbp = try self.sandboxPtrFor(tool);
         // Cache compiled transform modules under a "transform:"-prefixed key so
         // they never collide with the wrapped tool's own module in
         // `self.modules`; repeated invocations skip recompilation (the modules
@@ -979,6 +973,11 @@ pub const Agent = struct {
         const mod = if (self.modules.get(cache_key)) |m|
             m
         else blk: {
+            const wasm_bytes = self.wasmBytes(tool) catch |err| {
+                log.log(.error_, "transform '{s}': cannot load {s}: {s}", .{ tool.name, tool.wasm, @errorName(err) });
+                return err;
+            };
+            const sbp = try self.sandboxPtrFor(tool);
             const m = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes);
             self.modules.put(self.arena, cache_key, m) catch {
                 m.deinit();
