@@ -193,7 +193,7 @@ fn copyFile(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, src: []const u
 // ------------------------------------------------------------------- tests --
 
 test "history append + revert round trip" {
-    var gpa_state = std.heap.DebugAllocator(.{}) .init;
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa_state.deinit();
     const gpa = gpa_state.allocator();
 

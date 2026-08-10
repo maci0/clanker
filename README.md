@@ -13,6 +13,7 @@ zig build          # build the clanker binary
 zig build tools    # build the WASM tools
 zig build test     # run the test suite
 ./zig-out/bin/clanker init   # create config.local.json + state/
+./zig-out/bin/clanker gate   # run the full deterministic gate (build/test/tools/fmt/lint)
 ```
 
 Set the API key env var for your chosen provider (see [config.json](config.json)), then:
@@ -35,7 +36,7 @@ clanker loads **[config.json](config.json)** (committed example) and merges **`c
 | `instance` | This agent's `name` and `id` |
 | `peers` | Other instances (`name` + `url`) for notify / phonebook |
 | `notify` | Peer notification topic / enable |
-| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`) |
+| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `autolearn`, `subagents`) |
 
 Provider `kind` is either `openai_compat` or `anthropic`. See the full field list and HTTP/CLI reference in [docs/README.md](docs/README.md#configuration).
 

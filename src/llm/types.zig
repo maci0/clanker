@@ -26,9 +26,18 @@ pub const ToolCall = struct {
     arguments: []const u8,
 };
 
+/// A multimodal image part: base64 payload + MIME type.
+pub const ImagePart = struct {
+    mime: []const u8,
+    b64: []const u8,
+};
+
 pub const Message = struct {
     role: Role,
     content: ?[]const u8 = null,
+    /// Multimodal images attached to this message (OpenAI-compat image_url
+    /// blocks). When non-empty, `content` is the accompanying text.
+    images: ?[]ImagePart = null,
     /// Present on assistant messages that requested tools.
     tool_calls: ?[]const ToolCall = null,
     /// Present on tool messages; links to the tool_call_id of a call.

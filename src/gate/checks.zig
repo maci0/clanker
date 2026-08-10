@@ -79,7 +79,9 @@ pub fn formatFiles(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_
 
 /// Source-hygiene scan of exactly the files changed by a proposal.
 pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_files: []const []const u8) !GateResult {
-    const forbidden = [_][]const u8{ "TODO", "FIXME" };
+    // Split so this file does not match its own scan: spelled whole, the
+    // needles make lintGate fail on checks.zig every single run.
+    const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME" };
     var hits: usize = 0;
     for (changed_files) |f| {
         if (!std.mem.endsWith(u8, f, ".zig")) continue;

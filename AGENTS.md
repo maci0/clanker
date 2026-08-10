@@ -7,7 +7,7 @@ through a gated loop. Follow these conventions when changing this codebase.
 ## Build & test
 
 - `zig build` — build the `clanker` harness (native, x86_64-linux-musl).
-- `zig build tools` — compile `tool-src/zig/*.zig` to `zig-out/tools/*.wasm`.
+- `zig build tools` — compile `tools/zig/*.zig` to `zig-out/tools/*.wasm`.
 - `zig build test` — run unit + integration tests. All tests must pass before
   any change is accepted. Tests live in `test` blocks inside the source files;
   new files must be referenced from the `comptime` block in `src/main.zig`.
@@ -25,15 +25,22 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 - `src/llm/` — provider adapters (openai_compat, anthropic) + HTTP client.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
-- `src/agent/` — the agent loop, system prompt assembly, session store.
+- `src/agent/` — the agent loop, system prompt assembly, session store,
+  execution graphs, sub-agents, autolearn.
+- `src/mcp/`, `src/peers/`, `src/patch/`, `src/util/` — MCP server, peer
+  notify/phonebook, patch application, logging and dotenv.
+- Every `.zig` file lives under a subsystem directory; only `main.zig`,
+  `cli.zig`, and `config.zig` sit directly in `src/`. A new module with tests
+  must be added to the `comptime` block in `src/main.zig` or its tests never
+  run.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:
   clanker cannot modify `src/improve/`, `src/evals/`, `src/tools/builder.zig`,
-  or `eval-tasks/` in a single pass (anti-cheat boundary).
-- `tool-src/zig/` — WASM tool sources (Zig); `tool-src/ts/` — AssemblyScript
-  sources; `tools.d/` — descriptors; `tool-bin/` — committed AS build output
-  (built via `npm run build` in `tool-src/ts/`; guest ABI: exports
+  or `evals/` in a single pass (anti-cheat boundary).
+- `tools/zig/` — WASM tool sources (Zig); `tools/ts/` — AssemblyScript
+  sources; `tools/manifests/` — descriptors; `tools/bin/` — committed AS build output
+  (built via `npm run build` in `tools/ts/`; guest ABI: exports
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
   output (`zig build tools`), gitignored. Prefer implementing functionality as
   WASM tools.
@@ -42,10 +49,11 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 Guest modules export `scratch(need) -> u32`, `host_arena() -> u32`,
 `run(ptr, len) -> u64` (packed `(out_ptr << 32) | out_len`), and import the
-`env.ck_*` host functions declared in `tools-src/lib.zig`.
+`env.ck_*` host functions declared in `tools/zig/lib.zig`.
 
 ## Self-improvement loop
 
 Every promoted change must pass: `zig build`, `zig build test`,
 `zig build tools`, `zig fmt --check` (auto-formatted), and the source lint.
-Promoted changes are committed as `clanker: <summary> [imp-<id>]`.
+Promoted changes are committed as `clanker: <summary> [imp-<id>]`. Run the
+whole gate manually with `clanker gate`.

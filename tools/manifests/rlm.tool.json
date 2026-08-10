@@ -1,0 +1,8 @@
+{
+  "name": "rlm",
+  "description": "Recursive Language Model: recursively call a sub-LM over a portion of the input (arXiv:2512.24601). Pass an instruction + a chunk of text; a sub-agent processes it and may recurse with higher depth for sub-portions. Use to process inputs that exceed the context window, or to analyze long documents by chunking.",
+  "wasm": "zig-out/tools/rlm.wasm",
+  "input_schema": { "type": "object", "properties": { "instruction": { "type": "string" }, "text": { "type": "string" }, "depth": { "type": "integer" } }, "required": ["instruction", "text"] },
+  "fs_prefixes": [],
+  "network_allow": []
+}

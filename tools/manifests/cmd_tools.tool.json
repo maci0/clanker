@@ -3,6 +3,6 @@
   "description": "list registered tools",
   "wasm": "zig-out/tools/cmd_tools.wasm",
   "input_schema": { "type": "object", "properties": { "args": { "type": "string" } } },
-  "fs_prefixes": ["tools.d/"],
+  "fs_prefixes": ["tools/manifests/"],
   "internal": true
 }

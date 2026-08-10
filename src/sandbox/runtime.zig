@@ -6,6 +6,9 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const protocol = @import("protocol.zig");
 const host = @import("host.zig");
+const config_mod = @import("../config.zig");
+const chatrooms_mod = @import("../peers/chatrooms.zig");
+const token_stats_mod = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
 
 /// Deterministic instruction budget per tool call (OutOfFuel trap).
@@ -35,8 +38,11 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_getenv", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckGetenv);
     try lk.defineFuncCtx("env", "ck_exec", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckExec);
     try lk.defineFuncCtx("env", "ck_std_api", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckStdApi);
+    try lk.defineFuncCtx("env", "ck_subagent", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckSubagent);
     try lk.defineFuncCtx("env", "ck_docker", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckDocker);
     try lk.defineFuncCtx("env", "ck_llm", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlm);
+    try lk.defineFuncCtx("env", "ck_chat", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckChat);
+    try lk.defineFuncCtx("env", "ck_stats", h, fn (*zwasm.Caller) u32, &host.ckStats);
     try lk.defineFuncCtx("env", "ck_config", h, fn (*zwasm.Caller) u32, &host.ckConfig);
     try lk.defineFuncCtx("env", "ck_result", h, fn (*zwasm.Caller) u64, &host.ckResult);
 }
@@ -203,6 +209,110 @@ test "zwasm executes on a worker thread" {
     try std.testing.expectEqual(@as(?i32, 42), w.result);
 }
 
+test "chat wasm tool executes (send + history via ck_chat)" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A minimal config: instance name, chatrooms on, one subscribed room.
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .state_dir = "",
+        .state_base_dir = tmp.dir,
+        .config_json = "{\"op\":\"send\"}",
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const out = try mod.executeTool("{\"room\":\"dev\",\"text\":\"hello from wasm\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+
+    // The message must have landed in the (isolated) chatroom log.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const hist = try chatrooms_mod.readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 10);
+    try std.testing.expectEqual(@as(usize, 1), hist.len);
+    try std.testing.expectEqualStrings("hello from wasm", hist[0].text);
+    try std.testing.expectEqualStrings("test-clanker", hist[0].from);
+}
+
+test "model_stats wasm tool executes (ck_stats host fn)" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.modules.token_stats = true;
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .state_dir = "",
+        .state_base_dir = tmp.dir,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/stats.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const out = try mod.executeTool("{}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"stats\":[]") != null);
+
+    // Seed the log and check aggregation flows through the tool.
+    token_stats_mod.append(tmp.dir, io, std.testing.allocator, std.testing.allocator, "", .{
+        .ts = 1,
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 100,
+        .completion_tokens = 20,
+        .total_tokens = 120,
+        .cache_hit = 90,
+        .cache_miss = 10,
+        .cost = 0.001,
+        .duration_ms = 1000,
+    });
+    const out2 = try mod.executeTool("{}");
+    defer std.testing.allocator.free(out2);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "\"calls\":1") != null);
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
@@ -211,7 +321,7 @@ test "assemblyscript calc_ts tool executes" {
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tool-bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     var sb = host.Sandbox{

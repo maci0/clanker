@@ -2,8 +2,9 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
-const autolearn = @import("autolearn.zig");
+const autolearn = @import("agent/autolearn.zig");
 const host = @import("sandbox/host.zig");
+const vertex_token = @import("llm/vertex_token.zig");
 const config = @import("config.zig");
 
 // Zig 0.16 only runs test blocks in the root file; reference every module
@@ -23,7 +24,8 @@ comptime {
     _ = @import("agent/session.zig");
     _ = @import("agent/graph.zig");
     _ = @import("util/dotenv.zig");
-    _ = @import("autolearn.zig");
+    _ = @import("util/atomic_write.zig");
+    _ = @import("agent/autolearn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
@@ -32,6 +34,11 @@ comptime {
     _ = @import("patch/apply.zig");
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
+    _ = @import("llm/gcp_jwt.zig");
+    _ = @import("llm/vertex_token.zig");
+    _ = @import("peers/chatrooms.zig");
+    _ = @import("stats/tokens.zig");
+    _ = @import("cli.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),
@@ -60,6 +67,11 @@ fn resolveZigLibDir(io: std.Io, gpa: std.mem.Allocator) void {
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     resolveZigLibDir(init.io, gpa);
+    // Both live for the whole process, but freeing them keeps the debug
+    // allocator's leak report meaningful: a real leak should not hide behind a
+    // known one.
+    defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
+    defer vertex_token.deinit(gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
     // (existing real env vars always win). Gated by the modules.dotenv flag.

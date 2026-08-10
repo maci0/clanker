@@ -1,4 +1,4 @@
-# Agent prompt: Zig 0.16 changelog conformance review (zdtd)
+# Agent prompt: Zig 0.16 changelog conformance review (clanker)
 
 Your goal is to find code that drifted from the Zig 0.16.0 release notes:
 removed APIs (absent by construction, spot-check), deprecated-but-present
@@ -11,50 +11,47 @@ Copy everything below the line into a fresh agent session (or `@` this file).
 
 ## Role
 
-You are reviewing and optionally fixing **Zig code** in **zdtd**
-(`/home/maci/Desktop/7dtd/zdtd`): a clean-room Zig 0.16 dedicated server for the
-stock 7DTD client wire.
+You are reviewing and optionally fixing **Zig code** in **clanker**
+(`/home/maci/Desktop/clanker`): a self-improving AI agent harness that runs
+its tools as sandboxed WebAssembly modules via zwasm.
 
 Ground truth is the
 [**Zig 0.16.0 release notes**](https://ziglang.org/download/0.16.0/release-notes.html),
 sections **Language Changes**, **Standard Library**, **Build System**. Where the
 changelog gives an upgrade guide (for example
-`std.time.Instant -> std.Io.Timestamp`), zdtd code must already follow the
+`std.time.Instant -> std.Io.Timestamp`), clanker code must already follow the
 right-hand side. Cite the changelog subsection per finding.
 
 This is **not** the general idiom review (`zig-idiomatic-review.md`), **not**
 the abstraction lifecycle review (`abstractions-review.md`), **not** the
-SIMD pass (`simd-review.md`), **not** the language best-practices review
-(`zig-best-practices-review.md`), **not** the ECS/SoA state-ownership review
-(`ecs-soa-review.md`), and **not** the hardcoded-data audit
-(`hardcoded-data-review.md`). Focus only on 0.16 conformance: API names,
-interface shape, and removed/deprecated surface. Style and hot-path rules from
-AGENTS.md still apply where they interact (tick path, no em dashes).
+WASM-vs-native placement review (`wasm-review.md`), and **not** the language
+best-practices review (`zig-best-practices-review.md`). Focus only on 0.16
+conformance: API names, interface shape, and removed/deprecated surface.
+Style and hot-path rules from AGENTS.md still apply where they interact
+(streaming-path memory, no em dashes).
 
 ### Key framing: what can actually be wrong
 
-zdtd pins Zig 0.16 and `make check` is green, so genuinely **removed** APIs
+clanker pins Zig 0.16 and `zig build` is green, so genuinely **removed** APIs
 cannot exist in the tree. The review hunts:
 
 1. **Deprecated-but-present** APIs the changelog flags (`@intFromFloat`,
    `std.meta.Int`, `std.mem.indexOf*` aliases, `@cImport`).
 2. **0.15-era idioms that still compile** but fight the 0.16 interface:
-   medium-level `std.posix` calls outside the sanctioned residual table,
+   raw `std.posix` calls outside the sanctioned residual list (section D),
    managed-style containers, time/thread patterns that bypass the `Io` model.
 3. **Missed 0.16 opportunities** in touched or new code: `Io.Reader` /
-   `Io.Writer.fixed`, unmanaged containers, `std.testing.io`, `process.Init`
-   args, `Io.Dir.createFileAtomic`.
-4. **Drift from the documented residuals**: every `std.posix` / `posix.system`
-   call in application code must be listed in `docs/STD_ABSTRACTIONS.md`
-   (Residual thin posix table). Anything else is a finding.
+   `Io.Writer.fixed`, unmanaged containers, `process.Init` args,
+   `Io.Dir.createFileAtomic`.
+4. **Drift from the documented residuals** (section D): every `std.posix`
+   call in application code is either in that list or a finding.
 
 ## Read first
 
 | Doc | Why |
 |---|---|
 | [Zig 0.16.0 release notes](https://ziglang.org/download/0.16.0/release-notes.html) | Ground truth: upgrade guides per change |
-| `AGENTS.md` (Zig style, critical rules, checklist) | House style and tick-path rules |
-| `docs/STD_ABSTRACTIONS.md` | Sanctioned residual thin posix + why clock/accept stay low |
+| `AGENTS.md` (Zig style, critical rules) | House style |
 | Touched source files | Actual code under review |
 
 ## Non-negotiable constraints
@@ -62,26 +59,28 @@ cannot exist in the tree. The review hunts:
 - **Zig 0.16+** only. No pre-0.16 shims, no compat wrappers that exist solely
   to hide a 0.15 name.
 - **No em dashes. No AI attribution** in commits, docs, comments, or PRs.
-- **Keep `make check` / `zig build test` green.**
+- **Keep `zig build && zig build test` green.**
 - **Minimal diffs.** A rename is a rename; do not refactor surrounding code.
-- **Do not change wire or sim semantics.** `@intFromFloat` -> `@trunc`/
-  `@floor` keeps the same conversion and the same deliberate trap on
-  NaN/inf/huge (that trap is wire safety, keep it).
-- **Tick path stays cheap.** No new `std.Io.Threaded` per call (its `init`
-  installs SIGIO/SIGPIPE handlers, `Io/Threaded.zig:1652`).
-- **Do not touch the documented residual posix** (`docs/STD_ABSTRACTIONS.md`):
-  `posix.setsockopt` REUSEADDR/V6ONLY, `posix.poll` + `accept4`, `posix.read`/
-  `system.write`/`system.close`, `posix.system.clock_gettime`/`nanosleep`.
-  The changelog's "posix and os.windows removals" section sanctions exactly
-  two directions: higher (`std.Io`) or lower (`std.posix.system`). zdtd's
-  residuals are the low direction, each justified.
+- **Do not change agent/LLM/tool-call semantics.** `@intFromFloat` ->
+  `@trunc`/`@floor` keeps the same conversion and the same deliberate trap on
+  NaN/inf/huge values, which matters wherever a tool-arg float is coerced to
+  an int (`src/config.zig`, `src/agent/loop.zig`): keep that trap, don't
+  paper over it with a saturating cast.
+- **Streaming/loop paths stay cheap.** No new `std.Io.Threaded` per call
+  (its `init` installs signal handlers) inside `Agent.on_token` or the agent
+  loop body.
+- **Do not touch the documented residual posix** (section D) without a real
+  0.16-conformance reason. The changelog's "posix and os.windows removals"
+  section sanctions exactly two directions: higher (`std.Io`) or lower
+  (`std.posix`/`std.posix.system`). clanker's residuals are the low
+  direction, each with a one-line reason.
 
 ## Scope modes (user may pick one)
 
 | Mode | Do |
 |---|---|
-| **Review only** | Findings + `../reviews/ZIG_0_16_REVIEW.md`. No code changes. |
-| **Fix** | Review + apply the rename/migration fixes; `make check` green. |
+| **Review only** | Findings + `docs/reviews/ZIG_0_16_REVIEW.md`. No code changes. |
+| **Fix** | Review + apply the rename/migration fixes; `zig build && zig build test` green. |
 
 Default if unspecified: **review only**, all of `src/`.
 
@@ -94,39 +93,33 @@ Default if unspecified: **review only**, all of `src/`.
 | `@Type` replaced with `@Int`/`@Enum`/`@Struct`/`@Union`/`@Pointer`/`@Fn`/`@Tuple`/`@EnumLiteral` | No `@Type(` anywhere; `std.meta.Int` -> `@Int` (same args) |
 | `@cImport` deprecated (moves to build system) | No `@cImport` in src |
 | `@intFromFloat` deprecated ("redundant with `@trunc`") | `@intFromFloat(f)` -> `@trunc(f)`; `@intFromFloat(@floor(v))` -> `@floor(v)` with int result type |
-| Small ints coerce to floats (`u24` -> `f32`, not `u25`) | No needless `@floatFromInt` under the precision limit |
+| Small ints coerce to floats (e.g. `u24` -> `f32`, not `u25`) | No needless `@floatFromInt` under the precision limit |
 | switch prong captures may no longer all be discarded | Compiler-enforced; verify no all-`_` captures remain |
-| Packed unions: no pointers; explicit backing ints; extern contexts need explicit tag/backing | Compiler-enforced; spot-check wire `packed struct`/`union` for `usize`-style pointer fields |
-| No runtime vector indexes; no in-memory array/vector coercion | Compiler-enforced; spot-check SIMD code |
+| No runtime vector indexes; no in-memory array/vector coercion | Compiler-enforced; spot-check any SIMD-shaped code (none expected in clanker today) |
 
 ### B. Time (changelog "Time")
 
 | Upgrade guide | Check |
 |---|---|
-| `std.time.Instant` -> `std.Io.Timestamp` | Absent (removed) |
+| `std.time.Instant` -> `std.Io.Timestamp` | Absent (removed); clanker already uses `std.Io.Timestamp.now(io, .awake\|.real)` throughout `src/agent/loop.zig`, `src/cli.zig` |
 | `std.time.Timer` -> `std.Io.Timestamp` | Absent (removed) |
 | `std.time.timestamp` -> `std.Io.Timestamp.now` | Absent (removed) |
-| `Clock.resolution` added | Not needed by zdtd; do not add |
 
-`util/clock.zig` is the deliberate Io-free leaf (vDSO `posix.system.clock_gettime`
-per `docs/STD_ABSTRACTIONS.md`). This is correct; the changelog removed the
-middle layer and sanctions `posix.system`. Do not flag, and do not "fix" by
-constructing `Io.Threaded` per call. `Io.Threaded.init_single_threaded` exists
-as a comptime-const Io (the release notes' own "no Io handy" workaround) but is
-a single-thread fallback global; `clock.zig` stays on `posix.system`.
+No deliberate Io-free clock leaf exists in clanker the way a low-level game
+loop might need one; all timing goes through `std.Io.Timestamp`. If you find
+a raw `std.posix.system.clock_gettime` or similar, it's a finding, not a
+sanctioned residual (unlike section D's list).
 
 ### C. I/O as an interface (changelog "I/O as an Interface", File System, Networking, Process)
 
 | Upgrade guide | Check |
 |---|---|
-| Every fs/net/process API takes `io` | `io_fs` calls, `std.Io.Dir`/`File` methods, `litenet` use `io` params |
-| `std.io` -> `std.Io`; `GenericReader`/`AnyReader` -> `Io.Reader`; `FixedBufferStream` -> `Io.Reader.fixed(buf)` / `Io.Writer.fixed(buf)` | Absent (removed); new code uses `Io.Reader`/`Io.Writer` fixed variants (webui HTTP path already does) |
-| `std.leb.readUleb128`/`readIleb128` -> `Io.Reader.takeLeb128` | Any `std.leb` read sites migrate |
-| `Dir.atomicFile(...)` -> `Dir.createFileAtomic(io, path, .{ .replace = true })`; writer via `file.writer(io, &buf)`; `renameIntoPlace()` -> `replace(io)` | `io_fs` atomic-write path |
-| `process.Child.init`+`spawn` -> `process.spawn(io, .{...})`; `Child.run` -> `process.run(allocator, io, .{...})`; `execv` -> `process.replace(io, .{...})` | Any child-process use |
+| Every fs/net/process API takes `io` | `std.Io.Dir`/`File` methods, `std.Io.net.IpAddress.listen` (`cli.zig` `cmdServe`) take `io` params |
+| `std.io` -> `std.Io`; `GenericReader`/`AnyReader` -> `Io.Reader`; `FixedBufferStream` -> `Io.Reader.fixed(buf)` / `Io.Writer.fixed(buf)` | Absent (removed); clanker already uses `std.Io.Writer.fixed`/`.Allocating` (JSON building in `cli.zig`, `webui.zig`) |
+| `Dir.atomicFile(...)` -> `Dir.createFileAtomic(io, path, .{ .replace = true })` | Any atomic-write path (session/history/staging writes) |
+| `process.Child.init`+`spawn` -> `process.spawn(io, .{...})`; `Child.run` -> `process.run(allocator, io, .{...})` | The gate checks (`src/gate/checks.zig`) and `ck_exec` (`src/sandbox/host.zig`) shell out; verify they use the 0.16 process API, not a removed `Child.init`/`.spawn` pair |
 | `getCwd`/`getCwdAlloc` -> `currentPath(io, buf)`/`currentPathAlloc(io, allocator)` | Absent or migrated |
-| `File.Stat.atime` now `?i128`-style optional; `setTimestamps` takes `.{ .access_timestamp, .modify_timestamp }` | Any stat/timestamp code |
-| Added: `Io.Dir.walkSelectively`, `readFileAlloc`, `readToEndAlloc` | Optional; do not add unless needed |
+| Added: `Io.Dir.readFileAlloc`, `readToEndAlloc` | Already used (`Registry.load`, tool wasm loading); fine, this is the intended 0.16 shape |
 
 ### D. posix removals (changelog "posix and os.windows removals")
 
@@ -135,82 +128,95 @@ medium-level abstraction and have thus been removed. You must now choose a
 direction: **Go higher: use `std.Io`** or **Go lower: use `std.posix.system`
 directly**. More removals are planned."
 
-- Every `std.posix.X` call in application code is either (a) in the residual
-  table of `docs/STD_ABSTRACTIONS.md`, or (b) a finding: prefer `std.Io`, or
-  move to `posix.system` with a documented reason.
-- `Io.net.Server.accept` maps EAGAIN to `errnoBug` (debug panic,
-  `Io/Threaded.zig:12467`), so the documented `poll(0)` + `accept4` stays.
-- No new `std.posix.open/read/write` loops for ordinary files.
+clanker's residual (re-verify with the recipe below, don't trust this list
+blindly: it rots):
+
+| Site (re-verify line numbers) | Call | Why it's residual, not a bug |
+|---|---|---|
+| `src/cli.zig` (REPL stdin read) | `std.posix.read(stdin_file.handle, &tmp)` | Needs "whatever is available right now" TTY semantics; documented inline in the surrounding comment |
+| `src/cli.zig` (HTTP server accept/read loops, `writeAllFd`) | `std.posix.read`, raw `fd_t` | Minimal hand-rolled HTTP server; below the request/response abstraction the rest of the codebase uses |
+| `src/sandbox/host.zig` (`ck_http`-adjacent socket read) | `std.posix.read` | Same raw-socket-pump shape as the HTTP server |
+| `src/llm/mock_server.zig` | `std.posix.read`, raw `fd_t` writer | Test-only mock server mirroring the real one's shape |
+| `src/main.zig` | `std.posix.setrlimit(.STACK, ...)` | No `std.Io` equivalent for process rlimits; correct "go lower" case |
+
+- Every `std.posix.X` call in application code is either (a) in the table
+  above, or (b) a finding: prefer `std.Io`, or justify a new residual with a
+  one-line reason matching the table's style.
+- No new `std.posix.open/read/write` loops for ordinary files where
+  `std.Io.Dir`/`File` already covers the job.
 
 ### E. Containers and allocators (changelog "Migration to Unmanaged Containers", allocator entries)
 
 | Change | Check |
 |---|---|
-| `ArrayHashMap`/`AutoArrayHashMap`/`StringArrayHashMap` removed -> `array_hash_map.Custom`/`Auto`/`String` | Absent or migrated |
-| `PriorityQueue`/`PriorityDequeue` no longer hold an allocator | Not used |
-| `ArrayList` unmanaged: `.empty`, methods take `allocator` | No managed-style `ArrayList(...).init` with allocator field |
+| `ArrayHashMap`/`AutoArrayHashMap`/`StringArrayHashMap` removed -> `array_hash_map.Custom`/`Auto`/`String` | clanker already uses `std.StringArrayHashMapUnmanaged` throughout (`config.zig`, `registry.zig`, `autolearn.zig`, `agent/loop.zig`); this is the correct 0.16 shape, do not flag it |
+| `ArrayList` unmanaged: `.empty`, methods take `allocator` | No managed-style `ArrayList(...).init(allocator)`; a scan at review time found none (re-verify) |
 | `heap.ThreadSafeAllocator` removed | Absent |
-| `heap.ArenaAllocator` now thread-safe and lock-free | Fine to use at init/load, never on tick |
+| `heap.ArenaAllocator` now thread-safe and lock-free | Fine to use per-run (`Agent.arena`), never grown unbounded on the streaming path |
 
 ### F. Threading (changelog "Thread.Pool Removed")
 
-- `std.Thread.Pool` and `spawnWg` are **removed** -> `std.Io.async` /
-  `std.Io.Group.async` for fire-and-forget work. zdtd parallelism stays on the
-  project pool `util/parallel.zig`; verify it does not reference `Thread.Pool`.
-- When Io-based concurrency is used, `Thread.Mutex`/`Thread.Condition`/
-  `Thread.ResetEvent` must be `Io.Mutex`/`Io.Condition`/`Io.Event`.
+- `std.Thread.Pool` and `spawnWg` are **removed**. clanker's parallelism is
+  ad hoc `std.Thread.spawn` scoped to one tool-call batch (`executeCalls`,
+  `src/agent/loop.zig`) and the REPL/`run` spinner thread (`src/cli.zig`);
+  neither used `Thread.Pool`, so there's nothing to migrate, but verify no
+  new code reaches for it.
+- If Io-based concurrency is introduced, `Thread.Mutex`/`Thread.Condition`/
+  `Thread.ResetEvent` must be `Io.Mutex`/`Io.Condition`/`Io.Event` instead.
 
 ### G. Process, env, args (changelog "Juicy Main", "Environment Variables and Process Arguments Become Non-Global")
 
-- `main` takes `std.process.Init` or `std.process.Init.Minimal` (AGENTS: zdtd
-  uses `Minimal`); argv via `init.args`, env via `init.environ` /
-  `init.environ_map`. No `std.os.environ` global reads.
-- No bare-arg `main()` if the process needs args/env.
+- `main` takes `std.process.Init`; clanker's `src/main.zig` already does
+  this (`argv` via `init.args`, env via `init.environ_map`, passed through to
+  `cli.run`). No `std.os.environ` global reads should appear anywhere.
+- No bare-arg `main()`.
 
 ### H. `std.mem` naming (changelog "mem: introduce cut functions; rename 'index of' to 'find'")
 
 - `indexOf*` -> `find*` family (`find`, `findPos`, `findScalar`, `findAny`,
-  `findNone`, ...). The `indexOf*` names remain as aliases (`mem.zig:1414`),
-  so they compile; new/touched code must use `find*`.
+  `findNone`, ...). The `indexOf*` names remain as aliases, so they compile;
+  new/touched code should prefer `find*`. clanker's current code uses
+  `std.mem.indexOfScalar`/`indexOf` in several places (`src/cli.zig`,
+  `src/mcp/server.zig`, `src/gate/checks.zig`, `src/util/dotenv.zig`,
+  `src/main.zig`): these all still work, so this is a **P2/P3 rename
+  opportunity, not urgent**, unless the user asks for a full sweep.
 - New `cut`/`cutPrefix`/`cutSuffix`/`cutScalar`/`cutLast`/`cutLastScalar` are
-  the idiom for split-at-substring; prefer them in new code.
+  the idiom for split-at-substring; prefer them in new code (e.g. the next
+  time something manually does `indexOf` + slicing to split a string).
 
 ### I. Formatting (changelog "Replace {D} format specifier with Io.Duration format method")
 
 - `{D}` is removed. Duration formatting is `{f}` with
-  `std.Io.Duration{ .nanoseconds = ns }`.
+  `std.Io.Duration{ .nanoseconds = ns }`. Check any place that formats
+  elapsed time (the REPL/CLI stats footer currently hand-formats `ms`/`tok/s`
+  with `{d}`/`{d:.1}`, which is fine and not the same thing as `{D}`; only
+  flag an actual `{D}` specifier if one turns up).
 
 ### J. Build system (changelog "Build System")
 
-- Dependencies fetch into project-local `zig-pkg/` (zdtd already does).
-- `zig build --fork=[path]` overrides are available for local package forks.
+- Dependencies fetch into project-local `zig-pkg/` (clanker already does).
 - `build.zig.zon` requires `fingerprint` and enum-literal `name` (verify).
-- Unit test timeouts, `--error-style`, `--multiline-errors` are opt-in; do not
-  add unless useful.
+- Unit test timeouts, `--error-style`, `--multiline-errors` are opt-in; do
+  not add unless useful.
 
-## Known suspects (pre-scanned, start here; re-verify line numbers)
-
-Drift confirmed at scan time (all compile, all deprecated/renamed per the
-changelog). Line numbers rot; re-verify each pin before citing or fixing:
+## Known suspects (verified at review-authoring time; re-verify, line numbers rot)
 
 ```text
-src/apm/metrics.zig:153          @intFromFloat(@ceil(...))        -> @ceil(...) int result
-src/wire/packages.zig:2646       @intFromFloat(bd)                -> @trunc(bd)
-src/world/sleepers.zig:70-71     @intFromFloat(@floor(x/z))       -> @floor(x/z) int result
-src/ecs/interest.zig:53          std.meta.Int(.unsigned, lanes)   -> @Int(.unsigned, lanes)
-src/apm/report.zig:143-159       std.mem.indexOf (tests)          -> std.mem.find
+src/config.zig            jsonInt(): @intFromFloat(f)                    -> @trunc(f), same NaN/inf trap
+src/agent/loop.zig         float tool-arg formatting: @intFromFloat(f)    -> @trunc(f)/@floor(f), same trap
 ```
 
-Comments to sweep when fixing: `src/wire/packages.zig:685` and
-`src/wire/stock_entity.zig:232` describe the deliberate NaN trap of
-`@intFromFloat`; the semantics survive the rename (the new conversions still
-trap), so update the comment wording, keep the behavior.
+Both confirmed present via `rg -n '@intFromFloat' src --type zig` at the
+time this prompt was written. Re-run the search yourself before fixing : 
+the codebase self-modifies (`clanker improve-self`) and these may have
+already moved, or new hits may have appeared elsewhere.
 
-Already clean (spot-check only, do not re-search for hours): no `@Type(`,
-no `@cImport`, no `std.time.Instant/Timer/timestamp`, no `Thread.Pool` /
-`spawnWg`, no `ArrayHashMap*`, no `getAppDataDir`, no `process.getCwd`, no
-`GenericReader`/`AnyReader`/`FixedBufferStream`, no `std.io` old namespace, no
-`Thread.Mutex/Condition` in code (one doc comment, see recipe), no `{D}` format.
+Already clean at that same scan (spot-check only, do not re-search for
+hours): no `@Type(`, no `@cImport`, no `std.time.Instant/Timer/timestamp`,
+no `Thread.Pool`/`spawnWg`, no `ArrayHashMap*` (unmanaged variants used
+throughout), no managed `ArrayList(...).init(`, no `GenericReader`/
+`AnyReader`/`FixedBufferStream`, no `{D}` format, no `Thread.Mutex`/
+`Condition`/`ResetEvent` in code.
 
 ## Search recipes (run early)
 
@@ -221,71 +227,68 @@ rg -n 'std\.meta\.Int|@Type\(' src --type zig
 rg -n 'std\.mem\.indexOf|\.indexOf\(' src --type zig
 rg -n '@cImport' src --type zig
 
-# Removed (code hits must be zero; proves the audit ran. One sanctioned hit:
-# a util/parallel.zig doc comment on IoMutex naming the old Thread.Mutex)
-rg -n 'std\.time\.(Instant|Timer)|Thread\.Pool|spawnWg|ArrayHashMap|getAppDataDir|GenericReader|AnyReader|FixedBufferStream|std\.io\.|Thread\.(Mutex|Condition|ResetEvent)|\{D\}' src --type zig
+# Removed (hits should be zero; proves the audit ran)
+rg -n 'std\.time\.(Instant|Timer)|Thread\.Pool|spawnWg|ArrayHashMap\(|GenericReader|AnyReader|FixedBufferStream|std\.io\.|Thread\.(Mutex|Condition|ResetEvent)|\{D\}' src --type zig
 
-# Residual-posix drift (every hit must be in docs/STD_ABSTRACTIONS.md)
-rg -n 'posix\.(system\.)?(open|read|write|close|poll|setsockopt|clock_gettime|nanosleep|accept4|socket|bind|listen|fcntl|stat)' src --type zig
+# Residual-posix drift (every hit must match the table in section D)
+rg -n 'std\.posix\.' src --type zig
 
 # Io-conformance spot checks
 rg -n '\.atomicFile\(|renameIntoPlace|process\.(Child|execv)|getCwd' src --type zig
-rg -n 'ArrayList\(' src --type zig   # .empty + allocator-arg style only
+rg -n 'ArrayList\([^)]*\)\.init\(' src --type zig   # should be empty: .empty + allocator-arg style only
 ```
 
 Classify each hit: **deprecated rename** (fix, semantics unchanged) /
-**residual, sanctioned** (in STD_ABSTRACTIONS.md; leave) / **0.15 idiom that
-still compiles** (migrate to the 0.16 shape) / **removed** (should not exist;
-if found, the pin or the build is wrong).
+**residual, sanctioned** (matches section D; leave) / **0.15 idiom that
+still compiles** (migrate to the 0.16 shape) / **removed** (should not
+exist; if found, the pin or the build is wrong).
 
 ## Finding severity
 
 | Sev | Meaning | Examples |
 |---|---|---|
-| **P0** | Fights the 0.16 interface where it matters (hot path, wire) | New `posix` call on tick path outside residual table; alloc per call |
-| **P1** | Deprecated API on a core path | `std.meta.Int` in interest; `@intFromFloat` in wire/stream encode |
-| **P2** | Deprecated API on init/log/test paths or pure rename drift | `std.mem.indexOf` in tests; `@intFromFloat` in sleepers |
-| **P3** | Nit | Comment wording left from a rename |
+| **P0** | Fights the 0.16 interface where it matters (streaming path, agent loop) | New `posix` call on the per-token path outside the section D table; alloc-per-call regression from a bad migration |
+| **P1** | Deprecated API on a core path | `std.meta.Int` in tool dispatch; `@intFromFloat` where the NaN trap matters (config parsing, tool-arg coercion) |
+| **P2** | Deprecated API on init/log/test paths or pure rename drift | `std.mem.indexOf` outside a hot path |
+| **P3** | Nit | Comment wording left from a prior rename |
 
 ## Deliverables
 
 ### Always
 
-1. **`../reviews/ZIG_0_16_REVIEW.md`** (create or update) with:
+1. **`docs/reviews/ZIG_0_16_REVIEW.md`** (create or update) with:
    - Scope (paths, mode, date) and the release-notes URL
    - Per-section tables: location (`path:line`), changelog subsection, 0.15
      form, 0.16 form, severity
    - A "residual posix" re-verification note: every call site cross-checked
-     against `docs/STD_ABSTRACTIONS.md`
-   - A "removed API audit" line: the rg for removed APIs returned nothing
-     beyond the sanctioned `src/util/parallel.zig` doc-comment mention
+     against section D's table
+   - A "removed API audit" line: confirm the removed-API rg returned nothing
    - Ordered fix plan (small PRs, one rename theme per PR)
-2. Short note in chat: top 5 findings + whether tests were run
+2. Short note in chat: top 5 findings + whether `zig build test` was run
 
 ### If fixing
 
-- Minimal patches; rename-only diffs; keep wire/sim behavior identical
-- `make check` green
-- Update `docs/STD_ABSTRACTIONS.md` only if a residual changes (it should not
-  for this pass)
+- Minimal patches; rename-only diffs; keep agent/LLM/tool-call behavior
+  identical, including the NaN/inf trap on float-to-int tool-arg coercion
+- `zig build && zig build test` green
 - Do **not** mix in general idiom cleanup
 
 ## Success criteria
 
 - [ ] Every deprecated/renamed API listed in the changelog is hunted, with a
       verdict per hit
-- [ ] Residual-posix call sites match `docs/STD_ABSTRACTIONS.md` exactly
-- [ ] Removed-API rg is provably empty apart from the sanctioned
-      `src/util/parallel.zig` doc comment
-- [ ] Wire/sim behavior unchanged; NaN-trap comments updated, not removed
-- [ ] If fixes applied: `make check` green, diffs minimal
+- [ ] Residual-posix call sites match section D's table exactly, or the
+      delta is explained
+- [ ] Removed-API rg is provably empty
+- [ ] Agent/LLM/tool-call behavior unchanged; the float-to-int trap comment
+      updated, not removed, if that code is touched
+- [ ] If fixes applied: `zig build && zig build test` green, diffs minimal
 - [ ] No em dashes / AI attribution
 
 ## Optional user addenda
 
 - "Fix all deprecated APIs found; do not touch residual posix."
-- "Review only `src/wire`, `src/ecs`, `src/util` for 0.16 drift."
+- "Review only `src/llm`, `src/sandbox`, `src/agent` for 0.16 drift."
 - "Also flag missed 0.16 opportunities in new code, not just renames."
-- "Verify `build.zig`/`build.zig.zon` against the Build System changelog
-  section."
+- "Sweep every `indexOf*` to `find*`, not just the P0/P1 cases."
 - "Produce a `zig build test` run to prove the audit did not break anything."

@@ -27,6 +27,9 @@ pub const Tool = struct {
     /// May call the model through `ck_llm`. Costs tokens, so it is opt-in per
     /// descriptor and forces the tool onto the sequential execution path.
     llm: bool = false,
+    /// Never runs on the parallel worker pool (host-shared state, e.g. the
+    /// chatroom log): each tool call waits its turn on the main thread.
+    sequential: bool = false,
     /// Free-form per-plugin settings from the descriptor's `config` object,
     /// handed to the guest verbatim via `ck_config`. The harness only reads the
     /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
@@ -34,6 +37,13 @@ pub const Tool = struct {
     config: json.Value = .{ .object = .{} },
     /// Set when this tool rewrites another tool's input or output.
     transform: ?Transform = null,
+    /// `"peers"` or `"providers"`: the harness adds those configured hosts to
+    /// `network_allow` at load, because a descriptor cannot know them.
+    network_from_config: []const u8 = "",
+    /// Commands this tool may run through `ck_exec`. Empty means the harness
+    /// default set; a non-empty list replaces it, so a tool that needs one
+    /// binary does not also get git and zig.
+    exec_allow: []const []const u8 = &.{},
 
     /// Core tools (the `cmd_*` slash commands, the web UI, the formatter) back
     /// the harness itself and stay on. A transform is hidden from the model
@@ -192,9 +202,24 @@ pub const Registry = struct {
                 else => {},
             }
         }
+        if (obj.get("network_from_config")) |nv| {
+            if (nv == .string) t.network_from_config = nv.string;
+        }
+        if (obj.get("exec_allow")) |ev| {
+            switch (ev) {
+                .array => |arr| t.exec_allow = try strArray(arena, arr),
+                else => {},
+            }
+        }
         if (obj.get("llm")) |lv| {
             switch (lv) {
                 .bool => |b| t.llm = b,
+                else => {},
+            }
+        }
+        if (obj.get("sequential")) |sv| {
+            switch (sv) {
+                .bool => |b| t.sequential = b,
                 else => {},
             }
         }

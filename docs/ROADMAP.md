@@ -2,72 +2,38 @@
 
 ## Done
 
-- **REPL/TUI** – `clanker repl` with `:help`/`:quit` and stateful sessions.
-- **Streaming** – SSE client + `Agent.on_token` hook for live token output.
-- **Web UI plugin** – internal `webui` WASM tool served at `GET /`.
-- **Token budget** – `compact_threshold_bytes` and `max_total_tokens` controls.
+- **REPL/TUI** — `clanker repl` with slash commands (`/help`, `/tools`, `/sessions`, `/graph`, `/plugins`, `/status`, `/goal`), stateful sessions, and live token streaming.
+- **Live status UX** — animated spinner + `⚙ tool` / `↳ ms` status lines cover the gap while the LLM or a tool is running, in both `clanker repl` and `clanker run` (`Agent.on_tool_call` / `on_tool_result` hooks); `clanker run` keeps stdout pipe-clean and puts status on stderr.
+- **Streaming** — SSE client with tool-call accumulation and `Agent.on_token` hook; the REPL streams tokens live.
+- **Web UI plugin** — internal `webui` WASM tool served at `GET /` by `clanker serve`; real multi-turn chat via a `session` id, and a `\x01{"type":...}` event protocol on `/api/run`'s stream for live tool status.
+- **Token budget + compaction** — `compact_threshold_bytes` and `max_total_tokens` (plus per-turn/per-session caps) in agent config; conversation compaction runs before and after turns in the REPL, one-shot runs, and the improve engine.
+- **Self-improvement gates** — `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint run on every staged change before promotion; exposed as `clanker gate` and reused by `improve-self`.
+- **Parallel tools / registry** — heterogeneous tool sources (Zig + AssemblyScript) with `clanker tools list`.
+- **Multi-instance peers** — peers in config, `clanker serve` (HTTP), `clanker notify <peer> "<msg>"`, `clanker phonebook`, agent cards at `/.well-known/agent.json`, A2A message handler.
+- **MCP server** — `clanker mcp`: stdio JSON-RPC server exposing the tool registry.
+- **Execution graphs** — every run recorded to `state/runs/`; ASCII timeline via `clanker graph [run-id]` and `/graph`.
+- **Plugins & transforms** — every tool is a WASM plugin; descriptors gate `internal`, `enabled`, `llm`, `config`, `transform`; `after`/`before` transform chains rewrite tool I/O; `/plugins` toggles them.
+- **`/goal`** — persistent structured goals steering agent runs; `clanker goal`.
+- **Autolearn** — usage aggregation from `state/autolearn.jsonl` + `state/runs/`, roadmap upsert via `clanker autolearn`.
+- **Subagents** — `subagent` WASM tool: nested agent runs on a dedicated thread with bounded iterations (`ck_subagent` host fn), gated by `modules.subagents`.
+- **RLM / reasoning** — `rlm` WASM tool (recursive sub-LM over input chunks, bounded depth) and the `reasoning` tool; traces persisted to `state/reasoning.jsonl`.
+- **Self-review tools** — `std_api` (Zig 0.16 std signature lookup via `ck_std_api`), `symbols` (declaration-site extraction), `zig_check` (per-file `ast-check`/`fmt`), `test_file` (`zig test <file>`), `history` (improve-history review), `roadmap` (planned-items reader), `learnings` (read `state/learnings.md`).
+- **Docs** — this roadmap, `README.md`, and `docs/README.md` (reference) maintained in-repo.
+- **Chatrooms** — clankers subscribe to named rooms and talk to each other: `chat_*` WASM tools, `clanker chat` CLI, `/api/chat/*` HTTP endpoints, subscription overrides, and per-run inbox injection (`modules.chatrooms`).
+- **Token usage stats** — every completion recorded to `state/token_stats.jsonl` at the client choke point; `model_stats` WASM tool, `clanker stats` table, and `GET /api/stats` aggregate per provider/model (calls, tokens, cache hit rate, tok/s, cost).
 
 ## Planned
 
-- Plugin manifest SDK for third-party tool packaging.
-- Additional evals and coverage gaps.
-- Peer-group messaging with shared todos.
-- Other genuinely unimplemented ideas as they arise.
-
-
-## Done
-
-- [x] **Self-improvement gates** — `zig build`, `zig build test`, `zig build tools`, format, and lint gates run on staged changes before promotion. (DONE: gates are enforced in `src/improve/engine.zig`.)
-- [x] **Parallel tools** — multiple tools can be defined and executed independently; the registry supports heterogeneous tool sources. (DONE: `tools list` and registry in `src/tools/registry.zig`.)
-- [x] **Multi-instance peers, notify, phonebook** — peers are defined in config, notifications are posted to `/api/notify`, and agent cards are served at `/.well-known/agent.json` with a `phonebook` command to scan peers. (DONE: see `src/cli.zig`, `src/peers/notify.zig`.)
-- [x] **Token accounting + compaction** — usage tracking and context compaction are handled in the agent loop. (DONE: session messages are compacted and token counts are reported.)
-
-## Planned
-
-- [ ] **REPL/TUI** — interactive shell and terminal UI for the agent. (Not yet implemented; `repl` currently returns `NotYetImplemented`.)
-- [ ] **Webui plugin** — browser-based interface for managing sessions and watching improvements.
-- [ ] **Plugin manifest SDK** — formalized developer SDK for building and shipping tools with a manifest-driven build.
-- [ ] **Remaining evals** — more self-evaluation tasks and example-graded evals beyond the current set.# Roadmap
-
-## Done
-
-- **REPL/TUI** — `clanker repl` command with `:help` / `:quit` and stateful sessions.
-- **Streaming** — SSE client with tool-call accumulation and `Agent.on_token` hook; REPL streams tokens live.
-- **Web UI plugin** — Internal `webui` WASM tool served at `GET /`.
-- **Token budget** — `compact_threshold_bytes` and `max_total_tokens` in agent config.
-
-## Planned
-
-- **Plugin manifest SDK** — a formal manifest format for third-party tool plugins.
-- **Remaining eval coverage** — add more eval tasks (eval-tasks/) and graded examples.
-- **Peer group messaging with shared todos** — collaborative task management between agents.
-- **Other ideas** — e.g. more advanced sandbox policies, multi-tenant deployments.
-
-## Planned tools
-
-- [x] **context7** (DONE: fetches library docs from context7.com, optional topic filter — e.g. ziglang/zig + std.http)
-- [x] **code_search** (DONE: open-source code search via Sourcegraph — grep.app's API is Vercel-blocked for non-browser clients; returns repo/path/line snippets)
-
-
-Tools that would most help clanker improve itself (implement as WASM tools in tool-src/zig/ + descriptors in tools.d/, internal:true when the agent must not see them as ordinary tools; see AGENTS.md for the ABI):
-
-- [x] **std_api** (DONE: host fn ck_std_api + tool; greps installed std for symbol signatures) — look up a Zig 0.16 std symbol (e.g. readSliceShort) by grepping the installed std source (std.Io / std.process / std.posix / std.json); return the signature + doc comment. Kills the #1 proposal failure mode (wrong Zig API usage) before the gate.
-- [x] **zig_check** (DONE: per-file `zig ast-check` / `zig fmt --check` via ck_exec zig) — per-file `zig ast-check` + `zig fmt --check` for fast self-review before proposing a patch.
-- [x] **test_file** (DONE: `zig test <file> --test-filter`; note: works for self-contained files, project files with relative imports need `zig build test`) — run `zig test <file> [--test-filter <name>]` for a single module instead of the full gate.
-- [ ] **lsp** — zls LSP client (hover/diagnostics/completions) via stdio JSON-RPC; src/lsp/client.zig slice already specified.
-- [x] **symbols** (DONE: rg declaration-site extraction for fn/const/var/struct/enum/union) — structured declaration/reference extraction (fn/const/struct) via rg patterns.
-- [x] **history** (DONE: reviews state/improvements.jsonl — status/summary/instruction) — review improve history (successes, failures, feedback tails) so clanker learns from its own past attempts.
-- [ ] **autolearn** — run the usage aggregation + roadmap upsert as a tool.
-- [ ] **model_stats** — aggregate tokens/cost/cache/tool usage from state/runs + state/autolearn.jsonl.
-- [x] **config_view** (DONE: dumps config.json + config.local.json, optional section filter) — dump the effective config (providers, models, modules, budgets).
-- [x] **roadmap** (DONE: lists planned items from docs/ROADMAP.md) — read the Planned section so tasks can pick the next item.
-- [x] **learnings** (DONE: reads state/learnings.md) — read the persisted learnings file (write_note is write-only today).
+- **Plugin manifest SDK** — a formal manifest format for third-party tool packaging and distribution.
+- **LSP integration** — `lsp` WASM tool wrapping a zls client (hover/diagnostics/completions) over stdio JSON-RPC.
+- **Shared todo lists across rooms** — collaborative task management between agents in a chatroom.
+- **Remaining eval coverage** — more `evals/` definitions and graded examples.
+- **Other ideas** — more advanced sandbox policies (fuel metering hardening, syscall-level denials), multi-tenant deployments.
 
 ## Autolearn
 
-Automatically observed from usage patterns (state/autolearn.jsonl + state/runs/). Refresh with `clanker autolearn`.
+Automatically observed from usage patterns (`state/autolearn.jsonl` + `state/runs/`). Refresh with `clanker autolearn`.
 
-- Optimize the most-used tools: git,calculator (usage tracked in state/autolearn.jsonl).
-- Fix 'git' tool errors (1 failure(s), last: )
+- Optimize the most-used tools: git, calculator (usage tracked in state/autolearn.jsonl).
+- Fix 'git' tool errors (1 failure(s), last: ).
 - Build a dedicated tool or skill for the recurring task 'Summarize the last 3 git commits' (seen 2 time(s)) — automate it so future runs are one tool call instead of a full agent loop.
-

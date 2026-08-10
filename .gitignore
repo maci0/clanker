@@ -3,9 +3,9 @@
 zig-out/
 zig-pkg/
 
-# AssemblyScript toolchain and its build output
-tool-src/ts/node_modules/
-tool-src/ts/build/
+# AssemblyScript toolchain and its build output (tools/bin/ IS committed)
+tools/ts/node_modules/
+tools/ts/build/
 
 # Runtime state (logs, history, sessions, improvements) — never commit
 state/
@@ -18,3 +18,9 @@ config.local.json
 *.swp
 *~
 .env
+
+# Local run artifacts (backups, logs, scratch output)
+*.bak
+*.log
+run.json
+chatrooms.jsonl

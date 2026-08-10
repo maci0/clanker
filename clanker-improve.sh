@@ -19,7 +19,7 @@
 #   --dry-run                 preview the proposal without promoting
 #   --skip-build              don't rebuild clanker + tools first
 #   --log FILE                append a copy of the run to FILE
-#                             (default: state/improve-<timestamp>.log)
+#                             (default: state/logs/improve-<timestamp>.log)
 #   --no-log                  don't write a log file
 #   -h, --help                show this help
 #
@@ -29,7 +29,7 @@
 #                             docs/ROADMAP.md and have clanker build it
 #
 # improve-self is a single-shot patch loop, not the agent tool loop: the model
-# sees src/, tool-src/, tests/, build.zig* and config.json, and answers with a
+# sees src/, tools/, tests/, build.zig* and config.json, and answers with a
 # patch. It has no tools and cannot read or edit anything outside that context,
 # so docs/ and AGENTS.md stay this script's (and your) job.
 #
@@ -258,15 +258,16 @@ if [ "$DRY_RUN" -eq 1 ]; then CLANKER_ARGS+=(--dry-run); fi
 info "improve-self (iters=$ITERS provider=${PROVIDER:-$(read_default_provider)} model=${MODEL:-default}$( [ "$DRY_RUN" -eq 1 ] && echo ' dry-run'))"
 info "instruction: $(printf '%s' "$INSTRUCTION" | head -c 150)$([ ${#INSTRUCTION} -gt 150 ] && echo '…')"
 
+# Logs live in their own directory: state/ already holds structured data
+# (history/, runs/, sessions/, staging/) and loose logs bury it.
+mkdir -p state/logs
 if [ "$WANT_LOG" -eq 1 ] && [ -z "$LOG_FILE" ]; then
-  mkdir -p state
-  LOG_FILE="state/improve-$(date +%Y%m%d-%H%M%S).log"
+  LOG_FILE="state/logs/improve-$(date +%Y%m%d-%H%M%S).log"
 fi
 
 RUN_LOG="$LOG_FILE"
 if [ -z "$RUN_LOG" ]; then
-  mkdir -p state
-  RUN_LOG="$(mktemp state/improve-run.XXXXXX.log)"
+  RUN_LOG="$(mktemp state/logs/improve-run.XXXXXX.log)"
   trap 'rm -f "$RUN_LOG"' EXIT
 fi
 if [ -n "$LOG_FILE" ]; then info "logging to $LOG_FILE"; fi

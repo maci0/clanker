@@ -10,7 +10,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 
-const tools_dir = "tools.d";
+const tools_dir = "tools/manifests";
 const state_path = "state/plugins.json";
 
 const Transform = struct {
@@ -87,7 +87,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return textJson(out, alloc, if (want_enabled) "enabled: " else "disabled: ", name);
 }
 
-/// Every descriptor in tools.d, merged with the disabled list in state/.
+/// Every descriptor in tools/manifests, merged with the disabled list in state/.
 fn readPlugins(alloc: std.mem.Allocator) ![]Plugin {
     const raw = try lib.fsList(tools_dir);
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});

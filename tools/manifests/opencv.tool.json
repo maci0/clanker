@@ -1,0 +1,15 @@
+{
+  "name": "opencv",
+  "description": "Analyze an image with OpenCV. ops: info (size, brightness, sharpness), edges (Canny), contours (bounding boxes), faces (Haar cascade), grayscale, resize. Input: {\"op\": \"info\", \"path\": \"docs/assets/mascot.jpg\", \"options\": {}}. Written images land in state/opencv/.",
+  "wasm": "zig-out/tools/opencv.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "op": { "type": "string", "enum": ["info", "edges", "contours", "faces", "grayscale", "resize"] },
+      "path": { "type": "string" },
+      "options": { "type": "object" }
+    },
+    "required": ["op", "path"]
+  },
+  "exec_allow": ["uv"]
+}

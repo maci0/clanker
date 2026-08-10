@@ -8,13 +8,14 @@ const config = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
+const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
 
 const protocol_version = "2024-11-05";
 const max_line = 1 << 20;
 
-pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config) !void {
+pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map) !void {
     const reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
 
@@ -46,7 +47,7 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
                 // its start, so parsing after the shift would see corrupted
                 // data (every line except the last failed to parse).
                 log.log(.debug, "mcp handling line: {s}", .{line});
-                handleLine(io, gpa, &reg, tool_defs, line) catch |err| {
+                handleLine(io, gpa, cfg, environ_map, &reg, tool_defs, line) catch |err| {
                     log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
                 };
             }
@@ -93,7 +94,7 @@ fn respondText(s: *json.Stringify, text: []const u8, is_error: bool) !void {
     try s.endArray();
 }
 
-fn handleLine(io: std.Io, gpa: std.mem.Allocator, reg: *const registry.Registry, tool_defs: []const types.ToolDef, line: []const u8) !void {
+fn handleLine(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, tool_defs: []const types.ToolDef, line: []const u8) !void {
     const req = try json.parseFromSliceLeaky(Request, gpa, line, .{ .ignore_unknown_fields = true });
     if (req.method) |m| {
         // Notifications (initialized, cancelled, ...) never get a response.
@@ -147,7 +148,7 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, reg: *const registry.Registry,
             }
             try s.endArray();
         } else if (std.mem.eql(u8, m, "tools/call")) {
-            try handleToolCall(&s, io, gpa, reg, req.params);
+            try handleToolCall(&s, io, gpa, cfg, environ_map, reg, req.params);
         } else {
             // Unknown method: a JSON-RPC response must not contain both
             // "result" and "error". Discard the half-written result object
@@ -180,7 +181,10 @@ fn writeResponse(io: std.Io, bytes: []const u8) void {
     out_w.interface.flush() catch {};
 }
 
-fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, reg: *const registry.Registry, params: ?json.Value) !void {
+fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, params: ?json.Value) !void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
     var name: []const u8 = "";
     var arg_text: []const u8 = "{}";
     var arg_buf: [256 * 1024]u8 = undefined;
@@ -213,15 +217,13 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, reg: *
     };
     defer gpa.free(wasm_bytes);
 
-    var env_map = std.process.Environ.Map.init(gpa);
-    defer env_map.deinit();
-    var sb = host.Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = ".",
-        .network_allow = tool.?.network_allow,
-        .fs_prefixes = tool.?.fs_prefixes,
-        .environ_map = &env_map,
+    // The real process environment, including anything dotenv loaded: an empty
+    // map here means every API key lookup inside a tool silently comes back
+    // missing, and the tool reports a misleading "not configured".
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    var sb = host.sandboxFor(gpa, io, arena, environ_map, cfg, tool.?, &ctx) catch {
+        try respondText(s, "sandbox policy failed", true);
+        return;
     };
 
     var mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {

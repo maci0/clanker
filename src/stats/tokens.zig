@@ -1,0 +1,316 @@
+//! Global token usage statistics, recorded at the LLM client choke point and
+//! aggregated per (provider, model).
+//!
+//! Every chat completion (agent runs, improve-engine proposals, ck_llm tool
+//! calls, subagents) is appended to `<state_dir>/token_stats.jsonl`:
+//!   {"ts":...,"provider":"kimi-k3","model":"kimi-k3","prompt_tokens":...,
+//!    "completion_tokens":...,"total_tokens":...,"cache_hit":...,
+//!    "cache_miss":...,"cost":0.001,"duration_ms":123}
+//!
+//! Aggregation groups the log by provider+model and produces one Stat per
+//! group (plus a totals row), newest usage counted exactly once.
+
+const std = @import("std");
+const log = @import("../util/log.zig");
+
+pub const stat_path = "token_stats.jsonl";
+/// Hard cap on the log so a busy harness cannot grow state without bound.
+pub const max_log_bytes = 32 << 20;
+
+pub const Record = struct {
+    ts: i64,
+    provider: []const u8,
+    model: []const u8,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    cache_hit: u64,
+    cache_miss: u64,
+    cost: f64,
+    duration_ms: u64,
+};
+
+/// Aggregated usage for one (provider, model) pair.
+pub const Stat = struct {
+    provider: []const u8,
+    model: []const u8,
+    calls: u64 = 0,
+    prompt_tokens: u64 = 0,
+    completion_tokens: u64 = 0,
+    total_tokens: u64 = 0,
+    cache_hit: u64 = 0,
+    cache_miss: u64 = 0,
+    cost: f64 = 0,
+    duration_ms: u64 = 0,
+
+    pub fn cacheHitRate(self: *const Stat) f64 {
+        const cached = self.cache_hit + self.cache_miss;
+        if (cached == 0) return 0;
+        return @as(f64, @floatFromInt(self.cache_hit)) / @as(f64, @floatFromInt(cached)) * 100.0;
+    }
+
+    pub fn tokensPerSec(self: *const Stat) f64 {
+        if (self.duration_ms == 0) return 0;
+        return @as(f64, @floatFromInt(self.total_tokens)) / (@as(f64, @floatFromInt(self.duration_ms)) / 1000.0);
+    }
+};
+
+fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
+    if (state_dir.len == 0) return stat_path;
+    return std.fmt.allocPrint(arena, "{s}/{s}", .{ state_dir, stat_path });
+}
+
+// ----------------------------------------------------------------- appending --
+
+/// Appends one usage record. Best-effort: failures are logged, never fatal —
+/// a stats write must not break a chat completion. O(1) append via a
+/// truncate-free open + seek to end (the caller holds the only writer).
+pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {
+    if (state_dir.len > 0) base.createDirPath(io, state_dir) catch return;
+    const path = subPath(arena, state_dir) catch return;
+
+    // Trim the log when it outgrows the cap (rewrites the file from 0, so the
+    // seek offset below must stay 0); otherwise append at the current size.
+    var size: u64 = 0;
+    if (base.statFile(io, path, .{})) |st| {
+        if (st.size > max_log_bytes) {
+            trimLog(base, io, gpa, arena, path) catch {};
+        } else {
+            size = st.size;
+        }
+    } else |_| {}
+
+    var line_buf: [1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&line_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.write(rec) catch return;
+    const line = line_buf[0..w.end];
+
+    const file = base.createFile(io, path, .{ .truncate = false }) catch |err| {
+        log.log(.warn, "[stats] open failed: {s}", .{@errorName(err)});
+        return;
+    };
+    defer file.close(io);
+    var wbuf: [512]u8 = undefined;
+    var fw = file.writer(io, &wbuf);
+    fw.seekToUnbuffered(size) catch return;
+    fw.interface.writeAll(line) catch return;
+    fw.interface.writeAll("\n") catch return;
+    fw.flush() catch return;
+}
+
+/// Rewrites the log keeping only the newest lines (used when it hits the cap).
+fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, path: []const u8) !void {
+    _ = arena;
+    const raw = try base.readFileAlloc(io, path, gpa, .limited(max_log_bytes));
+    defer gpa.free(raw);
+    // Keep the last 1000 lines.
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(gpa);
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |ln| {
+        if (ln.len == 0) continue;
+        try lines.append(gpa, ln);
+    }
+    const keep = if (lines.items.len > 1000) lines.items.len - 1000 else 0;
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(gpa);
+    for (lines.items[keep..]) |ln| {
+        try out.appendSlice(gpa, ln);
+        try out.append(gpa, '\n');
+    }
+    try base.writeFile(io, .{ .sub_path = path, .data = out.items });
+}
+
+// -------------------------------------------------------------- aggregation --
+
+/// Parses the whole log (arena-owned Records). Empty/missing log -> empty.
+pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Record {
+    _ = gpa;
+    const path = subPath(arena, state_dir) catch return &[_]Record{};
+    const raw = base.readFileAlloc(io, path, arena, .limited(max_log_bytes)) catch return &[_]Record{};
+    var out: std.ArrayList(Record) = .empty;
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const rec = std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+        try out.append(arena, rec);
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// Groups records by (provider, model), newest-first by total tokens.
+pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Stat {
+    const recs = try loadAll(base, io, gpa, arena, state_dir);
+    var by_key: std.StringArrayHashMapUnmanaged(Stat) = .empty;
+    for (recs) |r| {
+        const key = std.fmt.allocPrint(arena, "{s}/{s}", .{ r.provider, r.model }) catch continue;
+        const gop = try by_key.getOrPut(arena, key);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{ .provider = r.provider, .model = r.model };
+        }
+        gop.value_ptr.calls += 1;
+        gop.value_ptr.prompt_tokens += r.prompt_tokens;
+        gop.value_ptr.completion_tokens += r.completion_tokens;
+        gop.value_ptr.total_tokens += r.total_tokens;
+        gop.value_ptr.cache_hit += r.cache_hit;
+        gop.value_ptr.cache_miss += r.cache_miss;
+        gop.value_ptr.cost += r.cost;
+        gop.value_ptr.duration_ms += r.duration_ms;
+    }
+    const out = try arena.alloc(Stat, by_key.count());
+    var idx: usize = 0;
+    var it = by_key.iterator();
+    while (it.next()) |kv| {
+        out[idx] = kv.value_ptr.*;
+        idx += 1;
+    }
+    std.mem.sort(Stat, out, {}, struct {
+        fn lessThan(_: void, a: Stat, b: Stat) bool {
+            return a.total_tokens > b.total_tokens;
+        }
+    }.lessThan);
+    return out;
+}
+
+/// Sums a slice of stats into one totals row (empty provider/model).
+pub fn totals(stats: []const Stat) Stat {
+    var t = Stat{ .provider = "", .model = "" };
+    for (stats) |s| {
+        t.calls += s.calls;
+        t.prompt_tokens += s.prompt_tokens;
+        t.completion_tokens += s.completion_tokens;
+        t.total_tokens += s.total_tokens;
+        t.cache_hit += s.cache_hit;
+        t.cache_miss += s.cache_miss;
+        t.cost += s.cost;
+        t.duration_ms += s.duration_ms;
+    }
+    return t;
+}
+
+/// Serializes {ok, stats, totals} for the ck_stats host fn and /api/stats.
+pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]const u8 {
+    var buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("stats");
+    try s.beginArray();
+    for (stats) |st| {
+        try s.beginObject();
+        try s.objectField("provider");
+        try s.write(st.provider);
+        try s.objectField("model");
+        try s.write(st.model);
+        try s.objectField("calls");
+        try s.print("{d}", .{st.calls});
+        try s.objectField("prompt_tokens");
+        try s.print("{d}", .{st.prompt_tokens});
+        try s.objectField("completion_tokens");
+        try s.print("{d}", .{st.completion_tokens});
+        try s.objectField("total_tokens");
+        try s.print("{d}", .{st.total_tokens});
+        try s.objectField("cache_hit");
+        try s.print("{d}", .{st.cache_hit});
+        try s.objectField("cache_miss");
+        try s.print("{d}", .{st.cache_miss});
+        try s.objectField("cache_hit_rate");
+        try s.print("{d:.1}", .{st.cacheHitRate()});
+        try s.objectField("tokens_per_sec");
+        try s.print("{d:.1}", .{st.tokensPerSec()});
+        try s.objectField("cost");
+        try s.print("{d:.6}", .{st.cost});
+        try s.objectField("duration_ms");
+        try s.print("{d}", .{st.duration_ms});
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.objectField("totals");
+    try s.beginObject();
+    try s.objectField("calls");
+    try s.print("{d}", .{total.calls});
+    try s.objectField("prompt_tokens");
+    try s.print("{d}", .{total.prompt_tokens});
+    try s.objectField("completion_tokens");
+    try s.print("{d}", .{total.completion_tokens});
+    try s.objectField("total_tokens");
+    try s.print("{d}", .{total.total_tokens});
+    try s.objectField("cache_hit_rate");
+    try s.print("{d:.1}", .{total.cacheHitRate()});
+    try s.objectField("tokens_per_sec");
+    try s.print("{d:.1}", .{total.tokensPerSec()});
+    try s.objectField("cost");
+    try s.print("{d:.6}", .{total.cost});
+    try s.endObject();
+    try s.endObject();
+    return arena.dupe(u8, buf[0..w.end]);
+}
+
+// ------------------------------------------------------------------- tests --
+
+test "append + aggregate groups by provider/model and sums" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const mk = struct {
+        fn r(provider: []const u8, model: []const u8, prompt: u64, comp: u64, hit: u64, miss: u64) Record {
+            return .{
+                .ts = 1,
+                .provider = provider,
+                .model = model,
+                .prompt_tokens = prompt,
+                .completion_tokens = comp,
+                .total_tokens = prompt + comp,
+                .cache_hit = hit,
+                .cache_miss = miss,
+                .cost = 0.01,
+                .duration_ms = 100,
+            };
+        }
+    }.r;
+
+    append(tmp.dir, io, std.testing.allocator, arena, "", mk("kimi-k3", "kimi-k3", 100, 20, 80, 20));
+    append(tmp.dir, io, std.testing.allocator, arena, "", mk("kimi-k3", "kimi-k3", 200, 30, 200, 30));
+    append(tmp.dir, io, std.testing.allocator, arena, "", mk("deepseek", "deepseek-v4-flash", 1000, 50, 900, 100));
+
+    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 2), stats.len);
+    // Sorted by total tokens desc: deepseek (1050) before kimi (350).
+    try std.testing.expectEqualStrings("deepseek", stats[0].provider);
+    try std.testing.expectEqual(@as(u64, 1), stats[0].calls);
+    try std.testing.expectEqual(@as(u64, 1050), stats[0].total_tokens);
+    try std.testing.expectEqual(@as(u64, 900), stats[0].cache_hit);
+    try std.testing.expectEqual(@as(u64, 100), stats[0].cache_miss);
+    try std.testing.expectEqual(@as(u64, 2), stats[1].calls);
+    try std.testing.expectEqual(@as(u64, 350), stats[1].total_tokens);
+    try std.testing.expectApproxEqAbs(@as(f64, 90.0), stats[0].cacheHitRate(), 0.01);
+
+    const t = totals(stats);
+    try std.testing.expectEqual(@as(u64, 3), t.calls);
+    try std.testing.expectEqual(@as(u64, 1400), t.total_tokens);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.03), t.cost, 0.0001);
+}
+
+test "statsJSON serializes stats + totals" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const stats = [_]Stat{.{ .provider = "kimi-k3", .model = "kimi-k3", .calls = 2, .total_tokens = 350, .cache_hit = 280, .cache_miss = 70 }};
+    const json_out = try statsJSON(arena, &stats, totals(&stats));
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json_out, .{});
+    try std.testing.expect(parsed.object.get("ok").?.bool);
+    try std.testing.expectEqual(@as(usize, 1), parsed.object.get("stats").?.array.items.len);
+    try std.testing.expectEqual(@as(i64, 350), parsed.object.get("stats").?.array.items[0].object.get("total_tokens").?.integer);
+    try std.testing.expectEqual(@as(i64, 2), parsed.object.get("totals").?.object.get("calls").?.integer);
+}

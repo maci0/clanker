@@ -1,0 +1,16 @@
+{
+  "name": "peers",
+  "description": "Talk to other clanker instances. {\"action\": \"phonebook\"} scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer.",
+  "wasm": "zig-out/tools/peers.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string", "enum": ["phonebook", "notify"] },
+      "peer": { "type": "string" },
+      "message": { "type": "string" }
+    },
+    "required": ["action"]
+  },
+  "fs_prefixes": ["config.json", "config.local.json"],
+  "network_from_config": "peers"
+}

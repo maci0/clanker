@@ -19,17 +19,15 @@ pub const Proposal = struct {
 };
 
 /// Prefixes a file path must match to be part of the modifiable surface.
-/// Deliberately excludes the evaluation machinery (eval-tasks/, src/evals/,
-/// src/improve/, src/tools/builder.zig) so a single improvement pass cannot
-/// weaken its own gate.
+/// Deliberately excludes the evaluation machinery so a single improvement pass
+/// cannot weaken its own gate: `evals/` by being absent from this list,
+/// `src/evals/`, `src/improve/`, and `src/tools/builder.zig` by the denials in
+/// `validatePath` (they sit inside the allowed `src/` prefix).
 pub const allowed_prefixes = [_][]const u8{
     "src/",
-    "tool-src/",
-    "tool-bin/",
+    "tools/",
     "skills/",
     "tests/",
-    "tools.d/",
-    "tools/",
     "docs/",
     "README.md",
     "AGENTS.md",
@@ -45,9 +43,13 @@ pub fn validatePath(path: []const u8) bool {
             if (std.mem.startsWith(u8, path, "src/evals/")) return false;
             if (std.mem.startsWith(u8, path, "src/improve/")) return false;
             if (std.mem.eql(u8, path, "src/tools/builder.zig")) return false;
-            if (std.mem.startsWith(u8, path, "eval-tasks/")) return false;
-            if (std.mem.startsWith(u8, path, "tools.d/") and !std.mem.endsWith(u8, path, ".tool.json")) return false;
-            if (std.mem.startsWith(u8, path, "tools/") and !std.mem.endsWith(u8, path, ".tool.json")) return false;
+            // Descriptors are editable, but only as descriptors: a stray write
+            // into tools/manifests/ must not drop a .wasm or anything else the
+            // registry would then try to load.
+            if (std.mem.startsWith(u8, path, "tools/manifests/") and !std.mem.endsWith(u8, path, ".tool.json")) return false;
+            // tools/bin holds committed AssemblyScript build output; it is
+            // produced by the TS toolchain, never hand-patched.
+            if (std.mem.startsWith(u8, path, "tools/bin/")) return false;
             return true;
         }
     }
@@ -123,16 +125,17 @@ fn strField(obj: json.ObjectMap, key: []const u8) ![]const u8 {
 test "validatePath" {
     try std.testing.expect(validatePath("src/main.zig"));
     try std.testing.expect(validatePath("src/agent/loop.zig"));
-    try std.testing.expect(validatePath("tool-src/zig/calculator.zig"));
+    try std.testing.expect(validatePath("tools/zig/calculator.zig"));
     try std.testing.expect(validatePath("skills/SYSTEM.md"));
-    try std.testing.expect(validatePath("tools.d/calculator.tool.json"));
+    try std.testing.expect(validatePath("tools/manifests/calculator.tool.json"));
     try std.testing.expect(validatePath("build.zig"));
     try std.testing.expect(!validatePath("src/evals/runner.zig"));
     try std.testing.expect(!validatePath("src/improve/engine.zig"));
     try std.testing.expect(!validatePath("src/tools/builder.zig"));
-    try std.testing.expect(!validatePath("eval-tasks/math.task.json"));
+    try std.testing.expect(!validatePath("evals/math.task.json"));
     try std.testing.expect(!validatePath("state/foo"));
-    try std.testing.expect(!validatePath("tools.d/calculator.wasm"));
+    try std.testing.expect(!validatePath("tools/manifests/calculator.wasm"));
+    try std.testing.expect(!validatePath("tools/bin/calc_ts.wasm"));
     try std.testing.expect(!validatePath("../etc/passwd"));
     try std.testing.expect(!validatePath("vendor/foo"));
 }

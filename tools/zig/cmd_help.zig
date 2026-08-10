@@ -27,7 +27,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 const help_text =
     \\slash commands (most run as WASM tools):
     \\  /help            this reference
-    \\  /tools           list registered tools (tools.d)
+    \\  /tools           list registered tools
     \\  /sessions        list saved sessions
     \\  /graph           show the latest execution graph
     \\  /status          show instance + peers

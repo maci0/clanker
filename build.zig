@@ -43,9 +43,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
 
     // ------------------------------------------------------- wasm tool builds
-    // `zig build tools` compiles every tools-src/<name>.zig into a
+    // `zig build tools` compiles every tools/zig/<name>.zig into a
     // wasm32-freestanding module installed at zig-out/tools/<name>.wasm.
-    const tools_step = b.step("tools", "Compile tools-src/*.zig into zig-out/tools/*.wasm");
+    const tools_step = b.step("tools", "Compile tools/zig/*.zig into zig-out/tools/*.wasm");
     const tool_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .freestanding,
@@ -55,7 +55,7 @@ pub fn build(b: *std.Build) void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    const tools_src_path = b.pathFromRoot("tool-src/zig");
+    const tools_src_path = b.pathFromRoot("tools/zig");
     var dir = std.Io.Dir.openDirAbsolute(io, tools_src_path, .{ .iterate = true }) catch |err| {
         std.debug.print("warning: cannot open {s}: {s}\n", .{ tools_src_path, @errorName(err) });
         return;
@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
         const tool = b.addExecutable(.{
             .name = stem,
             .root_module = b.createModule(.{
-                .root_source_file = b.path(b.fmt("tool-src/zig/{s}.zig", .{stem})),
+                .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
                 .target = tool_target,
                 .optimize = .ReleaseSmall,
             }),

@@ -1,0 +1,8 @@
+{
+  "name": "reasoning",
+  "description": "read recent reasoning traces recorded from reasoning models (state/reasoning.jsonl) to review your own chain-of-thought and learn from it (RLM).",
+  "wasm": "zig-out/tools/reasoning.wasm",
+  "input_schema": { "type": "object", "properties": { "last": { "type": "integer" } } },
+  "fs_prefixes": ["state/"],
+  "network_allow": []
+}

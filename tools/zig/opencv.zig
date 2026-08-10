@@ -1,0 +1,77 @@
+//! opencv: image analysis through OpenCV.
+//!
+//! Input:  {"op": "info"|"edges"|"faces"|"contours"|"grayscale"|"resize",
+//!          "path": "<image>", "options": { ... }}
+//! Output: the analysis JSON, or {"ok": false, "error": "..."}
+//!
+//! A wasm32-freestanding guest cannot link OpenCV, and no in-process binding
+//! exists, so this shells out to tools/py/opencv_tool.py through ck_exec. uv
+//! supplies cv2 in an ephemeral environment, so nothing is installed on the
+//! host. The descriptor's `exec_allow` limits this tool to `uv` alone.
+
+const std = @import("std");
+const lib = @import("lib.zig");
+
+const script = "tools/py/opencv_tool.py";
+
+const Request = struct {
+    op: []const u8 = "info",
+    path: []const u8 = "",
+    options: std.json.Value = .{ .object = .{} },
+};
+
+export fn run(ptr: u32, len: u32) callconv(.c) u64 {
+    return lib.run(ptr, len, tool_main);
+}
+
+fn tool_main(input: []const u8, out: *lib.Out) !void {
+    const alloc = std.heap.wasm_allocator;
+    const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch
+        return errJson(out, "input must be {\"op\": ..., \"path\": ...}");
+
+    if (req.path.len == 0) return errJson(out, "path is required");
+    // The script reads whatever path it is handed, so the traversal check
+    // belongs here rather than in Python: keep it inside the project.
+    if (std.mem.startsWith(u8, req.path, "/") or std.mem.indexOf(u8, req.path, "..") != null)
+        return errJson(out, "path must be relative and stay inside the project");
+
+    const opts = try std.fmt.allocPrint(alloc, "{f}", .{std.json.fmt(req.options, .{})});
+
+    var args: std.ArrayList([]const u8) = .empty;
+    // `uv run --with` builds a throwaway env: no host package is touched.
+    for ([_][]const u8{ "run", "--quiet", "--with", "opencv-python-headless~=4.14", "--with", "numpy", "python3", script, req.op, req.path }) |a| {
+        try args.append(alloc, a);
+    }
+    try args.append(alloc, opts);
+
+    const raw = lib.exec("uv", args.items) catch |err| return errJson(out, @errorName(err));
+
+    // ck_exec answers {"code":N,"stdout":"...","stderr":"..."}; the script's
+    // own JSON is on stdout and is what the agent should see.
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .ignore_unknown_fields = true }) catch
+        return errJson(out, "exec returned no JSON");
+    if (parsed != .object) return errJson(out, "exec returned no JSON");
+
+    const stdout = if (parsed.object.get("stdout")) |v| (if (v == .string) v.string else "") else "";
+    const trimmed = std.mem.trim(u8, stdout, " \t\r\n");
+    if (trimmed.len > 0) return out.writeAll(trimmed);
+
+    const stderr = if (parsed.object.get("stderr")) |v| (if (v == .string) v.string else "") else "";
+    const tail = if (stderr.len > 400) stderr[stderr.len - 400 ..] else stderr;
+    var ebuf: [640]u8 = undefined;
+    var ew: std.Io.Writer = .fixed(&ebuf);
+    var es = std.json.Stringify{ .writer = &ew, .options = .{} };
+    try es.beginObject();
+    try es.objectField("ok");
+    try es.write(false);
+    try es.objectField("error");
+    try es.write(if (tail.len > 0) tail else "opencv script produced no output");
+    try es.endObject();
+    try out.writeAll(ebuf[0..ew.end]);
+}
+
+fn errJson(out: *lib.Out, msg: []const u8) !void {
+    var buf: [512]u8 = undefined;
+    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
+    try out.writeAll(body);
+}

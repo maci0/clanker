@@ -2,179 +2,6 @@
 
 ## Architecture
 
-- **src/agent/loop.zig** – the agent loop: think (LLM chat) → act (execute WASM tool calls) → observe (feed results back), with stateful sessions and token statistics.
-- **src/llm/** – OpenAI-compatible and Anthropic providers, including `deepseek`, `kimi-k3` (at `api.moonshot.ai/v1` with reasoning), and `muse-spark`.
-- **src/sandbox/** – zwasm runtime with `ck_*` host functions and a sandbox policy.
-- **src/improve/** – gated self-improvement engine that proposes patches, stages them, and promotes on green gates.
-- **src/evals/** + **src/gate/checks.zig** – deterministic gates (`zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint).
-- **src/mcp/server.zig** – stdio JSON-RPC Model Context Protocol server.
-- **src/peers/notify.zig** + `phonebook` command – peer notifications and agent-card discovery.
-- **src/patch/apply.zig** – exact-match patch application.
-
-## WASM Tool ABI
-
-Guest tools export `scratch`, `host_arena`, and `run`; they import `env.ck_*` host functions:
-
-- `ck_log` – write a log line
-- `ck_now` – current timestamp
-- `ck_random` – random bytes
-- `ck_http` – outbound HTTP request
-- `ck_fs_read` / `ck_fs_write` – sandboxed file access
-- `ck_getenv` – read an environment variable
-- `ck_exec` – run a subprocess
-- `ck_docker` – invoke Docker
-- `ck_llm` – one-shot model call (requires `"llm": true` in the descriptor)
-- `ck_config` – this tool's own `config` object from its descriptor
-- `ck_result` – read back the host-written result from the host arena
-
-Host functions write results into the host arena; the guest reads them back via `ck_result`. Tools compile to `wasm32-freestanding` (not `wasip1`).
-
-## Tool Layout
-
-- `tool-src/zig/` – Zig tool sources
-- `tool-src/ts/` – AssemblyScript sources
-- `tools.d/*.tool.json` – tool descriptors, with optional `internal: true` flag
-- `zig-out/tools/` – built WASM modules
-- `tool-bin/` – committed AssemblyScript artifacts
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `init` | Create `config.local.json` + `state/` |
-| `providers check [name]` | Verify provider connectivity |
-| `run"<task>"` | Run the agent on a task |
-| `repl` | Interactive REPL with `:help`/`:quit` and stateful sessions |
-| `sessions` | List persisted sessions |
-| `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
-| `tools list` | List registered tools |
-| `eval [name]` | Run evaluation(s) |
-| `improve-self` | Run the gated self-improvement loop |
-| `revert <id>` | Revert a previous promotion |
-| `git` | Git passthrough |
-| `mcp` | Start the MCP server |
-| `goal <intent>` | Design and persist a structured goal |
-| `notify <peer> "<message>"` | Send a peer notification |
-| `phonebook` | List peer agent cards |
-| `serve` | Start the HTTP server |
-
-## Configuration
-
-`config.json` (and optional `config.local.json` override) supports:
-
-- `providers` – provider definitions (e.g., `deepseek`, `kimi-k3`, `muse-spark`) with `kind`, `base_url`, `api_key_env`, `model`, `max_tokens`
-- `agent` – `max_iterations`, `compact_threshold_bytes`, `max_total_tokens`, `tools_dir`
-- `peers` – list of peer `{name, url}`
-- `instance` – `name` and `id` for this instance
-- `notify` – `topic` for notifications
-- `improve` – `min_delta`, `max_context_bytes`
-
-## HTTP Serve Endpoints
-
-- `GET /` – web UI via the internal `webui` WASM tool
-- `GET /.well-known/agent.json` – A2A agent card
-- `GET /api/status` – instance + peers status
-- `POST /api/notify` – receive peer notifications
-- `POST /api/a2a/message` – A2A message handling
-- `POST /api/run` – run an agent task synchronously
-
-## Streaming
-
-`client.chatStream` parses Server-Sent Events (SSE) with tool-call accumulation. The agent exposes an `on_token` hook; the REPL attaches to it for live token output during a run.
-
-## Self-Improvement Loop
-
-1. Model proposes a JSON patch (summary, rationale, exact-match changes).
-2. Changes are applied to a staging copy of the project.
-3. Gates run in staging: `zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint.
-4. On success, the changes are promoted to the live tree, a git commit is created (`clanker: <summary> [imp-<id>]`), and peers are notified.
-5. On failure, the error tail is fed back for a retry.
-
-
-clanker is a self-improving AI agent harness written in Zig 0.16. It wraps LLM APIs and executes tools as WebAssembly modules via the zwasm sandbox. The agent can modify its own source code through a gated improvement loop, then commit the changes with git.
-
-## Architecture
-
-- `src/agent/loop.zig` — the main agent loop: builds the message stream, calls the model, executes tool calls, and repeats until the task is done.
-- `src/llm/providers.zig` — provider abstraction for OpenAI-compatible and Anthropic chat APIs. Each provider is configured in JSON and references an API key from the environment.
-- `src/sandbox/` — zwasm WebAssembly runtime. Tools are compiled to `wasm32-freestanding` (see `build.zig`) and run inside a sandbox that exposes `ck_*` host functions.
-- `src/improve/engine.zig` — the self-improvement engine. It assembles relevant source files as context, asks a model for an exact-match patch proposal, applies it to a staging copy, runs gates (`zig build`, `zig build test`, `zig build tools`, plus format/lint checks), and promotes on success.
-- `src/evals/` and `src/gate/` — evaluation harness and gate checks (build, test, tools, format, lint) used both for self-assessment and pre-promotion verification.
-- `src/mcp/server.zig` — a Model Context Protocol server that exposes clanker’s tools over MCP.
-- `src/peers/notify.zig` — peer discovery and notification. Each instance can serve an agent card at `/.well-known/agent.json` and accept notifications at `/api/notify`. `src/cli.zig` implements a `phonebook` command that scans peers.
-- `src/patch/apply.zig` — applies patch proposals (exact-match replaces) to files on disk.
-
-## Tool ABI
-
-Tools are WebAssembly modules compiled with zwasm-compatible exports:
-
-- `scratch` — the sandbox scratch memory used for input/output buffers.
-- `host_arena` — a host-managed arena for larger allocations.
-- `run` — the entry point; called with a pointer to a descriptor in scratch memory.
-
-Tools import host functions prefixed with `env.ck_*` (e.g. `ck_read`, `ck_write`, `ck_log`) to interact with the host. The exact set is defined by the sandbox runtime.
-
-## Tool layout
-
-- `tool-src/zig/` — Zig source for compiled tools.
-- `tool-src/ts/` — TypeScript source (compiled via a JS toolchain) for tools.
-- `tools.d/*.tool.json` — descriptor files that declare each tool’s name, input schema, and compiled artifact.
-- `zig-out/tools/` — Zig build output for local tools.
-- `tool-bin/` — built `.wasm` artifacts (also copied into staging for the tools gate).
-
-## Build and test
-
-- `zig build` — build the clanker executable.
-- `zig build tools` — compile all tools (Zig and TypeScript) into WebAssembly.
-- `zig build test` — run unit tests.
-
-All three are required for the self-improvement gates.
-
-## CLI commands
-
-- `clanker init` — create `config.local.json` and `state/`.
-- `clanker providers check [name]` — verify provider connectivity.
-- `clanker run "<task>"` — run the agent on a task.
-- `clanker run --goal <id> "<task>"` — run with an active goal.
-- `clanker sessions` — list saved sessions.
-- `clanker graph [run-id]` — list recorded runs, or render one as an ASCII timeline.
-- `clanker tools list` — list registered tools.
-- `clanker eval <name>` — run a specific evaluation.
-- `clanker improve-self "<instruction>"` — run the self-improvement loop.
-- `clanker revert <improvement-id>` — revert a promoted improvement.
-- `clanker git <args>...` — passthrough to git.
-- `clanker mcp` — serve the MCP protocol.
-- `clanker goal "<intent>"` — ask the agent to design and persist a structured goal.
-- `clanker notify <peer> "<message>"` — send a notification to a peer.
-- `clanker phonebook` — list peer agent cards.
-- `clanker serve --port <port>` — serve the agent card, notify, and A2A endpoints.
-
-Use `--verbose` or `-v` for debug logging and `--dry-run` with `improve-self` to preview changes without applying them.
-
-## Configuration
-
-Configuration is read from `config.json` (committed example) and merged with `config.local.json` (gitignored, user-specific). Providers are defined under `providers`, each referencing an API key via an environment variable. Example providers include `deepseek`, `kimi-k3`, and `muse-spark`. Other sections:
-
-- `agent` — iteration limits, tool/skills directories, sandbox root, git commit toggle.
-- `improve` — iteration count, context size, and other self-improvement limits.
-- `peers` — list of peer clanker instances (name + URL) for notifications and phonebook.
-- `instance` — identity of this instance (name, id).
-- `notify` — notification settings (enable/disable, topic).
-
-## Self-improvement loop
-
-The `improve-self` command runs the following loop (with retries):
-
-1. **Proposal** — gather relevant source files as context and ask the model for a patch proposal (JSON with `summary`, `rationale`, and `changes`).
-2. **Staging** — copy the modifiable tree into `state/staging/<id>` and apply the proposal.
-3. **Gates** — run `zig build`, `zig build test`, `zig build tools`, plus format and lint checks on the staged copy.
-4. **Promote** — if all gates pass, copy the changed files into the live tree.
-5. **Commit** — optionally commit with git using the proposal summary.
-
-The engine also snapshots the original files in `state/history/` and records the outcome so a failed improvement can be retried with error feedback.# clanker documentation
-
-## Architecture
-
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs tools as sandboxed WebAssembly modules via zwasm and improves its own source through a gated loop.
 
 ### Agent loop (`src/agent/loop.zig`)
@@ -184,15 +11,32 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive.
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run.
+
+### Interactive UX (REPL, `clanker run`)
+
+Both `clanker repl` and `clanker run` render the same live status while a turn is in flight, so there is never a silent gap between hitting enter and seeing output:
+- a dim animated braille spinner (`⠋⠙⠹…`) while waiting on the LLM or a tool,
+- a `⚙ <tool names>` line when a tool batch starts, and a `↳ <ms>` line when it finishes,
+- a bold `›` gutter marking where the model's actual answer begins,
+- the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/cli.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
+- a dim stats footer per turn: prompt/completion tokens, wall time, tok/s, cache hit rate, cost.
+
+`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status on stderr, gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
 
 ### LLM providers (`src/llm/`)
 
 - **OpenAI-compatible** (`src/llm/client.zig`): works with any OpenAI-compatible endpoint.
 - **Anthropic** (`src/llm/providers.zig`): supports Anthropic's native API.
-- **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com` with model `deepseek-chat`.
+- **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
 - **kimi-k3**: OpenAI-compatible provider at `api.moonshot.ai/v1`, supports reasoning.
-- **muse-spark**: Anthropic-compatible provider for Muse Spark models.
+- **muse-spark** / **muse-spark-1.1**: Anthropic-compatible providers for Muse Spark models.
+- **ollama**: local OpenAI-compatible endpoint at `http://127.0.0.1:11434/v1`.
+- **vllm-local**: OpenAI-compatible endpoint for a local vLLM server.
+- **openai** / **anthropic**: first-party API endpoints.
+- **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project`, `location`, and either an access token in `api_key_env` or a `service_account_file`; tokens are minted in-process and cached until they near expiry. `std.crypto.Certificate.rsa` only verifies signatures, so the RS256 assertion Google requires is signed in `src/llm/gcp_jwt.zig` on std primitives: `der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, and the RSASSA-PKCS1-v1_5 padding is built by hand. No gcloud, no Python, no subprocess. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
+
+Streaming is the Anthropic event vocabulary, not OpenAI's: `content_block_delta` carries `text_delta` for prose and `input_json_delta` fragments for tool arguments, and usage arrives split across `message_start` (input, cache reads) and `message_delta` (output, cumulative). Unknown event types, including `thinking_delta` and `signature_delta`, are ignored rather than treated as errors.
 
 Providers are configured in `config.json` / `config.local.json` (see below).
 
@@ -215,7 +59,7 @@ Tools run in a WebAssembly sandbox using the zwasm runtime. The guest exports `s
 | `ck_config` | Return this tool's `config` object from its descriptor |
 | `ck_result` | Write the tool result into the host arena |
 
-Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools.d/*.tool.json` control network and filesystem access.
+Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools/manifests/*.tool.json` control network and filesystem access.
 
 The tool target is `wasm32-freestanding` (not `wasip1`).
 
@@ -233,7 +77,7 @@ The history is stored in `state/history/` and can be reverted with `clanker reve
 
 ### Evals and gates (`src/evals/`, `src/gate/checks.zig`)
 
-Deterministic evals live in `src/evals/` (harness) with task definitions in `eval-tasks/*.task.json`, and run with `clanker eval`. The gates are used both for self-improvement and CI. They include:
+Deterministic evals live in `src/evals/` (harness) with task definitions in `evals/*.task.json`, and run with `clanker eval`. The gates are used both for self-improvement and CI. They include:
 - `selfhost_build`: `zig build`
 - `selfhost_tests`: `zig build test`
 - `selfhost_tools`: `zig build tools`
@@ -246,6 +90,37 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 ### Peers (`src/peers/notify.zig`)
 
 `clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL.
+
+### Token usage stats (`src/stats/tokens.zig`)
+
+Every LLM completion is recorded at the client choke point to
+`state/token_stats.jsonl` and aggregated per (provider, model):
+`clanker stats` (table), the `model_stats` WASM tool (so clanker can review
+its own spending), and `GET /api/stats`. Each record carries prompt /
+completion / total tokens, cache hit & miss, estimated USD cost (from the
+model's `cost_per_1m_*`), and call duration. The log is capped at 32 MiB.
+Module flag: `modules.token_stats`.
+
+### Chatrooms (`src/peers/chatrooms.zig`)
+
+Clankers can subscribe to named chatrooms and talk to each other. A room is
+implicit — created on first message. Sending appends the message to the local
+log and fans it out to every configured peer's `POST /api/chat/message`; each
+peer keeps the message only when it subscribes to that room.
+
+- State: `state/chatrooms.jsonl` (log), `state/chatrooms-sub.json` (runtime
+  join/leave overrides), `state/chatrooms-cursor.json` (inbox cursor).
+- Config: `"chatrooms": {"on": true, "rooms": ["dev"], "max_history": 500}`,
+  module flag `modules.chatrooms`.
+- CLI: `clanker chat send <room> "<text>"`, `clanker chat history <room> [after]`,
+  `clanker chat rooms`, `clanker chat subscribe <room> [on]`.
+- WASM tools: `chat_send`, `chat_history`, `chat_rooms`, `chat_subscribe`
+  (one `chat.wasm` module; the descriptor `config` pins the op). They are
+  marked `sequential` so concurrent tool calls never race on the log file.
+- HTTP: `POST /api/chat/message` (delivery), `GET /api/chat/messages?room=..&after=..`,
+  `GET /api/chat/rooms`.
+- Inbox: each agent run injects a `[chatroom inbox]` user message with messages
+  newer than the cursor, so a subscribed clanker notices what its peers said.
 
 ### Patch application (`src/patch/apply.zig`)
 
@@ -260,42 +135,91 @@ Each tool is a WebAssembly module compiled to `wasm32-freestanding` with these e
 
 The guest imports `env.ck_*` functions listed above. The host writes the tool result into the host arena, and the guest reads it back via `ck_result`.
 
+## Repository layout
+
+One rule: a top-level directory holds the data the agent works with, and `src/<same-name>/` holds the harness code that runs it.
+
+| Data | Code | Contents |
+|------|------|----------|
+| `tools/` | `src/tools/` | Tool sources, descriptors, and committed WASM |
+| `evals/` | `src/evals/` | `*.task.json` eval definitions |
+| `skills/` | — | Markdown skills folded into the system prompt |
+| `docs/` | — | This reference, the roadmap, review prompts, assets |
+| `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
+| `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
+
+Under `src/`, every module lives in a subsystem directory; only `main.zig`, `cli.zig`, and `config.zig` sit at the top. Build output (`zig-out/`), the fetched dependency cache (`zig-pkg/`), and `.zig-cache/` are generated and gitignored.
+
 ## Tool layout
 
-- `tool-src/zig/` — Zig tool sources.
-- `tool-src/ts/` — AssemblyScript tool sources.
-- `tools.d/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`).
+- `tools/zig/` — Zig tool sources.
+- `tools/ts/` — AssemblyScript tool sources.
+- `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`).
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
-- `tool-bin/` — committed AssemblyScript artifacts (compiled JS/WASM).
+- `tools/bin/` — committed AssemblyScript artifacts (compiled JS/WASM).
 
-Tools are discovered by the registry (`src/tools/registry.zig`) from the configured `tools_dir` (default `tools.d`).
+Tools are discovered by the registry (`src/tools/registry.zig`) from the configured `tools_dir` (default `tools/manifests`).
+
+## Build and test
+
+| Command | What it does |
+|---------|--------------|
+| `zig build` | Build the `clanker` binary (native, x86_64-linux-musl) |
+| `zig build tools` | Compile `tools/zig/*.zig` to `zig-out/tools/*.wasm` |
+| `zig build test` | Run the unit and integration tests |
+| `zig fmt --check src/ tools/zig/` | Verify formatting |
+| `clanker gate` | Run all of the above the way the self-improvement gate does |
+
+All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool.
 
 ## Tool catalog
 
-Every entry in `tools.d/` is one WASM module plus its descriptor. `internal: true` hides the tool from the model's tool list: it is reachable only through a REPL slash command or an HTTP route, never chosen by the agent. `fs_prefixes` is the complete filesystem authority the sandbox grants that tool; a tool with no prefixes cannot read or write anything.
+Every entry in `tools/manifests/` is one WASM module plus its descriptor. `internal: true` hides the tool from the model's tool list: it is reachable only through a REPL slash command or an HTTP route, never chosen by the agent. `fs_prefixes` is the complete filesystem authority the sandbox grants that tool; a tool with no prefixes cannot read or write anything.
 
-| Tool | Internal | Filesystem | Purpose |
-|------|----------|------------|---------|
-| `calculator` | | none | Arithmetic, either `{"a","b","op"}` or `{"expr": "2+3*4"}` (`+ - * / ^`, parentheses, standard precedence) |
-| `search_code` | | none | Search the project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
-| `fetch_web` | | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
-| `web_search` | | none | DuckDuckGo HTML search, up to 8 results with title, url, snippet |
-| `git` | | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`. Destructive verbs (`push`, `reset`, `rebase`, `checkout`, `clean`, `rm`, `fetch`, `merge`, `revert`, `stash`) are denied |
-| `docker` | | none | Query the local Docker daemon over its Unix socket |
-| `write_note` | | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
-| `edit_skill` | | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
-| `goal` | | `state/` | Design and persist a structured goal that steers later runs |
-| `cmd_help` | yes | none | Slash-command reference |
-| `cmd_tools` | yes | `tools.d/` | List registered tools |
-| `cmd_sessions` | yes | `state/sessions/` | List saved sessions |
-| `cmd_graph` | yes | `state/runs/` | Render the latest execution graph |
-| `cmd_plugins` | yes | `tools.d/`, `state/` | List plugins, toggle the optional ones |
-| `translate` | yes | none | Transform plugin (off by default): translates tool results via `ck_llm` |
-| `cmd_status` | yes | `config.json`, `config.local.json` | Show this instance and its peers |
-| `format` | yes | none | Markdown to ANSI formatter used for REPL output |
-| `webui` | yes | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
+Tools the model can call:
 
-`tools.d/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
+| Tool | Filesystem | Purpose |
+|------|------------|---------|
+| `calculator` | none | Arithmetic, either `{"a","b","op"}` or `{"expr": "2+3*4"}` (`+ - * / ^`, parentheses, standard precedence) |
+| `search_code` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
+| `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |
+| `std_api` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
+| `code_search` | none | Search open-source code through Sourcegraph |
+| `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
+| `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
+| `web_search` | none | DuckDuckGo HTML search, up to 8 results with title, url, snippet |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`. Destructive verbs (`push`, `reset`, `rebase`, `checkout`, `clean`, `rm`, `fetch`, `merge`, `revert`, `stash`) are denied |
+| `docker` | none | Query the local Docker daemon over its Unix socket |
+| `peers` | `config.json` | Scan peer agent cards (up/down) or post a message to one peer |
+| `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
+| `zig_check` | `.` | Fast per-file `zig ast-check` and format check, without the full gate |
+| `test_file` | `.` | Run one Zig test file, optionally with `--test-filter` |
+| `config_view` | `config.json`, `config.local.json` | Dump the effective config: providers, models, modules, budgets |
+| `roadmap` | `docs/` | Read the roadmap and list the planned (unchecked) items |
+| `history` | `state/` | Review the improve history: successes, failures, summaries |
+| `learnings` | `state/learnings.md` | Read the persisted learnings |
+| `write_note` | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
+| `edit_skill` | `skills/` | Write or replace a markdown skill file, changing the agent's own instructions |
+| `goal` | `state/` | Design and persist a structured goal that steers later runs |
+| `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
+| `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
+| `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
+
+Internal tools, never offered to the model:
+
+| Tool | Filesystem | Purpose |
+|------|------------|---------|
+| `cmd_help` | none | Slash-command reference |
+| `cmd_tools` | `tools/manifests/` | List registered tools |
+| `cmd_sessions` | `state/sessions/` | List saved sessions |
+| `cmd_graph` | `state/runs/` | Render the latest execution graph |
+| `cmd_status` | `config.json`, `config.local.json` | Show this instance and its peers |
+| `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
+| `format` | none | Markdown-to-ANSI transform (bold/italic/code/bullets); not currently called by the harness — the REPL and `clanker run` use an equivalent streaming implementation (`MdStream` in `src/cli.zig`) instead, since this tool's whole-string ABI can't handle a marker split across two stream deltas |
+| `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
+| `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
+
+`tools/manifests/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
 
 ## Plugins
 
@@ -308,9 +232,27 @@ Every tool is a WASM plugin; the descriptor decides how much of the harness it g
 | `llm` | May call the model through `ck_llm`; forces sequential execution |
 | `config` | Free-form settings object, returned to the guest by `ck_config` |
 | `transform` | Marks the tool as a chain link: `{ "phase": "before"\|"after", "tools": ["*"], "order": 50 }` |
+| `network_from_config` | `"peers"` or `"providers"`: the harness adds those configured hosts to `network_allow` at load |
+| `exec_allow` | Commands this tool may run through `ck_exec`; replaces the harness default set |
 | `fs_prefixes` / `network_allow` | Filesystem and network authority |
 
 ### Switching plugins on and off
+
+### Tools that reach outside the sandbox
+
+Two descriptor keys widen a tool's reach, both opt-in per tool:
+
+`network_from_config` solves a problem a descriptor cannot: peer and provider hosts live in `config.json`, so no static `network_allow` can name them. A tool that sets `"network_from_config": "peers"` gets the configured peer hosts added to its allowlist at load, and adding a peer to config is enough. The `peers` tool uses this to scan agent cards and post notifications.
+
+`exec_allow` replaces the harness's default `ck_exec` set (`git`, `rg`, `ast-grep`, `semcode`, `zig`) with a narrower one. The `opencv` tool declares `"exec_allow": ["uv"]`, so it can run exactly one binary and not, say, `git`.
+
+The `opencv` tool is the shape to copy when a capability has no in-process WASM binding: a `wasm32-freestanding` guest cannot link OpenCV, so the tool shells out to `tools/py/opencv_tool.py` and `uv run --with` supplies `cv2` in a throwaway environment, leaving the host untouched. Path traversal is refused in the guest before the script ever sees the path, and written images land under `state/opencv/`.
+
+### Execution graphs in the web UI
+
+The **Runs** panel picks any recorded run and draws its graph: one row per node, grouped by iteration, with a bar whose width is that node's share of the slowest node in the run. LLM rows carry prompt/completion tokens, tool rows the result size, and the closing `final` row the answer size. The `final` node repeats the duration of the LLM call that produced it, so it is deliberately drawn without a bar rather than counting that time twice.
+
+The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by the `cmd_graph` plugin's `json` modes. The harness never reads `state/runs/` itself: run ids are validated as `run-<digits>` before they reach the plugin, and the graph is parsed and re-emitted rather than passed through, so a hand-edited file under `state/runs/` cannot become a response body verbatim.
 
 `/plugins` in the REPL lists every tool with its state; `/plugins off <name>` and `/plugins on <name>` toggle one. The choice is written to `state/plugins.json` (`{"disabled": [...], "enabled": [...]}`, machine-local, gitignored) and the running REPL reloads its registry immediately.
 
@@ -340,7 +282,7 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the two handled in-process, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools.d/`.
+A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the two handled in-process, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -384,6 +326,8 @@ iter 2
 | `eval [name]` | Run evals |
 | `improve-self "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
+| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) on the current checkout |
+| `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Start the MCP server |
 | `goal` | Design and persist a structured goal |
@@ -393,21 +337,50 @@ iter 2
 
 ## Configuration
 
-`config.json` is the global config; `config.local.json` overrides it. Example:
+`config.json` is the global config; `config.local.json` overrides it, provider by provider.
+
+A provider declares its backend once and its models in a map. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
+
+```json
+"kimi-k3": {
+  "kind": "openai_compat",
+  "base_url": "https://api.moonshot.ai/v1",
+  "api_key_env": "KIMI_API_KEY",
+  "default_model": "kimi-k3",
+  "models": {
+    "kimi-k3": { "context_window": 1048576, "max_tokens": 16384, "reasoning_effort": "high" },
+    "kimi-k2.7-code": { "context_window": 1048576, "max_tokens": 16384 }
+  }
+}
+```
+
+`default_model` is only needed when a provider declares more than one model; with a single model it is inferred, so naming it twice is unnecessary.
+
+The pre-`models` form is **rejected**, not silently accepted:
+
+| In the file | Result |
+|-------------|--------|
+| `"model": "x"` on the provider | `ProviderLegacyModelFields` — use `"models"` |
+| `max_tokens` / `context_window` / `temperature` / `reasoning_effort` on the provider | `ProviderLegacyModelFields` — move it into the model |
+| no `"models"` at all | `ProviderMissingModel` |
+| `default_model` naming an absent entry | `ProviderDefaultModelUnknown` |
+
+Each names the provider and the fix. All four fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
+
+Full example:
 
 ```json
 {
   "default_provider": "deepseek",
   "providers": {
-    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 },
-    "kimi-k3": { "kind": "openai_compat", "base_url": "https://api.moonshot.ai/v1", "api_key_env": "MOONSHOT_API_KEY", "model": "kimi-k3" },
-    "muse-spark": { "kind": "anthropic", "base_url": "https://api.musespark.ai/v1", "api_key_env": "MUSE_SPARK_API_KEY", "model": "spark-v3" }
+    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat", "models": { "deepseek-chat": { "max_tokens": 2048 } } },
+    "muse-spark": { "kind": "anthropic", "base_url": "https://api.musespark.ai/v1", "api_key_env": "MUSE_SPARK_API_KEY", "default_model": "spark-v3", "models": { "spark-v3": {} } }
   },
   "agent": {
     "max_iterations": 12,
     "compact_threshold_bytes": 30000,
     "max_total_tokens": 100000,
-    "tools_dir": "tools.d",
+    "tools_dir": "tools/manifests",
     "sandbox_root": "state/sandbox"
   },
   "peers": [
@@ -444,15 +417,34 @@ Fields:
 | `/` | GET | Web UI (rendered by the internal `webui` WASM tool) |
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
+| `/api/runs` | GET | Recorded runs, newest first (JSON) |
+| `/api/runs/<run-id>` | GET | One execution graph, node by node (JSON) |
 | `/api/notify` | POST | Receive a notification (JSON) |
 | `/api/a2a/message` | POST | A2A message handler |
 | `/api/run` | POST | Run an agent task and return the response |
 
-`GET /` loads the `webui` tool from the registry and renders its output as HTML.
+`GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
+
+### `POST /api/run`
+
+Body: `{"task": "...", "stream": bool, "session": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after.
+
+With `"stream": true`, the response body is `text/plain` and framed line-by-line: plain lines are answer content, verbatim; a line prefixed with byte `0x01` is an out-of-band JSON event instead of content:
+
+```
+\x01{"type":"tool_call","names":"git"}
+\x01{"type":"tool_result","ms":9}
+...plain answer text streams here, unprefixed...
+\x01{"type":"done","prompt_tokens":8437,"completion_tokens":185,"cost":0.0281,"ms":10763}
+```
+
+`error` events (`{"type":"error","message":"..."}`) can appear instead of `done` if the run fails mid-stream. A client must buffer on `\n` and only treat a *complete* line starting with `0x01` as an event — a naive per-chunk check can split an event across two reads. The web UI's line splitter (`tools/zig/webui/index.html`) is the reference implementation.
+
+With `"stream": false`, the response is `{"ok": true, "content": "..."}` (or `{"ok": false, "error": "..."}`) once the run finishes.
 
 ## Streaming
 
-The LLM client supports SSE streaming (`client.chatStream`). The agent parses the stream, accumulates tool-call deltas, and invokes `Agent.on_token` for each content token. The REPL uses this to display tokens live.
+The LLM client supports SSE streaming (`client.chatStream`). The agent parses the stream, accumulates tool-call deltas, and invokes `Agent.on_token` for each content token. The REPL and `clanker run` use this to display tokens live; `clanker serve` relays the same deltas over `/api/run`'s `stream: true` framing above.
 
 ## Self-improvement loop
 

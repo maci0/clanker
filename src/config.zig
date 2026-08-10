@@ -9,10 +9,14 @@ const log = @import("util/log.zig");
 pub const ProviderKind = enum {
     openai_compat,
     anthropic,
+    /// Anthropic models served through Google Vertex AI: same message format,
+    /// but the model lives in the URL and auth is a GCP bearer token.
+    vertex_anthropic,
 
     pub fn fromStr(s: []const u8) ?ProviderKind {
         if (std.mem.eql(u8, s, "openai_compat")) return .openai_compat;
         if (std.mem.eql(u8, s, "anthropic")) return .anthropic;
+        if (std.mem.eql(u8, s, "vertex_anthropic")) return .vertex_anthropic;
         return null;
     }
 };
@@ -38,40 +42,47 @@ pub const Provider = struct {
     kind: ProviderKind = .openai_compat,
     base_url: []const u8,
     api_key_env: ?[]const u8 = null,
+    /// vertex_anthropic only: the GCP project and region that serve the model,
+    /// and the service account JSON used to mint access tokens.
+    project: []const u8 = "",
+    location: []const u8 = "",
+    service_account_file: []const u8 = "",
     /// Per-model settings keyed by model name. When non-empty, `default_model`
     /// selects the active model; the legacy flat fields below are ignored.
     models: std.StringArrayHashMapUnmanaged(Model) = .empty,
     /// Default model name within `models` (or the legacy `model` name).
     default_model: []const u8 = "",
-    /// Legacy: single model name.
-    model: []const u8 = "",
+
     /// Endpoint path override; defaults per kind (`/chat/completions`,
     /// `/v1/messages`).
     path: ?[]const u8 = null,
-    /// Legacy flat settings, used when `models` is empty.
-    max_tokens: u32 = 1024,
-    context_window: u32 = 131072,
-    temperature: ?f64 = null,
-    reasoning_effort: ?[]const u8 = null,
 
     /// Name of the active model (sent as the API `model` field).
-    pub fn activeModelName(self: *const Provider) []const u8 {
-        if (self.default_model.len > 0) return self.default_model;
-        return self.model;
+    /// Builds a provider with one model. JSON loading normalizes into exactly
+    /// this shape, so programmatic callers (tests, ad-hoc providers) do not
+    /// have to assemble the map by hand.
+    pub fn single(
+        arena: std.mem.Allocator,
+        name: []const u8,
+        base_url: []const u8,
+        kind: ProviderKind,
+        model_name: []const u8,
+        settings: Model,
+    ) !Provider {
+        var p = Provider{ .name = name, .base_url = base_url, .kind = kind, .default_model = model_name };
+        try p.models.put(arena, model_name, settings);
+        return p;
     }
 
-    /// Resolves the active model's settings: the configured model in the
-    /// `models` map, or the legacy flat fields.
+    /// The active model's name. Loading guarantees `default_model` is set and
+    /// present in `models`, so there is exactly one place this can come from.
+    pub fn activeModelName(self: *const Provider) []const u8 {
+        return self.default_model;
+    }
+
+    /// The active model's settings.
     pub fn activeModel(self: *const Provider) Model {
-        if (self.models.count() > 0 and self.default_model.len > 0) {
-            if (self.models.get(self.default_model)) |m| return m;
-        }
-        return .{
-            .context_window = self.context_window,
-            .max_tokens = self.max_tokens,
-            .temperature = self.temperature,
-            .reasoning_effort = self.reasoning_effort,
-        };
+        return self.models.get(self.default_model) orelse .{};
     }
 };
 
@@ -83,6 +94,9 @@ pub const Agent = struct {
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
+    /// Directory (relative to the process cwd) holding harness state:
+    /// chatroom logs, run records, cursors.
+    state_dir: []const u8 = "state",
     sandbox_root: []const u8 = ".",
     /// Commit promoted improvements with git (git_commit_after_improve).
     git_commit: bool = true,
@@ -117,6 +131,19 @@ pub const Notify = struct {
     topic: []const u8 = "clanker",
 };
 
+/// Clanker chatrooms: named group channels that peer clankers subscribe to
+/// and exchange messages over. Messages are fanned out to every configured
+/// peer via POST /api/chat/message; each peer keeps its own log of the rooms
+/// it subscribes to (state/chatrooms.jsonl).
+pub const Chatrooms = struct {
+    on: bool = true,
+    /// Rooms this instance subscribes to by default. `chat_subscribe` may
+    /// add/remove rooms at runtime (state/chatrooms-sub.json).
+    rooms: []const []const u8 = &.{},
+    /// How many messages the log is trimmed to on write.
+    max_history: u32 = 500,
+};
+
 pub const Modules = struct {
     mcp: bool = true,
     peers: bool = true,
@@ -132,6 +159,20 @@ pub const Modules = struct {
     hot_reload: bool = true,
     /// Record usage patterns / missing tools and feed them into the roadmap.
     autolearn: bool = true,
+    /// Allow the agent to delegate tasks to nested sub-agent runs.
+    subagents: bool = true,
+    /// Persist reasoning traces and expose them to the agent (Reasoning &
+    /// Learning module).
+    rlm: bool = true,
+    /// Multimodal: attach images to messages (image tool + image_url blocks).
+    multimodal: bool = true,
+    /// Chatrooms: group channels between peer clankers (chat_* tools, the
+    /// /api/chat/* endpoints, and inbox injection on run).
+    chatrooms: bool = true,
+    /// Global token usage stats: every chat completion is recorded to
+    /// state/token_stats.jsonl and aggregated per provider/model
+    /// (model_stats tool, `clanker stats`, GET /api/stats).
+    token_stats: bool = true,
 };
 
 pub const Config = struct {
@@ -144,8 +185,12 @@ pub const Config = struct {
     peers: []const Peer = &.{},
     instance: Instance = .{},
     notify: Notify = .{},
+    chatrooms: Chatrooms = .{},
     modules: Modules = .{},
     modules_present: bool = false,
+    chatrooms_present: bool = false,
+    instance_present: bool = false,
+    default_provider_present: bool = false,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
         const want = name orelse self.default_provider;
@@ -186,6 +231,7 @@ pub const Config = struct {
 
         if (obj.get("default_provider")) |v| {
             cfg.default_provider = try jsonStr(v, "default_provider");
+            cfg.default_provider_present = true;
         }
         if (obj.get("agent")) |v| {
             cfg.agent = try parseAgent(arena, v);
@@ -208,14 +254,22 @@ pub const Config = struct {
         }
         if (obj.get("instance")) |v| {
             cfg.instance = try parseInstance(arena, v);
+            cfg.instance_present = true;
         } else {
-            cfg.instance.name = try defaultInstName(arena);
+            // Only a fallback when nothing parsed one yet: a later local file
+            // without an "instance" section must not clobber a named instance
+            // with a pid-based default (merge() checks instance_present).
+            if (!cfg.instance_present) cfg.instance.name = try defaultInstName(arena);
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
         }
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
+        }
+        if (obj.get("chatrooms")) |v| {
+            cfg.chatrooms = try parseChatrooms(arena, v);
+            cfg.chatrooms_present = true;
         }
         if (obj.get("modules")) |v| {
             cfg.modules = try parseModules(arena, v);
@@ -232,33 +286,40 @@ pub const Config = struct {
             .object => |o| o,
             else => return error.ProviderNotObject,
         };
-        // Legacy: "model" is required when "models" is absent.
-        const legacy_model = if (obj.get("model")) |m| (try jsonStr(m, "model")) else "";
         var p = Provider{
             .name = name,
             .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
-            .model = legacy_model,
         };
+        // Settings that belong to a model are rejected on the provider: they
+        // differ per model on the same endpoint, and silently accepting them
+        // here is how a config ends up meaning something other than it reads.
+        if (obj.get("model") != null) {
+            log.log(.error_, "provider '{s}': \"model\" was replaced by \"models\". Use \"models\": {{\"<name>\": {{...}}}} and, with more than one, \"default_model\": \"<name>\"", .{name});
+            return error.ProviderLegacyModelFields;
+        }
+        for ([_][]const u8{ "max_tokens", "context_window", "temperature", "reasoning_effort" }) |legacy| {
+            if (obj.get(legacy) != null) {
+                log.log(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into \"models\": {{\"<name>\": {{\"{s}\": ...}}}}", .{ name, legacy, legacy });
+                return error.ProviderLegacyModelFields;
+            }
+        }
         if (obj.get("kind")) |k| {
             p.kind = ProviderKind.fromStr(try jsonStr(k, "kind")) orelse return error.UnknownProviderKind;
+        }
+        if (obj.get("project")) |k| {
+            p.project = try jsonStr(k, "project");
+        }
+        if (obj.get("location")) |k| {
+            p.location = try jsonStr(k, "location");
+        }
+        if (obj.get("service_account_file")) |k| {
+            p.service_account_file = try jsonStr(k, "service_account_file");
         }
         if (obj.get("api_key_env")) |k| {
             p.api_key_env = try jsonStr(k, "api_key_env");
         }
         if (obj.get("path")) |k| {
             p.path = try jsonStr(k, "path");
-        }
-        if (obj.get("max_tokens")) |k| {
-            p.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
-        }
-        if (obj.get("context_window")) |k| {
-            p.context_window = @intCast(try jsonInt(k, "context_window"));
-        }
-        if (obj.get("temperature")) |k| {
-            p.temperature = try jsonFloat(k, "temperature");
-        }
-        if (obj.get("reasoning_effort")) |k| {
-            p.reasoning_effort = try jsonStr(k, "reasoning_effort");
         }
         if (obj.get("default_model")) |k| {
             p.default_model = try jsonStr(k, "default_model");
@@ -273,12 +334,22 @@ pub const Config = struct {
                 const m = try parseModel(kv.key_ptr.*, kv.value_ptr.*);
                 try p.models.put(arena, kv.key_ptr.*, m);
             }
-            if (p.default_model.len == 0 and p.model.len > 0) {
-                p.default_model = p.model;
-            }
         }
-        if (p.default_model.len == 0 and p.model.len == 0 and p.models.count() > 0) {
+
+        // One shape, checked at startup: a provider names its models and picks
+        // one. Both failures below would otherwise surface as a confusing error
+        // on the first request instead of at load.
+        if (p.models.count() == 0) {
+            log.log(.error_, "provider '{s}': no \"models\" declared", .{name});
             return error.ProviderMissingModel;
+        }
+        if (p.default_model.len == 0) {
+            // One model is unambiguous, so naming it twice is noise.
+            p.default_model = p.models.keys()[0];
+        }
+        if (p.models.get(p.default_model) == null) {
+            log.log(.error_, "provider '{s}': default_model '{s}' is not in \"models\"", .{ name, p.default_model });
+            return error.ProviderDefaultModelUnknown;
         }
         return p;
     }
@@ -350,6 +421,31 @@ pub const Config = struct {
         return n;
     }
 
+    fn parseChatrooms(arena: std.mem.Allocator, v: json.Value) !Chatrooms {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.ChatroomsNotObject,
+        };
+        var c = Chatrooms{};
+        if (obj.get("on")) |k| c.on = switch (k) {
+            .bool => |b| b,
+            else => return error.FieldNotBool,
+        };
+        if (obj.get("rooms")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.ChatroomsRoomsNotArray,
+            };
+            var rooms: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| {
+                try rooms.append(arena, try jsonStr(item, "rooms[]"));
+            }
+            c.rooms = try rooms.toOwnedSlice(arena);
+        }
+        if (obj.get("max_history")) |k| c.max_history = @intCast(try jsonInt(k, "max_history"));
+        return c;
+    }
+
     fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(arena, "clanker-{d}", .{std.os.linux.getpid()});
     }
@@ -368,6 +464,7 @@ pub const Config = struct {
         if (obj.get("skills_dir")) |k| a.skills_dir = try jsonStr(k, "skills_dir");
         if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");
         if (obj.get("learnings_file")) |k| a.learnings_file = try jsonStr(k, "learnings_file");
+        if (obj.get("state_dir")) |k| a.state_dir = try jsonStr(k, "state_dir");
         if (obj.get("sandbox_root")) |k| a.sandbox_root = try jsonStr(k, "sandbox_root");
         if (obj.get("git_commit")) |k| a.git_commit = switch (k) {
             .bool => |b| b,
@@ -395,7 +492,10 @@ pub const Config = struct {
     }
 
     fn merge(dst: *Config, src: Config, arena: std.mem.Allocator) !void {
-        dst.default_provider = src.default_provider;
+        // Only override the default provider when the local file actually
+        // named one; otherwise a bare config.local.json would clobber the
+        // global default with the struct fallback ("deepseek").
+        if (src.default_provider_present) dst.default_provider = src.default_provider;
         var it = src.providers.iterator();
         while (it.next()) |kv| {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
@@ -405,8 +505,12 @@ pub const Config = struct {
         if (src.agent_present) dst.agent = src.agent;
         if (src.improve_present) dst.improve = src.improve;
         dst.peers = src.peers;
-        dst.instance = src.instance;
+        // Only override the instance when the local file actually named one:
+        // a bare config.local.json must not replace a stable name with a
+        // pid-based default on every restart.
+        if (src.instance_present) dst.instance = src.instance;
         dst.notify = src.notify;
+        if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.modules_present) dst.modules = src.modules;
     }
 
@@ -430,6 +534,11 @@ pub const Config = struct {
             .{ .key = "dotenv", .ptr = &m.dotenv },
             .{ .key = "hot_reload", .ptr = &m.hot_reload },
             .{ .key = "autolearn", .ptr = &m.autolearn },
+            .{ .key = "subagents", .ptr = &m.subagents },
+            .{ .key = "rlm", .ptr = &m.rlm },
+            .{ .key = "multimodal", .ptr = &m.multimodal },
+            .{ .key = "chatrooms", .ptr = &m.chatrooms },
+            .{ .key = "token_stats", .ptr = &m.token_stats },
         };
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
@@ -497,8 +606,8 @@ test "config load and merge" {
         \\{
         \\  "default_provider": "deepseek",
         \\  "providers": {
-        \\    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 },
-        \\    "ollama": { "base_url": "http://127.0.0.1:11434/v1", "model": "llama3.1" }
+        \\    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "models": { "deepseek-chat": { "max_tokens": 2048 } } },
+        \\    "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } }
         \\  },
         \\  "agent": { "max_iterations": 5 }
         \\}
@@ -510,11 +619,157 @@ test "config load and merge" {
     try std.testing.expectEqual(ProviderKind.openai_compat, ds.kind);
     try std.testing.expectEqualStrings("https://api.deepseek.com", ds.base_url);
     try std.testing.expectEqualStrings("DEEPSEEK_API_KEY", ds.api_key_env.?);
-    try std.testing.expectEqual(@as(u32, 2048), ds.max_tokens);
+    // The legacy flat shape is normalized into a one-entry models map.
+    try std.testing.expectEqualStrings("deepseek-chat", ds.activeModelName());
+    try std.testing.expectEqual(@as(u32, 2048), ds.activeModel().max_tokens);
+    try std.testing.expectEqual(@as(usize, 1), ds.models.count());
     const ollama = cfg.providers.getPtr("ollama").?;
     try std.testing.expect(ollama.api_key_env == null);
     try std.testing.expectEqual(@as(u32, 5), cfg.agent.max_iterations);
     // provider lookup
     const found = try cfg.provider(null);
     try std.testing.expectEqualStrings("deepseek", found.name);
+}
+
+/// Hosts a tool may reach when its descriptor sets `network_from_config`.
+/// `"peers"` yields every configured peer host, `"providers"` every provider
+/// base_url host. Descriptors cannot know these: they come from config, and
+/// change whenever a peer or provider is added.
+pub fn configuredHosts(self: *const Config, arena: std.mem.Allocator, which: []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    if (std.mem.eql(u8, which, "peers")) {
+        for (self.peers) |p| {
+            if (hostOf(p.url)) |h| try out.append(arena, h);
+        }
+    } else if (std.mem.eql(u8, which, "providers")) {
+        var it = self.providers.iterator();
+        while (it.next()) |kv| {
+            if (hostOf(kv.value_ptr.base_url)) |h| try out.append(arena, h);
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The hostname of a URL, without the port: `ck_http` matches against
+/// `std.Uri.host`, which excludes it, so keeping `:17932` here would deny every
+/// peer that runs on a non-default port.
+fn hostOf(url: []const u8) ?[]const u8 {
+    const scheme_end = std.mem.indexOf(u8, url, "://") orelse return null;
+    const rest = url[scheme_end + 3 ..];
+    const end = std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len;
+    var host = rest[0..end];
+    if (std.mem.indexOfScalar(u8, host, '@')) |at| host = host[at + 1 ..];
+    if (host.len > 0 and host[0] == '[') {
+        // IPv6 literal: the port sits after the closing bracket.
+        const close = std.mem.indexOfScalar(u8, host, ']') orelse return null;
+        host = host[0 .. close + 1];
+    } else if (std.mem.indexOfScalar(u8, host, ':')) |colon| {
+        host = host[0..colon];
+    }
+    return if (host.len == 0) null else host;
+}
+
+test "configuredHosts extracts peer and provider hosts" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = Config{};
+    cfg.peers = &.{
+        .{ .name = "a", .url = "http://127.0.0.1:17932" },
+        .{ .name = "b", .url = "https://rig.lan:8080/agent" },
+    };
+    const peer_hosts = try configuredHosts(&cfg, arena, "peers");
+    try std.testing.expectEqual(@as(usize, 2), peer_hosts.len);
+    try std.testing.expectEqualStrings("127.0.0.1", peer_hosts[0]);
+    try std.testing.expectEqualStrings("rig.lan", peer_hosts[1]);
+
+    try std.testing.expectEqual(@as(usize, 0), (try configuredHosts(&cfg, arena, "nothing")).len);
+    try std.testing.expect(hostOf("not-a-url") == null);
+}
+
+test "legacy flat provider fields are rejected with a pointer to the fix" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"flat","providers":{"flat":{"base_url":"https://example.test","model":"m1","context_window":4096}}}
+        ,
+    });
+    try std.testing.expectError(
+        error.ProviderLegacyModelFields,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+    );
+}
+
+test "a single model needs no default_model" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"solo","providers":{"solo":{"base_url":"https://example.test","models":{"only":{"max_tokens":128}}}}}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
+    const solo = cfg.providers.getPtr("solo").?;
+    try std.testing.expectEqualStrings("only", solo.activeModelName());
+    try std.testing.expectEqual(@as(u32, 128), solo.activeModel().max_tokens);
+}
+
+test "a provider with no models is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"empty","providers":{"empty":{"base_url":"https://example.test"}}}
+        ,
+    });
+    try std.testing.expectError(
+        error.ProviderMissingModel,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+    );
+}
+
+test "a default_model with no matching entry is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","default_model":"absent","models":{"present":{}}}}}
+        ,
+    });
+    // Caught at startup rather than at the first request.
+    try std.testing.expectError(
+        error.ProviderDefaultModelUnknown,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+    );
 }

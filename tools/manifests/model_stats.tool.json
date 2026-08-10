@@ -1,0 +1,9 @@
+{
+  "name": "model_stats",
+  "description": "Global token usage statistics aggregated per provider/model: call count, prompt/completion/total tokens, cache hit rate, tokens/sec, and estimated USD cost. Useful for deciding which backend to use, spotting expensive runs, and planning context/token savings.",
+  "wasm": "zig-out/tools/stats.wasm",
+  "input_schema": { "type": "object", "properties": {} },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true
+}

@@ -1,6 +1,6 @@
-# Agent prompt: Zig idiomatic code review (zdtd / Zig 0.16)
+# Agent prompt: Zig idiomatic code review (clanker / Zig 0.16)
 
-Your goal is to find code that fights Zig 0.16 idiom: allocator handling, error sets, comptime, slices and hot-path shape.
+Your goal is to find code that fights Zig 0.16 idiom: allocator handling, error sets, comptime, slices, and hot-path shape.
 
 Copy everything below the line into a fresh agent session (or `@` this file).
 
@@ -8,122 +8,122 @@ Copy everything below the line into a fresh agent session (or `@` this file).
 
 ## Role
 
-You are reviewing and optionally fixing **Zig code** in **zdtd**
-(`/home/maci/Desktop/7dtd/zdtd`): a clean-room Zig 0.16 dedicated server for the
-stock 7DTD client wire.
+You are reviewing and optionally fixing **Zig code** in **clanker**
+(`/home/maci/Desktop/clanker`): a self-improving AI agent harness that runs
+its tools as sandboxed WebAssembly modules via zwasm.
 
 Your job is a **style / idioms / correctness review** against house rules and
 modern Zig practice, then a **prioritized fix list** (and optional patches).
 
-This is **not** the hardcode/data audit (`hardcoded-data-review.md`), **not**
-the abstraction lifecycle review (`abstractions-review.md`), **not** the
-ECS/SoA state-ownership review (`ecs-soa-review.md`), **not** the SIMD
-pass (`simd-review.md`), **not** the 0.16 changelog conformance review
-(`zig-0.16-changelog-review.md`), and **not** the language best-practices
-review (`zig-best-practices-review.md`). Focus on language use, structure,
-memory, errors, comptime, I/O, and tick-path discipline. For "should this
-helper exist?", use `abstractions-review.md`. For state ownership (ECS vs
-resource vs world vs session) and SoA layout, use `ecs-soa-review.md`. For
-dense-loop vectorization, use `simd-review.md`. For removed/deprecated API
-names per the 0.16 release notes, use `zig-0.16-changelog-review.md`. For
-layout/naming/builtin choice/zero-cost abstractions, use
-`zig-best-practices-review.md`.
+This is **not** the abstraction lifecycle review (`abstractions-review.md`),
+**not** the WASM-vs-native placement review (`wasm-review.md`), **not** the
+0.16 changelog conformance review (`zig-0.16-changelog-review.md`), and
+**not** the language best-practices review (`zig-best-practices-review.md`).
+Focus on language use, structure, memory, errors, comptime, I/O, and
+hot-path discipline. For "should this helper exist?", use
+`abstractions-review.md`. For "should this be a WASM tool instead?", use
+`wasm-review.md`. For removed/deprecated API names per the 0.16 release
+notes, use `zig-0.16-changelog-review.md`. For layout/naming/builtin choice,
+use `zig-best-practices-review.md`.
 
 ## Read first
 
 | Doc | Why |
 |---|---|
-| `AGENTS.md` (Zig style, critical rules, anti-patterns, checklist) | Canonical house style |
-| `docs/ASSETS.md` | Asset load patterns (if touching assets) |
-| `docs/ECS_SYSTEMS.md` | SoA / tick architecture |
+| `AGENTS.md` (Zig style, architecture, tool ABI) | Canonical house style |
+| `docs/README.md` ("Sandbox", "WASM tool ABI") | The `ck_*` boundary, if touching sandbox code |
 | Touched source files | Actual code under review |
 
 ## Non-negotiable constraints
 
-- **Zig 0.16+** only. No pre-0.16 shims, no "works on 0.11" patterns.
+- **Zig 0.16+** only. No pre-0.16 shims, no "works on 0.15" patterns.
 - **No em dashes. No AI attribution** in commits, docs, comments, or PRs.
-- **Stdlib abstractions over OS-specific guts** (AGENTS rule 24): prefer
-  `std.Io`, `std.Io.Dir` / `File`, `std.Io.Threaded`, `std.mem`, `std.fmt`,
-  `std.Thread` (via project pool), `util/io_fs.zig`. Do **not** open-code
-  `std.os.linux.*` or raw `std.posix` file loops for ordinary work, and do not
-  reintroduce a second FS path (the old `linux_fs` module is gone; `io_fs` /
-  `std.Io` is the only one). Zig has no OOP "abstract classes"; the idiomatic
-  equivalent is **stdlib interfaces / vtables** (`std.Io`) and shared helpers on
-  top of them. LiteNet UDP is `litenet/udp_socket.zig` via `std.Io.net`, the
-  sanctioned path; do not invent a second raw net stack.
+- **`std.Io` for I/O**: `std.Io.Dir` / `File` / `Threaded`, `std.mem`,
+  `std.fmt`, `std.Thread`. Do not open-code raw `std.posix` loops for
+  ordinary work; clanker already has a short, deliberate residual (see
+  section 7) and it should not grow without reason. Zig has no OOP "abstract
+  classes"; the idiomatic equivalent is **stdlib interfaces / vtables**
+  (`std.Io`) and shared helpers on top of them.
 - **Follow Zig Zen** (see below): intent, edge cases, one obvious way, fail
   early, memory is a resource, serve the users.
-- **Keep `make check` / `zig build test` green.**
+- **Keep `zig build test` green.**
 - **YAGNI + minimal diffs.** Prefer small idiomatic fixes over drive-by rewrites.
-- **Do not break stock wire fidelity** while "cleaning" package builders.
-- **Tick path stays cheap:** no heap alloc, no XML re-parse, no file I/O on the
-  50 ms sim tick (except existing batched poll/send).
+- **Do not change agent/LLM/tool-call semantics** while "cleaning" code.
+- **Streaming/loop paths stay cheap:** the `Agent.on_token` callback fires
+  once per SSE delta (potentially hundreds of times per answer), and the
+  agent loop's `while (iteration < max_iterations)` body runs once per
+  think-act-observe round trip. Neither is a fixed-rate game tick, but both
+  run far more often than "once per command": treat them with the same
+  care a hot path gets elsewhere (see section 3a).
 
 ## Zig Zen (review lens)
 
 Use these as a severity tie-break when two fixes both "work." Official spirit
 ([Zig Zen](https://ziglang.org/documentation/master/#Zen)):
 
-| Zen line | In zdtd practice |
+| Zen line | In clanker practice |
 |---|---|
 | Communicate intent precisely | Names match behavior; `///` ownership; exhaustive switches; typed errors |
-| Edge cases matter | Empty peer list, zero-length body, cap hit, missing game-dir, bad C2S |
-| Favor reading code over writing code | Small fns; no clever macros; RE cites beat clever packing |
-| Only one obvious way to do things | One package builder per stock shape; one FS helper (`io_fs`); one parallel pool |
-| Runtime crashes better than bugs | `assert` internal invariants; do not paper over corrupt sim state |
-| Compile errors better than runtime crashes | Exhaustive enum switches; comptime layout checks; typed ids where cheap |
+| Edge cases matter | Empty tool-call list, zero-length stream delta, budget hit, malformed provider response |
+| Favor reading code over writing code | Small fns; no clever macros; the WASM ABI boundary is documented, not implied |
+| Only one obvious way to do things | One streaming path (`client.chatStream`), one tool dispatch (`registry.zig`), one markdown renderer (`MdStream`) |
+| Runtime crashes better than bugs | `assert` internal invariants; do not paper over a corrupt session/message list |
+| Compile errors better than runtime crashes | Exhaustive enum switches (`ProviderKind`, `Level`); typed config over stringly options where cheap |
 | Incremental improvements | Small PRs; fix idiom drift in files you touch instead of big-bang rewrites |
-| Avoid local maximums | Do not micro-opt with raw syscalls if it blocks std.Io migration |
-| Reduce the amount one must remember | Named caps; no magic numbers; no dual id spaces |
+| Avoid local maximums | Do not micro-opt with raw syscalls if it blocks a cleaner `std.Io` path |
+| Reduce the amount one must remember | Named caps (`max_session_tokens`, `max_per_turn_tokens`); no magic numbers |
 | Focus on code rather than style | Fix real footguns first; bikeshed last |
-| Resource alloc may fail; dealloc must succeed | `try` alloc at init; `defer`/`errdefer`; never leak on error path |
-| Memory is a resource | **No hot-path heap**; pools and scratch; caps |
-| Together we serve the users | Stock client playability and 20 TPS beat purity theatre |
+| Resource alloc may fail; dealloc must succeed | `try` alloc at init; `defer`/`errdefer`; never leak a WASM module or an arena on an error path |
+| Memory is a resource | No unbounded per-token/per-iteration heap growth; arenas scoped to a run, not the process |
+| Together we serve the users | A working agent that answers tasks beats purity theatre |
 
-**Zen vs "clever Linux":** open-coding `getdents64` or `open` is a **local maximum**.
-Prefer `std.Io.Dir` even if the generated code is similar; one portable, testable
-way beats N OS-specific paths.
+**Zen vs "clever":** open-coding a raw `posix` loop where `std.Io.Dir` already
+does the job is a **local maximum**. Prefer the portable, testable path even
+if the generated code is similar.
 
 ## Scope modes (user may pick one)
 
 | Mode | Do |
 |---|---|
-| **Review only** | Findings + `../reviews/ZIG_REVIEW.md` (or PR comment style tables). No code. |
+| **Review only** | Findings + `docs/reviews/ZIG_REVIEW.md`. No code. |
 | **Fix P0/P1** | Review + apply high-severity idiomatic fixes; re-run tests. |
 | **Full pass on path** | Deep review of given dirs/files + fix all safe issues. |
 | **Comptime focus** | Only comptime/inline/generics/`anytype` quality. |
-| **I/O migration** | Replace raw linux FS in listed files with `io_fs` / `std.Io`. |
+| **I/O audit** | List every `std.posix` call and classify vs the residual below. |
 
 Default if unspecified: **review only** on the paths the user named; if none,
-sample hot paths (`src/server/game.zig`, `src/ecs/*`, `src/wire/*`, `src/world/*`,
-`src/assets/*`, `src/util/*`).
+sample the paths most likely to drift: `src/agent/loop.zig`, `src/cli.zig`,
+`src/llm/client.zig`, `src/sandbox/host.zig`.
 
 ---
 
 ## What "idiomatic Zig" means here
 
-House style is **zdtd-shaped**, not generic blog Zig. Optimize for:
+House style is **clanker-shaped**, not generic blog Zig. Optimize for:
 
-1. Explicit allocators and ownership
-2. Caller-owned buffers on wire/tick paths
-3. **Zero heap allocation on the hot path** (see Hot path memory)
-4. Closed sets and bit layouts at **comptime** where it removes runtime cost or
-   duplication without hurting readability
-5. Clear error sets and fail-closed untrusted input
-6. SoA + fixed caps over clever dynamic graphs
-7. **Stdlib abstractions first** (`std.Io`, `std.mem`, …) over OS-specific glue
-8. Zig Zen: one obvious way, edge cases, memory is a resource
+1. Explicit allocators and ownership (arena for run-scoped data, gpa for
+   long-lived ownership: see AGENTS.md)
+2. Bounded, JSON-in/JSON-out shape at the WASM tool boundary; caller-owned
+   buffers on the streaming/hot paths inside the harness
+3. **No unbounded heap growth on the streaming or agent-loop path** (see Hot
+   path memory)
+4. Closed sets at **comptime** where it removes runtime cost or duplication
+   without hurting readability
+5. Clear error sets and fail-closed handling of untrusted input (provider
+   responses, tool output, WASM guest memory)
+6. **Stdlib abstractions first** (`std.Io`, `std.mem`, ...) over OS-specific glue
+7. Zig Zen: one obvious way, edge cases, memory is a resource
 
-Reference naming (from AGENTS.md):
+Reference naming (from AGENTS.md and observed house style):
 
-| Kind | Style |
-|---|---|
-| Functions / methods | `camelCase` |
-| Variables / fields / params | `snake_case` |
-| Types | `PascalCase` |
-| Files | `snake_case.zig` |
-| Module constants | `snake_case` |
-| Stock package / type **strings** | Match TFP names |
+| Kind | Style | Example |
+|---|---|---|
+| Functions / methods | `camelCase` | `compactMessages`, `writeStreamEvent`, `replShowThinking` |
+| Variables / fields / params | `snake_case` | `tool_call_id`, `run_stdout_color`, `max_iterations` |
+| Types | `PascalCase` | `Agent`, `MdStream`, `RunStats`, `ToolCall` |
+| Files | `snake_case.zig` | `cmd_status.zig`, `system_prompt.zig` |
+| Module constants | `snake_case` | `max_session_chars`, `parallel_tool_stack_bytes` |
+| WASM tool descriptor strings | Match the `.tool.json` `name` field exactly | `"webui"`, `"search_code"` |
 
 ---
 
@@ -139,25 +139,25 @@ memory, generics/`anytype` quality, and the hot path.
 
 | Use | Good | Bad |
 |---|---|---|
-| Closed enum maps | Package name → handler table, bit field layouts | Gigantic comptime that rebuilds half the game |
-| Small parsers / formatters | Fixed wire header sizes, `comptime` string hash of stock **names** | Comptime file I/O of full `blocks.xml` every compile without need |
-| Generic helpers | `fn append(comptime T: type, …)`, `anytype` with clear constraints | `anytype` soup with no docs and 6 overload meanings |
-| Unrolling tiny loops | `@memcpy`/`inline for` over 4–16 fixed fields | `inline for` over 10k items or whole chunk |
-| Type-level invariants | `comptime assert` on struct sizes matching RE | Silent `@sizeOf` assumptions without test |
+| Closed enum maps | Provider kind -> handler, level -> log prefix | Comptime that rebuilds a large table for no reuse |
+| Small parsers / formatters | Fixed escape tables, `comptime` string constants | Comptime file I/O of large fixtures without need |
+| Generic helpers | `inline for (@typeInfo(@TypeOf(extra)).@"struct".fields)` (as used in `writeStreamEvent`, `src/cli.zig`) | `anytype` soup with no docs and many overload meanings |
+| Type-level invariants | `comptime assert` on a struct layout that must match a wire/ABI shape | Silent `@sizeOf` assumptions without a test |
 
 **Rules of thumb:**
 
-- If a value is known at compile time and used in a hot path, consider `comptime`.
-- If it only runs at init once, **runtime is fine** (XML load, map load).
-- Prefer `comptime` **tables generated from data** (embed/parse fixtures) over
-  hand-copied content (that is also a data-audit concern).
-- `inline` = tiny hot helpers only (2–10 lines). Never `inline` large package
-  builders or AI systems.
+- If a value is known at compile time and used on a hot path (see 3a),
+  consider `comptime`.
+- If it only runs once per process or once per run (config load, system
+  prompt assembly), **runtime is fine**.
+- `inline` = tiny hot helpers only (2-10 lines), or a comptime-bounded loop
+  over a known-small set (the `writeStreamEvent` field-iteration example
+  above is the right shape: small, closed, compile-time-known).
 - Avoid `comptime` that makes **error messages unreadable** or compile times
   explode for little gain.
-- Use `@Int` / `@Enum` / `@Struct` / `@Union` / `@Pointer` / `@Fn` / `@Tuple` /
-  `@EnumLiteral` for type reification; `@Type` was removed in 0.16 and
-  `std.meta.Int` is deprecated in its favor. For removed/deprecated-name
+- Prefer `@Int` / `@Enum` / `@Struct` / `@Union` / `@Pointer` / `@Fn` /
+  `@Tuple` / `@EnumLiteral` for type reification; `@Type` was removed in 0.16
+  and `std.meta.Int` is deprecated in its favor. For removed/deprecated-name
   verdicts, `zig-0.16-changelog-review.md` is the authority.
 
 **Findings to hunt:**
@@ -175,96 +175,77 @@ Mark each: **good comptime** / **should be comptime** / **should not be comptime
 
 | Pattern | Prefer | Avoid |
 |---|---|---|
-| Small generic helper | `fn max(comptime T: type, a: T, b: T) T` | Copy-paste for u16/u32/i32 |
-| Context callbacks | `*const fn (?*anyopaque, …)` or typed ctx pointer | Global function pointers with hidden state |
-| `anytype` | One obvious duck type (e.g. table with `byName`) documented | Nested `anytype` in public APIs without examples |
+| Small generic helper | A documented `anytype` shape (e.g. `writeStreamEvent`'s `extra: anytype` struct) | Copy-paste for every event type |
+| Context callbacks | `?*const fn ([]const u8) void` (`Agent.on_token`), typed ctx via module-level state where the callback ABI is fixed | Global function pointers with undocumented hidden state |
+| `anytype` | One obvious duck type, documented | Nested `anytype` in public APIs without examples |
 | VTable / Io | `std.Io` as designed | Hand-rolled vtables for FS |
 | Allocator | Explicit `std.mem.Allocator` param | Hidden GPA statics |
 
-Check that `anytype` call sites would break loudly if the wrong type is passed
-(method names used, not only field peeks that coerce badly).
+Check that `anytype` call sites would break loudly if the wrong type is
+passed (field/method names used, not only shape peeks that coerce badly).
 
 ### 3. Memory and ownership
 
 | Rule | Check |
 |---|---|
-| Explicit allocator | Every growable structure knows who frees |
-| `defer` / `errdefer` | Immediately after successful acquire |
-| **Hot path: no heap alloc** | See subsection below (hard rule) |
-| Caller buffers | `buildXxxBody(buf, …) ![]u8` not `allocator.dupe` per send |
-| Arena | Init/load scoped arenas OK; never on 20 TPS hot path |
-| Tests | `std.testing.allocator` or DebugAllocator; leaks fail |
-| `page_allocator` | Not for tick, package bodies, interest, or stream encode |
+| Explicit allocator | Every growable structure knows who frees (arena vs `ctx.gpa`) |
+| `defer` / `errdefer` | Immediately after successful acquire (WASM module load, worker thread spawn) |
+| **Streaming/loop path: no unbounded heap growth** | See subsection below |
+| Arena | Run-scoped arena (`Agent.arena`) is correct for a single run's messages/tool results; never hold it across unrelated runs |
+| Tests | `std.testing.allocator`; leaks fail the test |
+| gpa vs arena | Session/registry state that outlives one run uses `gpa`; per-run scratch uses `arena` (AGENTS.md: "arena for run-scoped data, gpa for ownership") |
 
-### 3a. Hot path memory (hard rule)
+### 3a. Streaming and loop-path memory (hard rule)
 
-**Hot path** = anything that can run every tick (50 ms) or per packet / per peer
-/ per entity / per chunk on that tick. Includes:
+**Hot path** here means anything that can run once per streamed token/delta,
+or once per agent-loop iteration, not just once per CLI invocation. Includes:
 
-- Main loop body after listen (`Game` tick, net poll dispatch)
-- Package **decode** of C2S and **encode** of S2C
-- Interest / replicate / serialize-once fan-out
-- Chunk stream select + `stock_chunk` body build
-- ECS systems (`systems.*`, AI, director step, power tick)
-- LiteNet send/recv framing helpers called from the loop
+- `Agent.on_token` callbacks: `replDelta`, `runDelta`, `runStreamDelta`
+  (`src/cli.zig`) and everything they call, including `MdStream.feed`
+- The agent loop body in `Agent.run` (`src/agent/loop.zig`): one pass per
+  LLM round trip, potentially many per task
+- SSE parsing in `client.chatStream` (`src/llm/client.zig`): runs per chunk
+  off the wire
+- Tool-call dispatch (`executeCalls`, `src/agent/loop.zig`): one pass per
+  batch, spawns a worker thread per distinct tool name in the batch
 
-**Forbidden on the hot path (P0/P1):**
+**Forbidden without a specific reason (P0/P1):**
 
 | Pattern | Why |
 |---|---|
-| `allocator.alloc` / `create` / `dupe` / `allocPrint` | Heap per tick or per peer |
-| `ArrayList.append` that may grow | Hidden realloc |
-| `ArrayList` / `HashMap` **init** per call | Alloc + free churn |
-| Arena `allocator()` used to build one package then tear down | Still alloc pressure |
-| `page_allocator` anywhere here | Unbounded, slow, wrong layer |
-| `std.fmt.allocPrint` | Heap string |
-| Growing maps keyed by entity/chunk without a fixed cap | OOM / frame spikes |
-| `Thread.spawn` to "help" one tick | Join cost + alloc |
+| `allocator.alloc` / `create` / `dupe` / `allocPrint` per streamed token | Heap churn on every SSE delta |
+| Unbounded `ArrayList.append` per token with no cap | Hidden realloc, unbounded growth for a runaway stream |
+| Spawning a `std.Thread` per token or per loop iteration | Thread-spawn cost dwarfs the work; already scoped to per-tool-batch in `executeCalls`, keep it there |
 
-**Required instead:**
+**Already-correct shape to match (`MdStream.feed`, `src/cli.zig`):** it
+writes directly into the caller's `*std.Io.Writer` per byte/marker, holds at
+most 2 bytes of lookahead state in a fixed `[2]u8` field, and never
+allocates per delta. Any new per-token transform should look like this, not
+like a `std.ArrayList(u8)` rebuilt per call.
 
-| Pattern | Use |
-|---|---|
-| Caller / `Game` scratch | `body_buf`, `recv_buf`, `send_buf`, stack `[N]u8` |
-| Fixed SoA columns | Pre-sized at world/init; denseness over pointers |
-| Pools / free lists | Entity slots, chunk slots, already-allocated queues |
-| Named caps | `max_streamed_chunks`, interest lists, cmd buffers; **fail or drop** at cap |
-| `ArrayList` only if | Capacity reserved at init and **never grows** on tick (`append` only when `len < cap`, or use fixed array) |
-| Format | `std.fmt.bufPrint` into stack or scratch |
-| Temporary sets | Bitsets / fixed arrays / reuse `Game` scratch cleared each tick |
+**Fine to allocate (init / once-per-run):**
 
-**Init / load / admin (OK to allocate):**
-
-- `Game.create`, map/XML/TTS/prefab load, AssignIds merge
-- Admin telnet one-shot commands
-- First-touch worldgen that fills a chunk into an **already reserved** chunk slot
-  (the slot storage is pooled; avoid per-block heap)
-- Tests
-
-**Gray area (document if present):**
-
-- Rare path under a tick counter (`tick_n % N`) still counts as hot if N is small
-  or peer count is high: treat as hot unless proven init-only.
-- Debug logging: prefer stack buffers; never `allocPrint` in release hot paths.
+- `Agent.init` (system prompt assembly), `config.Config.load`, session
+  load/save, the final non-streamed content write
+- Tool execution: one `wasm_bytes` read + one worker struct per distinct
+  tool per batch is the existing, accepted shape
 
 **Review questions for every finding:**
 
-1. Can this run on the 20 TPS path or per packet?
-2. Does it call anything that may allocate (including std helpers)?
-3. If yes: move to init, reuse scratch, or pre-cap and drop.
+1. Can this run once per token, or once per agent-loop iteration on a long
+   task?
+2. Does it call anything that may allocate (including format helpers)?
+3. If yes: is the allocation bounded and proportional to the call (fine), or
+   does it grow per call with no cap (P0/P1)?
 
 Hunt:
 
 ```text
-# Direct alloc on likely hot modules
-rg -n 'allocator\.(alloc|create|dupe|realloc)|page_allocator|allocPrint|\.dupe\(' \
-  src/server/game.zig src/ecs src/wire src/litenet src/world/store.zig src/world/worldgen.zig --type zig
+# Direct alloc near the streaming/callback paths
+rg -n 'allocator\.(alloc|create|dupe|realloc)|allocPrint|\.dupe\(' src/cli.zig src/agent/loop.zig src/llm/client.zig --type zig
 
-# Growable structures
-rg -n 'ArrayList|HashMap|SegmentedList' src/server/game.zig src/ecs src/wire --type zig
-
-# Format heap
-rg -n 'allocPrint|allocPrintZ' src --type zig
+# Growable structures near those paths
+rg -n 'ArrayList|HashMap' src/agent/loop.zig src/llm/client.zig --type zig
 
 # Ownership hygiene
 rg -n 'defer |errdefer ' src --type zig
@@ -274,15 +255,10 @@ rg -n 'defer |errdefer ' src --type zig
 
 | Sev | Example |
 |---|---|
-| **P0** | `alloc` inside per-peer interest encode or per-chunk stream body build |
-| **P1** | `ArrayList` grow on tick; `dupe` of package name/body per send; map insert per entity without cap |
-| **P2** | Alloc on rare admin path that shares code with tick (split paths) |
+| **P0** | `allocPrint`/`dupe` called from inside `on_token`/`MdStream`-shaped per-delta code with no cap |
+| **P1** | `ArrayList` grown per streamed token with no bound; a new `Thread.spawn` per tool call inside an already-parallel batch |
+| **P2** | Alloc on a rare admin/log path that shares a function with a hot one (split paths) |
 | **P3** | Init-path alloc style nits |
-
-When fixing: prefer **scratch buffer fields on `Game`/`World`**, fixed max arrays,
-and encode-into-slice APIs. Do not "fix" with a bigger arena wiped each tick
-unless the arena is a single reused block with cleared high-water mark and a hard
-cap (still document; prefer true fixed scratch).
 
 ### 4. Errors and control flow
 
@@ -290,21 +266,24 @@ cap (still document; prefer true fixed scratch).
 |---|---|
 | Named error sets or precise `anyerror` only at boundaries | Swallowed `catch {}` without comment |
 | `try` / `errdefer` | Manual cleanup ladders |
-| `catch |err|` log + safe fallback with reason | `catch unreachable` on untrusted input |
-| `std.debug.assert` for internal invariants | Assert on client-controlled lengths |
-| Optional `?T` for not-found | Sentinel `-1` without type help |
+| `catch |err|` log + safe fallback with reason | `catch unreachable` on untrusted input (provider JSON, tool output, WASM guest memory) |
+| `std.debug.assert` for internal invariants | Assert on model- or tool-controlled lengths |
+| Optional `?T` for not-found | Sentinel values without type help |
 
-Untrusted C2S: reject/drop/disconnect; never crash the process on one bad peer
-when avoidable.
+Untrusted input (LLM provider responses, WASM tool output, guest memory
+reads in `src/sandbox/host.zig`) must fail closed: log and continue, deny,
+or error, never `catch unreachable`.
 
 ### 5. Optionals, enums, and illegal states
 
-- Prefer `enum` / `union(enum)` over parallel bool flags that can disagree.
-- Prefer `?T` over magic `0` meaning both "air" and "unset" unless wire-defined.
-- Exhaustive `switch` on enums (Zig forces this; do not `@panic("todo")` arms on
-  production paths without a tracked gap).
-- `packed struct` / explicit widths when matching wire or bitsets; document
-  endian and RE cite.
+- Prefer `enum` / `union(enum)` over parallel bool flags that can disagree
+  (e.g. `ProviderKind`, `log.Level`).
+- Prefer `?T` over a magic sentinel meaning "unset."
+- Exhaustive `switch` on enums (Zig forces this; do not leave a
+  `@panic("todo")` arm on a production path without a tracked gap).
+- `packed struct` / explicit widths when matching a wire/ABI shape (the WASM
+  guest ABI: `scratch`/`host_arena`/`run` packing ptr+len into a `u64`);
+  document the layout.
 
 ### 6. Slices, arrays, and numbers
 
@@ -312,119 +291,116 @@ when avoidable.
 |---|---|
 | `@memcpy` / `@memset` | Manual byte loops for bulk copy |
 | `@min` / `@max` | Branchy min/max |
-| `@intCast` with prior bounds check | Blind cast of untrusted lengths |
-| Named `const` for sizes/caps | Magic `169`, `96`, `3_000_000_000` inline |
+| `@intCast` with a prior bounds check | Blind cast of a model/tool-controlled length |
+| Named `const` for sizes/caps | Magic numbers inline (`max_session_chars`, `parallel_tool_stack_bytes` are the pattern to match) |
 | `[]const u8` for borrowed strings | Owning copies without need |
 
 ### 7. Zig 0.16 stdlib abstractions (not OS-specific layers)
 
 **Principle:** call the **highest stable std abstraction** that does the job.
-Do not drop to `std.os.linux`, `std.c`, or raw `posix` because it is "what the
-kernel wants." Thin project wrappers are OK only if they wrap std (`io_fs` →
-`std.Io`), not if they re-export syscalls.
+Do not drop to `std.posix` because it is "what the kernel wants." clanker
+already has a short, deliberate residual; know it before flagging a new hit.
+
+**Current residual (re-verify, don't assume this list is exhaustive or still
+accurate):**
+
+| Site | Shape | Why it's residual, not a bug |
+|---|---|---|
+| `src/cli.zig` (REPL stdin read) | `std.posix.read(stdin_file.handle, &tmp)` | Needs "whatever is available right now" semantics on a TTY; a buffered `std.Io.Reader` would block differently. Documented inline. |
+| `src/cli.zig` (HTTP server read loops, `writeAllFd`) | `std.posix.read`/raw `fd_t` | Hand-rolled minimal HTTP server predates/sits below the `std.Io.net` request/response layer clanker uses elsewhere |
+| `src/sandbox/host.zig` (`ck_http`-adjacent socket read) | `std.posix.read` | Same shape as above: raw socket byte pump for the sandboxed HTTP path |
+| `src/llm/mock_server.zig` | `std.posix.read`, raw `fd_t` writer | Test-only mock HTTP server, same shape as the real one |
+| `src/main.zig` | `std.posix.setrlimit(.STACK, ...)` | No `std.Io` equivalent for process rlimits; this is the correct "go lower" case |
+
+If you find a **new** `std.posix` call, check first whether it fits one of
+these shapes (raw socket/fd pump, no-`std.Io`-equivalent syscall) before
+flagging it; if it's ordinary file I/O that `std.Io.Dir`/`File` already
+covers, it's a finding.
 
 | Domain | Idiomatic (prefer) | Non-idiomatic (avoid in new/touched code) |
 |---|---|---|
-| Files / dirs | `std.Io.Threaded` + `std.Io.Dir` / `File`; `util/io_fs.zig` | `std.os.linux.open/read/write/getdents*`, ad-hoc `posix` loops, any second FS path |
-| Paths | `std.fs.path` / `bufPrint` into stack | Hardcoded `/tmp` for large caches; machine-local Steam paths outside tests |
-| Sync | `std.Io.Mutex` / `Condition` (with Io) | `std.Thread.Mutex`/`Condition`/`ResetEvent` (removed in 0.16; migrate to `Io.Mutex`/`Condition`/`Event`, verdicts per `zig-0.16-changelog-review.md`); spinlocks without need |
-| Threads | `util/parallel.zig` persistent pool | `Thread.spawn` per parallel-for; detached fire-and-forget on tick |
-| Formatting | `std.fmt.bufPrint` | `allocPrint` on hot path; manual digit loops without reason |
+| Files / dirs | `std.Io.Dir` / `File`, `std.Io.Threaded` | Raw `std.posix.open/read/write` for ordinary files |
+| Formatting | `std.fmt.bufPrint` (stack/scratch) or `std.Io.Writer.print` | `allocPrint` in a per-token/per-iteration path |
 | Mem | `std.mem`, `@memcpy`/`@memset` | Hand-rolled copy that ignores aliasing/overlap |
-| Random (sim) | Explicit seeded PRNG state | `std.crypto.random` on loot/AI tick |
-| Net (new code) | `litenet/udp_socket.zig` (`std.Io.net`) for UDP; `util/tcp_listen.zig` for TCP (AGENTS rule 24) | Second raw-syscall UDP stack beside LiteNet |
-| ArrayList | `.empty` + methods take `allocator` | Pre-0.16 init styles; grow on tick |
-
-**Layering (top → bottom; stay high):**
-
-```text
-  game / assets / world code
-           │
-           ▼
-  util/io_fs.zig   (optional thin helper)
-           │
-           ▼
-  std.Io + Dir/File/Threaded     ← stop here for ordinary FS
-           │
-           ▼
-  std.posix / std.os.linux       ← only inside std or documented legacy (LiteNet)
-```
-
-Crossing below `std.Io` in application code is a **P1** (P0 if new file or
-hot path). No legacy `linux_fs` remains in `src/util` (the migration is done);
-keep it that way and never reintroduce a second FS path.
+| Threads | `std.Thread.spawn` scoped to one bounded batch (as `executeCalls` already does) | Spawning per token or per loop iteration |
+| ArrayList | `.empty` + methods take `allocator` | Pre-0.16 managed-container init styles |
 
 Hunt residual low-level I/O:
 
 ```text
-rg -n 'std\.os\.linux\.|std\.posix\.(open|read|write|close)|std\.c\.(open|read)' src --type zig
-rg -n 'linux_fs\.' src --type zig   # should be empty: migration done, regression guard
-rg -n 'io_fs\.|std\.Io\.' src --type zig
+rg -n 'std\.posix\.' src --type zig
 ```
 
-Classify each hit: **legacy OK (cite why)** vs **migrate when touching** vs
-**must fix now**.
+Classify each hit: **residual, matches the table above** vs **new residual,
+needs a one-line justification** vs **should migrate to `std.Io`**.
 
 ### 8. Structure and layers
 
 Folder structure and layering policy in depth belongs to
-`zig-best-practices-review.md`; here, flag only violations of the zdtd layer
-table below.
+`zig-best-practices-review.md`; here, flag only violations of the layer
+table below (from AGENTS.md).
 
 | Layer | Holds | Must not hold |
 |---|---|---|
-| `wire/*` | Package body layout, binary LE | Game rules, world mutation |
-| `ecs/*` | SoA sim, pure systems | Syscalls, package id integers |
-| `world/*` | Chunks, TTS, gen, store | LiteNet send |
-| `server/game.zig` | Join SM, orchestration, send | Open-coded package field writes (use builders) |
-| `assets/*` | XML/tables load | Tick logic |
-| `litenet/*` | Framing, UDP | Sim |
-
-(`apm/*`, `util/*`, `plugin/*`, and top-level `main.zig` / `protocol.zig` /
-`fuzz.zig` / `version.zig` also exist; review them by the general rules above.)
+| `src/llm/` | Provider adapters (openai_compat, anthropic), HTTP/SSE client | Tool dispatch, sandbox policy |
+| `src/sandbox/` | zwasm runtime wrapper, `ck_*` host functions, policy | Agent-loop orchestration, provider calls |
+| `src/agent/` | Agent loop, system prompt assembly, session store, execution graphs, sub-agents, autolearn | Raw socket/process I/O beyond what the loop needs |
+| `src/mcp/`, `src/peers/`, `src/patch/`, `src/util/` | MCP server, peer notify/phonebook, patch application, logging/dotenv | Agent-loop logic |
+| `src/evals/` + `src/gate/` | Eval harness, deterministic gates | Nothing outside verification |
+| `src/improve/` | Self-improvement engine (**protected**: see `wasm-review.md`'s trust-boundary section) | - |
+| `src/tools/` | Tool registry (`registry.zig`) and the WASM build pipeline (`builder.zig`, **protected**) | Agent orchestration |
 
 Findings: cyclic imports, god-files that should split, `pub` on helpers that
-should be file-private, duplicated encoders for one stock package shape.
+should be file-private, a second implementation of something the registry or
+sandbox already does once.
 
 ### 9. Naming and API clarity
 
-Naming policy (full table, casing rules) is owned by
-`zig-best-practices-review.md`; here, flag names that misstate behavior or hide
-ownership.
+Naming policy (full table) is owned by `zig-best-practices-review.md`; here,
+flag names that misstate behavior or hide ownership.
 
-- Flags named for **what they do** (`stream_chunks` not `world_enabled` if it
-  only throttles streaming).
-- Functions: verb + object; no ambiguous `handle` / `process` without package name.
-- Ownership in `///` on public APIs: who frees, whose buffer, lifetime of returned slices.
-- File-level `//!` purpose + non-goals.
-- No narrating comments on obvious code; RE/layout comments on wire fields are good.
+- Flags named for **what they do** (`run_stdout_color`, not a vaguer
+  `interactive`, since it gates one specific thing).
+- Functions: verb + object; no ambiguous `handle`/`process` without context.
+- Ownership in `///` on public APIs: who frees, whose buffer, lifetime of
+  returned slices (arena-owned vs caller-owned is a recurring distinction
+  here, since `Agent.arena` and `ctx.gpa` coexist).
+- File-level `//!` purpose + non-goals (most `src/` files already do this;
+  match it).
+- No narrating comments on obvious code; comments that explain a
+  non-obvious constraint (like the ones on the residual `std.posix` sites
+  above) are good.
 
-### 10. Tick path (20 TPS)
+### 10. Streaming and loop-path review (per-token / per-iteration code)
 
-Review any change that runs per tick or per packet:
+Review any change that runs per streamed delta or per agent-loop iteration:
 
-- [ ] **No heap allocation** (section 3a): no `alloc`/`dupe`/`allocPrint`, no growing lists/maps
-- [ ] No file/XML/network connect (beyond existing batched poll/sendto)
-- [ ] No unbounded `ArrayList` growth; prefer fixed caps + drop
-- [ ] No `Thread.spawn` outside `util/parallel` pool
-- [ ] Caps named and enforced (stream, interest, entities, cmd buffers)
-- [ ] Material cost has `apm` section/counter when new hot work is added
-- [ ] Deterministic order where two systems touch the same data
-- [ ] Scratch buffers are reused (`body_buf` etc.), not allocated per call
+- [ ] **No unbounded heap growth per token** (section 3a)
+- [ ] No file/network I/O added inside a per-token callback beyond what
+      already exists (writing to the configured writer is fine; opening a
+      new connection per token is not)
+- [ ] Any new `ArrayList`/buffer used per token has a cap or is reused
+      across calls (like `MdStream`'s `hold` field), not rebuilt each time
+- [ ] No `Thread.spawn` outside the existing per-tool-batch shape in
+      `executeCalls`
+- [ ] Deterministic behavior when two tool calls in a batch touch the same
+      state (the existing sequential-fallback-for-repeated-tool-name rule in
+      `executeCalls` is the precedent to match)
 
 ### 11. Tests
 
-- Unit tests at **bottom** of owning file
-- Multi-system paths in `server/scenarios.zig`
-- Wire builders: size/marker/golden tests
-- Comptime-heavy code: at least one test that would fail if layout drifts
-- No `skip` to land a feature; `SkipZigTest` only when stock install missing
+- Unit tests at the **bottom** of the owning file (existing precedent:
+  `compactMessages`, `MdStream` tests in `src/cli.zig`)
+- New parsers/streaming state machines get at least one test that would fail
+  if a marker-split-across-chunks case regressed (see the `MdStream` split
+  test for the shape to match)
+- No `skip` to land a feature
 
 ### 12. Build and tooling
 
-- Logic in `build.zig` / `build.zig.zon`, not only Makefile
-- No `-f` flags that hide safety in Debug without reason
-- `DebugAllocator` in main for dev
+- Build logic in `build.zig` / `build.zig.zon`
+- `zig build`, `zig build tools`, `zig build test` all stay green
+- `zig fmt --check src/ tools/zig/` clean
 
 ---
 
@@ -432,9 +408,9 @@ Review any change that runs per tick or per packet:
 
 | Sev | Meaning | Examples |
 |---|---|---|
-| **P0** | Wrong / unsafe / tick bomb | Leak on hot path, raw syscall in new code, catch on C2S that applies bad state, non-exhaustive switch crash |
-| **P1** | Clear non-idiomatic with real cost or footgun | Alloc per package send, inline 200-line fn, anytype public API, second FS path reintroduced |
-| **P2** | Style / maintainability | Naming drift, missing `//!`, comptime that should be runtime (or reverse), god-file split candidate |
+| **P0** | Wrong / unsafe / streaming-path cost bomb | Leak on the per-token path, `catch unreachable` on provider/tool-controlled data, non-exhaustive switch crash |
+| **P1** | Clear non-idiomatic with real cost or footgun | Alloc per streamed token, `anytype` public API with no documented shape, a second implementation of an existing dispatch path |
+| **P2** | Style / maintainability | Naming drift, missing `//!`, comptime that should be runtime (or reverse) |
 | **P3** | Nit | Comment polish, import order, micro-readability |
 
 ---
@@ -443,25 +419,25 @@ Review any change that runs per tick or per packet:
 
 ### Always
 
-1. **`../reviews/ZIG_REVIEW.md`** (create or update) with:
+1. **`docs/reviews/ZIG_REVIEW.md`** (create or update) with:
    - Scope (paths, mode, date)
    - Summary counts by severity
    - Tables: location (`path:line`), issue, idiomatic fix, severity
    - Comptime-specific subsection (good / bad / missing)
-   - I/O / syscall debt list (legacy vs fix-now)
+   - `std.posix` residual list: matches the table in section 7, or explains
+     the delta
    - Ordered fix plan (small PRs)
-2. Short note in chat: top 5 issues + whether tests were run
+2. Short note in chat: top 5 issues + whether `zig build test` was run
 
 ### If fixing
 
-- Minimal patches; one theme per commit if user asked for commits
-- `make check` green
-- Update `TODO.md` only if review debt is tracked there
-- Do **not** mix hardcode/data moves unless required for the idiomatic fix
+- Minimal patches; one theme per commit if the user asked for commits
+- `zig build && zig build test` green
+- Do **not** mix in WASM-placement moves (`wasm-review.md` territory) unless
+  required for the idiomatic fix
 
 ### Optional
 
-- Link from `docs/INDEX.md` under prompts / engineering
 - Suggest `ast-grep` rules for recurring anti-patterns
 
 ---
@@ -473,23 +449,18 @@ Review any change that runs per tick or per packet:
 rg -n 'inline fn|inline for|comptime ' src --type zig
 rg -n 'anytype|@TypeOf|@typeInfo|@Type\(' src --type zig
 
-# Memory / tick risk
-rg -n 'page_allocator|allocator\.alloc\(|\.dupe\(' src/server src/ecs src/wire --type zig
+# Streaming/loop-path risk
+rg -n 'allocPrint|\.dupe\(' src/cli.zig src/agent/loop.zig src/llm/client.zig --type zig
 rg -n 'Thread\.spawn' src --type zig
 
-# I/O debt
-rg -n 'std\.os\.linux\.|std\.posix\.(open|read|write|close)' src --type zig
-rg -n 'linux_fs\.' src --type zig   # should be empty: proves the no-second-FS guard held
-rg -n 'io_fs\.' src --type zig
+# I/O residual
+rg -n 'std\.posix\.' src --type zig
 
 # Errors
 rg -n 'catch \{\s*\}|catch unreachable' src --type zig
 
 # Zig 0.16 ArrayList style drift
 rg -n 'ArrayList\(' src --type zig
-
-# Public surface sprawl (methods are indented inside `pub const Game = struct`)
-rg -c 'pub fn ' src/server/game.zig
 ```
 
 Prefer **ast-grep** for structural patterns (e.g. all `catch {}` blocks, all
@@ -497,117 +468,78 @@ Prefer **ast-grep** for structural patterns (e.g. all `catch {}` blocks, all
 
 ---
 
-## Good vs bad examples (zdtd-shaped)
+## Good vs bad examples (clanker-shaped)
 
-### Comptime table (good)
+### Streaming-safe state machine (good)
 
 ```zig
-const package_handlers = std.StaticStringMap(Handler).initComptime(.{
-    .{ "NetPackageSetBlock", handleSetBlock },
-    // …
-});
+// MdStream (src/cli.zig): fixed [2]u8 lookahead, writes straight to the
+// caller's writer, never allocates per delta.
+fn feed(self: *MdStream, w: *std.Io.Writer, chunk: []const u8) void { ... }
 ```
 
-### Inline abuse (bad)
+### Hidden alloc on the streaming path (bad)
 
 ```zig
-inline fn buildHugePackage(...) ![]u8 { // 150 lines
-```
-
-### Caller buffer (good)
-
-```zig
-pub fn buildWorldTimeBody(buf: []u8, bits: u64) ![]u8 {
-    // write into buf, return buf[0..n]
+fn onToken(delta: []const u8) void {
+    const styled = std.fmt.allocPrint(gpa, "{s}", .{delta}) catch return; // per token!
+    ...
 }
 ```
 
-### Hidden alloc on send (bad)
+### Bounded per-batch parallelism (good)
 
 ```zig
-const body = try allocator.alloc(u8, 64); // per peer per tick
-```
-
-### Hot path scratch (good)
-
-```zig
-// Game.body_buf reused every send
-const body = try packages.buildWorldTimeBody(self.body_buf[0..16], bits);
-try self.broadcast("NetPackageWorldTime", body);
-```
-
-### Hot path list grow (bad)
-
-```zig
-var list: std.ArrayList(u32) = .empty;
-defer list.deinit(allocator);
-// … append interested peers every tick …
-```
-
-### Hot path fixed cap (good)
-
-```zig
-var peers: [max_clients]u16 = undefined;
-var n: usize = 0;
-// append only while n < peers.len; else drop furthest
+// executeCalls (src/agent/loop.zig): one worker thread per distinct tool
+// name in the batch, joined before the batch returns.
+const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
 ```
 
 ### I/O via std abstraction (good)
 
 ```zig
-try io_fs.writeFile(allocator, path, bytes);
-// or, constructed ONCE at startup and the `io` passed down
-// (Threaded.init installs signal handlers; never build one per call):
-var threaded = std.Io.Threaded.init(allocator, .{});
-defer threaded.deinit();
-const io = threaded.io();
-try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
+var out_w = stdout_file.writer(io, &out_buf);
+try out_w.interface.writeAll(content);
 ```
 
-### I/O via OS-specific syscalls (bad in app code)
+### I/O via raw syscalls without justification (bad, unless it matches section 7's residual shape)
 
 ```zig
-const fd = std.os.linux.open(...); // or a project wrapper re-exporting the same
-_ = std.os.linux.getdents64(fd, ...);
+_ = std.posix.read(fd, &buf); // new ordinary-file read: use std.Io.Dir/File instead
 ```
 
 ### Errors (good)
 
 ```zig
-const n = parseSetBlockChanges(body, tmp) catch {
-    // malformed C2S: drop
-    return;
+const resp = a.run(messages, task, &err_detail) catch |err| {
+    log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
+    return err;
 };
 ```
 
 ### Errors (bad)
 
 ```zig
-_ = parse(...) catch {}; // applied nothing, caller thinks success
+_ = a.run(messages, task, &err_detail) catch {}; // swallowed, caller thinks it succeeded
 ```
 
 ---
 
 ## Anti-patterns (quick list)
 
-- Dropping to `std.os.linux` / raw `posix` / `std.c` for ordinary FS or process I/O
-- Reintroducing a second FS path beside `io_fs` / `std.Io` (the `linux_fs` migration is done)
+- Dropping to `std.posix` for ordinary FS work that `std.Io.Dir`/`File` already covers
 - Reimplementing what `std.mem` / `std.fmt` / `std.Io` already do
-- Two ways to do the same I/O or encode (violates "one obvious way")
-- **Any heap allocation on tick / per-packet / per-peer encode path**
-- `page_allocator` or unbounded `ArrayList`/`HashMap` growth on tick
-- Arena-per-package or `allocPrint` in the main loop
+- Two ways to do the same dispatch (e.g. a second tool-execution path beside `registry.zig`)
+- **Any unbounded heap allocation on the per-token or per-agent-loop-iteration path**
+- `allocPrint` inside `on_token`/`MdStream`-shaped code
 - `inline` on large functions
-- Comptime that embeds policy better left as data/config
+- Comptime that embeds policy better left as config
 - `anytype` public APIs without a single documented shape
-- Second encoder for the same stock package
-- `catch {}` without intentional drop + comment
-- Global mutable allocator or sim RNG
-- `Thread.spawn` per parallel-for invocation
-- Magic numbers on wire/tick paths
-- Narrating comments; missing RE cites on wire layout
-- Pre-0.16 `ArrayList` init / allocator styles
-- Using `@import` cycles to avoid a facade (`ecs/root.zig`, etc.)
+- `catch {}` without an intentional-drop comment
+- Global mutable allocator
+- `Thread.spawn` per token or per loop iteration instead of per bounded batch
+- Magic numbers on streaming/loop paths (name them, matching `max_session_chars` style)
+- Narrating comments; missing rationale on non-obvious residual `std.posix` sites
 - Ignoring edge cases (empty, max, malformed) because the happy path works
 
 ---
@@ -616,23 +548,21 @@ _ = parse(...) catch {}; // applied nothing, caller thinks success
 
 - [ ] Findings are actionable with `path:line` and severity
 - [ ] Comptime/inline/`anytype` called out explicitly
-- [ ] **Hot-path alloc findings listed** (or explicit "none found" after search)
-- [ ] I/O debt classified: std abstraction vs OS-specific legacy vs fix-now
+- [ ] **Streaming/loop-path alloc findings listed** (or explicit "none found" after search)
+- [ ] `std.posix` residual classified against section 7's table
 - [ ] Zig Zen called out where a fix chooses the clearer/one-way path
 - [ ] No P0 left unmentioned in scope
-- [ ] If fixes applied: `make check` green, diffs minimal
+- [ ] If fixes applied: `zig build && zig build test` green, diffs minimal
 - [ ] No em dashes / AI attribution
-- [ ] Stock wire behavior unchanged unless bugfix was incorrect code
+- [ ] Agent/LLM/tool-call behavior unchanged unless the bug itself was wrong behavior
 
 ---
 
 ## Optional user addenda
 
-- "Review only `src/util/parallel.zig` and `src/world/worldgen.zig`."
-- "Fix all P0/P1 I/O: migrate touched files to std.Io / io_fs; no second FS path."
-- "Comptime focus: package maps and binary layouts."
-- "Hot path only: fail every heap alloc / growing list on tick and interest."
+- "Review only `src/agent/loop.zig` and `src/llm/client.zig`."
+- "Fix all P0/P1 streaming-path allocs; leave everything else as findings."
+- "Comptime focus: `writeStreamEvent`-style field iteration and any WASM ABI layout code."
 - "Apply Zig Zen as the primary rubric; cite which zen line each P0/P1 maps to."
-- "Compare to agave AGENTS.md habits where they do not conflict with zdtd."
-- "Produce ast-grep rules for catch-empty, linux.open, and allocator.alloc in ecs/wire."
-- "Do not edit game.zig; findings only."
+- "Produce ast-grep rules for catch-empty, raw posix reads, and allocPrint in hot paths."
+- "Do not edit loop.zig; findings only."

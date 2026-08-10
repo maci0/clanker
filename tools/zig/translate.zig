@@ -6,7 +6,7 @@
 //!          "prior": ["<transforms already applied>"]}
 //! Output: {"ok": true, "payload": "<rewritten json>"}
 //!
-//! Settings come from the `config` object in tools.d/translate.tool.json:
+//! Settings come from the `config` object in tools/manifests/translate.tool.json:
 //!   lang       target language (default "en")
 //!   provider   provider name for the translation call (default: the agent's)
 //!   model      model name within that provider

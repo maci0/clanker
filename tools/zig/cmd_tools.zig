@@ -1,4 +1,4 @@
-//! cmd_tools: list registered tools (tool names from tools.d/*.tool.json).
+//! cmd_tools: list registered tools (tool names from tools/manifests/*.tool.json).
 //! Input:  {"args": "..."}
 //! Output: {"ok": true, "text": "<tool names, one per line>"}
 
@@ -13,24 +13,26 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
     _ = parsed;
 
-    const raw = lib.fsList("tools.d") catch |err| return errJson(out, @errorName(err));
+    const raw = lib.fsList("tools/manifests") catch |err| return errJson(out, @errorName(err));
     const names = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{});
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.heap.wasm_allocator);
+    var count: usize = 0;
     if (names == .array) {
         for (names.array.items) |item| {
             if (item != .string) continue;
             const name = item.string;
             // strip the .tool.json suffix
-            const base = if (std.mem.endsWith(u8, name, ".tool.json"))
-                name[0 .. name.len - ".tool.json".len]
-            else
-                name;
-            if (buf.items.len > 0) try buf.append(std.heap.wasm_allocator, '\n');
+            if (!std.mem.endsWith(u8, name, ".tool.json")) continue;
+            const base = name[0 .. name.len - ".tool.json".len];
+            count += 1;
             try buf.appendSlice(std.heap.wasm_allocator, base);
+            try buf.append(std.heap.wasm_allocator, '\n');
         }
     }
+    const summary = try std.fmt.allocPrint(std.heap.wasm_allocator, "{d} tool(s) registered", .{count});
+    try buf.appendSlice(std.heap.wasm_allocator, summary);
 
     var rbuf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&rbuf);

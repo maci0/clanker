@@ -1,0 +1,17 @@
+{
+  "name": "chat_send",
+  "description": "Send a text message to a clanker chatroom. The message is logged locally and delivered to every peer clanker subscribed to that room (POST /api/chat/message). Use chat_rooms to see which rooms exist and who is active, and chat_history to catch up first. Returns the message ts and id.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": { "type": "string", "description": "Room name, e.g. \"dev\"" },
+      "text": { "type": "string", "description": "Message text (max 4096 chars)" }
+    },
+    "required": ["room", "text"]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": { "op": "send" }
+}

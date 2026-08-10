@@ -1,6 +1,12 @@
-//! cmd_graph: show the most recent execution graph (state/runs/*.json).
-//! Input:  {"args": "..."}
-//! Output: {"ok": true, "text": "<summary + node lines>"}
+//! cmd_graph: read execution graphs (state/runs/*.json).
+//! Input:  {"args": "" | "list" | "<run-id>" | "json" | "json <run-id>"}
+//! Output: {"ok": true, "text": "..."}
+//!
+//! `""` renders the latest run, `<run-id>` renders that one, `list` prints one
+//! line per run. The `json` modes put machine-readable text in the same field:
+//! `json` is an array of run summaries and `json <run-id>` is a whole graph.
+//! The web UI serves those two through `GET /api/runs` so the harness never
+//! reads `state/runs/` itself.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -14,6 +20,8 @@ const GraphNode = struct {
     completion_tokens: u32 = 0,
     result_bytes: usize = 0,
     duration_ms: u64 = 0,
+    ok: bool = true,
+    output: []const u8 = "",
 };
 
 const GraphFile = struct {
@@ -31,22 +39,42 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
-    _ = parsed;
+    const alloc = std.heap.wasm_allocator;
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
+    var args: []const u8 = "";
+    if (parsed == .object) {
+        if (parsed.object.get("args")) |a| {
+            if (a == .string) args = std.mem.trim(u8, a.string, " \t");
+        }
+    }
 
     const raw = lib.fsList("state/runs") catch |err| return errJson(out, @errorName(err));
-    const names = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{});
+    const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
-    // Pick the lexically-last run file (run-<ts> sorts chronologically).
+    if (std.mem.eql(u8, args, "list")) return listRuns(out, alloc, names);
+    if (std.mem.eql(u8, args, "json")) return listRunsJson(out, alloc, names);
+    if (std.mem.startsWith(u8, args, "json ")) {
+        const want = std.mem.trim(u8, args["json ".len..], " \t");
+        return runJson(out, alloc, names, want);
+    }
+
+    // No argument renders the most recent run (run-<ts> sorts chronologically);
+    // an argument names the run to render.
     var best: ?[]const u8 = null;
     if (names == .array) {
         for (names.array.items) |item| {
             if (item != .string) continue;
             if (!std.mem.endsWith(u8, item.string, ".json")) continue;
+            if (args.len > 0) {
+                const stem = item.string[0 .. item.string.len - ".json".len];
+                if (std.mem.eql(u8, stem, args)) best = item.string;
+                continue;
+            }
             if (best == null or std.mem.lessThan(u8, best.?, item.string)) best = item.string;
         }
     }
     const fname = best orelse {
+        if (args.len > 0) return errJson(out, "no such run");
         try out.writeAll("{\"ok\":true,\"text\":\"(no runs yet — clanker run creates one)\"}");
         return;
     };
@@ -99,6 +127,120 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(buf.items);
     try s.endObject();
     try out.writeAll(rbuf[0..w.end]);
+}
+
+/// `list`: one line per recorded run, oldest first, with the task and shape of
+/// each so a run id can be picked out and rendered.
+fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !void {
+    if (names != .array or names.array.items.len == 0)
+        return writeText(out, "(no runs yet — clanker run creates one)");
+
+    var files: std.ArrayList([]const u8) = .empty;
+    for (names.array.items) |item| {
+        if (item != .string) continue;
+        if (!std.mem.endsWith(u8, item.string, ".json")) continue;
+        try files.append(alloc, item.string);
+    }
+    std.mem.sort([]const u8, files.items, {}, lessThanStr);
+
+    var buf: std.ArrayList(u8) = .empty;
+    for (files.items) |fname| {
+        const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
+        const content = lib.fsRead(path) catch continue;
+        const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch continue;
+        const line = try std.fmt.allocPrint(alloc, "{s}\t{d}ms\t{d} node(s)\t{s}\n", .{ g.run_id, g.duration_ms, g.nodes.len, g.task });
+        try buf.appendSlice(alloc, line);
+    }
+    try writeText(out, buf.items);
+}
+
+fn lessThanStr(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// `json`: newest-first array of run summaries, for the web UI's run picker.
+fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !void {
+    var files: std.ArrayList([]const u8) = .empty;
+    if (names == .array) {
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            if (!std.mem.endsWith(u8, item.string, ".json")) continue;
+            try files.append(alloc, item.string);
+        }
+    }
+    std.mem.sort([]const u8, files.items, {}, lessThanStr);
+
+    var buf: [48 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginArray();
+    // Newest first, and capped: the picker shows recent runs, not the archive.
+    var shown: usize = 0;
+    var i: usize = files.items.len;
+    while (i > 0 and shown < 50) {
+        i -= 1;
+        const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{files.items[i]});
+        const content = lib.fsRead(path) catch continue;
+        const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch continue;
+        shown += 1;
+        try s.beginObject();
+        try s.objectField("run_id");
+        try s.write(g.run_id);
+        try s.objectField("task");
+        try s.write(g.task);
+        try s.objectField("provider");
+        try s.write(g.provider);
+        try s.objectField("duration_ms");
+        try s.write(g.duration_ms);
+        try s.objectField("nodes");
+        try s.write(g.nodes.len);
+        try s.objectField("prompt_tokens");
+        try s.write(g.total_prompt_tokens);
+        try s.objectField("completion_tokens");
+        try s.write(g.total_completion_tokens);
+        try s.endObject();
+    }
+    try s.endArray();
+    try writeText(out, buf[0..w.end]);
+}
+
+/// `json <run-id>`: the whole graph, node by node, for the web UI's chart.
+fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want: []const u8) !void {
+    if (want.len == 0) return errJson(out, "usage: json <run-id>");
+    var found: ?[]const u8 = null;
+    if (names == .array) {
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            if (!std.mem.endsWith(u8, item.string, ".json")) continue;
+            const stem = item.string[0 .. item.string.len - ".json".len];
+            if (std.mem.eql(u8, stem, want)) found = item.string;
+        }
+    }
+    const fname = found orelse return errJson(out, "no such run");
+    const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
+    const content = lib.fsRead(path) catch |err| return errJson(out, @errorName(err));
+    // Parsed and re-emitted rather than passed through, so a hand-edited file
+    // in state/runs/ cannot become the response body verbatim.
+    const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return errJson(out, @errorName(err));
+
+    var buf: [48 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(g);
+    try writeText(out, buf[0..w.end]);
+}
+
+fn writeText(out: *lib.Out, text: []const u8) !void {
+    var buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("text");
+    try s.write(text);
+    try s.endObject();
+    try out.writeAll(buf[0..w.end]);
 }
 
 fn errJson(out: *lib.Out, msg: []const u8) !void {

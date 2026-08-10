@@ -1,0 +1,16 @@
+{
+  "name": "providers",
+  "description": "Check which configured LLM providers answer. {\"action\": \"check\"} pings every provider with a one-token request and reports ok/failed/skipped with latency; {\"action\": \"check\", \"provider\": \"kimi-k3\"} checks one; {\"action\": \"list\"} lists them without spending tokens.",
+  "wasm": "zig-out/tools/providers.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string", "enum": ["check", "list"] },
+      "provider": { "type": "string" }
+    },
+    "required": ["action"]
+  },
+  "fs_prefixes": ["config.json", "config.local.json"],
+  "llm": true,
+  "network_from_config": "providers"
+}

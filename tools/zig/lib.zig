@@ -22,13 +22,22 @@ extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
+extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
+extern fn ck_stats() u32;
 extern fn ck_config() u32;
 extern fn ck_result() u64;
 extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
+extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
 
 const scratch_cap = 64 * 1024;
 const host_arena_cap = 64 * 1024;
-const out_cap = 64 * 1024;
+/// Bigger than the input and host-result buffers because a tool's output is
+/// the one thing that can legitimately be large: webui.zig JSON-encodes the
+/// whole embedded page through here. All three are `undefined`, so they cost
+/// .bss pages in linear memory (capped at 16 MiB, see runtime.zig) and add
+/// nothing to the .wasm on disk. The host reads the result straight out of
+/// linear memory and imposes no size limit of its own.
+pub const out_cap = 256 * 1024;
 
 var scratch_buf: [scratch_cap]u8 align(16) = undefined;
 var host_arena_buf: [host_arena_cap]u8 align(16) = undefined;
@@ -120,6 +129,28 @@ pub fn logInfo(msg: []const u8) void {
     log(1, msg);
 }
 
+/// Delegates a task to a nested sub-agent run (host-side).
+pub fn subagent(task: []const u8, provider: ?[]const u8) FsError![]const u8 {
+    var buf: [8192]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return error.IoError;
+    s.objectField("task") catch return error.IoError;
+    s.write(task) catch return error.IoError;
+    if (provider) |p| {
+        s.objectField("provider") catch return error.IoError;
+        s.write(p) catch return error.IoError;
+    }
+    s.endObject() catch return error.IoError;
+    const req = sliceToMem(buf[0..w.end]);
+    const rc = ck_subagent(req.ptr, req.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        2 => error.NotFound,
+        else => error.IoError,
+    };
+}
+
 /// Looks up a symbol in the Zig standard library source (host-side rg).
 pub fn stdApi(symbol: []const u8) FsError![]const u8 {
     const p = sliceToMem(symbol);
@@ -168,14 +199,67 @@ pub fn httpPost(url: []const u8, body: []const u8) HttpError![]const u8 {
     };
 }
 
+pub const ChatError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
+
+/// Runs a chatroom operation (send / history / rooms / subscribe) host-side.
+/// The op lives in the request JSON; the guest fills in the argument fields.
+pub fn chat(req: []const u8) ChatError![]const u8 {
+    const p = sliceToMem(req);
+    const rc = ck_chat(p.ptr, p.len);
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        3 => error.TooLarge,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
+}
+
+pub const StatsError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
+
+/// Aggregated global token usage per provider/model (host-side aggregation
+/// over state/token_stats.jsonl). Requires the token_stats module.
+pub fn stats() StatsError![]const u8 {
+    const rc = ck_stats();
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        3 => error.TooLarge,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
+}
+
 pub const LlmError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
 
 /// One-shot model call on the harness's active provider. Requires `"llm": true`
 /// in this tool's descriptor; denied otherwise. No tools, no history: a prompt
 /// in, completion text out.
 pub fn llm(prompt: []const u8) LlmError![]const u8 {
-    const p = sliceToMem(prompt);
-    const rc = ck_llm(p.ptr, p.len);
+    return llmWith(prompt, null, 0);
+}
+
+/// Same, but aimed at a named provider and/or a different output cap. Both are
+/// optional: null provider and 0 max_tokens keep the descriptor's settings.
+pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) LlmError![]const u8 {
+    var buf: [32 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return error.InvalidArg;
+    s.objectField("prompt") catch return error.InvalidArg;
+    s.write(prompt) catch return error.TooLarge;
+    if (provider) |p| {
+        s.objectField("provider") catch return error.InvalidArg;
+        s.write(p) catch return error.InvalidArg;
+    }
+    if (max_tokens > 0) {
+        s.objectField("max_tokens") catch return error.InvalidArg;
+        s.write(max_tokens) catch return error.InvalidArg;
+    }
+    s.endObject() catch return error.InvalidArg;
+
+    const req = sliceToMem(buf[0..w.end]);
+    const rc = ck_llm(req.ptr, req.len);
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
         1 => error.SandboxDenied,

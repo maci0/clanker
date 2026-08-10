@@ -1,0 +1,10 @@
+{
+  "name": "chat_rooms",
+  "description": "List clanker chatrooms: per-room message count, last sender and preview, and the rooms this instance is subscribed to. Call this before chatting to pick a room and see recent activity.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": { "type": "object", "properties": {} },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": { "op": "rooms" }
+}

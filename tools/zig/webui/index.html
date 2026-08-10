@@ -10,34 +10,78 @@
     color-scheme: light dark;
     --bg: #0d1117;
     --surface: #161b22;
+    --surface-2: #1c2129;
     --border: #30363d;
     --rule: #21262d;
     --fg: #e6edf3;
     --fg-muted: #9198a1;
     --accent: #58a6ff;
+    --accent-dim: #1f6feb33;
     --on-accent: #041024;
     --danger: #ff7b72;
+    --on-danger: #1a0505;
+    --ok: #3fb950;
     --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --step-0: 0.75rem;
     --step-1: 1rem;
     --step-2: 1.25rem;
+    --radius-sm: 4px;
+    --radius: 6px;
+    --radius-lg: 10px;
+    --radius-pill: 999px;
   }
   @media (prefers-color-scheme: light) {
-    :root {
+    :root:not([data-theme="dark"]) {
       --bg: #ffffff;
       --surface: #f6f8fa;
+      --surface-2: #eef1f4;
       --border: #d0d7de;
       --rule: #e4e8ec;
       --fg: #1f2328;
       --fg-muted: #57606a;
       --accent: #0969da;
+      --accent-dim: #0969da22;
       --on-accent: #ffffff;
       --danger: #cf222e;
+      --on-danger: #ffffff;
+      --ok: #1a7f37;
     }
+  }
+  /* Manual override wins over prefers-color-scheme in both directions. */
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --surface-2: #eef1f4;
+    --border: #d0d7de;
+    --rule: #e4e8ec;
+    --fg: #1f2328;
+    --fg-muted: #57606a;
+    --accent: #0969da;
+    --accent-dim: #0969da22;
+    --on-accent: #ffffff;
+    --danger: #cf222e;
+    --on-danger: #ffffff;
+    --ok: #1a7f37;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #1c2129;
+    --border: #30363d;
+    --rule: #21262d;
+    --fg: #e6edf3;
+    --fg-muted: #9198a1;
+    --accent: #58a6ff;
+    --accent-dim: #1f6feb33;
+    --on-accent: #041024;
+    --danger: #ff7b72;
+    --on-danger: #1a0505;
+    --ok: #3fb950;
   }
 
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
     background: var(--bg);
@@ -45,7 +89,22 @@
     font-family: var(--sans);
     font-size: var(--step-1);
     line-height: 1.5;
+    display: flex;
+    flex-direction: column;
   }
+
+  .skip-link {
+    position: absolute; top: -100%; left: 0.75rem; z-index: 100;
+    font-family: var(--mono); font-size: var(--step-0);
+    padding: 0.5rem 0.9rem; background: var(--accent); color: var(--on-accent);
+    border-radius: var(--radius); text-decoration: none; transition: top 0.15s;
+  }
+  .skip-link:focus { top: 0.75rem; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
 
   header {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
@@ -55,64 +114,162 @@
     font-family: var(--mono); font-size: var(--step-2); font-weight: 700;
     letter-spacing: -0.02em; margin: 0; color: var(--accent);
   }
+  .spacer { flex: 1; }
   .chip {
     font-family: var(--mono); font-size: var(--step-0);
-    padding: 0.15rem 0.5rem; border-radius: 999px;
+    padding: 0.15rem 0.5rem; border-radius: var(--radius-pill);
     background: var(--surface); color: var(--fg-muted);
+    border: 1px solid transparent;
   }
   .chip[data-state="down"] { color: var(--danger); }
+  .chip[data-state="live"] { color: var(--ok); }
+  button.chip-btn {
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
+    padding: 0.15rem 0.6rem; border-radius: var(--radius-pill); cursor: pointer;
+    background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
+  }
+  button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
 
-  main { max-width: 56rem; margin: 0 auto; padding: 1.5rem; }
+  main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: 1.25rem 1.5rem 2rem; }
 
+  /* ---- transcript: a running list of turns, chat-style ---- */
+  .transcript { display: flex; flex-direction: column; gap: 1.5rem; }
+  .transcript:empty { display: none; }
+  .turn { border: 1px solid var(--rule); border-radius: var(--radius-lg); overflow: hidden; }
+  .turn-you {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    background: var(--surface-2); padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--rule);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .turn-you::before { content: "you  ·  "; color: var(--accent); font-weight: 700; }
+  .turn-body { padding: 0.9rem; }
+  .turn-events { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.6rem; }
+  .turn-events:empty { display: none; margin: 0; }
+  .event-tool {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--accent);
+    display: flex; align-items: center; gap: 0.4rem;
+  }
+  .event-tool .dur { color: var(--fg-muted); }
+  .spin {
+    display: inline-block; width: 0.8em; height: 0.8em; flex: none;
+    border-radius: 50%; border: 2px solid var(--accent-dim); border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* A frozen ring says nothing, so reduced motion swaps the spinner for the
+     word it stands in for. The running/finished state change survives either
+     way — a settled row replaces both with its duration. */
+  .event-tool .run-state { color: var(--fg-muted); }
+  @media (prefers-reduced-motion: no-preference) { .event-tool .run-state { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .spin { display: none; } }
+  .turn-answer {
+    font-family: var(--mono); font-size: var(--step-1);
+    white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
+  }
+  .turn-answer:empty::before {
+    content: "…"; color: var(--fg-muted); display: inline-block;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .turn-answer:empty::before { animation: none; opacity: 0.6; } }
+  .turn-answer .failed { color: var(--danger); }
+
+  /* ---- fenced code blocks inside a finished answer ----
+     The language tag and Copy button sit in their own header strip rather
+     than floating over the code: as overlays they covered the first line and
+     inherited the 44px control height onto a block that can be shorter. */
+  .code-block {
+    margin: 0.6rem 0; border: 1px solid var(--rule);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .code-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+    padding: 0.3rem 0.4rem 0.3rem 0.9rem;
+    background: var(--surface); border-bottom: 1px solid var(--rule);
+  }
+  .code-block pre {
+    margin: 0; padding: 0.75rem 0.9rem; background: var(--surface-2);
+    border: 0; border-radius: 0; overflow-x: auto;
+    white-space: pre; font-family: var(--mono); font-size: var(--step-0); line-height: 1.5;
+  }
+  .code-lang {
+    font-family: var(--mono); font-size: var(--step-0); text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--fg-muted);
+  }
+  .copy-code-btn {
+    min-height: 32px; padding: 0.2rem 0.7rem; font-size: var(--step-0); font-weight: 600;
+    background: var(--surface-2); color: var(--fg-muted); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .copy-code-btn:hover { color: var(--fg); border-color: var(--accent); }
+
+  /* highlight.js token colors, mapped to clanker's own theme tokens instead
+     of an imported hljs theme file — stays in sync with the light/dark and
+     manual theme overrides above instead of fighting them. */
+  .hljs-comment, .hljs-quote { color: var(--fg-muted); font-style: italic; }
+  .hljs-keyword, .hljs-selector-tag, .hljs-tag, .hljs-built_in, .hljs-type { color: var(--accent); }
+  .hljs-string, .hljs-addition, .hljs-symbol, .hljs-regexp { color: var(--ok); }
+  .hljs-deletion { color: var(--danger); }
+  .hljs-title, .hljs-name, .hljs-attr, .hljs-attribute, .hljs-variable { color: var(--fg); }
+  .hljs-title.function_, .hljs-title.class_, .hljs-section { color: var(--fg); font-weight: 700; }
+  .hljs-number, .hljs-literal, .hljs-meta { color: var(--fg-muted); }
+  .hljs-emphasis { font-style: italic; }
+  .hljs-strong { font-weight: 700; }
+  .turn-foot {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
+    margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed var(--rule);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  }
+  .turn-foot:empty { display: none; margin: 0; padding: 0; border: 0; }
+  .turn-foot button {
+    padding: 0.2rem 0.6rem; font-size: var(--step-0);
+    background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
+  }
+  .turn.stopped .turn-answer::after { content: " [stopped]"; color: var(--fg-muted); font-style: italic; }
+
+  /* The one authored motion moment beyond the tool spinner: the caret marks a live stream. */
+  .caret {
+    display: inline-block; width: 0.6ch; height: 1em; vertical-align: text-bottom;
+    background: var(--accent); animation: caret 1.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  }
+  @keyframes caret { 50% { opacity: 0.15; } }
+  @media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
+
+  /* ---- composer ---- */
+  .composer { margin-top: 1.5rem; }
   label {
     display: block; font-size: var(--step-0); font-weight: 600;
     letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--fg-muted); margin-bottom: 0.5rem;
   }
   textarea {
-    width: 100%; min-height: 6rem; padding: 0.75rem;
+    width: 100%; min-height: 5rem; padding: 0.75rem;
     font-family: var(--mono); font-size: var(--step-1); line-height: 1.5;
     background: var(--surface); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 6px; resize: vertical;
+    border: 1px solid var(--border); border-radius: var(--radius); resize: vertical;
   }
   ::placeholder { color: var(--fg-muted); opacity: 1; }
   .toolbar {
     display: flex; flex-wrap: wrap; justify-content: space-between;
     align-items: center; gap: 0.75rem; margin-top: 0.75rem;
   }
+  .toolbar-actions { display: flex; gap: 0.5rem; }
   button {
     min-height: 44px; padding: 0.5rem 1.25rem;
     font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
     color: var(--on-accent); background: var(--accent);
-    border: 0; border-radius: 6px; cursor: pointer;
+    border: 0; border-radius: var(--radius); cursor: pointer;
   }
   button.secondary {
     font-size: var(--step-0); padding: 0.5rem 0.9rem;
     background: var(--surface); color: var(--fg-muted);
     border: 1px solid var(--border);
   }
+  button.danger { background: var(--danger); color: var(--on-danger); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .meta { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); }
-
-  .result {
-    font-family: var(--mono); font-size: var(--step-1);
-    white-space: pre-wrap; overflow-wrap: anywhere;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 6px; padding: 1rem; margin: 1rem 0 0; min-height: 3rem;
-  }
-  .result[hidden] { display: none; }
-  .result .failed { color: var(--danger); }
-  /* The one authored motion moment: the caret marks a live stream. */
-  .caret {
-    display: inline-block; width: 0.6ch; height: 1em; vertical-align: text-bottom;
-    background: var(--accent); animation: caret 1.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-  }
-  @keyframes caret { 50% { opacity: 0.15; } }
-  @media (prefers-reduced-motion: reduce) {
-    .caret { animation: none; opacity: 0.6; }
-  }
 
   section { margin-top: 2.5rem; border-top: 1px solid var(--rule); padding-top: 1.25rem; }
   .section-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
@@ -120,6 +277,119 @@
     font-size: var(--step-0); font-weight: 700; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--fg-muted); margin: 0;
   }
+  /* ---- runs: the execution graph of a recorded run ---- */
+  .runs { margin-top: 1.25rem; }
+  .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+  /* Each label takes a full row so both sit above their own control, the way
+     the composer's Task label does — otherwise one wraps above and the other
+     lands beside its field. */
+  .run-picker label { margin: 0; flex-basis: 100%; }
+  select, #run-filter {
+    flex: 1; min-width: 12rem; min-height: 44px; padding: 0.4rem 0.6rem;
+    font-family: var(--mono); font-size: var(--step-0);
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  #run-filter { flex-basis: 100%; }
+  #run-filter:focus { border-color: var(--accent); }
+  #run-filter::-webkit-search-cancel-button { cursor: pointer; }
+  .run-graph { margin-top: 1rem; }
+  .run-head {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    padding-bottom: 0.6rem; border-bottom: 1px dashed var(--rule); margin-bottom: 0.75rem;
+    overflow-wrap: anywhere; white-space: pre-line;
+  }
+  .run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); }
+
+  /* ---- run canvas: llm -> tool(s) -> llm -> ... -> final, drawn as nodes and edges ---- */
+  .run-canvas { position: relative; overflow-x: auto; }
+  .run-edges { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .run-edges path { fill: none; stroke: var(--border); stroke-width: 1.5; }
+  .run-node {
+    position: absolute; padding: 0.4rem 0.6rem; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--border);
+    font-family: var(--mono); font-size: var(--step-0);
+    /* Reset the base button rule's centering/weight/min-height: this box grows
+       to fit its content (the layout measures each box rather than assuming a
+       height) and reads left-aligned like every other label in the file. */
+    min-height: auto; font-weight: normal; color: inherit; text-align: left; cursor: pointer;
+  }
+  .run-node:hover { border-color: var(--accent); }
+  .run-node.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .run-node[data-kind="llm"] { border-color: var(--accent); }
+  .run-node[data-kind="tool"] { border-color: var(--ok); }
+  .run-node[data-kind="final"] { border-color: var(--fg); background: var(--surface-2); font-weight: 700; }
+  .run-node[data-ok="false"] { border-color: var(--danger); border-width: 2px; }
+  .run-node-kind {
+    display: flex; align-items: center; gap: 0.3rem;
+    font-size: var(--step-0); letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--fg-muted); margin-bottom: 0.1rem;
+  }
+  .run-node[data-kind="llm"] .run-node-kind { color: var(--accent); }
+  .run-node[data-kind="tool"] .run-node-kind { color: var(--ok); }
+  .run-node[data-ok="false"] .run-node-kind { color: var(--danger); }
+  .run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-node-metrics { display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
+  /* The bar is the picture: width is the node's share of the run's slowest node. */
+  .run-node-bar { display: block; height: 3px; margin-top: 0.3rem; border-radius: var(--radius-sm); background: var(--rule); overflow: hidden; }
+  .run-node-bar > span { display: block; height: 100%; background: var(--accent); }
+  .run-node[data-kind="tool"] .run-node-bar > span { background: var(--ok); }
+  .run-iter-tag {
+    position: absolute; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    display: flex; align-items: center; justify-content: center;
+    width: 1.4rem; height: 1.4rem; border-radius: 50%; border: 1px dashed var(--rule);
+  }
+  .run-node-incomplete {
+    position: absolute; font-family: var(--mono); font-size: var(--step-0); color: var(--danger);
+    padding: 0.4rem 0.6rem; border: 1px dashed var(--danger); border-radius: var(--radius);
+  }
+
+  /* ---- detail panel: what a clicked node actually produced ---- */
+  .run-detail {
+    margin-top: 1rem; padding: 0.9rem; border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    background: var(--surface-2);
+  }
+  .run-detail[hidden] { display: none; }
+  .run-detail-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem;
+    font-family: var(--mono); font-size: var(--step-0); margin-bottom: 0.5rem;
+  }
+  .run-detail-title { color: var(--fg); font-weight: 700; }
+  .run-detail-meta { color: var(--fg-muted); }
+  .run-detail-output {
+    font-family: var(--mono); font-size: var(--step-0); white-space: pre-wrap; overflow-wrap: anywhere;
+    max-height: 20rem; overflow-y: auto; margin: 0; color: var(--fg);
+  }
+  .run-detail-output:empty::before { content: "(nothing recorded for this node)"; color: var(--fg-muted); }
+  .run-detail-note {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    margin: 0 0 0.5rem; padding-left: 0.6rem; border-left: 2px solid var(--border);
+  }
+  .run-detail-close {
+    padding: 0.2rem 0.6rem; font-size: var(--step-0);
+    background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
+  }
+
+  /* ---- json tree: collapsible view of a node's parsed JSON output ---- */
+  .json-tree { font-family: var(--mono); font-size: var(--step-0); }
+  .json-row { padding: 0.05rem 0; overflow-wrap: anywhere; }
+  /* Reserves exactly the width of a branch's disclosure triangle so leaf keys
+     and branch keys at the same level share a left edge. */
+  .json-row::before { content: ""; display: inline-block; width: 1em; }
+  .json-key { color: var(--fg-muted); }
+  .json-brace { color: var(--fg-muted); }
+  .json-node > summary {
+    cursor: pointer; list-style: none; padding: 0.05rem 0;
+  }
+  .json-node > summary::-webkit-details-marker { display: none; }
+  .json-node > summary::before {
+    content: "▸"; display: inline-block; width: 1em; color: var(--fg-muted);
+  }
+  .json-node[open] > summary::before { content: "▾"; }
+  .json-node > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .json-children { margin-left: 1.1rem; border-left: 1px dashed var(--rule); padding-left: 0.6rem; }
+  .json-empty { color: var(--fg-muted); }
+
   dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
   dt { font-size: var(--step-0); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); }
   dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
@@ -132,28 +402,73 @@
     dl { grid-template-columns: 1fr; gap: 0.25rem; }
     dt { margin-top: 0.75rem; }
     .toolbar button { width: 100%; }
+    .toolbar-actions { width: 100%; }
+    .toolbar-actions button { flex: 1; }
+  }
+
+  /* Touch feedback on press; harmless on pointer devices too. */
+  button:active:not(:disabled) { transform: scale(0.97); }
+  @media (prefers-reduced-motion: reduce) { button:active:not(:disabled) { transform: none; } }
+
+  @media (forced-colors: active) {
+    button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-tag,
+    .code-block, .code-head, .copy-code-btn, .run-node-incomplete { border: 1px solid ButtonText; }
+    .run-edges path { stroke: CanvasText; }
+    :focus-visible { outline: 2px solid Highlight; }
   }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to main content</a>
 <header>
   <h1>clanker</h1>
-  <span class="chip" id="instance-chip">connecting…</span>
-  <span class="chip" id="peers-chip" hidden></span>
+  <span class="chip" id="instance-chip" aria-live="polite">connecting…</span>
+  <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
+  <span class="spacer"></span>
+  <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
+  <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
+  <button type="button" class="chip-btn" id="new-chat">New chat</button>
 </header>
 
-<main>
-  <form id="task-form">
+<main id="main" tabindex="-1">
+  <!-- No aria-live here: each turn's answer is its own live region (see
+       createTurn). Nesting one inside the other made a screen reader announce
+       every streamed chunk twice, once per region. -->
+  <div class="transcript" id="transcript"></div>
+
+  <form id="task-form" class="composer">
     <label for="task">Task</label>
     <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
     <div class="toolbar">
       <span class="meta" id="hint"></span>
-      <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
+      <div class="toolbar-actions">
+        <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
+        <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
+      </div>
     </div>
     <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
   </form>
 
-  <pre class="result" id="result" role="status" aria-live="polite" aria-atomic="false" hidden></pre>
+  <section>
+    <div class="section-head">
+      <h2>Runs</h2>
+      <button type="button" class="secondary" id="runs-refresh">Refresh</button>
+    </div>
+    <div class="runs">
+      <div class="run-picker">
+        <label for="run-filter">Filter recorded runs</label>
+        <input type="search" id="run-filter" placeholder="Filter by task or run id…" autocomplete="off">
+        <label for="run-select">Recorded run</label>
+        <select id="run-select"></select>
+        <!-- Typing in the filter rewrites the option list and swaps the graph
+             with no visible message when it succeeds, so the match count is
+             announced here instead. -->
+        <p class="sr-only" id="run-filter-status" role="status" aria-live="polite"></p>
+      </div>
+      <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
+      <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
+    </div>
+  </section>
 
   <section>
     <div class="section-head">
@@ -169,31 +484,192 @@
   </section>
 </main>
 
+<!-- Vendored (not CDN-loaded): d3-dag for the run graph layout below, highlight.js
+     for code-block syntax coloring. Served from /webui/vendor/ by the native HTTP
+     server (src/cli.zig), not the WASM-templated page itself, since that WASM
+     tool's output buffer is far smaller than these files. Neither is a <script>
+     tag here on purpose: together they are ~200 KB, and the common visit (check
+     status, read a streamed answer) needs neither. loadVendor below fetches each
+     one the first time something actually needs it. -->
 <script>
-(function () {
+document.addEventListener("DOMContentLoaded", function () {
   "use strict";
 
   var el = {
     form: document.getElementById("task-form"),
     task: document.getElementById("task"),
     submit: document.getElementById("submit"),
+    cancel: document.getElementById("cancel"),
     refresh: document.getElementById("refresh"),
     hint: document.getElementById("hint"),
-    result: document.getElementById("result"),
+    transcript: document.getElementById("transcript"),
     instance: document.getElementById("instance"),
     instanceChip: document.getElementById("instance-chip"),
     peers: document.getElementById("peers"),
-    peersChip: document.getElementById("peers-chip")
+    peersChip: document.getElementById("peers-chip"),
+    sessionChip: document.getElementById("session-chip"),
+    newChat: document.getElementById("new-chat"),
+    themeToggle: document.getElementById("theme-toggle"),
+    runsRefresh: document.getElementById("runs-refresh"),
+    runFilter: document.getElementById("run-filter"),
+    runFilterStatus: document.getElementById("run-filter-status"),
+    runSelect: document.getElementById("run-select"),
+    runGraph: document.getElementById("run-graph"),
+    runDetail: document.getElementById("run-detail")
   };
 
+  /* Fetches a vendored library on first use and caches the promise, so the
+     ~200 KB of d3-dag + highlight.js stays off the initial load of a page
+     whose common visit needs neither. Every caller must tolerate rejection:
+     the graph falls back to an error line, code blocks stay unhighlighted. */
+  var vendorLoads = {};
+  function loadVendor(file, ready) {
+    if (vendorLoads[file]) return vendorLoads[file];
+    vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "/webui/vendor/" + file;
+      s.onload = function () {
+        if (ready()) resolve();
+        else reject(new Error(file + " loaded but exported nothing"));
+      };
+      s.onerror = function () { reject(new Error("could not load " + file)); };
+      document.head.appendChild(s);
+    });
+    return vendorLoads[file];
+  }
+
+  function loadD3() {
+    return loadVendor("d3-dag.min.js", function () { return !!(window.d3 && window.d3.dagStratify); });
+  }
+
+  var tomlRegistered = false;
+  function loadHljs() {
+    return loadVendor("hljs.min.js", function () { return !!window.hljs; }).then(registerToml);
+  }
+
+  // highlight.js doesn't ship a TOML grammar in any of its distributed
+  // bundles (it lives in a separate, unpublished third-party repo) — a
+  // small hand-written one is simpler and more honest than pulling in a
+  // whole extra vendored file for one language. className values match the
+  // .hljs-* tokens already themed above (attr/string/number/literal/
+  // comment/meta), so no new CSS is needed.
+  function registerToml() {
+    if (tomlRegistered) return;
+    tomlRegistered = true;
+    window.hljs.registerLanguage("toml", function (hljs) {
+      return {
+        name: "TOML",
+        case_insensitive: false,
+        contains: [
+          hljs.COMMENT("#", "$"),
+          { className: "section", begin: /^\s*\[+/, end: /\]+/ },
+          { className: "attr", begin: /^\s*[A-Za-z0-9_.-]+(?=\s*=)/ },
+          { className: "meta", begin: /\b\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?\b/ },
+          { className: "literal", begin: /\b(true|false)\b/ },
+          hljs.QUOTE_STRING_MODE,
+          hljs.APOS_STRING_MODE,
+          hljs.C_NUMBER_MODE
+        ]
+      };
+    });
+  }
+
+  /* Motion the CSS can't reach: scrollIntoView's smooth behavior is a JS
+     argument, so the @media blocks above never see it. */
+  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  function scrollTo(node, block) {
+    node.scrollIntoView({ block: block, behavior: reducedMotion.matches ? "auto" : "smooth" });
+  }
+
+  /* The async clipboard API is undefined outside a secure context, which is
+     exactly what `clanker serve` is when reached over a LAN address rather
+     than localhost. Failing silently there left a dead button, so the text
+     gets selected instead and the label says what to press. */
+  function copyText(text, btn, restoreLabel, selectTarget) {
+    function restore() {
+      window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
+    }
+    function selectInstead() {
+      var sel = window.getSelection && window.getSelection();
+      if (selectTarget && sel && document.createRange) {
+        var range = document.createRange();
+        range.selectNodeContents(selectTarget);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        btn.textContent = "Selected — press Ctrl+C";
+      } else {
+        btn.textContent = "Copy unavailable";
+      }
+      restore();
+    }
+    if (!navigator.clipboard || !window.isSecureContext) return selectInstead();
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = "Copied";
+      restore();
+    }, selectInstead);
+  }
+
   var busy = false;
+  var controller = null;
+  var elapsedTimer = null;
+  var sessionId = loadSession();
+
+  function newSessionId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return "sess-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function loadSession() {
+    var id = null;
+    try { id = window.localStorage.getItem("clanker.session"); } catch (e) {}
+    if (!id) id = newSessionId();
+    try { window.localStorage.setItem("clanker.session", id); } catch (e) {}
+    return id;
+  }
+
+  function renderSessionChip() {
+    el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  }
+
+  var THEMES = ["system", "light", "dark"];
+
+  function loadTheme() {
+    var t = null;
+    try { t = window.localStorage.getItem("clanker.theme"); } catch (e) {}
+    return THEMES.indexOf(t) === -1 ? "system" : t;
+  }
+
+  function applyTheme(theme) {
+    if (theme === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", theme);
+    el.themeToggle.textContent = "theme: " + theme;
+  }
+
+  var theme = loadTheme();
+  applyTheme(theme);
+
+  el.themeToggle.addEventListener("click", function () {
+    theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    try { window.localStorage.setItem("clanker.theme", theme); } catch (e) {}
+    applyTheme(theme);
+  });
+
+  el.newChat.addEventListener("click", function () {
+    if (busy) return;
+    sessionId = newSessionId();
+    try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+    el.transcript.textContent = "";
+    renderSessionChip();
+    el.task.focus();
+  });
 
   function syncControls() {
     el.submit.disabled = busy || el.task.value.trim() === "";
     el.refresh.disabled = busy;
+    el.newChat.disabled = busy;
     el.task.readOnly = busy;
+    el.cancel.hidden = !busy;
     el.submit.textContent = busy ? "Running…" : "Run (Ctrl+Enter)";
-    el.result.setAttribute("aria-busy", String(busy));
     document.title = busy ? "Running… · clanker" : "clanker";
   }
 
@@ -202,10 +678,57 @@
     syncControls();
   }
 
-  /* Appended, never assigned over: a stream that fails mid-flight keeps the
-     tokens it already delivered. */
-  function append(text, failed) {
-    el.result.hidden = false;
+  function startElapsed(startedAt) {
+    stopElapsed();
+    elapsedTimer = window.setInterval(function () {
+      el.hint.textContent = "running… " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
+    }, 200);
+  }
+
+  function stopElapsed() {
+    if (elapsedTimer) { window.clearInterval(elapsedTimer); elapsedTimer = null; }
+  }
+
+  /* Each submitted task gets its own turn card, appended below the last —
+     a real conversation history instead of one box that forgets the past
+     answer as soon as you ask another question. */
+  function createTurn(task) {
+    var turn = document.createElement("div");
+    turn.className = "turn";
+
+    var you = document.createElement("div");
+    you.className = "turn-you";
+    you.textContent = task;
+
+    var body = document.createElement("div");
+    body.className = "turn-body";
+
+    var events = document.createElement("div");
+    events.className = "turn-events";
+
+    var answer = document.createElement("div");
+    answer.className = "turn-answer";
+    // aria-live rather than role="status": status carries an implicit
+    // aria-atomic="true", which made every streamed chunk re-announce the
+    // whole answer from the top. Explicitly atomic-false announces only the
+    // new text.
+    answer.setAttribute("aria-live", "polite");
+    answer.setAttribute("aria-atomic", "false");
+
+    var foot = document.createElement("div");
+    foot.className = "turn-foot";
+
+    body.appendChild(events);
+    body.appendChild(answer);
+    body.appendChild(foot);
+    turn.appendChild(you);
+    turn.appendChild(body);
+    el.transcript.appendChild(turn);
+
+    return { root: turn, events: events, answer: answer, foot: foot };
+  }
+
+  function appendText(turn, text, failed) {
     var node = document.createTextNode(text);
     if (failed) {
       var span = document.createElement("span");
@@ -213,21 +736,196 @@
       span.appendChild(node);
       node = span;
     }
-    var caret = el.result.querySelector(".caret");
-    if (caret) el.result.insertBefore(node, caret);
-    else el.result.appendChild(node);
+    var caret = turn.answer.querySelector(".caret");
+    if (caret) turn.answer.insertBefore(node, caret);
+    else turn.answer.appendChild(node);
   }
 
-  function showCaret(on) {
-    var caret = el.result.querySelector(".caret");
+  function showCaret(turn, on) {
+    var caret = turn.answer.querySelector(".caret");
     if (on && !caret) {
       caret = document.createElement("span");
       caret.className = "caret";
       caret.setAttribute("aria-hidden", "true");
-      el.result.appendChild(caret);
+      turn.answer.appendChild(caret);
     } else if (!on && caret) {
       caret.remove();
     }
+  }
+
+  /* Once a turn finishes cleanly, promote ```fenced``` code inside the plain
+     answer text into <pre> blocks with their own copy button — the common
+     case for a coding agent's replies. Skipped for failed/stopped turns so
+     the red [error] styling already in the DOM is never flattened back to
+     plain text. */
+  function finalizeAnswer(turn) {
+    if (turn.answer.querySelector(".failed")) return;
+    var raw = turn.answer.textContent;
+    if (raw.indexOf("```") === -1) return;
+    var frag = document.createDocumentFragment();
+    var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
+    var last = 0, m;
+    while ((m = re.exec(raw))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(raw.slice(last, m.index)));
+      frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
+      last = re.lastIndex;
+    }
+    if (last < raw.length) frag.appendChild(document.createTextNode(raw.slice(last)));
+    turn.answer.textContent = "";
+    turn.answer.appendChild(frag);
+  }
+
+  /* JSON-shaped text (a tool result, most often) is unreadable as one line
+     and hljs has no way to know it's JSON without a fence's language tag.
+     Only untagged text is tried against JSON.parse: reformatting a block the
+     author explicitly fenced as something else overrides a stated intent, and
+     bare `42` or `"a"` parses as JSON too. */
+  function prettyJsonIfPossible(text) {
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /* Fills codeEl with the text to display and kicks off highlighting once
+     hljs has loaded. Returns what it decided, because the language is needed
+     for the label and cannot be read back off codeEl.className afterwards —
+     hljs appends its own "hljs" class there. */
+  function highlightInto(codeEl, lang, rawText) {
+    var pretty = lang ? null : prettyJsonIfPossible(rawText);
+    var text = pretty !== null ? pretty : rawText;
+    var effectiveLang = pretty !== null ? "json" : (lang || "");
+    codeEl.textContent = text;
+    if (effectiveLang) {
+      codeEl.className = "language-" + effectiveLang;
+      loadHljs().then(function () {
+        try { window.hljs.highlightElement(codeEl); } catch (e) {}
+      }).catch(function () {});
+    }
+    return { text: text, lang: effectiveLang };
+  }
+
+  function buildCodeBlock(lang, code) {
+    var wrap = document.createElement("div");
+    wrap.className = "code-block";
+
+    var pre = document.createElement("pre");
+    var codeEl = document.createElement("code");
+    var shown = highlightInto(codeEl, lang, code);
+    pre.appendChild(codeEl);
+
+    var head = document.createElement("div");
+    head.className = "code-head";
+    var langTag = document.createElement("span");
+    langTag.className = "code-lang";
+    langTag.textContent = shown.lang;
+    head.appendChild(langTag);
+
+    var copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "copy-code-btn";
+    copyBtn.textContent = "Copy";
+    // Copies what's actually shown (prettified JSON, not the original
+    // one-line source) — that's what a person just read and expects to paste.
+    copyBtn.addEventListener("click", function () {
+      copyText(shown.text, copyBtn, "Copy", codeEl);
+    });
+    head.appendChild(copyBtn);
+
+    wrap.appendChild(head);
+    wrap.appendChild(pre);
+    return wrap;
+  }
+
+  function addToolEvent(turn, names) {
+    var row = document.createElement("div");
+    row.className = "event-tool";
+    var spin = document.createElement("span");
+    spin.className = "spin";
+    spin.setAttribute("aria-hidden", "true");
+    var label = document.createElement("span");
+    label.textContent = "⚙ " + names;
+    // Shown only under prefers-reduced-motion, where the spinner is hidden.
+    var state = document.createElement("span");
+    state.className = "run-state";
+    state.textContent = "running…";
+    row.appendChild(spin);
+    row.appendChild(label);
+    row.appendChild(state);
+    turn.events.appendChild(row);
+    return row;
+  }
+
+  function settleLastToolEvent(turn, ms) {
+    var rows = turn.events.querySelectorAll(".event-tool");
+    if (rows.length === 0) return;
+    var row = rows[rows.length - 1];
+    var spin = row.querySelector(".spin");
+    if (spin) spin.remove();
+    var state = row.querySelector(".run-state");
+    if (state) state.remove();
+    var dur = document.createElement("span");
+    dur.className = "dur";
+    dur.textContent = ms + "ms";
+    row.appendChild(dur);
+  }
+
+  function renderStats(turn, stats, task) {
+    turn.foot.textContent = "";
+    var parts = [];
+    if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
+      parts.push(stats.prompt_tokens + " prompt + " + stats.completion_tokens + " completion");
+    }
+    if (typeof stats.ms === "number") parts.push(stats.ms + "ms");
+    if (typeof stats.cost === "number") parts.push("$" + stats.cost.toFixed(4));
+    var span = document.createElement("span");
+    span.textContent = parts.join(" · ");
+    turn.foot.appendChild(span);
+
+    var copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "secondary";
+    copyBtn.textContent = "Copy answer";
+    copyBtn.addEventListener("click", function () {
+      copyText(turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
+    });
+    turn.foot.appendChild(copyBtn);
+
+    if (task) {
+      var regenBtn = document.createElement("button");
+      regenBtn.type = "button";
+      regenBtn.className = "secondary";
+      regenBtn.textContent = "Run again";
+      regenBtn.title = "Resubmit this task as a new turn";
+      regenBtn.addEventListener("click", function () {
+        if (busy) return;
+        el.task.value = task;
+        el.form.requestSubmit();
+      });
+      turn.foot.appendChild(regenBtn);
+    }
+  }
+
+  /* Streamed bytes are content by default; a line prefixed with 0x01 is an
+     out-of-band event (tool started, tool finished, error, turn done) —
+     see stream_event_prefix in the server. Buffering on "\n" means a
+     control line split across two network chunks is never misread as
+     content. */
+  function makeLineSplitter(onLine) {
+    var buffer = "";
+    return {
+      push: function (chunk) {
+        buffer += chunk;
+        var lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (var i = 0; i < lines.length; i++) onLine(lines[i], true);
+      },
+      flush: function () {
+        if (buffer) onLine(buffer, false);
+        buffer = "";
+      }
+    };
   }
 
   function renderStatus(status) {
@@ -241,7 +939,7 @@
     }
     var peers = status.peers || [];
     el.instanceChip.textContent = status.instance.name;
-    delete el.instanceChip.dataset.state;
+    el.instanceChip.dataset.state = "live";
     el.peersChip.hidden = peers.length === 0;
     el.peersChip.textContent = peers.length + (peers.length === 1 ? " peer" : " peers");
     el.instance.textContent = status.instance.name + " (" + status.instance.id + ")";
@@ -297,22 +995,48 @@
     loadStatus().finally(function () { el.refresh.disabled = busy; });
   });
 
+  el.cancel.addEventListener("click", function () {
+    if (controller) controller.abort();
+  });
+
   el.form.addEventListener("submit", function (e) {
     e.preventDefault();
     var task = el.task.value.trim();
     if (busy || task === "") return;
 
+    var turn = createTurn(task);
+    scrollTo(turn.root, "start");
+
+    // Submit is about to be disabled. If it holds focus, focus would fall to
+    // <body> and a keyboard user would have to tab the whole page to reach
+    // Stop; hand it over deliberately instead.
+    var handOffFocus = document.activeElement === el.submit;
     setBusy(true);
-    el.result.textContent = "";
-    el.result.hidden = false;
+    if (handOffFocus) el.cancel.focus();
     el.hint.textContent = "";
-    showCaret(true);
+    showCaret(turn, true);
     var startedAt = Date.now();
+    startElapsed(startedAt);
+    controller = new AbortController();
+
+    var splitter = makeLineSplitter(function (line) {
+      if (line.charCodeAt(0) === 1) {
+        var evt;
+        try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
+        if (evt.type === "tool_call") addToolEvent(turn, evt.names);
+        else if (evt.type === "tool_result") settleLastToolEvent(turn, evt.ms);
+        else if (evt.type === "error") appendText(turn, "\n[" + evt.message + "]\n", true);
+        else if (evt.type === "done") renderStats(turn, evt, task);
+        return;
+      }
+      appendText(turn, line + "\n", false);
+    });
 
     fetch("/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: task, stream: true })
+      body: JSON.stringify({ task: task, stream: true, session: sessionId }),
+      signal: controller.signal
     }).then(function (resp) {
       if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
       var reader = resp.body.getReader();
@@ -320,25 +1044,656 @@
       return (function pump() {
         return reader.read().then(function (chunk) {
           if (chunk.done) return;
-          append(decoder.decode(chunk.value, { stream: true }), false);
+          splitter.push(decoder.decode(chunk.value, { stream: true }));
           return pump();
         });
       })();
     }).then(function () {
-      el.hint.textContent = "finished in " + (Date.now() - startedAt) + "ms";
+      splitter.flush();
+      finalizeAnswer(turn);
       el.task.value = "";
     }).catch(function (err) {
-      append("\n[run failed: " + err.message + "]\n", true);
-      el.hint.textContent = "failed after " + (Date.now() - startedAt) + "ms";
+      splitter.flush();
+      if (err && err.name === "AbortError") {
+        turn.root.classList.add("stopped");
+      } else {
+        appendText(turn, "\n[run failed: " + err.message + "]\n", true);
+      }
     }).finally(function () {
-      showCaret(false);
+      showCaret(turn, false);
+      stopElapsed();
+      el.hint.textContent = "";
+      controller = null;
+      // Stop is about to be hidden; take focus back to the composer rather
+      // than letting it drop to <body>.
+      var focusWasOnStop = document.activeElement === el.cancel;
       setBusy(false);
+      if (focusWasOnStop) el.task.focus();
     });
   });
 
+
+  // ---- runs: pick a recorded run, draw its execution graph ----------------
+
+  function runLabel(r) {
+    var task = (r.task || "").replace(/\s+/g, " ").trim();
+    if (task.length > 60) task = task.slice(0, 59) + "…";
+    return r.run_id + "  ·  " + (task || "(no task)");
+  }
+
+  var allRuns = [];
+
+  /* Rebuilds the <select>'s actual option list from allRuns filtered by
+     substring match on task text or run id — kept as a real native <select>
+     (free keyboard nav, native mobile picker) rather than a custom dropdown;
+     hiding <option>s with CSS isn't reliably respected by every browser's
+     native combobox rendering, but replacing the option list outright always
+     works. */
+  function renderRunOptions(filterText) {
+    var q = (filterText || "").trim().toLowerCase();
+    var matches = !q ? allRuns : allRuns.filter(function (r) {
+      return (r.task || "").toLowerCase().indexOf(q) !== -1 || r.run_id.toLowerCase().indexOf(q) !== -1;
+    });
+    var previous = el.runSelect.value;
+    el.runSelect.textContent = "";
+    matches.forEach(function (r) {
+      var opt = document.createElement("option");
+      opt.value = r.run_id;
+      opt.textContent = runLabel(r);
+      el.runSelect.appendChild(opt);
+    });
+    if (!matches.length) {
+      el.runSelect.disabled = true;
+      el.runGraph.textContent = "";
+      // The open node detail belongs to a run that is no longer listed or
+      // drawn; leaving it up would attribute one run's output to whatever is
+      // selected next.
+      closeNodeDetail();
+      var none = document.createElement("p");
+      none.className = "run-empty";
+      none.textContent = q ? "No recorded runs match “" + filterText.trim() + "”." : "No runs recorded yet. Run a task and it appears here.";
+      el.runGraph.appendChild(none);
+      announceRunMatches(q, 0);
+      return null;
+    }
+    el.runSelect.disabled = false;
+    var wanted = matches.some(function (r) { return r.run_id === previous; }) ? previous : matches[0].run_id;
+    el.runSelect.value = wanted;
+    announceRunMatches(q, matches.length);
+    return wanted;
+  }
+
+  /* The filter's whole result — how many runs matched, which one is now shown —
+     is conveyed by the option list and the graph redrawing, both silent. Says
+     it out loud for anyone who can't see either. Left empty while unfiltered,
+     so simply loading the page announces nothing. */
+  function announceRunMatches(query, count) {
+    if (!query) {
+      el.runFilterStatus.textContent = "";
+      return;
+    }
+    el.runFilterStatus.textContent = count === 0
+      ? "No runs match " + query + "."
+      : count + (count === 1 ? " run matches " : " runs match ") + query + ". Showing the first.";
+  }
+
+  function loadRuns() {
+    return fetch("/api/runs")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (runs) {
+        allRuns = runs;
+        var wanted = renderRunOptions(el.runFilter.value);
+        if (wanted) return loadRun(wanted);
+      })
+      .catch(function (err) {
+        el.runGraph.textContent = "";
+        var p = document.createElement("p");
+        p.className = "run-empty";
+        p.textContent = "Could not load runs: " + err.message;
+        el.runGraph.appendChild(p);
+      });
+  }
+
+  function loadRun(id) {
+    return fetch("/api/runs/" + encodeURIComponent(id))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(drawRun)
+      .catch(function (err) {
+        el.runGraph.textContent = "";
+        var p = document.createElement("p");
+        p.className = "run-empty";
+        p.textContent = "Could not load that run: " + err.message;
+        el.runGraph.appendChild(p);
+      });
+  }
+
+  function metricsFor(n) {
+    if (n.kind === "llm") {
+      return n.prompt_tokens + "/" + n.completion_tokens + " tok · " + n.duration_ms + "ms";
+    }
+    if (n.kind === "tool") {
+      return n.result_bytes + " B · " + n.duration_ms + "ms";
+    }
+    return "answer " + n.result_bytes + " B";
+  }
+
+  /* The run is a chain of iterations: one llm node decides, then zero or
+     more tool nodes run (in parallel when the model asked for several at
+     once), then the next llm node picks up from there — until an llm node
+     decides it's done and a final node closes the run. Group the flat node
+     list back into that shape so it can be drawn as boxes and arrows instead
+     of a bar chart pretending to be a timeline. */
+  function buildStages(nodes) {
+    var stages = [];
+    var final = null;
+    nodes.forEach(function (n) {
+      if (n.kind === "llm") stages.push({ iteration: n.iteration, llm: n, tools: [] });
+      else if (n.kind === "tool" && stages.length) stages[stages.length - 1].tools.push(n);
+      else if (n.kind === "final") final = n;
+    });
+    return { stages: stages, final: final };
+  }
+
+  var lastGraph = null;
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (resizeTimer) window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(function () {
+      if (lastGraph) drawRun(lastGraph);
+    }, 150);
+  });
+
+  function drawRun(g) {
+    // Redraws also happen on window resize (same run, new layout) — only
+    // close the detail panel when the run itself actually changed, not on
+    // every resize while someone's mid-read of a node's output.
+    if (!lastGraph || lastGraph.run_id !== g.run_id) {
+      el.runDetail.hidden = true;
+      el.runDetail.textContent = "";
+    }
+    lastGraph = g;
+    el.runGraph.textContent = "";
+    var nodes = g.nodes || [];
+
+    var head = document.createElement("p");
+    head.className = "run-head";
+    head.textContent = g.run_id + " · " + (g.provider || "?") + " · " + g.duration_ms + "ms · " +
+      g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion tok\n" + (g.task || "");
+    el.runGraph.appendChild(head);
+
+    if (!nodes.length) {
+      var empty = document.createElement("p");
+      empty.className = "run-empty";
+      empty.textContent = "This run recorded no nodes.";
+      el.runGraph.appendChild(empty);
+      return;
+    }
+
+    var built = buildStages(nodes);
+    // Duration bars are scaled against the slowest node, not the run total:
+    // one long LLM call would otherwise flatten every tool call to an
+    // invisible sliver.
+    var slowest = nodes.reduce(function (m, n) {
+      return n.kind === "final" ? m : Math.max(m, n.duration_ms || 0);
+    }, 0) || 1;
+
+    // The SVG arrows that show branching/convergence are aria-hidden (each
+    // node's own aria-label already covers its kind/name/metrics); without
+    // this, a screen-reader user gets a flat list of nodes with no sense of
+    // which tool calls ran in parallel or what fed into what.
+    var summary = document.createElement("p");
+    summary.className = "sr-only";
+    summary.textContent = graphSummaryText(built);
+    el.runGraph.appendChild(summary);
+
+    var canvas = document.createElement("div");
+    canvas.className = "run-canvas";
+    // Focusable so a graph wider than the viewport can be scrolled with arrow
+    // keys even when it holds nothing focusable (a run that recorded only the
+    // "did not finish" marker); node boxes are buttons and reachable on their
+    // own.
+    canvas.tabIndex = 0;
+    canvas.setAttribute("aria-label", "Scrollable execution graph diagram");
+    el.runGraph.appendChild(canvas);
+
+    // d3-dag is fetched on demand, so the first graph of a session draws one
+    // network round-trip later than the rest of the page.
+    loadD3().then(function () {
+      // A newer run may have been requested while the library was in flight.
+      if (canvas.isConnected) layoutGraph(canvas, built, slowest);
+    }).catch(function (err) {
+      var errEl = document.createElement("p");
+      errEl.className = "run-empty";
+      errEl.textContent = "Could not load the graph layout library: " + err.message;
+      canvas.appendChild(errEl);
+    });
+  }
+
+  function graphSummaryText(built) {
+    var parts = ["Execution graph:"];
+    built.stages.forEach(function (stage) {
+      var seg = "iteration " + stage.iteration + " called the model";
+      if (stage.tools.length === 1) {
+        seg += ", then ran 1 tool (" + stage.tools[0].label + ")";
+      } else if (stage.tools.length > 1) {
+        seg += ", then ran " + stage.tools.length + " tools in parallel (" +
+          stage.tools.map(function (t) { return t.label; }).join(", ") + ")";
+      }
+      parts.push(seg + ".");
+    });
+    parts.push(built.final ? "The run ended with a final answer." : "The run ended without a final answer.");
+    return parts.join(" ");
+  }
+
+  /* Turns the stage list into d3-dag's flat {id, parentIds} input: each llm
+     node's parents are whatever fed it (the previous llm directly, or that
+     iteration's tool cluster), each tool's parent is its iteration's llm,
+     and a synthetic "incomplete" node closes off a run that ended without a
+     final node (hit the iteration cap or the token budget) instead of
+     leaving the chain dangling with no visible outcome. */
+  function toDagInput(built) {
+    var data = [];
+    var parents = [];
+    built.stages.forEach(function (stage, si) {
+      var llmId = "n" + data.length;
+      data.push({ id: llmId, parentIds: parents, kind: "llm", node: stage.llm, iteration: stage.iteration });
+      if (stage.tools.length) {
+        parents = stage.tools.map(function (tn) {
+          var tid = "n" + data.length;
+          data.push({ id: tid, parentIds: [llmId], kind: "tool", node: tn });
+          return tid;
+        });
+      } else {
+        parents = [llmId];
+      }
+    });
+    if (data.length) {
+      data.push(built.final
+        ? { id: "n" + data.length, parentIds: parents, kind: "final", node: built.final }
+        : { id: "n" + data.length, parentIds: parents, kind: "incomplete", node: null });
+    }
+    return data;
+  }
+
+  /* Lays the DAG out with d3-dag's Sugiyama layered algorithm (proper
+     crossing minimization instead of hand-rolled fan-out math — this is the
+     same layered-graph technique tools like dagre/Airflow's DAG view use)
+     and draws the result as accessible DOM boxes with an SVG arrow layer
+     behind them. A layer wider than the viewport scrolls horizontally
+     inside .run-canvas rather than wrapping or shrinking nodes. */
+  function layoutGraph(canvas, built, slowest) {
+    var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
+    // The iteration-number tag hangs left of each llm node's own box (see
+    // .run-iter-tag placement below), so the left edge needs extra room or
+    // it clips into an unnecessary scrollbar.
+    var tagPad = 42;
+    var containerW = canvas.clientWidth || el.runGraph.clientWidth || 320;
+
+    var data = toDagInput(built);
+    if (!data.length) return;
+
+    /* Build every box first and measure it. A box's height depends on its
+       kind (a final node has no duration bar) and on whether its metrics line
+       wraps, so it ranges from roughly 60 to 90px. The layout used to assume
+       one constant instead, which put consecutive layers on top of each other
+       and left every arrowhead buried under the box it pointed at. */
+    data.forEach(function (d) {
+      d.el = d.kind === "incomplete" ? buildIncompleteNode(nodeW) : buildNodeBox(d, slowest, nodeW);
+      d.el.style.visibility = "hidden";
+      canvas.appendChild(d.el);
+    });
+    var nodeH = 0;
+    data.forEach(function (d) {
+      d.h = d.el.offsetHeight;
+      nodeH = Math.max(nodeH, d.h);
+    });
+
+    var dag;
+    try {
+      dag = window.d3.dagStratify()(data);
+    } catch (e) {
+      canvas.textContent = "";
+      var errEl = document.createElement("p");
+      errEl.className = "run-empty";
+      errEl.textContent = "Could not lay out this run's graph: " + e.message;
+      canvas.appendChild(errEl);
+      return;
+    }
+    // The tallest box sets the layer pitch, so no pair of layers can collide
+    // however the shorter boxes in between are sized.
+    window.d3.sugiyama().nodeSize([nodeW + hGap, nodeH + vGap])(dag);
+
+    var xs = [], ys = [];
+    for (var dn0 of dag.idescendants()) { xs.push(dn0.x); ys.push(dn0.y); }
+    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+    var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    var graphW = maxX - minX + nodeW;
+    var graphH = maxY - minY + nodeH;
+    var offsetX = pad + tagPad + nodeW / 2 - minX + Math.max(0, (containerW - pad * 2 - tagPad - graphW) / 2);
+    var offsetY = pad + nodeH / 2 - minY;
+
+    var totalW = Math.max(containerW, graphW + pad * 2 + tagPad);
+    var totalH = graphH + pad * 2;
+    canvas.style.height = totalH + "px";
+    // No canvas.style.minWidth here on purpose: absolutely-positioned nodes
+    // and the SVG edge layer (sized to totalW) create scrollable overflow
+    // inside .run-canvas on their own once they exceed its box. Forcing the
+    // box itself to totalW via min-width would make the *page* that wide
+    // instead of scrolling inside this container.
+
+    var svgNS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "run-edges");
+    svg.setAttribute("width", totalW);
+    svg.setAttribute("height", totalH);
+    svg.setAttribute("aria-hidden", "true");
+
+    var defs = document.createElementNS(svgNS, "defs");
+    var marker = document.createElementNS(svgNS, "marker");
+    marker.setAttribute("id", "run-arrow");
+    marker.setAttribute("viewBox", "0 0 8 8");
+    marker.setAttribute("refX", "7");
+    marker.setAttribute("refY", "4");
+    marker.setAttribute("markerWidth", "6");
+    marker.setAttribute("markerHeight", "6");
+    marker.setAttribute("orient", "auto-start-reverse");
+    var arrowPath = document.createElementNS(svgNS, "path");
+    arrowPath.setAttribute("d", "M0,0 L8,4 L0,8 z");
+    arrowPath.setAttribute("fill", "var(--border)");
+    marker.appendChild(arrowPath);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    /* Sugiyama hands back centre-to-centre polylines. Drawing them as-is put
+       the arrowhead inside the opaque target box, so no arrow was ever
+       visible: clip the ends back to each box's edge instead. */
+    for (var link of dag.ilinks()) {
+      var pts = link.points.map(function (p) { return [p.x + offsetX, p.y + offsetY]; });
+      pts[0][1] = link.source.y + offsetY + link.source.data.h / 2;
+      pts[pts.length - 1][1] = link.target.y + offsetY - link.target.data.h / 2 - 3;
+      var d = "M" + pts[0][0] + "," + pts[0][1];
+      for (var pi = 1; pi < pts.length; pi++) d += " L" + pts[pi][0] + "," + pts[pi][1];
+      var path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", d);
+      path.setAttribute("marker-end", "url(#run-arrow)");
+      svg.appendChild(path);
+    }
+    // Behind the boxes, which are already in the canvas from the measuring pass.
+    canvas.insertBefore(svg, canvas.firstChild);
+
+    for (var dn of dag.idescendants()) {
+      var cx = dn.x + offsetX, cy = dn.y + offsetY;
+      let kind = dn.data.kind, node = dn.data.node, box = dn.data.el;
+
+      // Each box is centred on its own height, not on a shared constant.
+      box.style.left = (cx - nodeW / 2) + "px";
+      box.style.top = (cy - dn.data.h / 2) + "px";
+      box.style.visibility = "";
+
+      if (kind === "incomplete") continue;
+
+      if (kind === "llm") {
+        var tag = document.createElement("span");
+        tag.className = "run-iter-tag";
+        tag.textContent = dn.data.iteration;
+        tag.style.left = (cx - nodeW / 2 - 20) + "px";
+        tag.style.top = (cy - 11) + "px";
+        tag.setAttribute("aria-hidden", "true");
+        canvas.appendChild(tag);
+      }
+
+      box.addEventListener("click", function () {
+        el.runGraph.querySelectorAll(".run-node.selected").forEach(function (n) { n.classList.remove("selected"); });
+        box.classList.add("selected");
+        showNodeDetail(kind, node);
+      });
+    }
+  }
+
+  function buildIncompleteNode(nodeW) {
+    var stop = document.createElement("div");
+    stop.className = "run-node-incomplete";
+    stop.style.width = nodeW + "px";
+    stop.textContent = "did not finish";
+    stop.setAttribute("aria-label", "run ended without a final answer — likely hit the iteration limit or token budget");
+    return stop;
+  }
+
+  function buildNodeBox(d, slowest, nodeW) {
+    var kind = d.kind, node = d.node;
+    var box = document.createElement("button");
+    box.type = "button";
+    box.className = "run-node";
+    box.dataset.kind = kind;
+    if (node.ok === false) box.dataset.ok = "false";
+    box.style.width = nodeW + "px";
+
+    var kindEl = document.createElement("span");
+    kindEl.className = "run-node-kind";
+    kindEl.textContent = (node.ok === false ? "✕ " : "") + kind;
+    box.appendChild(kindEl);
+
+    var label = document.createElement("span");
+    label.className = "run-node-label";
+    label.textContent = node.label || node.detail || kind;
+    // The box ellipsises a long tool name; without this only a screen-reader
+    // user (via aria-label below) could find out what it was.
+    label.title = label.textContent;
+    box.appendChild(label);
+
+    var metrics = document.createElement("span");
+    metrics.className = "run-node-metrics";
+    metrics.textContent = metricsFor(node);
+    box.appendChild(metrics);
+
+    if (kind !== "final") {
+      var bar = document.createElement("span");
+      bar.className = "run-node-bar";
+      var barFill = document.createElement("span");
+      barFill.style.width = Math.max(2, Math.round((node.duration_ms || 0) / slowest * 100)) + "%";
+      bar.appendChild(barFill);
+      box.appendChild(bar);
+    }
+
+    // The bar and the ✕ mark are decorative; the label already carries
+    // kind, name, and every number a screen reader needs.
+    box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
+    return box;
+  }
+
+  /* A collapsible tree for JSON-shaped node output — most tool results are
+     JSON, and a flat highlighted blob makes a large payload (a big file
+     listing, a nested API response) a wall of text with no way to collapse
+     the part you don't care about. <details>/<summary> gives keyboard
+     toggle and correct semantics for free, no custom ARIA needed. */
+  function buildJsonTree(value, keyLabel, depth) {
+    if (value === null) return jsonLeaf(keyLabel, "null", "hljs-literal");
+    if (typeof value === "boolean") return jsonLeaf(keyLabel, String(value), "hljs-literal");
+    if (typeof value === "number") return jsonLeaf(keyLabel, String(value), "hljs-number");
+    if (typeof value === "string") return jsonLeaf(keyLabel, JSON.stringify(value), "hljs-string");
+    if (Array.isArray(value)) {
+      var items = value.map(function (v, i) { return [String(i), v]; });
+      return jsonBranch(keyLabel, items, "[", "]", items.length + (items.length === 1 ? " item" : " items"), depth);
+    }
+    var entries = Object.keys(value).map(function (k) { return [k, value[k]]; });
+    return jsonBranch(keyLabel, entries, "{", "}", entries.length + (entries.length === 1 ? " key" : " keys"), depth);
+  }
+
+  function jsonLeaf(keyLabel, text, valueClass) {
+    var row = document.createElement("div");
+    // .json-row's ::before reserves the same width as a branch's disclosure
+    // triangle, so a leaf key and a branch key at one level start at the same
+    // x. Without it the left edge jitters by 1em with no relation to nesting,
+    // which is the one thing a tree's left edge is supposed to encode.
+    row.className = "json-row";
+    if (keyLabel !== null) {
+      var k = document.createElement("span");
+      k.className = "json-key";
+      k.textContent = keyLabel + ": ";
+      row.appendChild(k);
+    }
+    var v = document.createElement("span");
+    v.className = valueClass;
+    v.textContent = text;
+    row.appendChild(v);
+    return row;
+  }
+
+  function jsonBranch(keyLabel, entries, open, close, countLabel, depth) {
+    if (!entries.length) return jsonLeaf(keyLabel, open + close, "json-empty");
+    var details = document.createElement("details");
+    details.className = "json-node";
+    // Root and its immediate children open, everything below collapsed: a tree
+    // that arrives fully expanded is the wall of text it was built to replace.
+    // A closed branch still says what it holds ("{ 3 keys }"), so nothing is
+    // hidden that the reader can't see they are choosing not to open.
+    details.open = depth < 1;
+    var summary = document.createElement("summary");
+    if (keyLabel !== null) {
+      var k = document.createElement("span");
+      k.className = "json-key";
+      k.textContent = keyLabel + ": ";
+      summary.appendChild(k);
+    }
+    var brace = document.createElement("span");
+    brace.className = "json-brace";
+    brace.textContent = open + " " + countLabel + " " + close;
+    summary.appendChild(brace);
+    details.appendChild(summary);
+    var body = document.createElement("div");
+    body.className = "json-children";
+    entries.forEach(function (pair) { body.appendChild(buildJsonTree(pair[1], pair[0], depth + 1)); });
+    details.appendChild(body);
+    return details;
+  }
+
+  /* Populates the persistent detail panel below the graph with whatever a
+     clicked node recorded: not just its size, but the actual truncated tool
+     result or model output (graph.zig's Node.output; earlier versions of
+     recorded runs won't have it, hence the empty-state in the CSS). */
+  function showNodeDetail(kind, node) {
+    el.runDetail.textContent = "";
+    el.runDetail.hidden = false;
+
+    var head = document.createElement("div");
+    head.className = "run-detail-head";
+
+    var titleWrap = document.createElement("span");
+    var title = document.createElement("span");
+    title.className = "run-detail-title";
+    title.textContent = (node.ok === false ? "✕ " : "") + kind + " · " + (node.label || node.detail || kind);
+    titleWrap.appendChild(title);
+    var meta = document.createElement("span");
+    meta.className = "run-detail-meta";
+    meta.textContent = "  " + metricsFor(node) + (node.detail ? "  ·  " + node.detail : "");
+    titleWrap.appendChild(meta);
+    head.appendChild(titleWrap);
+
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "secondary run-detail-close";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", closeNodeDetail);
+    head.appendChild(closeBtn);
+
+    el.runDetail.appendChild(head);
+
+    /* The server records only the first `output_preview_cap` bytes of a node's
+       result (graph.zig), and a JSON document cut mid-structure no longer
+       parses — so the tree below silently never appears for exactly the large
+       payloads it exists to make readable. Saying so beats letting the view
+       quietly degrade into a wall of text with no explanation.
+
+       Derived rather than flagged by the server: `result_bytes` is the full
+       byte length and `output` is the capped preview, so comparing them is
+       exact. Both sides are byte counts, so multi-byte content cannot fake it
+       the way comparing against a UTF-16 string length would. */
+    var shownBytes = node.output ? new TextEncoder().encode(node.output).length : 0;
+    var truncated = typeof node.result_bytes === "number" && node.result_bytes > shownBytes;
+    if (truncated) {
+      var note = document.createElement("p");
+      note.className = "run-detail-note";
+      note.textContent = "Showing the first " + shownBytes + " of " + node.result_bytes +
+        " bytes — the rest was not recorded, so this is raw text rather than a parsed tree.";
+      el.runDetail.appendChild(note);
+    }
+
+    // A div, not a <pre>: the JSON-tree branch fills this with interactive
+    // <details> elements, and <pre> implies preformatted text content, not a
+    // widget tree. .run-detail-output already sets white-space: pre-wrap
+    // itself, so nothing about the flat-text case depends on the tag.
+    var out = document.createElement("div");
+    out.className = "run-detail-output";
+    // Left truly empty (no child) when there's nothing recorded, so the
+    // :empty CSS placeholder still fires.
+    if (node.output) {
+      var parsed;
+      // Not attempted on a truncated preview: it cannot parse, and the note
+      // above has already explained why the tree is missing.
+      if (!truncated) {
+        try { parsed = JSON.parse(node.output); } catch (e) { parsed = undefined; }
+      }
+      if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
+        var tree = document.createElement("div");
+        tree.className = "json-tree";
+        tree.appendChild(buildJsonTree(parsed, null, 0));
+        out.appendChild(tree);
+      } else {
+        var outCode = document.createElement("code");
+        highlightInto(outCode, null, node.output);
+        out.appendChild(outCode);
+      }
+    }
+    el.runDetail.appendChild(out);
+
+    scrollTo(el.runDetail, "nearest");
+    // Without this, focus stays on the node button that was just activated;
+    // a keyboard user tabbing onward would walk through every remaining
+    // node in the graph before ever reaching this panel's Close button,
+    // instead of landing on the thing that just appeared.
+    closeBtn.focus();
+  }
+
+  /* Hides the panel and clears the graph's selection. Shared by the Close
+     button and by anything that removes the run the panel is describing. */
+  function closeNodeDetail() {
+    el.runDetail.hidden = true;
+    el.runDetail.textContent = "";
+    el.runGraph.querySelectorAll(".run-node.selected").forEach(function (n) { n.classList.remove("selected"); });
+  }
+
+  el.runSelect.addEventListener("change", function () {
+    loadRun(el.runSelect.value);
+  });
+
+  var runFilterTimer = null;
+  el.runFilter.addEventListener("input", function () {
+    if (runFilterTimer) window.clearTimeout(runFilterTimer);
+    runFilterTimer = window.setTimeout(function () {
+      var wanted = renderRunOptions(el.runFilter.value);
+      // Narrowing a filter usually leaves the same run on top. Refetching and
+      // relaying out the graph it is already showing costs a round trip and a
+      // full remeasure of every node box for no visible change.
+      if (wanted && (!lastGraph || lastGraph.run_id !== wanted)) loadRun(wanted);
+    }, 120);
+  });
+
+  el.runsRefresh.addEventListener("click", function () {
+    el.runsRefresh.disabled = true;
+    loadRuns().finally(function () { el.runsRefresh.disabled = false; });
+  });
+
+  renderSessionChip();
   setBusy(false);
   loadStatus();
-})();
+  loadRuns();
+});
 </script>
 </body>
 </html>

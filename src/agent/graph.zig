@@ -23,7 +23,19 @@ pub const Node = struct {
     result_bytes: usize = 0,
     duration_ms: u64 = 0,
     ok: bool = true,
+    /// Truncated preview of what this node actually produced (tool result
+    /// content, or the model's message content) — capped at
+    /// `output_preview_cap` bytes so a large tool result can't blow up the
+    /// graph file. Lets the web UI show what happened, not just its size.
+    output: []const u8 = "",
 };
+
+pub const output_preview_cap = 4000;
+
+/// Bounds a node's recorded output to `output_preview_cap` bytes.
+pub fn truncatedPreview(s: []const u8) []const u8 {
+    return if (s.len > output_preview_cap) s[0..output_preview_cap] else s;
+}
 
 pub const Graph = struct {
     run_id: []const u8,
@@ -52,11 +64,6 @@ pub const Graph = struct {
         for (self.nodes.items) |n| t += n.completion_tokens;
         return t;
     }
-};
-
-pub const LoadedGraph = struct {
-    graph: Graph,
-    arena_state: std.heap.ArenaAllocator,
 };
 
 /// Serializes the graph to JSON and writes `state/runs/<run_id>.json`.
@@ -108,6 +115,8 @@ pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *c
         try s.print("{d}", .{n.duration_ms});
         try s.objectField("ok");
         try s.write(n.ok);
+        try s.objectField("output");
+        try s.write(n.output);
         try s.endObject();
     }
     try s.endArray();
@@ -115,43 +124,6 @@ pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *c
 
     const path = try std.fmt.allocPrint(arena, "state/runs/{s}.json", .{g.run_id});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = buf[0..w.end] });
-}
-
-/// Reads a graph JSON file back into a Graph (arena-backed).
-pub fn load(io: std.Io, gpa: std.mem.Allocator, run_id: []const u8) !LoadedGraph {
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    const arena = arena_state.allocator();
-    const path = try std.fmt.allocPrint(arena, "state/runs/{s}.json", .{run_id});
-    const data = try std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 24));
-    const parsed = try std.json.parseFromSliceLeaky(GraphFile, arena, data, .{ .ignore_unknown_fields = true });
-    var g = Graph{
-        .run_id = parsed.run_id,
-        .task = parsed.task,
-        .provider = parsed.provider,
-        .started_at = parsed.started_at,
-        .duration_ms = parsed.duration_ms,
-    };
-    for (parsed.nodes) |n| {
-        try g.nodes.append(arena, .{
-            .kind = switch (std.mem.eql(u8, n.kind, "tool")) {
-                true => NodeKind.tool,
-                false => if (std.mem.eql(u8, n.kind, "final")) NodeKind.final else NodeKind.llm,
-            },
-            .iteration = n.iteration,
-            .label = n.label,
-            .detail = n.detail,
-            .prompt_tokens = n.prompt_tokens,
-            .completion_tokens = n.completion_tokens,
-            .result_bytes = n.result_bytes,
-            .duration_ms = n.duration_ms,
-            .ok = n.ok,
-        });
-    }
-    return .{ .graph = g, .arena_state = arena_state };
-}
-
-pub fn deinitLoaded(l: *LoadedGraph) void {
-    l.arena_state.deinit();
 }
 
 const GraphFile = struct {
@@ -174,24 +146,3 @@ const NodeFile = struct {
     duration_ms: u64 = 0,
     ok: bool = true,
 };
-
-/// Lists persisted runs: (run_id, task, duration_ms, node count) pairs.
-pub fn listRuns(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) ![]const []const u8 {
-    _ = gpa;
-    var out: std.ArrayList([]const u8) = .empty;
-    var dir = std.Io.Dir.cwd().openDir(io, "state/runs", .{ .iterate = true }) catch return &.{};
-    defer dir.close(io);
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const id = entry.name[0 .. entry.name.len - 5];
-        try out.append(arena, try arena.dupe(u8, id));
-    }
-    std.mem.sort([]const u8, out.items, {}, struct {
-        fn lt(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.lessThan(u8, a, b);
-        }
-    }.lt);
-    return out.toOwnedSlice(arena);
-}
