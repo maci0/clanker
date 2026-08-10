@@ -1307,6 +1307,18 @@ test "isNumericString accepts ints, negatives, and single-dot floats only" {
     try std.testing.expect(isNumericString("12a") == false);
 }
 
+test "isNumericString rejects dot-only strings without digits" {
+    // Pins the final `return saw_digit`: a bare "." or "-." passes every
+    // per-character check but has no digit, so it is not a number. If the
+    // saw_digit requirement were dropped, finalAnswer would happily reduce a
+    // prose answer to "." — this test fails on that regression.
+    try std.testing.expect(isNumericString(".") == false);
+    try std.testing.expect(isNumericString("-.") == false);
+    // The accepted edge forms: a dot may lead or trail the digits.
+    try std.testing.expect(isNumericString(".5") == true);
+    try std.testing.expect(isNumericString("3.") == true);
+}
+
 /// Extracts the exact-match answer from a JSON object: prefers an "answer"
 /// field when present, falls back to the sole value when the object has
 /// exactly one key, otherwise returns null (the object is kept as-is).
