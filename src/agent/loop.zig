@@ -83,6 +83,7 @@ pub const Agent = struct {
         try messages.append(self.arena, .{ .role = .user, .content = task });
 
         var iteration: u32 = 0;
+        var budget_hit = false;
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
             const resp = if (self.on_token) |cb|
@@ -115,6 +116,7 @@ pub const Agent = struct {
             if (self.cfg.agent.max_total_tokens) |budget| {
                 if (self.stats.total_tokens >= budget) {
                     log.log(.warn, "token budget reached ({d} total tokens)", .{self.stats.total_tokens});
+                    budget_hit = true;
                     break;
                 }
             }
@@ -141,6 +143,7 @@ pub const Agent = struct {
                 });
             }
         }
+        if (budget_hit) return error.SessionTokenBudgetExceeded;
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
     }
