@@ -101,3 +101,7 @@ pub fn main(init: std.process.Init) !void {
     if (opts.verbose) log.setLevel(.debug);
     try cli.run(init, opts);
 }
+
+comptime {
+    _ = @import("agent/graph.zig");
+}

@@ -146,3 +146,14 @@ const NodeFile = struct {
     duration_ms: u64 = 0,
     ok: bool = true,
 };
+
+test "truncatedPreview caps output at output_preview_cap bytes" {
+    const short = "hello";
+    try std.testing.expectEqualStrings(short, truncatedPreview(short));
+    const big = try std.testing.allocator.alloc(u8, output_preview_cap + 1);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'x');
+    const got = truncatedPreview(big);
+    try std.testing.expectEqual(output_preview_cap, got.len);
+    try std.testing.expectEqual(big.ptr, got.ptr);
+}
