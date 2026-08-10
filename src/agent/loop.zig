@@ -862,7 +862,7 @@ pub const Agent = struct {
                     if (ch != '.' and ch != ',' and ch != '!' and ch != '?' and ch != ';' and ch != ':') break;
                     stripped = stripped[0 .. stripped.len - 1];
                 }
-                if (stripped.len < s.len and isNumericString(stripped)) {
+                if (stripped.len < s.len) {
                     s = std.mem.trim(u8, stripped, " \t\r\n");
                 }
             }
