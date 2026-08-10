@@ -637,8 +637,9 @@ pub const Agent = struct {
                         stripped = last_line["Here is your result:".len..];
                     } else if (std.mem.startsWith(u8, last_line, "Here is the result:")) {
                         stripped = last_line["Here is the result:".len..];
-                    } else if (std.mem.startsWith(u8, last_line, "The correct answer is:")) {
-                        stripped = last_line["The correct answer is:".len..];
+                    } else if (std.mem.startsWith(u8, last_line, "The correct answer is")) {
+                        stripped = last_line["The correct answer is".len..];
+                        if (stripped.?.len > 0 and stripped.?[0] == ':') stripped = stripped.?[1..];
                     } else if (std.mem.startsWith(u8, last_line, "Correct answer:")) {
                         stripped = last_line["Correct answer:".len..];
                     } else if (std.mem.startsWith(u8, last_line, "The output is:")) {
