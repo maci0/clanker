@@ -51,3 +51,19 @@ fn dirOf(path: []const u8) []const u8 {
     if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
     return "";
 }
+
+test "apply replaces only the first exact-match occurrence" {
+    const testing = std.testing;
+    var threaded = std.Io.Threaded.init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "hello world world" });
+    try apply(tmp.dir, io, testing.allocator, &.{.{ .file = "a.txt", .old = "world", .new = "zig" }});
+    const content = try tmp.dir.readFileAlloc(io, "a.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(content);
+    try testing.expectEqualStrings("hello zig world", content);
+}
