@@ -1,16 +1,2 @@
-{
-  "name": "format",
-  "description": "internal markdown to ANSI formatter",
-  "wasm": "zig-out/tools/format.wasm",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "text": {
-        "type": "string"
-      }
-    },
-    "required": ["text"]
-  },
-  "network_allow": [],
-  "fs_prefixes": []
-}
+"wasm": "format.wasm",
+  "internal": true

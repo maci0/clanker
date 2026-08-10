@@ -18,6 +18,8 @@ pub const Tool = struct {
     /// Directory prefixes (relative to the sandbox root) the tool may access
     /// via ck_fs_*; empty = filesystem denied.
     fs_prefixes: []const []const u8 = &.{},
+    /// If true, the tool is loaded and runnable but hidden from the LLM catalog.
+    internal: bool = false,
 };
 
 pub const Registry = struct {
@@ -69,6 +71,7 @@ pub const Registry = struct {
         var it = self.tools.iterator();
         while (it.next()) |kv| {
             const t = kv.value_ptr.*;
+            if (t.internal) continue;
             try out.append(arena, .{
                 .name = t.name,
                 .description = t.description,
@@ -100,6 +103,12 @@ pub const Registry = struct {
         if (obj.get("fs_prefixes")) |fp| {
             switch (fp) {
                 .array => |arr| t.fs_prefixes = try strArray(arena, arr),
+                else => {},
+            }
+        }
+        if (obj.get("internal")) |iv| {
+            switch (iv) {
+                .bool => |b| t.internal = b,
                 else => {},
             }
         }
