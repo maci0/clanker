@@ -24,6 +24,7 @@ comptime {
     _ = @import("improve/engine.zig");
     _ = @import("patch/apply.zig");
     _ = @import("gate/checks.zig");
+    _ = @import("mcp/server.zig");
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -37,7 +38,6 @@ pub fn main(init: std.process.Init) !void {
 
     const opts = cli.parse(arg_list.items) catch |err| {
         switch (err) {
-            error.NotYetImplemented => log.log(.error_, "that command is not implemented in this build yet", .{}),
             error.MissingTask => log.log(.error_, "`clanker run` needs a task text argument", .{}),
             error.BadSubcommand => log.log(.error_, "usage: clanker providers check [name]", .{}),
             else => log.log(.error_, "{s}", .{@errorName(err)}),

@@ -18,6 +18,9 @@ pub const RequestParams = struct {
     temperature: ?f64 = null,
     max_tokens: ?u32 = null,
     response_format_json: bool = false,
+    /// Ask the provider to stream the response (SSE). Consumed by
+    /// client.chatStream, which parses the chunked deltas.
+    stream: bool = false,
 };
 
 pub const BuildError = error{ OutOfMemory, BodyTooLarge } || std.Io.Writer.Error;
@@ -145,7 +148,7 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
     try s.objectField("stream");
-    try s.print("false", .{});
+    try s.write(params.stream);
     if (params.provider.reasoning_effort) |re| {
         try s.objectField("reasoning_effort");
         try jstr(&s, re);
@@ -184,7 +187,7 @@ const OpenAIChoice = struct {
 
 const OpenAIError = struct {
     message: ?[]const u8 = null,
-    @"type": ?[]const u8 = null,
+    type: ?[]const u8 = null,
 };
 
 const OpenAIResponse = struct {
@@ -254,7 +257,7 @@ pub fn parseErrorDetail(arena: std.mem.Allocator, kind: config.ProviderKind, bod
 const AnthropicError = struct {
     @"error": ?struct {
         message: ?[]const u8 = null,
-        @"type": ?[]const u8 = null,
+        type: ?[]const u8 = null,
     } = null,
 };
 
@@ -385,7 +388,7 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
 }
 
 const AnthropicBlock = struct {
-    @"type": []const u8 = "",
+    type: []const u8 = "",
     text: ?[]const u8 = null,
     id: ?[]const u8 = null,
     name: ?[]const u8 = null,
@@ -401,7 +404,7 @@ const AnthropicResponse = struct {
     } = null,
     @"error": ?struct {
         message: ?[]const u8 = null,
-        @"type": ?[]const u8 = null,
+        type: ?[]const u8 = null,
     } = null,
 };
 
@@ -416,9 +419,9 @@ fn parseAnthropic(arena: std.mem.Allocator, body: []const u8) !types.ChatRespons
     var calls: std.ArrayList(types.ToolCall) = .empty;
 
     for (parsed.content) |block| {
-        if (std.mem.eql(u8, block.@"type", "text")) {
+        if (std.mem.eql(u8, block.type, "text")) {
             if (block.text) |t| try text_parts.appendSlice(arena, t);
-        } else if (std.mem.eql(u8, block.@"type", "tool_use")) {
+        } else if (std.mem.eql(u8, block.type, "tool_use")) {
             const w_buf = try arena.alloc(u8, 64 * 1024);
             var w: std.Io.Writer = .fixed(w_buf);
             if (block.input) |inp| {

@@ -4,11 +4,16 @@ zig-out/
 zig-pkg/
 
 # AssemblyScript toolchain and its build output
-as-tools/node_modules/
-tools-as/*.wasm
+tool-src/ts/node_modules/
+tool-src/ts/build/
 
-# Runtime state (logs, history, improvements) — never commit
+# Runtime state (logs, history, sessions, improvements) — never commit
 state/
 
 # User-local configuration (API keys live in env vars anyway)
 config.local.json
+
+# Editor / OS junk
+.DS_Store
+*.swp
+*~

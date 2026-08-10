@@ -6,7 +6,7 @@ clanker is a self-improving AI agent harness written in Zig 0.16. It wraps LLM A
 
 - `src/agent/loop.zig` — the main agent loop: builds the message stream, calls the model, executes tool calls, and repeats until the task is done.
 - `src/llm/providers.zig` — provider abstraction for OpenAI-compatible and Anthropic chat APIs. Each provider is configured in JSON and references an API key from the environment.
-- `src/sandbox/` — zwasm WebAssembly runtime. Tools are compiled to `wasm32-wasip1-threads` and run inside a sandbox that exposes `ck_*` host functions.
+- `src/sandbox/` — zwasm WebAssembly runtime. Tools are compiled to `wasm32-freestanding` (see `build.zig`) and run inside a sandbox that exposes `ck_*` host functions.
 - `src/improve/engine.zig` — the self-improvement engine. It assembles relevant source files as context, asks a model for an exact-match patch proposal, applies it to a staging copy, runs gates (`zig build`, `zig build test`, `zig build tools`, plus format/lint checks), and promotes on success.
 - `src/evals/` and `src/gate/` — evaluation harness and gate checks (build, test, tools, format, lint) used both for self-assessment and pre-promotion verification.
 - `src/mcp/server.zig` — a Model Context Protocol server that exposes clanker’s tools over MCP.

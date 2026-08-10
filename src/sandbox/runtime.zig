@@ -33,6 +33,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_fs_write", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsWrite);
     try lk.defineFuncCtx("env", "ck_getenv", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckGetenv);
     try lk.defineFuncCtx("env", "ck_exec", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckExec);
+    try lk.defineFuncCtx("env", "ck_docker", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckDocker);
     try lk.defineFuncCtx("env", "ck_result", h, fn (*zwasm.Caller) u64, &host.ckResult);
 }
 
@@ -102,7 +103,7 @@ pub const ToolModule = struct {
 
     /// Executes the tool with `input` (JSON), returning the tool's JSON output
     /// in a fresh allocation.
-    pub fn runTool(self: *ToolModule, input: []const u8) ![]u8 {
+    pub fn executeTool(self: *ToolModule, input: []const u8) ![]u8 {
         self.h.reset();
 
         const mem = self.inst.memory() orelse return error.ToolNoMemory;
@@ -137,8 +138,6 @@ fn seedRng(seed: u64, salt: []const u8) u64 {
 // ------------------------------------------------------------------- tests --
 
 test "zwasm loads a Zig-compiled module and calls it" {
-    // Compiled fixture: tests/fixtures/tiny.zig (add + no_args), committed to
-    // the repo; the test binary runs from the project root.
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -165,6 +164,41 @@ test "zwasm loads a Zig-compiled module and calls it" {
     try std.testing.expectEqual(@as(i32, 42), res);
 }
 
+test "zwasm executes on a worker thread" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tests/fixtures/tiny.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const W = struct {
+        wasm: []const u8,
+        io: std.Io,
+        result: ?i32 = null,
+        fn run(self: *@This()) void {
+            var env = std.process.Environ.Map.init(std.testing.allocator);
+            defer env.deinit();
+            var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = self.io, .root_dir = ".", .network_allow = &.{}, .environ_map = &env };
+            const mod = ToolModule.load(std.testing.allocator, self.io, &sb, self.wasm) catch |e| {
+                std.debug.print("worker load err {s}\n", .{@errorName(e)});
+                return;
+            };
+            defer mod.deinit();
+            var fn_ = mod.inst.typedFunc(fn (i32, i32) i32, "add");
+            const r = fn_.call(.{ 17, 25 }) catch |e| {
+                std.debug.print("worker call err {s}\n", .{@errorName(e)});
+                return;
+            };
+            self.result = r;
+        }
+    };
+    var w = W{ .wasm = wasm, .io = io };
+    const th = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, W.run, .{&w});
+    th.join();
+    try std.testing.expectEqual(@as(?i32, 42), w.result);
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
@@ -173,7 +207,7 @@ test "assemblyscript calc_ts tool executes" {
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools-as/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tool-bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     var sb = host.Sandbox{
@@ -187,11 +221,11 @@ test "assemblyscript calc_ts tool executes" {
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();
 
-    const out = try mod.runTool("17*23");
+    const out = try mod.executeTool("17*23");
     defer std.testing.allocator.free(out);
-    std.debug.print("\ncalc_ts raw input -> {s}\n", .{out});
+    try std.testing.expectEqualStrings("391", out);
 
-    const out2 = try mod.runTool("{\"expr\": \"17*23\"}");
+    const out2 = try mod.executeTool("{\"expr\": \"17*23\"}");
     defer std.testing.allocator.free(out2);
-    std.debug.print("calc_ts json input -> {s}\n", .{out2});
+    try std.testing.expectEqualStrings("391", out2);
 }

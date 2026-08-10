@@ -1,0 +1,12 @@
+{
+  "name": "clanker-as-tools",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "npx asc calc_ts.ts -o ../../tool-bin/calc_ts.wasm --optimize --bindings raw --noExportMemory --importMemory=false",
+    "build:all": "for f in *.ts; do [ \"$f\" = \"env.d.ts\" ] && continue; npx asc \"$f\" -o \"../../tool-bin/${f%.ts}.wasm\" --optimize; done"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
+  }
+}

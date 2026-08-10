@@ -42,7 +42,7 @@
   },
   "agent": {
     "max_iterations": 12,
-    "tools_dir": "tools",
+    "tools_dir": "tools.d",
     "skills_dir": "skills",
     "system_prompt_file": "skills/SYSTEM.md",
     "learnings_file": "state/learnings.md",

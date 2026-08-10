@@ -55,7 +55,7 @@ pub fn build(b: *std.Build) void {
     defer threaded.deinit();
     const io = threaded.io();
 
-    const tools_src_path = b.pathFromRoot("tools-src");
+    const tools_src_path = b.pathFromRoot("tool-src/zig");
     var dir = std.Io.Dir.openDirAbsolute(io, tools_src_path, .{ .iterate = true }) catch |err| {
         std.debug.print("warning: cannot open {s}: {s}\n", .{ tools_src_path, @errorName(err) });
         return;
@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
         const tool = b.addExecutable(.{
             .name = stem,
             .root_module = b.createModule(.{
-                .root_source_file = b.path(b.fmt("tools-src/{s}.zig", .{stem})),
+                .root_source_file = b.path(b.fmt("tool-src/zig/{s}.zig", .{stem})),
                 .target = tool_target,
                 .optimize = .ReleaseSmall,
             }),

@@ -34,6 +34,11 @@ pub const Agent = struct {
     modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
     /// Cumulative token usage across all LLM calls in this agent run.
     stats: RunStats = .{},
+    /// Optional streaming hook: when set, LLM responses are streamed (SSE)
+    /// and every content delta is delivered here as it arrives (e.g. the
+    /// REPL renders tokens live). Tool-call flows still assemble a normal
+    /// ChatResponse internally.
+    on_token: ?*const fn ([]const u8) void = null,
 
     pub fn init(
         ctx: *client.Ctx,
@@ -80,11 +85,18 @@ pub const Agent = struct {
         var iteration: u32 = 0;
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
-            const resp = try client.chat(self.ctx, self.arena, .{
-                .provider = self.provider,
-                .messages = messages.items,
-                .tools = self.tool_defs,
-            }, err_detail);
+            const resp = if (self.on_token) |cb|
+                try client.chatStream(self.ctx, self.arena, .{
+                    .provider = self.provider,
+                    .messages = messages.items,
+                    .tools = self.tool_defs,
+                }, err_detail, cb)
+            else
+                try client.chat(self.ctx, self.arena, .{
+                    .provider = self.provider,
+                    .messages = messages.items,
+                    .tools = self.tool_defs,
+                }, err_detail);
 
             if (resp.usage) |u| {
                 self.stats.total_prompt_tokens += u.prompt_tokens;

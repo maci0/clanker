@@ -19,6 +19,7 @@ extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
+extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
 extern fn ck_result() u64;
 
 const scratch_cap = 64 * 1024;
@@ -63,16 +64,7 @@ fn pack(out: *const Out) u64 {
 
 fn memSlice(ptr: u32, len: u32) ?[]const u8 {
     const base: usize = ptr;
-    // The host writes tool inputs into the scratch region but writes results
-    // into the host arena; both live in this module's linear memory, so a
-    // result pointer must be accepted outside the scratch buffer.
-    const scratch_lo: usize = @intFromPtr(&scratch_buf);
-    const scratch_hi = scratch_lo + scratch_buf.len;
-    const host_lo: usize = @intFromPtr(&host_arena_buf);
-    const host_hi = host_lo + host_arena_buf.len;
-    const in_scratch = base >= scratch_lo and base + len <= scratch_hi;
-    const in_host = base >= host_lo and base + len <= host_hi;
-    if (!in_scratch and !in_host) return null;
+    if (base < @intFromPtr(&scratch_buf) or base + len > @intFromPtr(&scratch_buf) + scratch_buf.len) return null;
     return @as([*]const u8, @ptrFromInt(base))[0..len];
 }
 
@@ -107,7 +99,12 @@ fn readResult() ?[]const u8 {
     const packed_ = ck_result();
     const ptr: u32 = @intCast(packed_ >> 32);
     const len: u32 = @intCast(packed_ & 0xFFFF_FFFF);
-    return memSlice(ptr, len);
+    // Host functions (ck_http, ck_exec, ck_fs_read, ck_getenv, ck_docker)
+    // write their results into the host arena, not the scratch buffer.
+    const base: usize = ptr;
+    if (base < @intFromPtr(&host_arena_buf) or
+        base + len > @intFromPtr(&host_arena_buf) + host_arena_buf.len) return null;
+    return @as([*]const u8, @ptrFromInt(base))[0..len];
 }
 
 pub fn log(comptime level: u32, msg: []const u8) void {
@@ -199,19 +196,48 @@ pub const ExecError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidArg
 pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.heap.wasm_allocator);
-    var w: std.Io.Writer = .fixed(try std.heap.wasm_allocator.alloc(u8, 8 * 1024));
-    defer std.heap.wasm_allocator.free(w.buffer);
+    const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
+    defer std.heap.wasm_allocator.free(wbuf);
+    var w: std.Io.Writer = .fixed(wbuf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
     try s.objectField("cmd");
     try s.write(cmd);
     try s.objectField("args");
-    try s.write(args);
+    try s.beginArray();
+    for (args) |a| try s.write(a);
+    try s.endArray();
     try s.endObject();
     try buf.appendSlice(std.heap.wasm_allocator, w.buffer[0..w.end]);
 
     const b = sliceToMem(buf.items);
     const rc = ck_exec(b.ptr, b.len);
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
+}
+
+pub const DockerError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidArg, NetworkError };
+
+/// Calls the harness's Docker-socket host function with a JSON request
+/// {"method": "...", "path": "..."}; returns the raw response body.
+pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u8 {
+    const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.InvalidArg;
+    defer std.heap.wasm_allocator.free(wbuf);
+    var w: std.Io.Writer = .fixed(wbuf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("method");
+    try s.write(method);
+    try s.objectField("path");
+    try s.write(path);
+    try s.endObject();
+
+    const req = sliceToMem(w.buffer[0..w.end]);
+    const rc = ck_docker(req.ptr, req.len);
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
         1 => error.SandboxDenied,

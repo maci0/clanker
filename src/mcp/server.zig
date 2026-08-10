@@ -40,15 +40,19 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
         }
         while (std.mem.indexOfScalar(u8, acc.items, '\n')) |nl| {
             const line = std.mem.trim(u8, acc.items[0..nl], " \t\r");
-            const rest = acc.items[nl + 1 ..];
-            std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
-            acc.items.len = rest.len;
             if (line.len > 0) {
+                // Handle the line *before* shifting the buffer: `line` is a
+                // view into acc.items, and the copyForwards below overwrites
+                // its start, so parsing after the shift would see corrupted
+                // data (every line except the last failed to parse).
                 log.log(.debug, "mcp handling line: {s}", .{line});
                 handleLine(io, gpa, &reg, tool_defs, line) catch |err| {
                     log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
                 };
             }
+            const rest = acc.items[nl + 1 ..];
+            std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
+            acc.items.len = rest.len;
         }
     }
 }

@@ -19,6 +19,9 @@ const runner_mod = @import("../evals/runner.zig");
 const builder = @import("../tools/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const history_mod = @import("history.zig");
+const patch_apply = @import("../patch/apply.zig");
+const gate_checks = @import("../gate/checks.zig");
+const peers = @import("../peers/notify.zig");
 const log = @import("../util/log.zig");
 
 pub const Options = struct {
@@ -34,7 +37,7 @@ pub const Options = struct {
 
 /// Directories/files copied into staging for the compile gate. Must be enough
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
-const staging_roots = [_][]const u8{ "src", "tools-src", "tests", "tools-as", "build.zig", "build.zig.zon", "config.json" };
+const staging_roots = [_][]const u8{ "src", "tool-src", "tests", "tool-bin", "build.zig", "build.zig.zon", "config.json" };
 
 const gate_evals = [_][]const u8{ "selfhost_build", "selfhost_tests", "selfhost_tools" };
 
@@ -165,39 +168,67 @@ pub const Engine = struct {
         const staged_dir = try std.Io.Dir.cwd().openDir(self.ctx.io, staging, .{});
         defer staged_dir.close(self.ctx.io);
 
-        applyChanges(self.ctx.io, self.ctx.gpa, staged_dir, proposal.changes) catch |err| {
+        patch_apply.apply(staged_dir, self.ctx.io, self.ctx.gpa, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
             return .failed;
         };
 
+        // Auto-format the staged .zig files so promoted code is always
+        // zig-fmt-clean regardless of the model's output formatting.
+        const fmt_files_all = try proposalChangedPaths(self.ctx.gpa, proposal);
+        defer self.ctx.gpa.free(fmt_files_all);
+        var fmt_auto = try gate_checks.formatFiles(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files_all);
+        defer fmt_auto.deinit(self.ctx.gpa);
+
         // ---- 5. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
-        var build = try builder.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
+        var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
         defer build.deinit(self.ctx.gpa);
         if (!build.ok) {
-            const tail = errorTail(self.arena, build.stderr);
+            const tail = errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
             return .failed;
         }
 
-        var test_gate = try builder.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
+        var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer test_gate.deinit(self.ctx.gpa);
         if (!test_gate.ok) {
-            const tail = errorTail(self.arena, test_gate.stderr);
+            const tail = errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
             return .failed;
         }
 
-        var tools = try builder.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{"tools"});
+        var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer tools.deinit(self.ctx.gpa);
         if (!tools.ok) {
-            const tail = errorTail(self.arena, tools.stderr);
+            const tail = errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            return .failed;
+        }
+
+        const fmt_files = try proposalChangedPaths(self.ctx.gpa, proposal);
+        defer self.ctx.gpa.free(fmt_files);
+        var fmt_check = try gate_checks.fmtGate(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files);
+        defer fmt_check.deinit(self.ctx.gpa);
+        if (!fmt_check.ok) {
+            const tail = errorTail(self.arena, fmt_check.detail);
+            log.log(.error_, "staging fmt check failed:", .{});
+            log.log(.error_, "{s}", .{tail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            return .failed;
+        }
+
+        var lint_check = try gate_checks.lintGate(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files);
+        defer lint_check.deinit(self.ctx.gpa);
+        if (!lint_check.ok) {
+            const tail = errorTail(self.arena, lint_check.detail);
+            log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
             return .failed;
         }
@@ -211,8 +242,19 @@ pub const Engine = struct {
             defer self.ctx.gpa.free(src);
             const data = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, src, self.ctx.gpa, .limited(1 << 24));
             defer self.ctx.gpa.free(data);
+            // Create parent dirs for new files (e.g. new modules in fresh subdirs).
+            if (dirName2(c.file).len > 0) {
+                std.Io.Dir.cwd().createDirPath(self.ctx.io, dirName2(c.file)) catch {};
+            }
             try std.Io.Dir.cwd().writeFile(self.ctx.io, .{ .sub_path = c.file, .data = data });
         }
+
+        // Git strategy: commit the promoted change so history, diff review and
+        // bisectability work; the state/history snapshot remains the fallback.
+        if (self.cfg.agent.git_commit) {
+            self.gitCommit(id, proposal.summary, files);
+        }
+        peers.notifyAll(self.ctx.gpa, self.ctx.io, self.cfg, "improve", self.arena.dupe(u8, proposal.summary) catch "");
 
         // Post-promotion gate on the live tree.
         const live = try self.gateScore();
@@ -221,6 +263,37 @@ pub const Engine = struct {
 
         log.log(.info, "✓ promoted improvement {s} (gate {d:.2}/{d})", .{ id, live.score, live.total });
         return .accepted;
+    }
+
+    fn gitCommit(self: *Engine, id: []const u8, summary: []const u8, files: [][]const u8) void {
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(self.ctx.gpa);
+        argv.append(self.ctx.gpa, "git") catch return;
+        argv.append(self.ctx.gpa, "add") catch return;
+        argv.append(self.ctx.gpa, "--") catch return;
+        for (files) |f| argv.append(self.ctx.gpa, f) catch return;
+        const add = std.process.run(self.ctx.gpa, self.ctx.io, .{ .argv = argv.items }) catch {
+            log.log(.warn, "git add failed (no repo?); relying on state/history snapshot", .{});
+            return;
+        };
+        defer self.ctx.gpa.free(add.stdout);
+        defer self.ctx.gpa.free(add.stderr);
+
+        const msg = std.fmt.allocPrint(self.ctx.gpa, "clanker: {s} [{s}]", .{ summary, id }) catch return;
+        defer self.ctx.gpa.free(msg);
+        const commit_argv = [_][]const u8{ "git", "commit", "-m", msg };
+        const commit = std.process.run(self.ctx.gpa, self.ctx.io, .{ .argv = &commit_argv }) catch return;
+        defer self.ctx.gpa.free(commit.stdout);
+        defer self.ctx.gpa.free(commit.stderr);
+        const ok = switch (commit.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        if (ok) {
+            log.log(.info, "committed as git change: {s}", .{msg});
+        } else {
+            log.log(.debug, "git commit output: {s}", .{commit.stderr});
+        }
     }
 
     fn newId(self: *Engine) ![]const u8 {
@@ -241,13 +314,13 @@ pub const Engine = struct {
     fn runGateEval(self: *Engine, e: *const scorers.Eval) !runner_mod.Result {
         const dir = std.Io.Dir.cwd();
         var g = switch (e.kind) {
-            .selfhost_build => try builder.buildGate(self.ctx.gpa, self.ctx.io, dir, &.{}),
-            .selfhost_tests => try builder.testGate(self.ctx.gpa, self.ctx.io, dir),
-            .selfhost_tools => try builder.buildGate(self.ctx.gpa, self.ctx.io, dir, &.{"tools"}),
+            .selfhost_build => try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, dir, &.{}),
+            .selfhost_tests => try gate_checks.testGate(self.ctx.gpa, self.ctx.io, dir),
+            .selfhost_tools => try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, dir),
             else => return error.NotAGateEval,
         };
         defer g.deinit(self.ctx.gpa);
-        const detail = if (g.ok) "" else errorTail(self.arena, g.stderr);
+        const detail = if (g.ok) "" else errorTail(self.arena, g.detail);
         return .{ .name = e.name, .kind = e.kind, .score = if (g.ok) 1 else 0, .ok = g.ok, .detail = detail };
     }
 
@@ -379,37 +452,22 @@ pub const Engine = struct {
     }
 };
 
+/// File paths from a proposal's changes (page-allocated; caller frees).
+fn proposalChangedPaths(gpa: std.mem.Allocator, p: proposal_mod.Proposal) ![][]const u8 {
+    return proposalChangedPathsSlice(gpa, p.changes);
+}
+
+fn proposalChangedPathsSlice(gpa: std.mem.Allocator, changes: []const proposal_mod.Change) ![][]const u8 {
+    const out = try gpa.alloc([]const u8, changes.len);
+    for (changes, 0..) |c, i| out[i] = c.file;
+    return out;
+}
+
 fn changedPaths(gpa: std.mem.Allocator, changes: []const proposal_mod.Change) [][]const u8 {
     _ = gpa;
     const out = std.heap.page_allocator.alloc([]const u8, changes.len) catch unreachable;
     for (changes, 0..) |c, i| out[i] = c.file;
     return out;
-}
-
-fn applyChanges(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, changes: []const proposal_mod.Change) !void {
-    for (changes) |c| {
-        const current = base.readFileAlloc(io, c.file, gpa, .limited(1 << 24)) catch |err| {
-            log.log(.error_, "cannot read '{s}' for patching: {s}", .{ c.file, @errorName(err) });
-            return err;
-        };
-        defer gpa.free(current);
-
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(gpa);
-        if (c.old.len == 0) {
-            try out.appendSlice(gpa, current);
-            try out.appendSlice(gpa, c.new);
-        } else {
-            const idx = std.mem.indexOf(u8, current, c.old) orelse {
-                log.log(.error_, "old text not found in '{s}'", .{c.file});
-                return error.OldTextNotFound;
-            };
-            try out.appendSlice(gpa, current[0..idx]);
-            try out.appendSlice(gpa, c.new);
-            try out.appendSlice(gpa, current[idx + c.old.len ..]);
-        }
-        try base.writeFile(io, .{ .sub_path = c.file, .data = out.items });
-    }
 }
 
 fn errorTail(arena: std.mem.Allocator, s: []const u8) []const u8 {
@@ -545,6 +603,11 @@ fn isDir(base: std.Io.Dir, io: std.Io, rel: []const u8) bool {
     var dir = base.openDir(io, rel, .{}) catch return false;
     dir.close(io);
     return true;
+}
+
+fn dirName2(path: []const u8) []const u8 {
+    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
+    return "";
 }
 
 fn dirOf(path: []const u8) []const u8 {

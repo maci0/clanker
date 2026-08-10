@@ -1,0 +1,6 @@
+{
+  "name": "search_code",
+  "description": "Search the project source. Input: {\"engine\": \"rg\" | \"ast-grep\" | \"semcode\", \"query\": \"...\", \"path\": \".\"}. rg = ripgrep regex search (--json); ast-grep = structural AST pattern search; semcode = semantic code search (needs a .semcode.db). Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
+  "wasm": "zig-out/tools/search_code.wasm",
+  "input_schema": { "type": "object", "properties": { "engine": { "type": "string", "enum": ["rg", "ast-grep", "semcode"] }, "query": { "type": "string" }, "path": { "type": "string" } }, "required": ["engine", "query"] }
+}

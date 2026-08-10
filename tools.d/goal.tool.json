@@ -1,0 +1,17 @@
+{
+  "name": "goal",
+  "description": "design and persist a structured goal",
+  "wasm": "zig-out/tools/goal.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "objective": { "type": "string" },
+      "completion_criterion": { "type": "string" },
+      "proof": { "type": "string" },
+      "boundaries": { "type": "string" },
+      "stop_rule": { "type": "string" }
+    },
+    "required": ["objective", "completion_criterion"]
+  },
+  "fs_prefixes": ["state/"]
+}

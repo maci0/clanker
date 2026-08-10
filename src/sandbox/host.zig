@@ -140,12 +140,16 @@ pub fn ckHttp(
     return httpImpl(h, bytes, method, url, body);
 }
 
+// Host-side implementation for the docker tool; registered in runtime.zig linkHostFns.
 pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, json_input, .{}) catch return Err.invalid;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, json_input, .{}) catch {
+        log.log(.warn, "[docker] json parse failed: '{s}'", .{json_input});
+        return Err.invalid;
+    };
     const obj = switch (parsed) {
         .object => |o| o,
         else => return Err.invalid,
@@ -154,7 +158,10 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    if (!std.mem.startsWith(u8, path, "/v1.")) return Err.denied;
+    if (!std.mem.startsWith(u8, path, "/v1.")) {
+        log.log(.warn, "[docker] path denied: '{s}'", .{path});
+        return Err.denied;
+    }
 
     var method: []const u8 = "GET";
     if (obj.get("method")) |m| {
@@ -162,30 +169,31 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     }
     if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "POST")) return Err.denied;
 
-    // Connect to the Docker Unix socket.
-    const sock = std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0) catch return Err.network;
-    defer std.posix.close(sock);
-
-    var addr = std.mem.zeroes(std.posix.sockaddr.un);
-    addr.family = std.posix.AF.UNIX;
-    const sock_path = "/var/run/docker.sock";
-    if (sock_path.len >= addr.path.len) return Err.invalid;
-    @memcpy(addr.path[0..sock_path.len], sock_path);
-    addr.path[sock_path.len] = 0;
-    std.posix.connect(sock, @ptrCast(&addr), @sizeOf(std.posix.sockaddr.un)) catch return Err.network;
+    // Connect to the Docker Unix socket (std.Io.net API in Zig 0.16).
+    const ua = std.Io.net.UnixAddress.init("/var/run/docker.sock") catch |err| {
+        log.log(.warn, "[docker] unixaddr init failed: {s}", .{@errorName(err)});
+        return Err.invalid;
+    };
+    const stream = ua.connect(h.sandbox.io) catch |err| {
+        log.log(.warn, "[docker] connect failed: {s}", .{@errorName(err)});
+        return Err.network;
+    };
+    defer stream.close(h.sandbox.io);
 
     // Build and send the HTTP request.
     const req = std.fmt.allocPrint(h.sandbox.gpa, "{s} {s} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n", .{ method, path }) catch return Err.invalid;
     defer h.sandbox.gpa.free(req);
-    const nw = std.posix.write(sock, req) catch return Err.network;
-    if (nw != req.len) return Err.network;
+    var wbuf: [8192]u8 = undefined;
+    var w = stream.writer(h.sandbox.io, &wbuf);
+    w.interface.writeAll(req) catch return Err.network;
+    w.interface.flush() catch return Err.network;
 
     // Read the full response.
     var resp = std.ArrayList(u8).empty;
     defer resp.deinit(h.sandbox.gpa);
     var tmp: [4096]u8 = undefined;
     while (true) {
-        const nr = std.posix.read(sock, &tmp) catch break;
+        const nr = std.posix.read(stream.socket.handle, &tmp) catch break;
         if (nr == 0) break;
         resp.appendSlice(h.sandbox.gpa, tmp[0..nr]) catch return Err.too_large;
         if (resp.items.len > h.sandbox.max_http_bytes) return Err.too_large;

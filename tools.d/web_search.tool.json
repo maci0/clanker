@@ -1,0 +1,21 @@
+{
+  "name": "web_search",
+  "description": "Search the web using DuckDuckGo HTML. Input: {\"query\": \"...\"}. Returns up to 8 results with title, url, and snippet.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "network_allow": [
+    "html.duckduckgo.com"
+  ],
+  "fs_prefixes": [],
+  "wasm": "zig-out/tools/web_search.wasm"
+}
