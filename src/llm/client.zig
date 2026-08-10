@@ -115,6 +115,17 @@ pub fn promptCost(u: types.Usage, per_1m_input: f64) f64 {
     return (uncached + hit * 0.1) / 1_000_000.0 * per_1m_input;
 }
 
+/// Total estimated cost (input + output) for a single completion, using the
+/// provider's active model pricing. Returns 0 when pricing info is absent.
+/// Public so CLI status bars and other callers can reuse the same math.
+pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
+    const active = provider.activeModel();
+    var cost: f64 = 0;
+    if (active.cost_per_1m_input) |ci| cost += promptCost(u, ci);
+    if (active.cost_per_1m_output) |co| cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+    return cost;
+}
+
 /// Records one completion in the global token-usage log (best-effort). The
 /// caller supplies `duration_ms`; 0 means "unknown" (chat() times the whole
 /// call via `llm_t0` where the retry loop hides the true duration).
@@ -124,10 +135,7 @@ fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Prov
     const u = usage orelse return;
     if (u.total_tokens == 0 and u.prompt_tokens == 0 and u.completion_tokens == 0) return;
 
-    const active = provider.activeModel();
-    var cost: f64 = 0;
-    if (active.cost_per_1m_input) |ci| cost += promptCost(u, ci);
-    if (active.cost_per_1m_output) |co| cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+    const cost = totalCost(provider, u);
 
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(ctx.io, .real).nanoseconds, 1_000_000_000));
     token_stats.append(std.Io.Dir.cwd(), ctx.io, ctx.gpa, arena, cfg.agent.state_dir, .{
