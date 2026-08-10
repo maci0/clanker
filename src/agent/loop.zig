@@ -846,6 +846,43 @@ pub const Agent = struct {
         return bytes;
     }
 
+    /// Pre-loads the wasm bytes of every tool in `calls` and compiles every
+    /// transform module registered for them (before and after phases) into
+    /// `self.modules` under its "transform:<name>" key. Runs on the main
+    /// thread before parallel workers spawn, so no worker thread ever
+    /// inserts into wasm_cache / the transform module cache concurrently.
+    /// Failures are logged and left for the execution path to surface:
+    /// runTransform lazily recompiles on a cache miss and runChain already
+    /// skips a transform that fails to load.
+    fn warmToolCaches(self: *Agent, calls: []const types.ToolCall) void {
+        for (calls) |tc| {
+            const tool = self.reg.get(tc.name) orelse continue;
+            if (!tool.enabled) continue;
+            _ = self.wasmBytes(tool) catch |err| {
+                log.log(.warn, "tool '{s}': cannot pre-load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
+                continue;
+            };
+            const phases = [_]registry.Transform.Phase{ .before, .after };
+            for (phases) |phase| {
+                const chain = self.reg.transformsFor(self.arena, tc.name, phase) catch continue;
+                for (chain) |t| {
+                    const cache_key = std.fmt.allocPrint(self.arena, "transform:{s}", .{t.name}) catch continue;
+                    if (self.modules.contains(cache_key)) continue;
+                    const tbytes = self.wasmBytes(t) catch continue;
+                    var tsb = self.sandboxFor(t) catch continue;
+                    const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &tsb, tbytes) catch |err| {
+                        log.log(.warn, "transform '{s}': pre-compile failed: {s}", .{ t.name, @errorName(err) });
+                        continue;
+                    };
+                    self.modules.put(self.arena, cache_key, m) catch {
+                        m.deinit();
+                        continue;
+                    };
+                }
+            }
+        }
+    }
+
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse {
@@ -907,6 +944,13 @@ pub const Agent = struct {
     fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]const []const u8 {
         const results = try self.arena.alloc([]const u8, calls.len);
         @memset(results, "");
+
+        // Warm the shared caches on the main thread before any worker
+        // spawns: every tool's wasm bytes and every registered transform
+        // module land in wasm_cache / the "transform:<name>" module cache
+        // here, so worker threads only ever *read* those maps and never
+        // insert into the shared StringArrayHashMapUnmanaged concurrently.
+        self.warmToolCaches(calls);
 
         // ---- parallel pass: one worker per distinct tool name ----
         var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
