@@ -28,6 +28,7 @@ pub const Command = enum {
     git,
     mcp,
     goal,
+    notify,
     serve,
 };
 
@@ -38,6 +39,8 @@ pub const Options = struct {
     task: ?[]const u8 = null,
     session: ?[]const u8 = null,
     goal: ?[]const u8 = null,
+    peer: ?[]const u8 = null,
+    message: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
     iters: u32 = 3,
     dry_run: bool = false,
@@ -134,6 +137,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .mcp;
             } else if (std.mem.eql(u8, a, "goal")) {
                 opts.command = .goal;
+            } else if (std.mem.eql(u8, a, "notify")) {
+                opts.command = .notify;
             } else if (std.mem.eql(u8, a, "serve")) {
                 opts.command = .serve;
             } else if (std.mem.eql(u8, a, "repl")) {
@@ -159,6 +164,10 @@ pub fn parse(args: []const []const u8) !Options {
             opts.provider = a;
         } else if (opts.command == .run and opts.task == null) {
             opts.task = a;
+        } else if (opts.command == .notify and opts.peer == null) {
+            opts.peer = a;
+        } else if (opts.command == .notify and opts.message == null) {
+            opts.message = a;
         } else {
             return error.UnknownArg;
         }
@@ -166,6 +175,7 @@ pub fn parse(args: []const []const u8) !Options {
 
     if (pending_sub != null) return error.BadSubcommand;
     if (opts.command == .run and opts.task == null) return error.MissingTask;
+    if (opts.command == .notify and (opts.peer == null or opts.message == null)) return error.MissingArg;
     return opts;
 }
 
@@ -181,6 +191,7 @@ const usage_text =
     \\  clanker providers check [name]  verify provider connectivity
     \\  clanker run "<task>"            run the agent on a task
     \\  clanker run --goal <id> "<task>"  run with an active goal
+    \\  clanker notify <peer> "<message>" send a notification to a peer
     \\  clanker --verbose               enable debug logging
     \\
 ;
@@ -199,6 +210,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .git => try cmdGit(init, opts),
         .mcp => try cmdMcp(init, opts),
         .goal => try cmdGoal(init, opts),
+        .notify => try cmdNotify(init, opts),
         .serve => try cmdServe(init, opts),
     }
 }
@@ -473,6 +485,66 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
     var goal_opts = opts;
     goal_opts.task = task;
     try cmdRun(init, goal_opts);
+}
+
+fn cmdNotify(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const peer_name = opts.peer orelse return error.MissingPeer;
+    const message = opts.message orelse return error.MissingMessage;
+
+    var found: ?*const config.Peer = null;
+    for (cfg.peers) |*p| {
+        if (std.mem.eql(u8, p.name, peer_name)) {
+            found = p;
+            break;
+        }
+    }
+    const peer = found orelse {
+        log.log(.error_, "unknown peer '{s}'", .{peer_name});
+        return error.UnknownPeer;
+    };
+
+    const url = try std.fmt.allocPrint(arena, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
+
+    const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+
+    var body_buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&body_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("from");
+    try s.write(cfg.instance.name);
+    try s.objectField("kind");
+    try s.write("notify");
+    try s.objectField("topic");
+    try s.write(cfg.notify.topic);
+    try s.objectField("payload");
+    try s.write(message);
+    try s.objectField("ts");
+    try s.print("{d}", .{ts});
+    try s.endObject();
+    const payload = body_buf[0..w.end];
+
+    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http_client.deinit();
+    var response_buf: [64 * 1024]u8 = undefined;
+    var rw: std.Io.Writer = .fixed(&response_buf);
+    const result = http_client.fetch(.{
+        .location = .{ .url = url },
+        .method = .POST,
+        .payload = payload,
+        .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/0.1.0" } },
+        .response_writer = &rw,
+    }) catch |err| {
+        log.log(.error_, "notify to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
+        return err;
+    };
+    const status = result.status;
+    const response = response_buf[0..rw.end];
+    log.log(.info, "notify {s}: HTTP {d} ({s})", .{ peer.name, @intFromEnum(status), response });
 }
 
 fn cmdMcp(init: std.process.Init, opts: Options) !void {
