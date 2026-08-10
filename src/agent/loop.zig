@@ -159,7 +159,7 @@ pub const Agent = struct {
                     .result_bytes = if (resp.message.content) |c| c.len else 0,
                     .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
                 });
-                return try self.finalAnswer(resp); // final answer
+                return try self.finish(messages, resp);
             };
             if (calls.len == 0) {
                 try g.add(self.ctx.gpa, .{
@@ -170,7 +170,7 @@ pub const Agent = struct {
                     .result_bytes = if (resp.message.content) |c| c.len else 0,
                     .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
                 });
-                return try self.finalAnswer(resp);
+                return try self.finish(messages, resp);
             }
 
             log.log(.info, "iteration {d}: {d} tool call(s)", .{ iteration + 1, calls.len });
@@ -296,6 +296,16 @@ pub const Agent = struct {
         var msg = resp.message;
         msg.content = content;
         return .{ .message = msg, .usage = resp.usage, .reasoning = resp.reasoning, .raw = resp.raw };
+    }
+
+    /// Cleans the final response (exact-match) and updates the last transcript
+    /// message so persisted sessions carry the same exact answer the caller sees.
+    fn finish(self: *Agent, messages: *std.ArrayList(types.Message), resp: types.ChatResponse) !types.ChatResponse {
+        const ans = try self.finalAnswer(resp);
+        if (messages.items.len > 0) {
+            messages.items[messages.items.len - 1] = ans.message;
+        }
+        return ans;
     }
 
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
