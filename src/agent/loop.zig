@@ -958,7 +958,12 @@ pub const Agent = struct {
             };
             // Pre-compile the primary tool module so executeTool (sequential
             // path) finds it already in self.modules and skips recompilation.
-            if (!self.modules.contains(tc.name)) {
+            // Parallel-eligible tools never read self.modules — their worker
+            // (and the duplicate-name fallback, executeToolOnWorker) loads a
+            // fresh module from the cached wasm bytes — so compiling one here
+            // would be discarded work on every batch.
+            const uses_modules_cache = self.no_parallel_tools or tool.llm or tool.sequential;
+            if (uses_modules_cache and !self.modules.contains(tc.name)) {
                 var sb = self.sandboxFor(tool) catch continue;
                 const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes) catch |err| {
                     log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
