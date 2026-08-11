@@ -16,6 +16,10 @@ const chatrooms = @import("../peers/chatrooms.zig");
 const log = @import("../util/log.zig");
 const toolout = @import("../util/toolout.zig");
 
+/// Appended to the system prompt so a model asked for an exact-format answer
+/// (a string, a number, JSON) does not wrap it in prose or markdown fences.
+const exact_format_suffix = "\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.";
+
 /// A fork resolved by the human: what was asked, and what they chose.
 pub const Decision = struct {
     question: []const u8,
@@ -163,7 +167,7 @@ pub const Agent = struct {
             .peers = peer_names.items,
             .catalog = catalog,
         }, defs);
-        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt});
+        const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
             .ctx = ctx,
             .arena = arena,
@@ -203,7 +207,7 @@ pub const Agent = struct {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt}) catch |err| {
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}", .{ base_prompt, exact_format_suffix }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
