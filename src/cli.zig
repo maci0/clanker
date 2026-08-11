@@ -1380,10 +1380,6 @@ fn findGoalSectionIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal
     return g.section;
 }
 
-fn findGoalSection(arena: std.mem.Allocator, io: std.Io, goal_id: []const u8) !?[]const u8 {
-    return findGoalSectionIn(arena, io, std.Io.Dir.cwd(), goal_id);
-}
-
 fn loadGoalById(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?GoalContext {
     const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
     const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
@@ -1423,10 +1419,6 @@ fn findNewestActiveGoalIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
         }
     }
     return best;
-}
-
-fn findNewestActiveGoal(arena: std.mem.Allocator, io: std.Io) !?GoalContext {
-    return findNewestActiveGoalIn(arena, io, std.Io.Dir.cwd());
 }
 
 /// Prepends a goal preamble to `task`. When `task` is empty, builds a default
