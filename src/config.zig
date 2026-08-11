@@ -227,6 +227,22 @@ pub const Modules = struct {
     token_stats: bool = true,
 };
 
+/// Online-research web access. The sandbox denies network to a tool by
+/// default: a tool reaches a host only when its descriptor names it
+/// (`network_allow`) or the harness adds it from config (`network_from_config`).
+/// This section is the config side of that second channel for the web/research
+/// tools: every host listed here is added to `fetch_web` and `web_search`'s
+/// allowlists at load, so granting a research site is a config edit, not a
+/// manifest edit.
+pub const Web = struct {
+    /// Hostnames (no scheme, no path — matched against the URL's host) the
+    /// research tools may reach. Default empty: out of the box the sandbox
+    /// still lets a tool reach only its own `network_allow` hosts, which for
+    /// `fetch_web` is a small static set. Adding a host here widens research
+    /// without touching any manifest.
+    allow: []const []const u8 = &.{},
+};
+
 pub const Config = struct {
     agent_present: bool = false,
     improve_present: bool = false,
@@ -235,6 +251,7 @@ pub const Config = struct {
     agent: Agent = .{},
     improve: Improve = .{},
     peers: []const Peer = &.{},
+    web: Web = .{},
     instance: Instance = .{},
     notify: Notify = .{},
     chatrooms: Chatrooms = .{},
@@ -244,6 +261,7 @@ pub const Config = struct {
     instance_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
+    web_present: bool = false,
     notify_present: bool = false,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
@@ -296,7 +314,7 @@ pub const Config = struct {
         warnUnknownKeys(obj, &.{
             "default_provider", "agent", "improve", "providers",
             "instance",         "peers", "notify",  "chatrooms",
-            "modules",
+            "modules",          "web",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -334,6 +352,10 @@ pub const Config = struct {
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
             cfg.peers_present = true;
+        }
+        if (obj.get("web")) |v| {
+            cfg.web = try parseWeb(arena, v);
+            cfg.web_present = true;
         }
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
@@ -506,6 +528,35 @@ pub const Config = struct {
         return out.toOwnedSlice(arena);
     }
 
+    fn parseWeb(arena: std.mem.Allocator, v: json.Value) !Web {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.WebNotObject,
+        };
+        var web = Web{};
+        warnUnknownKeys(obj, &.{"allow"}, "web");
+        if (obj.get("allow")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.WebAllowNotArray,
+            };
+            var allow: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| {
+                const host = try jsonStr(item, "web.allow[]");
+                if (!isBareHost(host)) return error.WebAllowHostInvalid;
+                try allow.append(arena, host);
+            }
+            web.allow = try allow.toOwnedSlice(arena);
+        }
+        return web;
+    }
+
+    /// `ck_http` compares this exact string with the parsed URL hostname, so
+    /// a URL, path, or host:port entry would never grant the intended access.
+    fn isBareHost(host: []const u8) bool {
+        return host.len > 0 and std.mem.indexOfAny(u8, host, ":/?#@% \t\r\n") == null;
+    }
+
     fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
         _ = arena;
         const obj = switch (v) {
@@ -631,6 +682,7 @@ pub const Config = struct {
         if (src.agent_present) dst.agent = src.agent;
         if (src.improve_present) dst.improve = src.improve;
         if (src.peers_present) dst.peers = src.peers;
+        if (src.web_present) dst.web = src.web;
         // Only override the instance when the local file actually named one:
         // a bare config.local.json must not replace a stable name with a
         // pid-based default on every restart.
@@ -777,6 +829,40 @@ test "config load and merge" {
     // provider lookup
     const found = try cfg.provider(null);
     try std.testing.expectEqualStrings("deepseek", found.name);
+}
+
+test "web.allow parses hostname entries onto Config" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    const cfg = try Config.parseConfig(arena_state.allocator(),
+        \\{"web":{"allow":["example.org","docs.example"]}}
+    );
+    try std.testing.expectEqual(@as(usize, 2), cfg.web.allow.len);
+    try std.testing.expectEqualStrings("example.org", cfg.web.allow[0]);
+    try std.testing.expectEqualStrings("docs.example", cfg.web.allow[1]);
+}
+
+test "config.local.json web.allow replaces the global web allowlist" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.json", .data =
+        \\{"web":{"allow":["global.example","keep.example"]}}
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.json", .data =
+        \\{"web":{"allow":["local.example"]}}
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
+    try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
 }
 
 test "confirm_writes parses its three values and rejects anything else" {

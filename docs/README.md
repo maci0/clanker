@@ -393,7 +393,7 @@ iter 2
 
 ## Configuration
 
-`config.json` is the global config; `config.local.json` overrides it, provider by provider.
+`config.json` is the global config; `config.local.json` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them.
 
 A provider declares its backend once and its models in a map. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
@@ -445,6 +445,9 @@ Full example:
   "peers": [
     { "name": "peer1", "url": "http://127.0.0.1:17922" }
   ],
+  "web": {
+    "allow": ["github.com", "raw.githubusercontent.com"]
+  },
   "instance": { "name": "clanker-1", "id": "abc" },
   "notify": { "topic": "updates" },
   "improve": { "capability_gate": true }
@@ -470,6 +473,8 @@ Fields:
   - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.
+- `web`: research-host allowlist for `fetch_web` and `web_search` only.
+  - `allow`: hostnames only — no scheme, path, or port. These hosts are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.json`.
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.

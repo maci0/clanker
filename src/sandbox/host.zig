@@ -255,12 +255,10 @@ pub fn sandboxFor(
     var net = tool.network_allow;
     if (tool.network_from_config.len > 0) {
         const extra = try config_mod.configuredHosts(cfg, arena, tool.network_from_config);
-        if (extra.len > 0) {
-            var list: std.ArrayList([]const u8) = .empty;
-            try list.appendSlice(arena, tool.network_allow);
-            try list.appendSlice(arena, extra);
-            net = try list.toOwnedSlice(arena);
-        }
+        net = try appendNetworkAllow(arena, net, extra);
+    }
+    if (isResearchTool(tool.name)) {
+        net = try appendNetworkAllow(arena, net, cfg.web.allow);
     }
     var llm_access: ?LlmAccess = null;
     if (tool.llm) {
@@ -286,6 +284,77 @@ pub fn sandboxFor(
         .cfg = cfg,
         .config_json = tool.config_json,
     };
+}
+
+fn appendNetworkAllow(
+    arena: std.mem.Allocator,
+    current: []const []const u8,
+    extra: []const []const u8,
+) ![]const []const u8 {
+    if (extra.len == 0) return current;
+    var list: std.ArrayList([]const u8) = .empty;
+    try list.appendSlice(arena, current);
+    try list.appendSlice(arena, extra);
+    return list.toOwnedSlice(arena);
+}
+
+fn isResearchTool(name: []const u8) bool {
+    return std.mem.eql(u8, name, "fetch_web") or std.mem.eql(u8, name, "web_search");
+}
+
+test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    const cfg = config_mod.Config{ .web = .{ .allow = &.{ "github.com", "raw.githubusercontent.com" } } };
+    const fetch = registry.Tool{
+        .name = "fetch_web",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+        .network_allow = &.{"api.github.com"},
+    };
+    const search = registry.Tool{
+        .name = "web_search",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+        .network_allow = &.{"html.duckduckgo.com"},
+    };
+    const unrelated = registry.Tool{
+        .name = "peers",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+        .network_allow = &.{"peer.static"},
+    };
+
+    const fetch_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &fetch, null);
+    try std.testing.expectEqual(@as(usize, 3), fetch_sb.network_allow.len);
+    try std.testing.expectEqualStrings("api.github.com", fetch_sb.network_allow[0]);
+    try std.testing.expectEqualStrings("github.com", fetch_sb.network_allow[1]);
+    try std.testing.expectEqualStrings("raw.githubusercontent.com", fetch_sb.network_allow[2]);
+
+    const search_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &search, null);
+    try std.testing.expectEqual(@as(usize, 3), search_sb.network_allow.len);
+    try std.testing.expectEqualStrings("html.duckduckgo.com", search_sb.network_allow[0]);
+    try std.testing.expectEqualStrings("github.com", search_sb.network_allow[1]);
+    try std.testing.expectEqualStrings("raw.githubusercontent.com", search_sb.network_allow[2]);
+
+    const unrelated_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &unrelated, null);
+    try std.testing.expectEqual(@as(usize, 1), unrelated_sb.network_allow.len);
+    try std.testing.expectEqualStrings("peer.static", unrelated_sb.network_allow[0]);
+
+    const no_web_cfg = config_mod.Config{};
+    const no_web_fetch_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &no_web_cfg, &fetch, null);
+    try std.testing.expectEqual(@as(usize, 1), no_web_fetch_sb.network_allow.len);
+    try std.testing.expectEqualStrings("api.github.com", no_web_fetch_sb.network_allow[0]);
 }
 
 /// Per-module execution context; passed to host functions via
