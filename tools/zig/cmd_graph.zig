@@ -229,12 +229,11 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
     }
     std.mem.sort([]const u8, files.items, {}, lessThanStr);
 
-    var buf: [48 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    var enc: std.Io.Writer.Allocating = .init(alloc);
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.beginArray();
     // A task can be the whole pasted prompt: one 23 KB task used to overflow
-    // this buffer and fail the entire list, taking the run picker with it.
+    // a fixed buffer and fail the entire list, taking the run picker with it.
     // The picker shows a label, so a label is all that is sent.
     // Newest first, and capped: the picker shows recent runs, not the archive.
     var shown: usize = 0;
@@ -265,7 +264,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.endObject();
     }
     try s.endArray();
-    try writeText(out, buf[0..w.end]);
+    try writeText(out, enc.written());
 }
 
 /// `json <run-id>`: the whole graph, node by node, for the web UI's chart.
@@ -287,11 +286,10 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
     // in state/runs/ cannot become the response body verbatim.
     const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.failErr(out, err, "reading the run graph");
 
-    var buf: [48 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    var enc: std.Io.Writer.Allocating = .init(alloc);
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.write(g);
-    try writeText(out, buf[0..w.end]);
+    try writeText(out, enc.written());
 }
 
 fn writeText(out: *lib.Out, text: []const u8) !void {
