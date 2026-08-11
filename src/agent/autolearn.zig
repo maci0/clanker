@@ -122,7 +122,14 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// Rewrites the log keeping only the newest `keep_lines` lines.
 fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
     _ = arena;
-    const raw = try base.readFileAlloc(io, event_path, gpa, .limited(max_log_bytes));
+    // The file can be just over max_log_bytes when the trim is triggered: it
+    // is trimmed the moment it crosses the cap, then one line is appended, so
+    // it never exceeds the cap by more than a single line. Reading with the
+    // same limit as the cap would fail with StreamTooLong on exactly the file
+    // that needs trimming — the trim would silently never run once the log
+    // crossed the cap, and it would keep growing forever. Cover the one-line
+    // overshoot with a generous slack instead.
+    const raw = try base.readFileAlloc(io, event_path, gpa, .limited(max_log_bytes + (1 << 16)));
     defer gpa.free(raw);
     var lines: std.ArrayList([]const u8) = .empty;
     defer lines.deinit(gpa);
