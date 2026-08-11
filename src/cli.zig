@@ -2728,7 +2728,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_goals = std.mem.eql(u8, target, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
-        const is_board = std.mem.eql(u8, target, "/api/board") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        // Matched on the path rather than the whole target: a board names its
+        // room with ?room=, and an exact compare 404'd every request that did.
+        const is_board = (std.mem.eql(u8, target, "/api/board") or std.mem.startsWith(u8, target, "/api/board?")) and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugins = std.mem.eql(u8, target, "/api/webui/plugins") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugin_asset = std.mem.eql(u8, method, "GET") and
@@ -2766,7 +2769,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
             handleStatus(cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
-            handleRuns(io, gpa, cfg, environ_map, target, stream);
+            handleRuns(io, gpa, cfg, environ_map, target, accepts_gzip, stream);
         } else if (std.mem.startsWith(u8, target, "/api/sessions") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
@@ -3532,6 +3535,7 @@ fn handleRuns(
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     target: []const u8,
+    accepts_gzip: bool,
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.graphs) {
@@ -3571,7 +3575,7 @@ fn handleRuns(
         respond(stream, 500, "Internal Server Error", "{\"error\":\"graph read failed\"}");
         return;
     };
-    respond(stream, 200, "OK", body);
+    respondCompressible(arena, stream, accepts_gzip, body);
 }
 
 /// `GET /api/sessions` lists saved conversations; `GET /api/sessions/<id>`
@@ -4065,7 +4069,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
 /// `GET /api/logs` lists the log files; `GET /api/logs/<name>` returns the tail
 /// of one. Names are matched against the listing rather than sanitised, so a
 /// crafted name cannot describe a path at all.
-fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -4113,7 +4117,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: st
         s.objectField("text") catch return;
         s.write(tail) catch return;
         s.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
+        respondCompressible(arena, stream, accepts_gzip, out.written());
         return;
     }
     if (rest.len != 0) {
@@ -4153,6 +4157,7 @@ fn handleSessions(
     method: []const u8,
     target: []const u8,
     body: []const u8,
+    accepts_gzip: bool,
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.sessions) {
@@ -4254,7 +4259,7 @@ fn handleSessions(
             respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
             return;
         };
-        respond(stream, 200, "OK", one);
+        respondCompressible(arena, stream, accepts_gzip, one);
         return;
     }
     if (rest.len != 0) {
@@ -4270,7 +4275,7 @@ fn handleSessions(
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
         return;
     };
-    respond(stream, 200, "OK", listing);
+    respondCompressible(arena, stream, accepts_gzip, listing);
 }
 
 /// Session ids reach the filesystem as a path fragment, so they are restricted
