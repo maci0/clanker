@@ -1,0 +1,6 @@
+id: zig-probe
+language: zig
+severity: hint
+message: found a function
+rule:
+  pattern: fn $NAME($$$ARGS) !void { $$$BODY }

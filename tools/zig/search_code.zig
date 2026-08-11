@@ -34,10 +34,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try args.append(std.heap.wasm_allocator, query);
         try args.append(std.heap.wasm_allocator, path);
     } else if (std.mem.eql(u8, engine, "ast-grep")) {
-        // ast-grep has no Zig grammar. Saying so costs one line here and
-        // saves the caller a turn spent decoding "zig is not supported".
-        if (std.mem.endsWith(u8, path, ".zig")) {
-            return errJson(out, "ast-grep has no Zig grammar; use engine=\"rg\" for .zig files");
+        try args.append(std.heap.wasm_allocator, "run");
+        // ast-grep ships no Zig parser; sgconfig.yml registers one built by
+        // tools/grammars/build.sh. Passing the config always (not only for
+        // .zig) also picks up any rules the project defines.
+        try args.append(std.heap.wasm_allocator, "--config");
+        try args.append(std.heap.wasm_allocator, "sgconfig.yml");
+        if (std.mem.endsWith(u8, path, ".zig") or std.mem.indexOf(u8, path, ".") == null) {
+            // The Zig grammar is a custom language, so it has to be named:
+            // ast-grep will not infer it from the extension alone.
+            try args.append(std.heap.wasm_allocator, "-l");
+            try args.append(std.heap.wasm_allocator, "zig");
         }
         try args.append(std.heap.wasm_allocator, "-p");
         try args.append(std.heap.wasm_allocator, query);

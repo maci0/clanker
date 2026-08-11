@@ -1,0 +1,18 @@
+# ast-grep project config.
+#
+# ast-grep ships no Zig grammar, so structural search over this project's own
+# source needs one registered here. Build it with tools/grammars/build.sh; the
+# .so is a build artifact and is not committed.
+ruleDirs:
+  - rules
+customLanguages:
+  zig:
+    # Built by tools/grammars/build.sh. Override the directory with
+    # CLANKER_GRAMMAR_DIR and edit this path to match.
+    libraryPath: tools/grammars/zig.so
+    extensions: [zig]
+    # ast-grep rewrites "$VAR" to "<expandoChar>VAR" before parsing the
+    # pattern, so the placeholder has to be legal in the target language.
+    # Zig identifiers are [A-Za-z0-9_], and "$" parses as an error node, which
+    # is why every pattern silently matched nothing until this was set.
+    expandoChar: "_"

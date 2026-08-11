@@ -24,3 +24,6 @@ config.local.json
 *.log
 run.json
 chatrooms.jsonl
+
+# tree-sitter grammars built by tools/grammars/build.sh
+tools/grammars/*.so
