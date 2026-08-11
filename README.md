@@ -31,7 +31,7 @@ clanker loads **[config.json](config.json)** (committed example) and merges **`c
 |-----|---------|
 | `default_provider` | Name of the active entry under `providers` |
 | `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
-| `agent` | Loop limits, `tools_dir` / `skills_dir`, sandbox root, compaction |
+| `agent` | Loop limits, `tools_dir` / `skills_dir`, sandbox root, compaction; optional `global_instructions_file` (default `$HOME/.agents/AGENTS.md`) |
 | `improve` | Self-improvement iteration and context size caps |
 | `instance` | This agent's `name` and `id` |
 | `peers` | Other instances (`name` + `url`) for notify / phonebook |
