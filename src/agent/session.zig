@@ -246,11 +246,73 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
     return out.toOwnedSlice(arena);
 }
 
+/// The most recently updated session's id, or null when none exist — what
+/// `--continue` means, for both `clanker run` and the REPL.
+pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?[]const u8 {
+    const metas = listSessions(io, arena, base) catch return null;
+    return if (metas.len > 0) metas[0].id else null;
+}
+
+/// The compaction budget a session is trimmed to before every save.
+pub const max_session_tokens = 128 * 1024;
+
+/// Drops oldest non-system messages until the estimated token count fits under
+/// `max_tokens` so long sessions auto-compact instead of exceeding the context
+/// window. Token count is estimated as chars/4 (a rough heuristic).
+pub fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) void {
+    var total: usize = 0;
+    for (messages.items) |m| {
+        total += if (m.content) |c| c.len / 4 else 0;
+    }
+    if (total <= max_tokens) return;
+    var i: usize = 0;
+    while (i < messages.items.len and total > max_tokens) {
+        const m = messages.items[i];
+        if (m.role != .system) {
+            total -|= if (m.content) |c| c.len / 4 else 0;
+            _ = messages.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 fn roleFromStr(s: []const u8) types.Role {
     return if (std.mem.eql(u8, s, "system")) .system else if (std.mem.eql(u8, s, "user")) .user else if (std.mem.eql(u8, s, "assistant")) .assistant else if (std.mem.eql(u8, s, "tool")) .tool else .user;
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "latestSessionId picks the most recently updated session" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No store yet: null, not an error.
+    try std.testing.expect(latestSessionId(io, arena, tmp.dir) == null);
+
+    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "older",
+        .title = "t",
+        .messages = &.{},
+        .created = 100,
+        .updated = 100,
+    });
+    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "newer",
+        .title = "t",
+        .messages = &.{},
+        .created = 50,
+        .updated = 200,
+    });
+    try std.testing.expectEqualStrings("newer", latestSessionId(io, arena, tmp.dir).?);
+}
 
 test "session save/load round trip" {
     var gpa_state = std.heap.DebugAllocator(.{}).init;

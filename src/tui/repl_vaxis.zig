@@ -37,6 +37,7 @@ const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
+const session_mod = @import("../agent/session.zig");
 const agent_loop = @import("../agent/loop.zig");
 const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
@@ -244,6 +245,14 @@ const Model = struct {
     reg: registry.Registry,
     tool_defs: []const types.ToolDef,
     messages: std.ArrayList(types.Message) = .empty,
+    /// Where this conversation persists (`state/sessions/<id>.json`), written
+    /// after every completed turn; null only when the sessions module is off
+    /// and no `--session` was given.
+    session_id: ?[]const u8 = null,
+    session_created: i64 = 0,
+    /// First task of the conversation, trimmed — the line `clanker sessions`
+    /// shows. Kept from a loaded session; set once on the first submit.
+    session_title: []const u8 = "",
 
     lines: std.ArrayList(Line) = .empty,
     text_field: vxfw.TextField,
@@ -343,6 +352,28 @@ const Model = struct {
         g_stream_buf.clearRetainingCapacity();
     }
 
+    /// Writes the conversation to `state/sessions/<id>.json`, called after
+    /// every completed turn (never mid-turn: the caller joins the worker
+    /// first, so `self.messages` is stable). A failed write is reported at
+    /// error level — the only log level this REPL leaves enabled — and the
+    /// next turn's save retries; it must not kill the session over a disk
+    /// hiccup.
+    fn persistSession(self: *Model) void {
+        const sid = self.session_id orelse return;
+        if (!self.cfg.modules.sessions) return;
+        session_mod.compactMessages(&self.messages, session_mod.max_session_tokens);
+        const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
+        session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
+            .id = sid,
+            .title = self.session_title,
+            .messages = self.messages.items,
+            .created = self.session_created,
+            .updated = updated,
+        }) catch |err| {
+            log.log(.error_, "session '{s}' save failed: {s}", .{ sid, @errorName(err) });
+        };
+    }
+
     fn submit(self: *Model, ctx: *vxfw.EventContext) !void {
         // One turn at a time: runThreadMain's finishTurn touches self.lines
         // and self.arena from the background thread. self.arena is a plain
@@ -407,6 +438,9 @@ const Model = struct {
         errdefer g_streaming = false;
 
         const owned_task = try self.arena.dupe(u8, task);
+        if (self.session_title.len == 0) {
+            self.session_title = std.mem.trim(u8, owned_task[0..@min(owned_task.len, 60)], " \t\r\n");
+        }
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
 
         // Kick off the tick heartbeat that picks up streamed deltas.
@@ -535,6 +569,9 @@ const Model = struct {
                     g_mutex.lockUncancelable(g_io);
                     g_streaming = false;
                     g_mutex.unlock(g_io);
+                    // The worker is joined, so self.messages is stable:
+                    // persist the conversation as it stands after this turn.
+                    self.persistSession();
                 }
                 g_mutex.lockUncancelable(g_io);
                 const still_streaming = g_streaming;
@@ -775,11 +812,13 @@ const Model = struct {
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
             self.provider.name,
             self.provider.activeModelName(),
             activity,
             if (streaming) " thinking" else "ready",
+            if (self.session_id != null) " \xc2\xb7 " else "",
+            self.session_id orelse "",
         }) catch "clanker (vaxis)";
         writeRow(surface, 0, status, dim);
 
@@ -1083,7 +1122,17 @@ fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
     return if (out) |o| o else text;
 }
 
-pub fn cmdReplVaxis(init: std.process.Init) !void {
+/// The `repl` command's flags, resolved by the caller's argv parse. A copy of
+/// the relevant `cli.Options` fields rather than the type itself: cli.zig
+/// already imports this file, and the REPL needs nothing else from it.
+pub const Opts = struct {
+    provider: ?[]const u8 = null,
+    model: ?[]const u8 = null,
+    session: ?[]const u8 = null,
+    continue_last: bool = false,
+};
+
+pub fn cmdReplVaxis(init: std.process.Init, opts: Opts) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
@@ -1106,8 +1155,36 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
-    const provider = (try cfg.provider(null)).*;
+    const provider = try cfg.resolveProvider(opts.provider, opts.model);
     const ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
+
+    // Which conversation this is: `--session <id>` names one, `--continue`
+    // picks up the most recently touched one, and otherwise (sessions module
+    // on) a fresh `repl-<ts>` id is minted so the conversation is findable in
+    // `clanker sessions` afterwards — the same contract the deleted REPL and
+    // `clanker run` honor. With the module off, nothing is read or written.
+    const now_s: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var session_id: ?[]const u8 = opts.session;
+    if (session_id == null and opts.continue_last) {
+        session_id = session_mod.latestSessionId(io, arena, std.Io.Dir.cwd());
+    }
+    if (session_id == null and cfg.modules.sessions) {
+        session_id = try std.fmt.allocPrint(arena, "repl-{d}", .{now_s});
+    }
+    var session_created: i64 = now_s;
+    var session_title: []const u8 = "";
+    var loaded_messages: []const types.Message = &.{};
+    if (session_id) |sid| {
+        const maybe_s: ?session_mod.Session = session_mod.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (maybe_s) |s| {
+            session_created = s.created;
+            session_title = s.title;
+            loaded_messages = s.messages;
+        }
+    }
 
     var buffer: [1024]u8 = undefined;
     var app: vxfw.App = try .init(io, gpa, init.environ_map, &buffer);
@@ -1124,7 +1201,16 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
         .reg = reg,
         .tool_defs = tool_defs,
         .text_field = vxfw.TextField.init(gpa),
+        .session_id = session_id,
+        .session_created = session_created,
+        .session_title = session_title,
     };
+    for (loaded_messages) |m| {
+        // The agent rebuilds its own system prompt per run; a stored one
+        // would fight it (same rule as `clanker run --session`).
+        if (m.role == .system) continue;
+        try model.messages.append(arena, m);
+    }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     defer model.text_field.deinit();
 

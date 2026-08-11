@@ -304,6 +304,36 @@ pub const Config = struct {
         return self.providers.getPtr(want) orelse error.UnknownProvider;
     }
 
+    /// The provider named by `--provider` (or the config default), with
+    /// `--model` applied as a one-off override of its `default_model`.
+    ///
+    /// `--model <provider>/<model>` picks both at once, so `--model
+    /// zai/glm-5.2` needs no separate `--provider`. The prefix is only read
+    /// as a provider when config actually has one by that name and
+    /// `--provider` was not given: a model id can contain a slash of its own
+    /// (`moonshotai/kimi-k3` is a model, served by the provider named
+    /// `kimi-k3`), and splitting those would send a request for a model that
+    /// does not exist to a provider that does not either.
+    pub fn resolveProvider(self: *const Config, provider_name: ?[]const u8, model_name: ?[]const u8) !Provider {
+        var want_provider = provider_name;
+        var want_model = model_name;
+        if (want_provider == null) {
+            if (want_model) |m| {
+                if (std.mem.indexOfScalar(u8, m, '/')) |slash| {
+                    const head = m[0..slash];
+                    const tail = m[slash + 1 ..];
+                    if (head.len > 0 and tail.len > 0 and self.providers.getPtr(head) != null) {
+                        want_provider = head;
+                        want_model = tail;
+                    }
+                }
+            }
+        }
+        var p = (try self.provider(want_provider)).*;
+        if (want_model) |m| p.default_model = m;
+        return p;
+    }
+
     /// Loads `config.json` plus `config.local.json` (if present) from `dir`.
     /// All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
