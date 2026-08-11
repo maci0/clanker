@@ -1,8 +1,9 @@
 //! peers: talk to the other clanker instances listed in config.
 //!
 //! Input:  {"action": "phonebook"}                     scan every peer's card
-//!         {"action": "notify", "peer": "<name>", "message": "..."}
-//! Output: {"ok": true, "peers": [...]}  |  {"ok": true, "sent": "<name>"}
+//!         {"action": "notify", "peer": "<name>", "message": "..."}      one peer
+//!         {"action": "notify", "message": "...", "kind": "...", "topic": "..."}  every peer
+//! Output: {"ok": true, "peers": [...]}  |  {"ok": true, "sent": "<name>"|"all"}
 //!
 //! The peer hosts are not in this descriptor: it sets
 //! `"network_from_config": "peers"` and the harness adds whatever is configured
@@ -36,6 +37,8 @@ const Request = struct {
     action: []const u8 = "phonebook",
     peer: []const u8 = "",
     message: []const u8 = "",
+    kind: []const u8 = "message",
+    topic: []const u8 = "",
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -125,29 +128,29 @@ fn phonebook(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer) !void
 }
 
 fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Request) !void {
-    if (req.peer.len == 0) return lib.fail(out, "notify needs a peer name");
     if (req.message.len == 0) return lib.fail(out, "notify needs a message");
+
+    // No peer named: fan out to every configured peer instead of one.
+    if (req.peer.len == 0) {
+        for (peers) |p| sendNotify(alloc, p, req) catch {};
+        var buf: [128]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        var s = std.json.Stringify{ .writer = &w, .options = .{} };
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("sent");
+        try s.write("all");
+        try s.endObject();
+        return out.writeAll(buf[0..w.end]);
+    }
 
     var target: ?Peer = null;
     for (peers) |p| {
         if (std.mem.eql(u8, p.name, req.peer)) target = p;
     }
     const peer = target orelse return lib.fail(out, "no such peer");
-
-    var body_buf: [16 * 1024]u8 = undefined;
-    var bw: std.Io.Writer = .fixed(&body_buf);
-    var bs = std.json.Stringify{ .writer = &bw, .options = .{} };
-    try bs.beginObject();
-    try bs.objectField("from");
-    try bs.write(instanceName(alloc));
-    try bs.objectField("kind");
-    try bs.write("message");
-    try bs.objectField("payload");
-    try bs.write(req.message);
-    try bs.endObject();
-
-    const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
-    _ = lib.httpPost(url, body_buf[0..bw.end]) catch |err| return lib.failErr(out, err, "notifying the peer");
+    sendNotify(alloc, peer, req) catch |err| return lib.failErr(out, err, "notifying the peer");
 
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -159,4 +162,25 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
     try s.write(peer.name);
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
+}
+
+fn sendNotify(alloc: std.mem.Allocator, peer: Peer, req: Request) !void {
+    var body_buf: [16 * 1024]u8 = undefined;
+    var bw: std.Io.Writer = .fixed(&body_buf);
+    var bs = std.json.Stringify{ .writer = &bw, .options = .{} };
+    try bs.beginObject();
+    try bs.objectField("from");
+    try bs.write(instanceName(alloc));
+    try bs.objectField("kind");
+    try bs.write(req.kind);
+    try bs.objectField("topic");
+    try bs.write(req.topic);
+    try bs.objectField("payload");
+    try bs.write(req.message);
+    try bs.objectField("ts");
+    try bs.print("{d}", .{@as(i64, @intFromFloat(lib.nowSeconds()))});
+    try bs.endObject();
+
+    const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
+    _ = try lib.httpPost(url, body_buf[0..bw.end]);
 }

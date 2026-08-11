@@ -619,7 +619,7 @@ pub const Config = struct {
         _ = key;
         return switch (v) {
             .integer => |i| i,
-            .float => |f| @intFromFloat(f),
+            .float => |f| @trunc(f),
             .number_string => |s| std.fmt.parseInt(i64, s, 10) catch error.FieldNotInt,
             else => error.FieldNotInt,
         };

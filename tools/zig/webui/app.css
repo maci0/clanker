@@ -96,7 +96,6 @@
     --danger: #e5705c;
     --on-danger: #1a1410;
     --warn: #d2a24c;
-  --warn-text: #d2a24c;
     --warn-text: #d2a24c;
     --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
     --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
@@ -204,27 +203,25 @@ header {
   padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--rule);
 }
 h1 {
-  font-family: var(--mono); font-size: var(--step-2); font-weight: 700;
+  font-family: var(--mono); font-size: var(--step-3); font-weight: 700;
   letter-spacing: -0.02em; margin: 0; color: var(--fg);
 }
 .spacer { flex: 1; }
 .chip {
-  border-radius: var(--radius);
   font-family: var(--mono); font-size: var(--step-0);
-  padding: 0.15rem 0.5rem; border-radius: var(--radius-pill);
+  padding: 0.15rem 0.5rem; border-radius: var(--radius);
   background: var(--surface); color: var(--fg-muted);
   border: 1px solid transparent;
 }
 .chip[data-state="down"] { color: var(--danger); }
 .chip[data-state="live"] { color: var(--ok); }
 button.chip-btn {
-  border-radius: var(--radius);
   font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
   /* On a narrow screen the Menu chip is the only route to navigation, so the
      header chips take the same 32px the dense rows take rather than the 22px
      the padding alone gave them. */
   min-height: 32px; display: inline-flex; align-items: center;
-  padding: 0.15rem 0.6rem; border-radius: var(--radius-pill); cursor: pointer;
+  padding: 0.15rem 0.6rem; border-radius: var(--radius); cursor: pointer;
   background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
 }
 button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
@@ -366,7 +363,6 @@ main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--sp
   width: 1.1rem; height: 0.9rem;
   border: 1px solid var(--rule);
 }
-.turn-events:empty { display: none; }
 .turn-events:empty { display: none; margin: 0; }
 .event-tool {
   font-family: var(--mono); font-size: var(--step-0); color: var(--accent);
@@ -859,7 +855,7 @@ button:active:not(:disabled) { transform: scale(0.97); }
   width: 100%; max-width: 40rem; max-height: 70vh; overflow-y: auto;
   padding: var(--space-4); border: 1px solid var(--border);
   border-radius: var(--radius-lg); background: var(--surface);
-  box-shadow: 0 1rem 3rem color-mix(in srgb, var(--bg) 60%, transparent);
+  box-shadow: var(--lift-high);
 }
 .palette-box { padding: var(--space-3); }
 #palette-input {
@@ -959,7 +955,7 @@ mark {
   border: 1px solid var(--border); border-radius: var(--radius-pill);
   background: var(--surface); color: var(--fg);
   font-family: var(--sans); font-size: var(--step-0);
-  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 55%, transparent);
+  box-shadow: var(--lift);
   animation: toast-in 140ms ease-out;
 }
 .toast[data-kind="bad"] { border-color: var(--danger); color: var(--danger); }
