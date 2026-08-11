@@ -3415,6 +3415,7 @@ fn renderWebui(
         .root_dir = cfg.agent.sandbox_root,
         .network_allow = tool.network_allow,
         .environ_map = environ_map,
+        .fuel = tool.fuel,
     };
     const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm load failed: {s}", .{ path, @errorName(err) });

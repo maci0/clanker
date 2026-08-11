@@ -3129,3 +3129,33 @@ test "a tool may run only the commands its manifest names" {
     try std.testing.expect(execAllowed(&several, "ast-grep"));
     try std.testing.expect(!execAllowed(&several, "sh"));
 }
+
+test "sandboxFor carries the descriptor's fuel budget into the sandbox" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const cfg = config_mod.Config{};
+    var tool = registry.Tool{
+        .name = "thrifty",
+        .description = "d",
+        .wasm = "t.wasm",
+        .input_schema = .{ .object = .{} },
+        .fuel = 2_000_000,
+    };
+    const sb = try sandboxFor(std.testing.allocator, io, arena, &env_map, &cfg, &tool, null);
+    try std.testing.expectEqual(@as(u64, 2_000_000), sb.fuel);
+
+    // Unset (0), the sandbox stays on 0 and runtime.zig's fuelBudget resolves
+    // it to the default at instantiation.
+    tool.fuel = 0;
+    const sb2 = try sandboxFor(std.testing.allocator, io, arena, &env_map, &cfg, &tool, null);
+    try std.testing.expectEqual(@as(u64, 0), sb2.fuel);
+}

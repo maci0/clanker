@@ -163,7 +163,13 @@ pub const ToolModule = struct {
 
         // ---- input buffer ----
         var scratch_fn = self.inst.typedFunc(fn (u32) u32, "scratch");
-        const scratch_ptr = try scratch_fn.call(.{@intCast(input.len)});
+        // A trap here (e.g. OutOfFuel on a small per-tool budget) is the same
+        // failure as a trap in run: report it as one instead of leaking a raw
+        // zwasm error to callers that only know ToolTrap.
+        const scratch_ptr = scratch_fn.call(.{@intCast(input.len)}) catch |err| {
+            log.log(.error_, "[sandbox] tool trap in scratch: {s} (tool={s})", .{ @errorName(err), self.name });
+            return error.ToolTrap;
+        };
         if (scratch_ptr == 0) return error.ToolScratchTooSmall;
         if (@as(u64, scratch_ptr) + input.len > mem_bytes.len) return error.ToolScratchTooSmall;
         @memcpy(mem_bytes[scratch_ptr .. scratch_ptr + input.len], input);
@@ -820,4 +826,49 @@ test "assemblyscript calc_ts tool executes" {
     const out2 = try mod.executeTool("{\"expr\": \"17*23\"}");
     defer std.testing.allocator.free(out2);
     try std.testing.expectEqualStrings("391", out2);
+}
+
+test "a tool with a tiny fuel budget runs out of fuel; the default budget answers" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // 15k is measured to cover this module's instantiation and arena
+    // discovery (~10.3k) but not a run (~18.8k more), so the trap lands in
+    // executeTool — deterministically, since fuel accounting is
+    // instruction-exact — and surfaces as ToolTrap, the error callers know,
+    // not a raw zwasm OutOfFuel.
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .fuel = 15_000,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    try std.testing.expectError(error.ToolTrap, mod.executeTool("17*23"));
+
+    // The same module bytes with fuel unset (0 resolves to the default
+    // budget) still answer: it was the budget that trapped above, not the
+    // tool.
+    var sb_ok = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+    };
+    const mod_ok = try ToolModule.load(std.testing.allocator, io, &sb_ok, wasm);
+    defer mod_ok.deinit();
+    const out = try mod_ok.executeTool("17*23");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("391", out);
 }

@@ -2332,6 +2332,7 @@ const ToolWorker = struct {
             .cfg = self.cfg,
             .state_dir = self.cfg.agent.state_dir,
             .config_json = self.tool.config_json,
+            .fuel = self.tool.fuel,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args ({d} bytes)={s}", .{ self.tool.name, self.arguments.len, self.arguments[0..@min(self.arguments.len, 300)] });
