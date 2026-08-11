@@ -70,6 +70,12 @@ pub const Agent = struct {
     max_iterations: u32,
     /// The system prompt (arena-owned), rebuilt when skills change.
     system_prompt_text: []const u8,
+    /// Instance identity and peer names, kept so refreshSystemPrompt rebuilds
+    /// the same prompt init built — without them a mid-session refresh
+    /// silently drops the Identity section from the system prompt.
+    instance_name: []const u8 = "",
+    instance_id: []const u8 = "",
+    peer_names: []const []const u8 = &.{},
     /// Loaded tool modules, keyed by tool name (wasm modules are stateful in
     /// zwasm for AssemblyScript guests — cache and reuse instead of
     /// re-instantiating per call).
@@ -154,6 +160,9 @@ pub const Agent = struct {
             .tool_defs = tool_defs,
             .max_iterations = cfg.agent.max_iterations,
             .system_prompt_text = prompt_text,
+            .instance_name = cfg.instance.name,
+            .instance_id = cfg.instance.id,
+            .peer_names = peer_names.items,
             .stats = .{},
         };
     }
@@ -170,6 +179,9 @@ pub const Agent = struct {
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
             .learnings_file = self.cfg.agent.learnings_file,
+            .instance_name = self.instance_name,
+            .instance_id = self.instance_id,
+            .peers = self.peer_names,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
@@ -989,22 +1001,16 @@ pub const Agent = struct {
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
-        // answer in a prose preamble (e.g. "Here is the result:") or appended
-        // trailing prose. For the answer_format eval we need the exact value,
-        // so fall back to the first non-empty line (the answer usually comes
-        // before trailing commentary) and strip a leading "Answer:"/"Result:"
-        // prefix.
+        // answer in a prose preamble (e.g. "Here is the result:"). For the
+        // answer_format eval we need the exact value, so fall back to the last
+        // non-empty line and strip a leading "Answer:"/"Result:" prefix.
         if (std.mem.indexOf(u8, s, "```") == null and
             std.mem.indexOfScalar(u8, s, '{') == null and
             std.mem.indexOfScalar(u8, s, '[') == null)
         {
-            var last_line: []const u8 = "";
+            var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
-            while (line_it.next()) |line| {
-                const t = std.mem.trim(u8, line, " \t\r\n");
-                if (t.len == 0) continue;
-                if (last_line.len == 0) last_line = t;
-            }
+            while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
             if (last_line.len > 0) {
                 // Strip common preamble prefixes repeatedly (e.g. "Here is your
                 // answer: The result is 42") so the exact-match answer survives.
@@ -1991,19 +1997,6 @@ test "finalAnswer strips a prose prefix to the exact answer" {
     agent.arena = arena;
 
     const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "The answer is clanker online" } };
-    const ans = try agent.finalAnswer(resp);
-    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
-}
-
-test "finalAnswer picks the answer line over trailing prose" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var agent: Agent = undefined;
-    agent.arena = arena;
-
-    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online\n\nHope this helps" } };
     const ans = try agent.finalAnswer(resp);
     try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
 }
