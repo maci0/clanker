@@ -146,16 +146,39 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 
 /// Symlinks the runtime paths a fresh worktree checkout doesn't get on its
 /// own — they're gitignored, so `git worktree add` never populates them.
-/// state/ (the improvement history / dedup log, the run lock, logs) has to
-/// be the SAME directory the main tree uses, or every isolated run starts
-/// from a clean slate with no memory of earlier ones and no lock shared
-/// with a concurrent one; .env and config.local.json carry the API keys and
-/// local overrides nothing else provides.
+/// .env and config.local.json carry the API keys and local overrides
+/// nothing else provides. state/improvements.jsonl and state/history/ are
+/// the cross-run memory (the dedup log, the revert snapshots) and have to
+/// be the same files the main tree uses, or every isolated run starts fresh
+/// with no memory of earlier ones.
+///
+/// state/ itself is deliberately NOT a symlink, and state/staging/ is
+/// deliberately not linked at all: patch_apply and friends are sandboxed to
+/// fs_prefixes ["state/staging"], and that check walks the path from the
+/// root with symlinks left unresolved specifically so one can't be used to
+/// step outside the sandbox — a symlinked `state` made every write under
+/// state/staging/ look like exactly that and get refused. state/ is a real
+/// directory local to the worktree; only the two entries below are linked
+/// back in, as leaves the sandboxed tools never traverse through.
 fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) !void {
     const root = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(root);
 
-    for ([_][]const u8{ "state", ".env", "config.local.json" }) |name| {
+    for ([_][]const u8{ ".env", "config.local.json" }) |name| {
+        std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
+        defer gpa.free(target);
+        const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(link_path);
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{}) catch |err|
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+    }
+
+    const state_dir = try std.fmt.allocPrint(gpa, "{s}/state", .{worktree_path});
+    defer gpa.free(state_dir);
+    try std.Io.Dir.cwd().createDirPath(io, state_dir);
+
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
