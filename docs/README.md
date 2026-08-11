@@ -117,6 +117,13 @@ peer keeps the message only when it subscribes to that room.
 - WASM tools: `chat_send`, `chat_history`, `chat_rooms`, `chat_subscribe`
   (one `chat.wasm` module; the descriptor `config` pins the op). They are
   marked `sequential` so concurrent tool calls never race on the log file.
+- Shared todos: `todo_add`, `todo_claim`, `todo_close`, `todo_list` (same
+  `chat.wasm` module) keep a per-room todo list any subscriber can work.
+  A todo action is a plain chat message (`@todo {...}` text), so it reuses
+  the log, fan-out, and subscription filter; state is an order-independent
+  fold of the log (`src/peers/todos.zig`) and racing claims resolve
+  deterministically (lowest `(ts, id)` wins — `todo_claim` returns the
+  winner and a `yours` flag).
 - HTTP: `POST /api/chat/message` (delivery), `GET /api/chat/messages?room=..&after=..`,
   `GET /api/chat/rooms`.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages

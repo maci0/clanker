@@ -1,0 +1,29 @@
+{
+  "name": "todo_claim",
+  "description": "Claim a todo from a chatroom's shared todo list so peers know you are working on it. Two agents claiming at once is resolved deterministically (earliest claim wins), so ALWAYS check the returned \"yours\" flag: false means another clanker already owns it and you should pick a different todo.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      },
+      "todo": {
+        "type": "string",
+        "description": "Todo id from todo_add or todo_list"
+      }
+    },
+    "required": [
+      "room",
+      "todo"
+    ]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "todo_claim"
+  },
+  "category": "chat"
+}

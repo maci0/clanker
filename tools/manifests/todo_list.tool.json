@@ -1,0 +1,24 @@
+{
+  "name": "todo_list",
+  "description": "List a chatroom's shared todo list: every todo with its id, title, status (open/claimed/closed), creator, and claimant. Use it to find unclaimed work before todo_claim, and to get the todo id todo_claim/todo_close need.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      }
+    },
+    "required": [
+      "room"
+    ]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "todo_list"
+  },
+  "category": "chat"
+}
