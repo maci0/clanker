@@ -144,7 +144,7 @@ pub const Agent = struct {
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
         }, tool_defs);
-        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt});
+        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt});
         return .{
             .ctx = ctx,
             .arena = arena,
@@ -174,7 +174,7 @@ pub const Agent = struct {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt}) catch |err| {
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt}) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
@@ -1944,4 +1944,30 @@ test "compactionKeepStart returns null when the history is too short to compact"
     // Over the token threshold but fewer than 8 messages: compaction would
     // have to delete context it is supposed to preserve, so it must decline.
     try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
+}
+
+test "finalAnswer preserves an exact string answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "finalAnswer strips a prose prefix to the exact answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "The answer is clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
 }
