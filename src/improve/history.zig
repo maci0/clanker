@@ -70,6 +70,18 @@ pub const History = struct {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.gpa);
 
+        // Carry the existing log forward. `writeFile` replaces, so building
+        // only the new record here meant every improvement erased the record
+        // of the one before it: a .jsonl that never held more than one line.
+        // With no memory of what it had already done, the loop re-proposed the
+        // same change until something else happened to stop it — the reason
+        // `repl_md = .{};` was promoted into src/cli.zig three separate times.
+        if (self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch null) |prior| {
+            defer self.gpa.free(prior);
+            try buf.appendSlice(self.gpa, prior);
+            if (prior.len > 0 and prior[prior.len - 1] != '\n') try buf.append(self.gpa, '\n');
+        }
+
         var w: std.Io.Writer = .fixed(try self.gpa.alloc(u8, 1 << 20));
         defer self.gpa.free(w.buffer);
         var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -213,4 +225,40 @@ test "history append + revert round trip" {
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(raw);
     try std.testing.expect(std.mem.indexOf(u8, raw, "test-id-1") != null);
+}
+
+test "append keeps every prior improvement" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+    try hist.append("imp-1", .accepted, "first", "did a thing", &.{"src/a.zig"}, 0.0, 1.0, "");
+    try hist.append("imp-2", .accepted, "second", "did another", &.{"src/b.zig"}, 1.0, 2.0, "");
+    try hist.append("imp-3", .rejected, "third", "was refused", &.{"src/c.zig"}, 2.0, 2.0, "");
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
+    defer gpa.free(raw);
+
+    // The whole point of the log: an earlier entry is still there after a
+    // later one lands. Without this the improvement loop has no memory and
+    // re-proposes work it already promoted.
+    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-3") != null);
+
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, std.mem.trim(u8, raw, "\n"), '\n');
+    while (it.next()) |line| {
+        if (line.len > 0) lines += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), lines);
 }

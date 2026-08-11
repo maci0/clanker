@@ -76,6 +76,10 @@ pub const Options = struct {
     chat_sub: []const u8 = "rooms",
     room: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
+    /// `eval --tasks`: only the agent-driven evals, skipping the selfhost
+    /// build gates. What a capability check wants; the build gates are already
+    /// covered on their own.
+    eval_tasks_only: bool = false,
     iters: u32 = 3,
     dry_run: bool = false,
     verbose: bool = false,
@@ -115,6 +119,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.verbose = true;
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
+            } else if (std.mem.eql(u8, a, "--tasks")) {
+                opts.eval_tasks_only = true;
             } else if (std.mem.eql(u8, a, "--provider")) {
                 idx += 1;
                 if (idx >= args.len) return error.MissingArg;
@@ -261,7 +267,7 @@ const usage_text =
     \\  clanker repl                    interactive multi-turn chat (streams tokens)
     \\  clanker sessions                list saved sessions
     \\  clanker tools list              list registered WASM tools
-    \\  clanker eval [name]             run eval tasks (all, or one by name)
+    \\  clanker eval [name] [--tasks]   run evals (all, one by name, --tasks = capability only)
     \\  clanker improve-self [--iters N] [--dry-run] "<instructions>"  self-improvement loop
     \\  clanker revert <id>             revert a previously applied improvement
     \\  clanker goal "<intent>"         design and persist a structured goal
@@ -642,6 +648,57 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
 
 // ---------------------------------------------------------------------- run --
 
+/// Reports a run that stopped at a limit instead of finishing.
+///
+/// The point is that the work is not lost. The conversation is the caller's,
+/// so the last thing the model actually said is still here even though `run`
+/// returned an error, and the execution graph for the attempt is already on
+/// disk. Printing those beats a stack trace: it tells the operator what was
+/// reached, what it cost, and which knob to turn.
+fn reportUnfinishedRun(
+    out_w: *std.Io.File.Writer,
+    messages: *const std.ArrayList(types.Message),
+    a: *const agent.Agent,
+    err: anyerror,
+) !void {
+    // Walk back to the last thing the assistant said with words in it. The
+    // final turns of a capped run are usually tool calls with no prose.
+    var partial: ?[]const u8 = null;
+    var i = messages.items.len;
+    while (i > 0) {
+        i -= 1;
+        const m = messages.items[i];
+        if (m.role != .assistant) continue;
+        if (m.content) |c| {
+            if (std.mem.trim(u8, c, " \t\r\n").len > 0) {
+                partial = c;
+                break;
+            }
+        }
+    }
+
+    if (partial) |c| {
+        try out_w.interface.writeAll(c);
+        if (!std.mem.endsWith(u8, c, "\n")) try out_w.interface.writeAll("\n");
+        try out_w.interface.flush();
+    }
+
+    const why = switch (err) {
+        error.MaxIterationsExceeded => "hit the iteration limit",
+        error.SessionTokenBudgetExceeded => "hit the session token budget",
+        else => "stopped early",
+    };
+    log.log(.error_, "run {s} after {d} iterations and did not produce a final answer", .{ why, a.max_iterations });
+    if (partial != null) {
+        log.log(.info, "the assistant's last message is printed above; it is partial work, not an answer", .{});
+    } else {
+        log.log(.info, "the assistant produced no prose before stopping; `clanker graph` replays what it did", .{});
+    }
+    if (err == error.MaxIterationsExceeded) {
+        log.log(.info, "raise agent.max_iterations in config.json (currently {d}) if the task needs more steps", .{a.max_iterations});
+    }
+}
+
 fn cmdRun(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -730,9 +787,19 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // animation to clean up out of a captured log.
     repl_answer_started = false;
     repl_md = .{};
-    repl_md = .{};
-    repl_md = .{};
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
+        // Running out of iterations or budget is an outcome, not a crash. The
+        // run did real work — often minutes of it and a measurable amount of
+        // money — and returning the error threw all of it away behind a Zig
+        // stack trace that points at loop.zig internals and reads like a bug
+        // in the harness.
+        switch (err) {
+            error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded => {
+                try reportUnfinishedRun(&out_w, &messages, &a, err);
+                std.process.exit(1);
+            },
+            else => {},
+        }
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return err;
     };
@@ -2166,9 +2233,16 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
         if (opts.eval_name) |want| {
             if (!std.mem.eql(u8, want, e.name)) continue;
         }
+        if (opts.eval_tasks_only and e.kind != .task) continue;
         try list.append(arena, e);
     }
-    if (list.items.len == 0) return error.UnknownEval;
+    // No task evals at all is a valid, if sad, answer for --tasks: it means
+    // nothing capability-level is being checked, not that the caller asked for
+    // an eval that does not exist.
+    if (list.items.len == 0) {
+        if (opts.eval_tasks_only) return;
+        return error.UnknownEval;
+    }
 
     const results = try r.runAll(list.items);
     var all_ok = true;
