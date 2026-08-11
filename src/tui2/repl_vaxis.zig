@@ -237,7 +237,6 @@ const Model = struct {
         const dim: vaxis.Style = .{ .dim = true };
         @memset(surface.buffer, .{ .style = .{}, .default = true });
 
-        // Row 0: status line.
         g_mutex.lockUncancelable(g_io);
         const streaming = g_streaming;
         const stream_snapshot = ctx.arena.dupe(u8, g_stream_buf.items) catch "";
@@ -253,7 +252,6 @@ const Model = struct {
         }) catch "clanker (vaxis)";
         writeRow(surface, 0, status, dim);
 
-        // Bottom: bordered input box (3 rows).
         const box_h: u16 = 3;
         const box_y = max.height -| box_h;
         drawBox(surface, 0, box_y, max.width, box_h);
@@ -261,7 +259,6 @@ const Model = struct {
         var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
         children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
 
-        // Middle: transcript tail, most recent content last.
         const top: u16 = 1;
         const bottom = box_y -| 1;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;

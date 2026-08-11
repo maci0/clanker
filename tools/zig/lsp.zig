@@ -117,14 +117,12 @@ fn buildSession(
     const root_uri = try std.fmt.allocPrint(alloc, "file://{s}", .{cwd});
     const file_uri = try std.fmt.allocPrint(alloc, "file://{s}/{s}", .{ cwd, file });
 
-    // initialize
     msg.clearRetainingCapacity();
     try writeJson(alloc, &msg,
         \\{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"processId":null,"rootUri":{f},"capabilities":{{}}}}}}
     , .{std.json.fmt(root_uri, .{})});
     try frame(alloc, &body, msg.items);
 
-    // initialized
     msg.clearRetainingCapacity();
     try msg.appendSlice(alloc,
         \\{"jsonrpc":"2.0","method":"initialized","params":{}}
@@ -139,7 +137,6 @@ fn buildSession(
     , .{ std.json.fmt(file_uri, .{}), std.json.fmt(source, .{}) });
     try frame(alloc, &body, msg.items);
 
-    // the question
     msg.clearRetainingCapacity();
     try writeJson(alloc, &msg,
         \\{{"jsonrpc":"2.0","id":2,"method":{f},"params":{{"textDocument":{{"uri":{f}}},"position":{{"line":{d},"character":{d}}},"context":{{"includeDeclaration":true}}}}}}

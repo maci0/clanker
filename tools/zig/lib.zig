@@ -13,7 +13,6 @@ const std = @import("std");
 // ---- host function imports (provided by the harness) ------------------------
 extern fn ck_log(level: u32, ptr: u32, len: u32) void;
 extern fn ck_now() u64;
-extern fn ck_random() u64;
 extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_read_range(path_ptr: u32, path_len: u32, offset: u32, length: u32) u32;
@@ -386,16 +385,9 @@ pub fn nowSeconds() f64 {
     return @as(f64, @floatFromInt(ck_now())) / 1e9;
 }
 
-/// Uniform float in [0, 1).
-pub fn randomFloat() f64 {
-    return @as(f64, @floatFromInt(ck_random())) / @as(f64, @floatFromInt(std.math.maxInt(u64)));
-}
+pub const HostError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
 
-pub const HttpError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
-
-pub fn httpGet(url: []const u8) HttpError![]const u8 {
-    const u = sliceToMem(url);
-    const rc = ck_http(0, u.ptr, u.len, 0, 0, 0, 0);
+fn hostResult(rc: u32) HostError![]const u8 {
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
         1 => error.SandboxDenied,
@@ -405,62 +397,44 @@ pub fn httpGet(url: []const u8) HttpError![]const u8 {
     };
 }
 
-pub fn httpPost(url: []const u8, body: []const u8) HttpError![]const u8 {
+pub fn httpGet(url: []const u8) HostError![]const u8 {
+    const u = sliceToMem(url);
+    const rc = ck_http(0, u.ptr, u.len, 0, 0, 0, 0);
+    return hostResult(rc);
+}
+
+pub fn httpPost(url: []const u8, body: []const u8) HostError![]const u8 {
     const u = sliceToMem(url);
     const b = sliceToMem(body);
     const rc = ck_http(1, u.ptr, u.len, b.ptr, b.len, 0, 0);
-    return switch (rc) {
-        0 => readResult() orelse error.InvalidArg,
-        1 => error.SandboxDenied,
-        3 => error.TooLarge,
-        4 => error.NetworkError,
-        else => error.InvalidArg,
-    };
+    return hostResult(rc);
 }
-
-pub const ChatError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
 
 /// Runs a chatroom operation (send / history / rooms / subscribe) host-side.
 /// The op lives in the request JSON; the guest fills in the argument fields.
-pub fn chat(req: []const u8) ChatError![]const u8 {
+pub fn chat(req: []const u8) HostError![]const u8 {
     const p = sliceToMem(req);
     const rc = ck_chat(p.ptr, p.len);
-    return switch (rc) {
-        0 => readResult() orelse error.InvalidArg,
-        1 => error.SandboxDenied,
-        3 => error.TooLarge,
-        4 => error.NetworkError,
-        else => error.InvalidArg,
-    };
+    return hostResult(rc);
 }
-
-pub const StatsError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
 
 /// Aggregated global token usage per provider/model (host-side aggregation
 /// over state/token_stats.jsonl). Requires the token_stats module.
-pub fn stats() StatsError![]const u8 {
+pub fn stats() HostError![]const u8 {
     const rc = ck_stats();
-    return switch (rc) {
-        0 => readResult() orelse error.InvalidArg,
-        1 => error.SandboxDenied,
-        3 => error.TooLarge,
-        4 => error.NetworkError,
-        else => error.InvalidArg,
-    };
+    return hostResult(rc);
 }
-
-pub const LlmError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
 
 /// One-shot model call on the harness's active provider. Requires `"llm": true`
 /// in this tool's descriptor; denied otherwise. No tools, no history: a prompt
 /// in, completion text out.
-pub fn llm(prompt: []const u8) LlmError![]const u8 {
+pub fn llm(prompt: []const u8) HostError![]const u8 {
     return llmWith(prompt, null, 0);
 }
 
 /// Same, but aimed at a named provider and/or a different output cap. Both are
 /// optional: null provider and 0 max_tokens keep the descriptor's settings.
-pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) LlmError![]const u8 {
+pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostError![]const u8 {
     var buf: [32 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -479,13 +453,7 @@ pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) LlmEr
 
     const req = sliceToMem(buf[0..w.end]);
     const rc = ck_llm(req.ptr, req.len);
-    return switch (rc) {
-        0 => readResult() orelse error.InvalidArg,
-        1 => error.SandboxDenied,
-        3 => error.TooLarge,
-        4 => error.NetworkError,
-        else => error.InvalidArg,
-    };
+    return hostResult(rc);
 }
 
 /// This tool's own `config` object from its descriptor, as a JSON string
@@ -501,26 +469,14 @@ pub const FsError = error{ SandboxDenied, NotFound, TooLarge, IoError, Mismatch 
 pub fn fsRead(path: []const u8) FsError![]const u8 {
     const p = sliceToMem(path);
     const rc = ck_fs_read(p.ptr, p.len);
-    return switch (rc) {
-        0 => readResult() orelse error.IoError,
-        1 => error.SandboxDenied,
-        2 => error.NotFound,
-        3 => error.TooLarge,
-        else => error.IoError,
-    };
+    return fsPathQuery(rc);
 }
 
 /// Lists file names under an allowed directory (JSON string array).
 pub fn fsList(path: []const u8) FsError![]const u8 {
     const p = sliceToMem(path);
     const rc = ck_fs_list(p.ptr, p.len);
-    return switch (rc) {
-        0 => readResult() orelse error.IoError,
-        1 => error.SandboxDenied,
-        2 => error.NotFound,
-        3 => error.TooLarge,
-        else => error.IoError,
-    };
+    return fsPathQuery(rc);
 }
 
 /// Reads [offset, offset+len) of a file. The host writes results into a 64 KiB
@@ -529,13 +485,7 @@ pub fn fsList(path: []const u8) FsError![]const u8 {
 pub fn fsReadRange(path: []const u8, offset: usize, len: usize) FsError![]const u8 {
     const p = sliceToMem(path);
     const rc = ck_fs_read_range(p.ptr, p.len, @intCast(offset), @intCast(len));
-    return switch (rc) {
-        0 => readResult() orelse error.IoError,
-        1 => error.SandboxDenied,
-        2 => error.NotFound,
-        3 => error.TooLarge,
-        else => error.IoError,
-    };
+    return fsPathQuery(rc);
 }
 
 /// Writes a file relative to the sandbox root.
@@ -661,8 +611,17 @@ pub fn getenv(name: []const u8) ?[]const u8 {
 
 pub const ExecError = error{ SandboxDenied, NotFound, TooLarge, NetworkError, InvalidArg, OutOfMemory, WriteFailed };
 
-/// Runs an allowlisted host command (git / rg / ast-grep / semcode) with the
-/// given arguments. Returns the raw {"ok","code","stdout","stderr"} JSON.
+fn execResult(rc: u32) ExecError![]const u8 {
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
+}
+
 /// Runs a command with `input` on its stdin and returns the {code, stdout,
 /// stderr} JSON. For processes you talk to rather than just launch — an LSP
 /// server reads framed requests and answers on stdout.
@@ -683,16 +642,11 @@ pub fn execStdin(cmd: []const u8, args: []const []const u8, input: []const u8) E
     s.endObject() catch return error.InvalidArg;
 
     const req = sliceToMem(wbuf[0..w.end]);
-    const rc = ck_exec(req.ptr, req.len);
-    return switch (rc) {
-        0 => readResult() orelse error.InvalidArg,
-        1 => error.SandboxDenied,
-        2 => error.NotFound,
-        3 => error.TooLarge,
-        else => error.InvalidArg,
-    };
+    return execResult(ck_exec(req.ptr, req.len));
 }
 
+/// Runs an allowlisted host command (git / rg / ast-grep / semcode) with the
+/// given arguments. Returns the raw {"ok","code","stdout","stderr"} JSON.
 pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
@@ -708,13 +662,7 @@ pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     try s.endObject();
 
     const b = sliceToMem(wbuf[0..w.end]);
-    const rc = ck_exec(b.ptr, b.len);
-    return switch (rc) {
-        0 => readResult() orelse error.InvalidArg,
-        1 => error.SandboxDenied,
-        4 => error.NetworkError,
-        else => error.InvalidArg,
-    };
+    return execResult(ck_exec(b.ptr, b.len));
 }
 
 pub const DockerError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidArg, NetworkError };
