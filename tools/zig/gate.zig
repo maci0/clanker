@@ -64,6 +64,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             &[_][]const u8{ "fmt", "--check", "src" }
         else if (std.mem.eql(u8, gate, "astcheck"))
             &[_][]const u8{ "ast-check", target_file }
+        else if (std.mem.eql(u8, gate, "build"))
+            // The default step, not a step named "build": build.zig declares
+            // run, test and tools, so `zig build build` fails with "no step
+            // named 'build'". That is the first gate in the default list, so
+            // every gate call with no arguments failed before running anything.
+            &[_][]const u8{"build"}
         else
             &[_][]const u8{ "build", gate };
 

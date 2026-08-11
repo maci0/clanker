@@ -1,6 +1,6 @@
 {
   "name": "read_file",
-  "description": "Reads a file by path and returns its text. Use offset and limit to paginate large files: the result reports the file's total byte size and, when truncated, the next_offset to resume from. Prefer this over search_code when you need a file's exact contents (e.g. src/agent/loop.zig, AGENTS.md, manifests).",
+  "description": "Reads a file by path and returns its text. Address it by line with start_line and line_count (the result reports start_line, end_line and next_line), or by byte with offset and limit. Either way whole lines are returned, never a fragment, and a short result reports where to resume. Prefer this over search_code when you need a file's exact contents (e.g. src/agent/loop.zig, AGENTS.md, manifests).",
   "wasm": "zig-out/tools/read_file.wasm",
   "enabled": true,
   "fs_prefixes": [
@@ -15,13 +15,21 @@
       },
       "offset": {
         "type": "integer",
-        "description": "Byte offset to start reading from (0-based). Use the previous result's next_offset to continue a truncated read.",
+        "description": "Byte offset to resume from, for walking a file whose lines you do not know. Ignored when start_line is given.",
         "default": 0
       },
       "limit": {
         "type": "integer",
-        "description": "Maximum number of bytes to return in this call.",
+        "description": "Maximum bytes to return, snapped down to a line boundary (default 768 KiB).",
         "default": 65536
+      },
+      "start_line": {
+        "type": "integer",
+        "description": "First line to return, 1-based. Use this when a diagnostic or search result gave you a line number; it is what file:line references mean."
+      },
+      "line_count": {
+        "type": "integer",
+        "description": "How many lines to return from start_line (default 200)."
       }
     },
     "required": [

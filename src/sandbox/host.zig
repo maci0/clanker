@@ -1693,8 +1693,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
         .cwd = .{ .dir = exec_dir },
-        .stdout_limit = .limited(64 * 1024),
-        .stderr_limit = .limited(8 * 1024),
+        // Generous, because the result is truncated with a marker below
+        // rather than refused: a search that matches a lot should return what
+        // it found and say it was cut, not fail with StreamTooLong and leave
+        // the caller guessing whether the tool or the pattern was at fault.
+        .stdout_limit = .limited(1 << 20),
+        .stderr_limit = .limited(64 * 1024),
     }) catch |err| {
         // Not a network condition: a process that could not be spawned or
         // whose output overran the cap was reported to the guest as
@@ -1731,6 +1735,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     return h.writeResult(bytes, wbuf[0..w.end]);
 }
 
+/// How much of a command's output survives into the result. The guest sees it
+/// through the host arena, so the whole of a large search cannot fit whatever
+/// the process produced.
+const exec_stdout_keep = 56 * 1024;
+const exec_stderr_keep = 8 * 1024;
+
 fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
@@ -1739,10 +1749,28 @@ fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []c
     try s.objectField("code");
     try s.print("{d}", .{code});
     try s.objectField("stdout");
-    try s.write(stdout);
+    try s.write(clipOutput(stdout, exec_stdout_keep));
     try s.objectField("stderr");
-    try s.write(stderr);
+    try s.write(clipOutput(stderr, exec_stderr_keep));
+    // Silent truncation reads as "that is all there is", which is how a search
+    // that matched thousands of lines looks identical to one that matched
+    // forty. Say it, and say what to do about it.
+    if (stdout.len > exec_stdout_keep or stderr.len > exec_stderr_keep) {
+        try s.objectField("truncated");
+        try s.write(true);
+        try s.objectField("note");
+        try s.print("output was {d} bytes and was cut to {d}; narrow the pattern or the path to see the rest", .{ stdout.len, exec_stdout_keep });
+    }
     try s.endObject();
+}
+
+/// Keeps the head of `text`, ending on a line boundary so the last line is
+/// whole rather than a fragment that reads as corrupted output.
+fn clipOutput(text: []const u8, keep: usize) []const u8 {
+    if (text.len <= keep) return text;
+    const head = text[0..keep];
+    if (std.mem.lastIndexOfScalar(u8, head, '\n')) |nl| return head[0 .. nl + 1];
+    return head;
 }
 
 // ------------------------------------------------------------- sandbox core --

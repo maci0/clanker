@@ -172,10 +172,17 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, env
     writeResponse(io, out_buf[0..w.end]);
 }
 
+/// One response per line on stdout.
+///
+/// Streaming, not positional: a positional writer starts at offset 0 every
+/// time it is created, and this creates one per response. Over a pipe the
+/// offset is ignored and nothing looks wrong, but with stdout redirected to a
+/// file each response overwrote the one before it. A 45-request session left a
+/// file holding the last reply followed by the middle of another.
 fn writeResponse(io: std.Io, bytes: []const u8) void {
     var stdout_file = std.Io.File.stdout();
     var wbuf: [65536]u8 = undefined;
-    var out_w = stdout_file.writer(io, &wbuf);
+    var out_w = stdout_file.writerStreaming(io, &wbuf);
     out_w.interface.writeAll(bytes) catch {};
     out_w.interface.writeAll("\n") catch {};
     out_w.interface.flush() catch {};

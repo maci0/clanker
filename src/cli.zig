@@ -782,7 +782,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // clean, tool-free content.
     const stdout_file = std.Io.File.stdout();
     var out_buf: [4096]u8 = undefined;
-    var out_w = stdout_file.writer(io, &out_buf);
+    var out_w = stdout_file.writerStreaming(io, &out_buf);
     run_out = &out_w;
     run_stdout_color = stdout_file.isTty(io) catch false;
     a.on_token = &runDelta;
@@ -891,7 +891,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const stdin_file = std.Io.File.stdin();
     var stdout_file = std.Io.File.stdout();
     var out_buf: [4096]u8 = undefined;
-    var out_w = stdout_file.writer(io, &out_buf);
+    var out_w = stdout_file.writerStreaming(io, &out_buf);
 
     // Stream the model's tokens to stdout as they arrive.
     repl_out = &out_w;
@@ -2709,6 +2709,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_goals = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/goals");
+        const is_todos = std.mem.eql(u8, target, "/api/todos") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
@@ -2760,6 +2762,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, stream);
+        } else if (is_todos) {
+            handleTodos(io, gpa, method, body, stream);
+        } else if (is_logs) {
+            handleLogs(io, gpa, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
@@ -3415,6 +3421,246 @@ fn handleRuns(
 /// plugin (the way `/api/runs` reaches cmd_graph) because session.zig already
 /// owns this store on the native side, and a long transcript exceeds the
 /// 64 KiB host arena a WASM tool reads through.
+/// Byte weight of a transcript, the same measure
+/// `agent.compact_threshold_bytes` is compared against.
+fn transcriptBytes(msgs: []const types.Message) usize {
+    var n: usize = 0;
+    for (msgs) |m| n += if (m.content) |c| c.len else 0;
+    return n;
+}
+
+/// Drop the oldest messages until the transcript fits under half the configured
+/// threshold. Whole messages only, and the most recent exchange always stays:
+/// a compaction that left a tool result without its call would corrupt the
+/// conversation rather than shorten it.
+fn compactSession(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    id: []const u8,
+    threshold: usize,
+) !usize {
+    var s = try session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id);
+    const target = threshold / 2;
+    var first: usize = 0;
+    // Never touch the last two messages: that is the most recent exchange.
+    const floor = if (s.messages.len > 2) s.messages.len - 2 else 0;
+    while (first < floor and transcriptBytes(s.messages[first..]) > target) : (first += 1) {}
+    // A tool result whose call was just dropped is orphaned; drop it too.
+    while (first < floor and s.messages[first].tool_call_id != null) : (first += 1) {}
+    if (first > 0) {
+        s.messages = s.messages[first..];
+        s.updated = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        try session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), s);
+    }
+    return transcriptBytes(s.messages);
+}
+
+test "compactSession keeps whole messages and the last exchange" {
+    // Exercised through the pure part: the trimming rule, not the file I/O.
+    const msgs = [_]types.Message{
+        .{ .role = .user, .content = "a" ** 100 },
+        .{ .role = .assistant, .content = "b" ** 100 },
+        .{ .role = .user, .content = "c" ** 100 },
+        .{ .role = .assistant, .content = "d" ** 100 },
+    };
+    try std.testing.expectEqual(@as(usize, 400), transcriptBytes(&msgs));
+    try std.testing.expectEqual(@as(usize, 200), transcriptBytes(msgs[2..]));
+}
+
+const TodoPost = struct {
+    text: ?[]const u8 = null,
+    id: ?[]const u8 = null,
+    done: ?bool = null,
+    remove: ?bool = null,
+};
+
+const Todo = struct {
+    id: []const u8,
+    text: []const u8,
+    done: bool = false,
+    created: i64 = 0,
+};
+
+/// A shared checklist at `state/todos.json`, readable and writable by the page
+/// and by anything else that opens the file. One POST shape covers add, toggle
+/// and remove: which one it is follows from which fields are present.
+fn handleTodos(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    method: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, todos_path, arena, .limited(1 << 20)) catch "[]";
+    var list: std.ArrayList(Todo) = .empty;
+    if (std.json.parseFromSliceLeaky([]Todo, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
+        list.appendSlice(arena, existing) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    }
+
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(TodoPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        if (req.text) |text| {
+            const trimmed = std.mem.trim(u8, text, " \t\r\n");
+            if (trimmed.len == 0 or trimmed.len > 500) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text must be 1-500 characters\"}");
+                return;
+            }
+            const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+            const id = std.fmt.allocPrint(arena, "t-{d}-{d}", .{ now, list.items.len }) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+            list.append(arena, .{ .id = id, .text = trimmed, .created = now }) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+        } else if (req.id) |id| {
+            var kept: std.ArrayList(Todo) = .empty;
+            var hit = false;
+            for (list.items) |t| {
+                if (!std.mem.eql(u8, t.id, id)) {
+                    kept.append(arena, t) catch continue;
+                    continue;
+                }
+                hit = true;
+                if (req.remove orelse false) continue;
+                var updated = t;
+                updated.done = req.done orelse !t.done;
+                kept.append(arena, updated) catch continue;
+            }
+            if (!hit) {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such todo\"}");
+                return;
+            }
+            list = kept;
+        } else {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"need text or id\"}");
+            return;
+        }
+        var enc: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(list.items, .{}, &enc.writer) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+        atomic_write.writeFile(io, std.Io.Dir.cwd(), todos_path, enc.written()) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
+            return;
+        };
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"todos\":") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    std.json.Stringify.value(list.items, .{}, &out.writer) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    out.writer.writeAll("}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    respond(stream, 200, "OK", out.written());
+}
+
+const todos_path = "state/todos.json";
+
+/// `GET /api/logs` lists the log files; `GET /api/logs/<name>` returns the tail
+/// of one. Names are matched against the listing rather than sanitised, so a
+/// crafted name cannot describe a path at all.
+fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/api/logs".len..];
+    var dir = std.Io.Dir.cwd().openDir(io, "state/logs", .{ .iterate = true }) catch {
+        respond(stream, 200, "OK", "{\"ok\":true,\"logs\":[]}");
+        return;
+    };
+    defer dir.close(io);
+
+    if (rest.len > 1 and rest[0] == '/') {
+        const want = percentDecode(arena, rest[1..]) catch {
+            respond(stream, 400, "Bad Request", "{\"error\":\"bad log name\"}");
+            return;
+        };
+        var it = dir.iterate();
+        var found = false;
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (std.mem.eql(u8, entry.name, want)) found = true;
+        }
+        if (!found) {
+            respond(stream, 404, "Not Found", "{\"error\":\"no such log\"}");
+            return;
+        }
+        const raw = dir.readFileAlloc(io, want, arena, .limited(log_tail_bytes * 8)) catch {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"log read failed\"}");
+            return;
+        };
+        // Tail only, cut at a line boundary so the view never opens mid-line.
+        var tail = if (raw.len > log_tail_bytes) raw[raw.len - log_tail_bytes ..] else raw;
+        if (raw.len > log_tail_bytes) {
+            if (std.mem.indexOfScalar(u8, tail, '\n')) |nl| tail = tail[nl + 1 ..];
+        }
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("name") catch return;
+        s.write(want) catch return;
+        s.objectField("bytes") catch return;
+        s.write(raw.len) catch return;
+        s.objectField("text") catch return;
+        s.write(tail) catch return;
+        s.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+    if (rest.len != 0) {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        return;
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("logs") catch return;
+    s.beginArray() catch return;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const stat = dir.statFile(io, entry.name, .{}) catch continue;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(entry.name) catch return;
+        s.objectField("bytes") catch return;
+        s.write(stat.size) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+const log_tail_bytes = 64 * 1024;
+
 fn handleSessions(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -3451,6 +3697,24 @@ fn handleSessions(
             var fork_buf: [256]u8 = undefined;
             const fork_body = std.fmt.bufPrint(&fork_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{new_id}) catch return;
             respond(stream, 200, "OK", fork_body);
+            return;
+        }
+        // `POST /api/sessions/<id>/compact` drops the oldest exchanges by hand,
+        // the same thing agent.compact_threshold_bytes does on its own once a
+        // transcript grows past it. Suffix first, for the reason fork gives.
+        if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/compact")) {
+            const src_id = id[0 .. id.len - "/compact".len];
+            if (!validSessionId(src_id)) {
+                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                return;
+            }
+            const bytes = compactSession(io, gpa, arena, src_id, cfg.agent.compact_threshold_bytes) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            var cbuf: [128]u8 = undefined;
+            const cbody = std.fmt.bufPrint(&cbuf, "{{\"ok\":true,\"bytes\":{d}}}", .{bytes}) catch return;
+            respond(stream, 200, "OK", cbody);
             return;
         }
         if (!validSessionId(id)) {

@@ -46,6 +46,22 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try buf.appendSlice(lib.alloc, "}");
     }
 
-    const result = lib.chat(buf.items) catch |err| return lib.fail(out, @errorName(err));
+    const result = lib.chat(buf.items) catch |err| {
+        // "InvalidArg" alone told a caller nothing: it names neither the field
+        // that is missing nor the operation that wanted it, and every chat
+        // tool shares this one call site.
+        const detail = switch (err) {
+            error.InvalidArg => if (std.mem.eql(u8, op, "send"))
+                "chat send needs \"room\" (or \"to\" for a direct message) and \"text\""
+            else if (std.mem.eql(u8, op, "history"))
+                "chat history needs \"room\", and optionally \"after\" (a timestamp)"
+            else if (std.mem.eql(u8, op, "subscribe"))
+                "chat subscribe needs \"room\", and optionally \"on\" (true to join, false to leave)"
+            else
+                "the chat host rejected the arguments for this operation",
+            else => @errorName(err),
+        };
+        return lib.fail(out, detail);
+    };
     try out.writeAll(result);
 }
