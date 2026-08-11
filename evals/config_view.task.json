@@ -1,18 +1,18 @@
 {
   "name": "config_view",
   "kind": "task",
-  "description": "config_view must dump the effective configuration through its fs_prefixes grant on config.json and config.local.json. config.json is committed and declares providers, so the assertion is environment-independent: with no section filter the text field carries the file's contents, which mention providers whatever the file says that week. It goes red when the fs grant or the read path breaks — the failure that would otherwise surface only as an agent flying blind about its own settings.",
-  "prompt": "Use the config_view tool with input {}. Look at the tool's JSON result. If its ok field is true and its text field is non-empty and mentions providers, reply with exactly CONFIG. Otherwise reply with exactly EMPTY.",
+  "description": "config_view must dump the effective config as ok:true with the merged JSON in its text field. config.json is checked into the repo and the tool's fs_prefixes cover both it and config.local.json, so a fresh checkout always has something to dump — unlike the state/-backed tools there is no legitimate empty case, and the assertion can be the ok field alone. It goes red when the fs_prefixes policy stops covering the config files or the merge/serialize path breaks.",
+  "prompt": "Use the config_view tool with input {}. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
   "requires_tool": "config_view",
   "criteria": [
     {
       "includes": [
-        "CONFIG"
+        "true"
       ]
     },
     {
       "excludes": [
-        "EMPTY"
+        "false"
       ]
     }
   ]

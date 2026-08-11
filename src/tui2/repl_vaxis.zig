@@ -50,7 +50,10 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
                 if (key.matches('c', .{ .ctrl = true })) return;
                 try text_input.update(.{ .key_press = key });
             },
-            .winsize => |ws| try vx.resize(gpa, writer, ws),
+            .winsize => |ws| {
+                try vx.resize(gpa, writer, ws);
+                vx.queueRefresh();
+            },
         }
 
         const win = vx.window();

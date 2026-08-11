@@ -111,7 +111,14 @@ pub const Options = struct {
     port: u16 = 17921,
 };
 
-pub fn parse(args: []const []const u8) !Options {
+/// Optional out-param for `parse`: on a parse error, holds the offending
+/// token/flag/value so the caller can report *what* was wrong, not just the
+/// bare error name (e.g. "unknown command: 'relp'" instead of "UnknownCommand").
+fn setDiag(diag: ?*[]const u8, token: []const u8) void {
+    if (diag) |d| d.* = token;
+}
+
+pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     var opts = Options{};
     var idx: usize = 1;
     var cmd_seen = false;
@@ -132,13 +139,19 @@ pub fn parse(args: []const []const u8) !Options {
 
         // Help/version flags act as their own command regardless of position.
         if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
-            if (cmd_seen) return error.UnknownArg;
+            if (cmd_seen) {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
             opts.command = .help;
             cmd_seen = true;
             continue;
         }
         if (std.mem.eql(u8, a, "--version")) {
-            if (cmd_seen) return error.UnknownArg;
+            if (cmd_seen) {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
             opts.command = .version;
             cmd_seen = true;
             continue;
@@ -154,29 +167,54 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.eval_tasks_only = true;
             } else if (std.mem.eql(u8, a, "--provider")) {
                 idx += 1;
-                if (idx >= args.len) return error.MissingArg;
+                if (idx >= args.len) {
+                    setDiag(diag, a);
+                    return error.MissingArg;
+                }
                 opts.provider = args[idx];
             } else if (std.mem.eql(u8, a, "--model")) {
                 idx += 1;
-                if (idx >= args.len) return error.MissingArg;
+                if (idx >= args.len) {
+                    setDiag(diag, a);
+                    return error.MissingArg;
+                }
                 opts.model = args[idx];
             } else if (std.mem.eql(u8, a, "--iters")) {
                 idx += 1;
-                if (idx >= args.len) return error.MissingArg;
-                opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch return error.BadIters;
+                if (idx >= args.len) {
+                    setDiag(diag, a);
+                    return error.MissingArg;
+                }
+                opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch {
+                    setDiag(diag, args[idx]);
+                    return error.BadIters;
+                };
             } else if (std.mem.eql(u8, a, "--session")) {
                 idx += 1;
-                if (idx >= args.len) return error.MissingArg;
+                if (idx >= args.len) {
+                    setDiag(diag, a);
+                    return error.MissingArg;
+                }
                 opts.session = args[idx];
             } else if (std.mem.eql(u8, a, "--goal")) {
                 idx += 1;
-                if (idx >= args.len) return error.MissingArg;
+                if (idx >= args.len) {
+                    setDiag(diag, a);
+                    return error.MissingArg;
+                }
                 opts.goal = args[idx];
             } else if (std.mem.eql(u8, a, "--port")) {
                 idx += 1;
-                if (idx >= args.len) return error.MissingArg;
-                opts.port = std.fmt.parseInt(u16, args[idx], 10) catch return error.BadPort;
+                if (idx >= args.len) {
+                    setDiag(diag, a);
+                    return error.MissingArg;
+                }
+                opts.port = std.fmt.parseInt(u16, args[idx], 10) catch {
+                    setDiag(diag, args[idx]);
+                    return error.BadPort;
+                };
             } else {
+                setDiag(diag, a);
                 return error.UnknownArg;
             }
             continue;
@@ -232,6 +270,7 @@ pub fn parse(args: []const []const u8) !Options {
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else {
+                setDiag(diag, a);
                 return error.UnknownCommand;
             }
         } else if (pending_sub) |sub| {
@@ -244,6 +283,7 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.chat_sub = a;
                 pending_sub = null; // sub consumed; next tokens are room etc.
             } else {
+                setDiag(diag, a);
                 return error.BadSubcommand;
             }
         } else if (opts.command == .eval and opts.eval_name == null) {
@@ -269,17 +309,34 @@ pub fn parse(args: []const []const u8) !Options {
         } else if (opts.command == .chat and opts.message == null) {
             opts.message = a;
         } else {
+            setDiag(diag, a);
             return error.UnknownArg;
         }
     }
 
-    if (pending_sub != null) return error.BadSubcommand;
+    if (pending_sub != null) {
+        setDiag(diag, "<subcommand>");
+        return error.BadSubcommand;
+    }
     if (opts.command == .run and opts.task == null) return error.MissingTask;
-    if (opts.command == .notify and (opts.peer == null or opts.message == null)) return error.MissingArg;
+    if (opts.command == .notify and opts.peer == null) {
+        setDiag(diag, "<peer>");
+        return error.MissingArg;
+    }
+    if (opts.command == .notify and opts.message == null) {
+        setDiag(diag, "<message>");
+        return error.MissingArg;
+    }
     if (opts.command == .chat) {
         const needs_room = !std.mem.eql(u8, opts.chat_sub, "rooms");
-        if (needs_room and opts.room == null) return error.MissingArg;
-        if (std.mem.eql(u8, opts.chat_sub, "send") and opts.message == null) return error.MissingArg;
+        if (needs_room and opts.room == null) {
+            setDiag(diag, "<room>");
+            return error.MissingArg;
+        }
+        if (std.mem.eql(u8, opts.chat_sub, "send") and opts.message == null) {
+            setDiag(diag, "<message>");
+            return error.MissingArg;
+        }
     }
     return opts;
 }
@@ -882,6 +939,43 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
 }
 
+/// The REPL's opening banner. On a terminal it reuses the left-bar card
+/// style already established for tool calls and the input box (`╭─`/`│`/
+/// `╰─`, no right-hand border — transcript.zig's doc comment explains why a
+/// closed box was rejected); piped output degrades to one dense plain line,
+/// so scripts get a header without box art.
+fn printReplBanner(w: *std.Io.Writer, theme: *const tui_theme.Theme, provider_name: []const u8, model_name: []const u8, sid: []const u8, tty: bool) void {
+    if (!tty) {
+        w.print("{s}clanker repl \xc2\xb7 {s}/{s}{s}\n", .{ theme.dim, provider_name, model_name, theme.reset }) catch {};
+        return;
+    }
+    w.print("{s}\xe2\x95\xad\xe2\x94\x80 {s}{s}\xe2\x9a\xa1 clanker{s} {s}repl{s}\n", .{ theme.tool, theme.reset, theme.answer_marker, theme.reset, theme.dim, theme.reset }) catch {};
+    w.print("{s}\xe2\x94\x82{s}  {s}{s}/{s} \xc2\xb7 session {s}{s}\n", .{ theme.tool, theme.reset, theme.dim, provider_name, model_name, sid, theme.reset }) catch {};
+    w.print("{s}\xe2\x95\xb0\xe2\x94\x80{s} {s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n", .{ theme.tool, theme.reset, theme.dim, theme.reset }) catch {};
+}
+
+test "printReplBanner draws a left-bar card on a tty" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", true);
+    const bytes = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad\xe2\x94\x80") != null); // ╭─
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x9a\xa1 clanker") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "openai/gpt-x") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "session repl-42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xb0\xe2\x94\x80") != null); // ╰─
+}
+
+test "printReplBanner degrades to one dense line when piped" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", false);
+    const bytes = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad") == null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "clanker repl \xc2\xb7 openai/gpt-x") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\n"));
+}
+
 fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -955,10 +1049,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     a.on_tool_results = &replToolResults;
     a.on_tool_result = &replToolResult;
 
-    try out_w.interface.print(
-        "{s}\xe2\x9a\xa1 clanker{s} {s}repl \xc2\xb7 {s}/{s}{s}\n{s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n",
-        .{ repl_theme.answer_marker, repl_theme.reset, repl_theme.dim, provider.name, provider.activeModelName(), repl_theme.reset, repl_theme.dim, repl_theme.reset },
-    );
+    printReplBanner(&out_w.interface, &repl_theme, provider.name, provider.activeModelName(), sid, stdout_file.isTty(io) catch false);
     try out_w.interface.flush();
 
     // On a terminal, keystrokes go through the line editor: a cooked TTY hands
@@ -2663,6 +2754,7 @@ fn cmdRevert(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const id = opts.task orelse return error.MissingArg;
     var hist = history.History.init(gpa, io, std.Io.Dir.cwd(), "state");
+    defer hist.deinit();
     try hist.revert(id);
 }
 
@@ -5564,17 +5656,32 @@ test "parseChoices stays quiet when the answer is not a choice question" {
 test "a bare invocation starts the REPL, and --help still asks for help" {
     // parse() takes the raw argv, so every case here starts with the program
     // name the shell passes.
-    try std.testing.expectEqual(Command.repl, (try parse(&.{"clanker"})).command);
+    try std.testing.expectEqual(Command.repl, (try parse(&.{"clanker"}, null)).command);
     // Global flags alone are still a REPL start, not a usage error.
-    const with_flags = try parse(&.{ "clanker", "--provider", "vertex-opus" });
+    const with_flags = try parse(&.{ "clanker", "--provider", "vertex-opus" }, null);
     try std.testing.expectEqual(Command.repl, with_flags.command);
     try std.testing.expectEqualStrings("vertex-opus", with_flags.provider.?);
     // An explicit command still wins, and help stays reachable.
-    try std.testing.expectEqual(Command.run, (try parse(&.{ "clanker", "run", "hi" })).command);
-    try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" })).command);
-    try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" })).command);
+    try std.testing.expectEqual(Command.run, (try parse(&.{ "clanker", "run", "hi" }, null)).command);
+    try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" }, null)).command);
+    try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" }, null)).command);
     // A typo is still a typo, not a silent REPL start.
-    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }));
+    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, null));
+}
+
+test "parse reports the offending token via the diag out-param" {
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, &diag));
+    try std.testing.expectEqualStrings("runn", diag);
+
+    try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "--bogus" }, &diag));
+    try std.testing.expectEqualStrings("--bogus", diag);
+
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "--provider" }, &diag));
+    try std.testing.expectEqualStrings("--provider", diag);
+
+    try std.testing.expectError(error.BadIters, parse(&.{ "clanker", "improve-self", "--iters", "abc", "x" }, &diag));
+    try std.testing.expectEqualStrings("abc", diag);
 }
 
 test "the run request body carries optional images, and the cap counts decoded bytes" {

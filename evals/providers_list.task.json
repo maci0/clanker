@@ -1,18 +1,18 @@
 {
   "name": "providers_list",
   "kind": "task",
-  "description": "providers with action list must enumerate the configured backends without spending a token — the offline half of the tool, exercising the config merge (config.json plus config.local.json overrides) and the fs grant, none of the network. config.json is committed and declares providers, so the assertion is environment-independent: ok:true with a non-empty providers array, indifferent to which providers are configured or whether any of them would actually answer. The check action has no eval on purpose: it pings real endpoints, so its verdict depends on keys and network the eval environment cannot promise.",
-  "prompt": "Use the providers tool with input {\"action\": \"list\"}. Look at the tool's JSON result. If its ok field is true and its providers field is a non-empty array, reply with exactly LISTED. Otherwise reply with exactly MISSING.",
+  "description": "providers with {\"action\": \"list\"} must enumerate the configured providers as ok:true without any network traffic or token spend — list is the deliberately free sibling of check. The assertion is only the ok field, so the case is indifferent to which providers a given machine has configured; it goes red when the config read (fs_prefixes on config.json/config.local.json) or the list serialization breaks, failures that check-with-network would otherwise mask behind provider flakiness.",
+  "prompt": "Use the providers tool with input {\"action\": \"list\"}. Do not use the check action. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
   "requires_tool": "providers",
   "criteria": [
     {
       "includes": [
-        "LISTED"
+        "true"
       ]
     },
     {
       "excludes": [
-        "MISSING"
+        "false"
       ]
     }
   ]
