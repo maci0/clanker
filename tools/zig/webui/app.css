@@ -209,7 +209,7 @@ button.chip-btn {
 }
 button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
 
-main { flex: 1; width: 100%; max-width: 84rem; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-6); }
+main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-6); }
 
 /* ---- tabs: one view at a time ----
    Everything used to be stacked in one column, so reaching Tools meant
