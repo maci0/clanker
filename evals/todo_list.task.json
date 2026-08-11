@@ -1,8 +1,8 @@
 {
   "name": "todo_list",
   "kind": "task",
-  "description": "todo_list must answer in one of its two documented shapes: ok:true with the run's private checklist when the host wired one in (sub-agent runs), or ok:false explaining that private todo lists exist only inside sub-agent runs (ADR 0002 routes a room-less todo_* op to the private list, and an eval task is a top-level run with none). Both are legible, correct answers; what the eval refuses is a third shape — a trap, a raw host error, or the removed room-scoped path coming back from the dead. The mutating siblings todo_add/todo_claim/todo_close share the exact same module, config pinning and host routing, so this one read-only probe covers the family's wiring.",
-  "prompt": "Use the todo_list tool with input {}. Look at the tool's JSON result. If its ok field is true, or its ok field is false and its error field explains that private todo lists exist only inside sub-agent runs, reply with exactly SHAPE_OK. For any other result reply with exactly SHAPE_BAD.",
+  "description": "todo_list must return ok:true with the current run's private checklist. Agent.run wires a fresh in-memory list for every top-level and nested run; ADR 0002 routes a room-less todo_* op there. A missing list is a host wiring defect, never an instruction to revive the removed room-scoped todo path. The mutating siblings todo_add/todo_claim/todo_close share the same module, config pinning and host routing, so this read-only probe covers the family's wiring.",
+  "prompt": "Use the todo_list tool with input {}. Look at the tool's JSON result. If its ok field is true, reply with exactly SHAPE_OK. For any other result reply with exactly SHAPE_BAD.",
   "requires_tool": "todo_list",
   "criteria": [
     {
