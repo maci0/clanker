@@ -533,6 +533,31 @@ test "fmtGate and formatFiles short-circuit when there is nothing to format" {
     try std.testing.expect(format_result.ok);
 }
 
+test "fmtGate catches unformatted code and formatFiles fixes it" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Deliberately unformatted: zig fmt would insert a space before `1`.
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x =1;\n" });
+
+    var check = try fmtGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    defer check.deinit(gpa);
+    try std.testing.expect(!check.ok);
+
+    var formatted = try formatFiles(gpa, io, tmp.dir, &.{"bad.zig"});
+    defer formatted.deinit(gpa);
+    try std.testing.expect(formatted.ok);
+
+    var check2 = try fmtGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    defer check2.deinit(gpa);
+    try std.testing.expect(check2.ok);
+}
+
 fn runZig(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, args: []const []const u8, label: []const u8) !GateResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
