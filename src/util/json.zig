@@ -39,6 +39,23 @@ pub fn floatField(obj: std.json.ObjectMap, key: []const u8) !f64 {
     };
 }
 
+/// Returns a slice of string values for `key`, or an error if absent or not an array of strings.
+pub fn strListField(alloc: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ![]const []const u8 {
+    const v = obj.get(key) orelse return error.MissingField;
+    const arr = switch (v) {
+        .array => |a| a,
+        else => return error.FieldNotStringArray,
+    };
+    const strings = try alloc.alloc([]const u8, arr.items.len);
+    for (arr.items, 0..) |item, i| {
+        strings[i] = switch (item) {
+            .string => |s| s,
+            else => return error.FieldNotStringArray,
+        };
+    }
+    return strings;
+}
+
 test "json field helpers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -65,4 +82,22 @@ test "json field helpers" {
     try std.testing.expectEqual(@as(f64, 1.5), try floatField(obj, "ratio"));
     try std.testing.expectError(error.FieldNotNumber, floatField(obj, "name"));
     try std.testing.expectError(error.MissingField, floatField(obj, "missing"));
+}
+
+test "strListField: string arrays, non-array, missing key" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"list\":[\"a\",\"b\"]}", .{});
+    const obj = parsed.object;
+    const list = try strListField(arena, obj, "list");
+    try std.testing.expectEqual(@as(usize, 2), list.len);
+    try std.testing.expectEqualStrings("a", list[0]);
+    try std.testing.expectEqualStrings("b", list[1]);
+
+    const parsed2 = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"list\":\"nope\"}", .{});
+    try std.testing.expectError(error.FieldNotStringArray, strListField(arena, parsed2.object, "list"));
+
+    try std.testing.expectError(error.MissingField, strListField(arena, parsed.object, "nope"));
 }
