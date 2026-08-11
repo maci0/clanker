@@ -178,6 +178,19 @@ const Model = struct {
     transcript_top: u16 = 0,
     transcript_bottom: u16 = 0,
 
+    /// Submitted-task history for the Up/Down recall every REPL has.
+    /// `hist_idx == history.len` means "editing a fresh line", and the
+    /// in-progress draft is parked in `hist_draft` while browsing so Esc
+    /// (which clears the field) can't destroy unsent text.
+    history: std.ArrayList([]const u8) = .empty,
+    hist_idx: usize = 0,
+    hist_draft: []const u8 = "",
+
+    /// Non-null while an OSC 52 clipboard read is awaited (some terminals
+    /// answer on a delay, some never answer). A second paste shortcut while
+    /// pending re-sends the request, which is harmless.
+    awaiting_clipboard: bool = false,
+
     fn widget(self: *Model) vxfw.Widget {
         return .{
             .userdata = self,
@@ -246,6 +259,9 @@ const Model = struct {
         }
 
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
+        self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
+        self.hist_idx = self.history.items.len;
+        self.hist_draft = "";
 
         g_mutex.lockUncancelable(g_io);
         g_streaming = true;
@@ -276,6 +292,33 @@ const Model = struct {
                 ctx.redraw = true;
             },
             .key_press => |key| {
+                // Terminal convention: Ctrl+Shift+C copies the current
+                // selection (mouse-drag, same path as a drag release),
+                // falling back to the whole input line. Plain Ctrl+C keeps
+                // its readline meaning (interrupt the turn, quit when idle).
+                if (key.matches('c', .{ .ctrl = true, .shift = true })) {
+                    try self.copySelectionOrInput(ctx);
+                    return ctx.consumeAndRedraw();
+                }
+                // Paste from the system clipboard. Two routes, tried in
+                // order: Ctrl+Shift+V asks the terminal for its OSC 52
+                // clipboard (arrives as a .paste event, which is handled
+                // below), and Shift+Insert additionally forces a bracketed
+                // paste so terminals that answer neither still do something
+                // paste-like. Ctrl+V is deliberately not bound: it is the
+                // readline "quote next character" prefix and the TextField
+                // treats it that way.
+                if (key.matches('v', .{ .ctrl = true, .shift = true })) {
+                    try ctx.requestSystemClipboard();
+                    self.awaiting_clipboard = true;
+                    return ctx.consumeEvent();
+                }
+                if (key.matches(vaxis.Key.insert, .{ .shift = true })) {
+                    self.in_paste = true;
+                    try ctx.requestSystemClipboard();
+                    self.awaiting_clipboard = true;
+                    return ctx.consumeEvent();
+                }
                 if (key.matches('c', .{ .ctrl = true })) {
                     g_mutex.lockUncancelable(g_io);
                     const streaming = g_streaming;
@@ -286,6 +329,22 @@ const Model = struct {
                         ctx.quit = true;
                     }
                     return;
+                }
+                // Readline-style line kill, including what Ctrl+U removes:
+                // yanked by Ctrl+Y, the one emacs chord TextField doesn't
+                // already implement.
+                if (key.matches('y', .{ .ctrl = true })) {
+                    self.yankInputToClipboard(ctx) catch {};
+                    return ctx.consumeAndRedraw();
+                }
+                // REPL history recall.
+                if (key.matches(vaxis.Key.up, .{})) {
+                    self.historyPrev();
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches(vaxis.Key.down, .{})) {
+                    self.historyNext();
+                    return ctx.consumeAndRedraw();
                 }
                 if (key.matches(vaxis.Key.enter, .{})) {
                     if (self.in_paste) {
@@ -300,6 +359,19 @@ const Model = struct {
             },
             .paste_start => self.in_paste = true,
             .paste_end => self.in_paste = false,
+            // Answer to our OSC 52 clipboard request (Ctrl+Shift+V). The
+            // payload is terminal-supplied text, so newlines are folded to
+            // spaces — the TextField is single-line and a raw newline would
+            // otherwise submit mid-paste.
+            .paste => |text| {
+                defer ctx.alloc.free(text);
+                self.in_paste = false;
+                self.awaiting_clipboard = false;
+                const flat = singleLinePaste(ctx.alloc, text);
+                defer if (flat.ptr != text.ptr) ctx.alloc.free(flat);
+                try self.text_field.insertSliceAtCursor(flat);
+                ctx.redraw = true;
+            },
             .mouse => |m| try self.handleMouse(ctx, m),
             else => try self.text_field.handleEvent(ctx, event),
         }
@@ -343,6 +415,70 @@ const Model = struct {
             },
             .motion => {},
         }
+    }
+
+    /// Ctrl+Shift+C: copy the active mouse-drag selection if there is one
+    /// (identical to what a drag release copies), else the current input
+    /// line, so the keychord is never a no-op. Clears the selection
+    /// afterwards, mirroring how terminal emulators drop the highlight on
+    /// copy.
+    fn copySelectionOrInput(self: *Model, ctx: *vxfw.EventContext) !void {
+        if (self.has_selection) {
+            if (self.last_surface) |surface| {
+                const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch "";
+                defer if (text.len > 0) ctx.alloc.free(text);
+                if (text.len > 0) try ctx.copyToClipboard(text);
+            }
+            self.has_selection = false;
+            ctx.redraw = true;
+            return;
+        }
+        const input = self.text_field.buf.dupe() catch return;
+        defer self.text_field.buf.allocator.free(input);
+        if (input.len > 0) try ctx.copyToClipboard(input);
+    }
+
+    /// Ctrl+Y: send the whole input line to the system clipboard, so the
+    /// kill ring TextField already maintains (Ctrl+U/Ctrl+K/Ctrl+W deletions)
+    /// and any typed-but-unsent text is one OSC 52 away from the outside
+    /// world.
+    fn yankInputToClipboard(self: *Model, ctx: *vxfw.EventContext) !void {
+        const input = self.text_field.buf.dupe() catch return;
+        defer self.text_field.buf.allocator.free(input);
+        if (input.len > 0) try ctx.copyToClipboard(input);
+    }
+
+    /// Up: walk one entry older in the history. First step parks the live
+    /// input as the draft to come back to.
+    fn historyPrev(self: *Model) void {
+        const n = self.history.items.len;
+        if (n == 0 or self.hist_idx == 0) return;
+        if (self.hist_idx == n) {
+            const draft = self.text_field.buf.dupe() catch return;
+            self.arena.free(self.hist_draft);
+            self.hist_draft = self.arena.dupe(u8, draft) catch return;
+            self.text_field.buf.allocator.free(draft);
+        }
+        self.hist_idx -= 1;
+        self.loadInputFrom(self.history.items[self.hist_idx]);
+    }
+
+    /// Down: walk one entry newer; past the newest entry restores the draft
+    /// that was parked when browsing began.
+    fn historyNext(self: *Model) void {
+        const n = self.history.items.len;
+        if (self.hist_idx >= n) return;
+        self.hist_idx += 1;
+        if (self.hist_idx == n) {
+            self.loadInputFrom(self.hist_draft);
+        } else {
+            self.loadInputFrom(self.history.items[self.hist_idx]);
+        }
+    }
+
+    fn loadInputFrom(self: *Model, text: []const u8) void {
+        self.text_field.clearRetainingCapacity();
+        self.text_field.insertSliceAtCursor(text) catch {};
     }
 
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
@@ -607,6 +743,24 @@ test "isQuitCommand recognizes the REPL quit set" {
     try std.testing.expect(!isQuitCommand("exit handling is next"));
     try std.testing.expect(!isQuitCommand(""));
     try std.testing.expect(!isQuitCommand("please exit"));
+}
+
+/// Folds CR/LF runs in clipboard text to single spaces so a multi-line
+/// paste lands on one line of the single-line TextField instead of
+/// submitting early (Enter submits). Returns the input unchanged when
+/// there's nothing to fold — caller frees only when the pointer differs.
+fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
+    var out: ?[]u8 = null;
+    defer if (out) |o| alloc.free(o);
+    for (text, 0..) |c, i| {
+        if (c != '\r' and c != '\n') continue;
+        if (out == null) {
+            const buf = alloc.dupe(u8, text) catch return text;
+            out = buf;
+        }
+        out.?[i] = ' ';
+    }
+    return if (out) |o| o else text;
 }
 
 pub fn cmdReplVaxis(init: std.process.Init) !void {
