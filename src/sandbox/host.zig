@@ -52,9 +52,6 @@ pub const Err = struct {
     pub const mismatch: u32 = 6;
 };
 
-/// Per-tool sandbox policy, owned by the harness.
-/// Runs a nested sub-agent. The harness wires this in when modules.subagents
-/// is enabled; tools call it via ck_subagent.
 /// Asks the human a multiple-choice question and returns the option they
 /// picked. Wired in only by the interactive REPL: a piped or scripted run has
 /// nobody to ask, so the tool reports that instead of blocking forever.
@@ -63,6 +60,8 @@ pub const AskFn = *const fn (
     options: []const []const u8,
 ) anyerror![]const u8;
 
+/// Runs a nested sub-agent. The harness wires this in when modules.subagents
+/// is enabled; tools call it via ck_subagent.
 pub const SubagentRunner = *const fn (
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -73,6 +72,7 @@ pub const SubagentRunner = *const fn (
     brief: subagent_mod.Brief,
 ) anyerror![]const u8;
 
+/// Per-tool sandbox policy, owned by the harness.
 pub const Sandbox = struct {
     gpa: std.mem.Allocator,
     io: std.Io,

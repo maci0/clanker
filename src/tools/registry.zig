@@ -132,7 +132,7 @@ pub const Registry = struct {
                 log.log(.warn, "cannot read tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
                 continue;
             };
-            const tool = parseDescriptor(arena, raw, tools_dir) catch |err| {
+            const tool = parseDescriptor(arena, raw) catch |err| {
                 log.log(.warn, "invalid tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
                 continue;
             };
@@ -396,7 +396,7 @@ pub const Registry = struct {
         return json.Value{ .object = out };
     }
 
-    fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8, tools_dir: []const u8) !Tool {
+    fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8) !Tool {
         const v = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
         const obj = switch (v) {
             .object => |o| o,
@@ -412,7 +412,6 @@ pub const Registry = struct {
             // schema is what every tool in this registry has.
             .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
         };
-        _ = tools_dir;
         if (obj.get("check")) |c| {
             if (c == .bool) t.check = c.bool;
         }
@@ -716,7 +715,7 @@ test "a descriptor schema always reaches the provider with a type" {
         \\{ "name": "read_file", "description": "read", "wasm": "read_file.wasm",
         \\  "parameters": { "properties": { "path": { "type": "string" } }, "required": ["path"] } }
     ;
-    const t = try Registry.parseDescriptor(arena, openai_style, "tools");
+    const t = try Registry.parseDescriptor(arena, openai_style);
     try std.testing.expectEqualStrings("object", t.input_schema.object.get("type").?.string);
     // The rest of the schema survives the normalization.
     try std.testing.expect(t.input_schema.object.get("properties") != null);
@@ -726,7 +725,7 @@ test "a descriptor schema always reaches the provider with a type" {
     const bare =
         \\{ "name": "noargs", "description": "d", "wasm": "n.wasm" }
     ;
-    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(b.input_schema == .object);
 }
 
@@ -747,7 +746,7 @@ test "every shipped manifest carries a schema the provider accepts" {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
         const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
-        const t = Registry.parseDescriptor(arena, raw, "tools") catch |err| {
+        const t = Registry.parseDescriptor(arena, raw) catch |err| {
             std.debug.print("manifest {s}: {s}\n", .{ entry.name, @errorName(err) });
             return err;
         };
@@ -794,7 +793,7 @@ test "a tool that calls the model says so in its descriptor" {
         const stem = entry.name[0 .. entry.name.len - ".zig".len];
         const manifest = try std.fmt.allocPrint(arena, "{s}.tool.json", .{stem});
         const raw = man_dir.readFileAlloc(io, manifest, arena, .limited(1 << 20)) catch continue;
-        const t = try Registry.parseDescriptor(arena, raw, "tools");
+        const t = try Registry.parseDescriptor(arena, raw);
         if (!t.llm and !t.sequential) {
             std.debug.print("{s} calls the model but its descriptor sets neither llm nor sequential\n", .{manifest});
             return error.ModelCallerNotDeclared;
@@ -810,7 +809,7 @@ test "descriptor statusline flag parses and defaults off" {
     const raw =
         \\{ "name": "sl", "description": "d", "wasm": "sl.wasm", "input_schema": {}, "statusline": true, "internal": true }
     ;
-    const t = try Registry.parseDescriptor(arena, raw, "tools");
+    const t = try Registry.parseDescriptor(arena, raw);
     try std.testing.expect(t.statusline);
     try std.testing.expect(t.internal);
 
@@ -819,7 +818,7 @@ test "descriptor statusline flag parses and defaults off" {
     const bare =
         \\{ "name": "plain", "description": "d", "wasm": "p.wasm" }
     ;
-    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(!b.statusline);
     try std.testing.expect(!b.internal);
 }
@@ -832,13 +831,13 @@ test "descriptor turn_hook flag parses and defaults off" {
     const raw =
         \\{ "name": "th", "description": "d", "wasm": "th.wasm", "input_schema": {}, "turn_hook": true, "internal": true }
     ;
-    const t = try Registry.parseDescriptor(arena, raw, "tools");
+    const t = try Registry.parseDescriptor(arena, raw);
     try std.testing.expect(t.turn_hook);
 
     const bare =
         \\{ "name": "plain2", "description": "d", "wasm": "p.wasm" }
     ;
-    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(!b.turn_hook);
 }
 
