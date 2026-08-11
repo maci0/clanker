@@ -1186,13 +1186,22 @@ pub const Agent = struct {
                 }
             }
             if (end > 0) {
-                s = s[start..end];
-                // If the model wrapped a bare value in {"answer": ...}, unwrap
-                // to the exact value. Only triggers when an "answer" field is
-                // present, so a user-requested JSON object is never altered.
-                if (unwrapJsonAnswer(self.arena, s)) |unwrapped| {
-                    s = unwrapped;
-                }
+                const candidate = s[start..end];
+                // Brace-balanced is not the same as JSON. `fn add(a: i32, b:
+                // i32) i32 { return a + b; }` balances, and taking it as the
+                // answer deleted the signature from every code answer that got
+                // this far — the stored reply became `{ return a + b; }`. Only
+                // a span that actually parses is treated as the value.
+                if (std.json.parseFromSliceLeaky(std.json.Value, self.arena, candidate, .{})) |_| {
+                    s = candidate;
+                    // If the model wrapped a bare value in {"answer": ...},
+                    // unwrap to the exact value. Only triggers when an "answer"
+                    // field is present, so a user-requested JSON object is
+                    // never altered.
+                    if (unwrapJsonAnswer(self.arena, s)) |unwrapped| {
+                        s = unwrapped;
+                    }
+                } else |_| {}
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
@@ -2587,6 +2596,44 @@ test "finalAnswer strips a prose prefix to the exact answer" {
     agent.arena = arena;
 
     const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "The answer is clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "finalAnswer keeps code that happens to balance its braces" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    // A fenced function is brace-balanced, so the JSON extractor used to take
+    // everything from the first `{` and hand back `{ return a + b; }` — the
+    // signature was deleted from every code answer that reached it.
+    const resp = types.ChatResponse{ .message = .{
+        .role = .assistant,
+        .content = "```zig\npub fn add(a: i32, b: i32) i32 {\n    return a + b;\n}\n```",
+    } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings(
+        "pub fn add(a: i32, b: i32) i32 {\n    return a + b;\n}",
+        ans.message.content.?,
+    );
+}
+
+test "finalAnswer still unwraps a real JSON answer object" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{
+        .role = .assistant,
+        .content = "Here you go: {\"answer\": \"clanker online\"}",
+    } };
     const ans = try agent.finalAnswer(resp);
     try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
 }
