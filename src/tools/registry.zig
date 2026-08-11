@@ -163,6 +163,11 @@ pub const Registry = struct {
             const t = kv.value_ptr;
             if (t.statusline and t.enabled) try out.append(arena, t);
         }
+        std.mem.sort(*const Tool, out.items, {}, struct {
+            fn lt(_: void, a: *const Tool, b: *const Tool) bool {
+                return std.mem.order(u8, a.name, b.name) == .lt;
+            }
+        }.lt);
         return out.toOwnedSlice(arena);
     }
 
