@@ -1010,7 +1010,13 @@ pub const Agent = struct {
         {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
-            while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
+            while (line_it.next()) |line| {
+                const trimmed = std.mem.trim(u8, line, " \t\r\n");
+                if (trimmed.len > 0) {
+                    last_line = trimmed;
+                    break;
+                }
+            }
             if (last_line.len > 0) {
                 // Strip common preamble prefixes repeatedly (e.g. "Here is your
                 // answer: The result is 42") so the exact-match answer survives.
@@ -1997,6 +2003,19 @@ test "finalAnswer strips a prose prefix to the exact answer" {
     agent.arena = arena;
 
     const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "The answer is clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "finalAnswer prefers the first non-empty line over trailing prose" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online\n\nSome trailing explanation that must not replace the answer." } };
     const ans = try agent.finalAnswer(resp);
     try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
 }
