@@ -70,6 +70,10 @@ So, when adding a capability:
   field points at whichever path. Zig is the default because the harness is
   Zig and `lib.zig` carries the host bindings; reach for AssemblyScript when
   the logic is easier to express in TypeScript or already exists there.
+  `clanker gate` never rebuilds `tools/ts/`, so a `.ts` edit not followed by
+  `npm run build:all` ships a stale `tools/bin/*.wasm` silently; run
+  `tools/ts/verify.sh` (rebuilds into a scratch dir and diffs against what is
+  committed) before committing a `tools/ts/` change.
 - Migrate what is already native when you touch it. `patch_apply`, `peers`, and
   `board` each began as `src/` code and moved out, deleting more from the
   harness than they added as guests.

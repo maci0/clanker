@@ -213,8 +213,9 @@ Tools are discovered by the registry (`src/tools/registry.zig`) from the configu
 | `zig build test` | Run the unit and integration tests |
 | `zig fmt --check src/ tools/zig/` | Verify formatting |
 | `clanker gate` | Run all of the above the way the self-improvement gate does |
+| `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/bin/*.wasm`, to catch drift `clanker gate` cannot see (requires node) |
 
-All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool.
+All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool. `tools/ts/verify.sh` is not part of `clanker gate` (a node toolchain is not guaranteed) and must be run by hand after editing `tools/ts/`.
 
 ## Tool catalog
 
