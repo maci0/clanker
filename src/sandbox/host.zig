@@ -1455,8 +1455,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const argv_json = sliceOf(bytes, argv_ptr, argv_len) orelse return Err.invalid;
 
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const parse_arena = arena_state.allocator();
+
     // parse {cmd, args}
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, argv_json, .{}) catch return Err.invalid;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, parse_arena, argv_json, .{}) catch return Err.invalid;
     const obj = switch (parsed) {
         .object => |o| o,
         else => return Err.invalid,
