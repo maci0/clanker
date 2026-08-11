@@ -241,6 +241,10 @@
         <button type="submit" class="secondary" id="card-add">Add card</button>
       </form>
       <div class="board" id="board"></div>
+      <!-- A sibling, not a child: inside .board it became a flex item after the
+           last column and needed sideways scrolling to find, which is the
+           opposite of what a first-run message is for. -->
+      <p class="run-empty" id="board-empty" hidden>No cards yet. Anything added here is in state/board.json, which every clanker can read.</p>
       <div id="card-detail" class="run-detail" role="region" aria-label="Selected card" hidden></div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
     </section>

@@ -62,6 +62,7 @@ var el = {
   sessionCopy: document.getElementById("session-copy"),
   runCopy: document.getElementById("run-copy"),
   board: document.getElementById("board"),
+  boardEmpty: document.getElementById("board-empty"),
   cardForm: document.getElementById("card-form"),
   cardTitle: document.getElementById("card-title"),
   cardColumn: document.getElementById("card-column"),
@@ -169,6 +170,21 @@ function scrollTo(node, block) {
    exactly what `clanker serve` is when reached over a LAN address rather
    than localhost. Failing silently there left a dead button, so the text
    gets selected instead and the label says what to press. */
+/* The server explains itself — "sessions module disabled", "no such model for
+   that provider", "an image exceeds the 4 MB limit" — and the page used to
+   replace all of it with a status code, so a switched-off module read as a
+   broken page. Every response goes through here. */
+function readJson(r) {
+  return r.json().then(function (d) {
+    if (!r.ok) throw new Error((d && d.error) || "HTTP " + r.status);
+    return d;
+  }, function () {
+    // A body that is not JSON at all still has to fail with something useful.
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return {};
+  });
+}
+
 function copyText(text, btn, restoreLabel, selectTarget) {
   function restore() {
     window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
@@ -243,6 +259,10 @@ el.newChat.addEventListener("click", function () {
   sessionId = newSessionId();
   try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
   el.transcript.textContent = "";
+  // createTurn hides the empty state and nothing ever put it back, so after
+  // one run plus New chat the area became the ambiguity the empty state was
+  // written to remove.
+  syncTranscriptEmpty();
   renderSessionChip();
   // The new conversation has no server-side record until its first turn is
   // saved, so it is offered as a pending option rather than waiting for a
@@ -456,10 +476,7 @@ function syncTranscriptEmpty() {
 
 function loadSessions() {
   return fetch("/api/sessions")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       renderSessionOptions(data.sessions || []);
     })
@@ -476,15 +493,18 @@ function loadSessions() {
 function renderSessionHistory(messages) {
   el.transcript.textContent = "";
   var pendingTurn = null;
+  var lastTask = null;
   messages.forEach(function (m) {
     if (m.role === "user") {
       // A question with no reply before the next one: close it off rather
       // than letting the next answer attach to the wrong question.
       if (pendingTurn) markTurnUnanswered(pendingTurn);
+      lastTask = m.content;
       pendingTurn = createTurn(m.content);
       return;
     }
     if (!pendingTurn) {
+      lastTask = null;
       pendingTurn = createTurn("(question not in this transcript)");
       var head = pendingTurn.root.querySelector(".turn-you");
       head.setAttribute("data-orphan", "true");
@@ -492,7 +512,9 @@ function renderSessionHistory(messages) {
     }
     appendText(pendingTurn, m.content, false);
     finalizeAnswer(pendingTurn);
-    renderStats(pendingTurn, {}, null);
+    // The task is passed back so Run again and Edit & resend survive a reload;
+    // the numbers cannot, because they were never saved with the session.
+    renderStats(pendingTurn, {}, lastTask);
     pendingTurn = null;
   });
   if (pendingTurn) markTurnUnanswered(pendingTurn);
@@ -532,10 +554,7 @@ function switchSession(id) {
   el.transcript.textContent = "";
   el.sessionStatus.textContent = "Loading conversation…";
   fetch("/api/sessions/" + encodeURIComponent(id))
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       renderSessionHistory(data.messages || []);
       syncTranscriptEmpty();
@@ -612,8 +631,7 @@ el.sessionRename.addEventListener("click", function () {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title: next })
-  }).then(function (r) {
-    if (!r.ok) throw new Error("HTTP " + r.status);
+  }).then(readJson).then(function () {
     el.sessionStatus.textContent = "Renamed to " + next + ".";
     return loadSessions();
   }).catch(function (err) {
@@ -633,8 +651,8 @@ el.sessionDelete.addEventListener("click", function () {
   if (!window.confirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.")) return;
   el.sessionDelete.disabled = true;
   fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
+    .then(readJson)
+    .then(function () {
       el.sessionStatus.textContent = "Deleted. Started a new conversation.";
       sessionId = newSessionId();
       try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
@@ -1172,10 +1190,7 @@ function renderStatus(status) {
 
 function loadStatus() {
   return fetch("/api/status")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(renderStatus)
     .catch(function () { renderStatus(null); });
 }
@@ -1451,10 +1466,7 @@ function announceRunMatches(query, count) {
 
 function loadRuns() {
   return fetch("/api/runs")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (runs) {
       allRuns = runs;
       var wanted = renderRunOptions(el.runFilter.value);
@@ -1479,10 +1491,7 @@ function showRunsError(message) {
 
 function loadRun(id) {
   return fetch("/api/runs/" + encodeURIComponent(id))
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(drawRun)
     .catch(function (err) {
       showRunsError("Could not load that run: " + err.message);
@@ -2114,10 +2123,7 @@ function renderChatRooms(rooms) {
 
 function loadChatRooms() {
   return fetch("/api/chat/rooms")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       subscribedRooms = data.subscribed || [];
       var wanted = renderChatRooms(data.rooms || []);
@@ -2177,10 +2183,7 @@ function joinIfNeeded(room) {
    once that happens. */
 function pollChat(room) {
   return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       chatBackoff = chat_poll_base_ms;
       // Leaving the failure notice up after recovery would keep promising a
@@ -2348,8 +2351,7 @@ el.chatForm.addEventListener("submit", function (e) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ room: room, text: text })
-  }).then(function (r) {
-    if (!r.ok) throw new Error("HTTP " + r.status);
+  }).then(readJson).then(function () {
     el.chatText.value = "";
     return pollChat(room);
   }).catch(function (err) {
@@ -2449,10 +2451,7 @@ function renderUsage(rows) {
 
 function loadUsage() {
   return fetch("/api/stats")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) { renderUsage(data.stats || []); })
     .catch(function (err) {
       el.usage.textContent = "";
@@ -2561,10 +2560,7 @@ function renderGoals(goals) {
 
 function loadGoals() {
   return fetch("/api/goals")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) { renderGoals(data.goals || []); })
     .catch(function (err) {
       el.goals.textContent = "";
@@ -2856,8 +2852,10 @@ function toggleTool(t, btn) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: t.name, on: want })
   }).then(function (r) {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.text();
+    return r.text().then(function (text) {
+      if (!r.ok) throw new Error(String(text).trim() || "HTTP " + r.status);
+      return text;
+    });
   }).then(function (reply) {
     t.enabled = want;
     btn.dataset.on = String(want);
@@ -2877,10 +2875,7 @@ function toggleTool(t, btn) {
 
 function loadTools() {
   return fetch("/api/plugins")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       allTools = data.plugins || [];
       renderTools(el.toolFilter.value);
@@ -2936,6 +2931,37 @@ var viewLoaders = {
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
 
+/* An in-flight panel, an empty panel and a hung panel were pixel-identical.
+   Each renderer overwrites this on success and each catch replaces it with the
+   failure, so one line is enough. */
+var VIEW_CONTAINERS = {
+  runs: "run-graph",
+  rooms: "chat-log",
+  goals: "goals",
+  board: "board",
+  tools: "tools",
+  system: "usage"
+};
+
+function markLoading(name) {
+  var id = VIEW_CONTAINERS[name];
+  if (!id) return;
+  var node = document.getElementById(id);
+  if (!node || node.childNodes.length) return;
+  node.setAttribute("aria-busy", "true");
+  var p = document.createElement("p");
+  p.className = "meta";
+  p.textContent = "Loading…";
+  node.appendChild(p);
+}
+
+function clearLoading(name) {
+  var id = VIEW_CONTAINERS[name];
+  if (!id) return;
+  var node = document.getElementById(id);
+  if (node) node.removeAttribute("aria-busy");
+}
+
 function showView(name, focusPanel) {
   if (VIEWS.indexOf(name) === -1) name = "chat";
   VIEWS.forEach(function (v) {
@@ -2953,8 +2979,19 @@ function showView(name, focusPanel) {
   el.railContext.hidden = name !== "chat";
   if (focusPanel) document.getElementById("view-" + name).focus();
   if (!viewLoaded[name] && viewLoaders[name]) {
-    viewLoaded[name] = true;
-    viewLoaders[name]();
+    // Marked loaded only once it has loaded: a view whose first fetch failed
+    // used to stay broken for the life of the page, however many times you
+    // came back to it.
+    markLoading(name);
+    var loading = viewLoaders[name]();
+    if (loading && typeof loading.then === "function") {
+      loading.then(function () {
+        viewLoaded[name] = true;
+        clearLoading(name);
+      }, function () { clearLoading(name); });
+    } else {
+      viewLoaded[name] = true;
+    }
   }
 }
 
@@ -3026,10 +3063,7 @@ var providerCache = [];
 
 function loadProviders() {
   return fetch("/api/providers")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (d) {
       providerCache = d.providers || [];
       el.modelSelect.textContent = "";
@@ -3192,10 +3226,7 @@ window.addEventListener("resize", syncScrollButton);
 
 el.sessionExportJson.addEventListener("click", function () {
   fetch("/api/sessions/" + encodeURIComponent(sessionId))
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       downloadText("clanker-" + sessionId.slice(0, 8) + ".json", JSON.stringify(data, null, 2), "application/json");
       el.sessionStatus.textContent = "Exported as JSON.";
@@ -3278,7 +3309,7 @@ function postGoal(payload, status) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   })
-    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(readJson)
     .then(function (d) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
@@ -3468,7 +3499,7 @@ el.sessionCompact.addEventListener("click", function () {
   }
   el.sessionCompact.disabled = true;
   fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
-    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(readJson)
     .then(function (d) {
       el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
       return loadSessions().then(function () {
@@ -3548,10 +3579,7 @@ var openCardId = null;
 
 function loadBoard() {
   return fetch("/api/board")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (d) { renderBoard(d.board || { columns: [], cards: [] }); })
     .catch(function (err) { el.boardStatus.textContent = "Could not load the board: " + err.message; });
 }
@@ -3562,7 +3590,7 @@ function postBoard(payload, status) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   })
-    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(readJson)
     .then(function (d) {
       renderBoard(d.board || board);
       if (status) el.boardStatus.textContent = status;
@@ -3692,12 +3720,7 @@ function renderBoard(next) {
     closeCardDetail();
   }
 
-  if (!board.cards.length) {
-    var none = document.createElement("p");
-    none.className = "run-empty";
-    none.textContent = "No cards yet. Anything added here is in state/board.json, which every clanker can read.";
-    el.board.appendChild(none);
-  }
+  el.boardEmpty.hidden = board.cards.length > 0;
 }
 
 function cardNode(c) {
@@ -4123,7 +4146,21 @@ el.cardForm.addEventListener("submit", function (e) {
   });
 });
 
-el.boardRefresh.addEventListener("click", function () { loadBoard(); });
+/* Refresh buttons that do not disable can be fired twice and say nothing while
+   they work; five of the seven already did this. */
+function wireRefresh(button, load) {
+  button.addEventListener("click", function () {
+    button.disabled = true;
+    var done = load();
+    if (done && typeof done.then === "function") {
+      done.then(function () { button.disabled = false; }, function () { button.disabled = false; });
+    } else {
+      button.disabled = false;
+    }
+  });
+}
+
+wireRefresh(el.boardRefresh, loadBoard);
 
 
 /* ---------- web UI plugins ----------
@@ -4254,10 +4291,7 @@ function loadPluginAssets(list) {
 
 function loadWebuiPlugins() {
   return fetch("/api/webui/plugins")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (d) {
       renderWebuiPlugins(d.plugins || []);
       return loadPluginAssets(d.plugins || []);
@@ -4289,7 +4323,7 @@ function renderWebuiPlugins(list) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: p.name, enabled: box.checked })
       })
-        .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+        .then(readJson)
         .then(function (d) {
           var nowOn = box.checked;
           renderWebuiPlugins(d.plugins || []);
@@ -4339,10 +4373,7 @@ var roomTodoRooms = [];
 
 function loadRoomTodos() {
   return fetch("/api/chat/rooms")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (d) {
       // The listing calls the field "room", not "name".
       roomTodoRooms = (d.rooms || []).map(function (r) { return typeof r === "string" ? r : r.room; });
@@ -4367,7 +4398,7 @@ function loadRoomTodos() {
 function fetchRoomTodos(room) {
   if (!room) return Promise.resolve();
   return fetch("/api/room-todos?room=" + encodeURIComponent(room))
-    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(readJson)
     .then(function (d) { renderRoomTodos(d, null); })
     .catch(function (err) { el.roomTodosStatus.textContent = "Could not load room todos: " + err.message; });
 }
@@ -4379,7 +4410,7 @@ function postRoomTodo(payload, status) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   })
-    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(readJson)
     .then(function (d) {
       renderRoomTodos(d, null);
       el.roomTodosStatus.textContent = status;
@@ -4458,10 +4489,7 @@ el.boardMine.addEventListener("change", function () { renderBoard(board); });
 
 function loadLogList() {
   return fetch("/api/logs")
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (d) {
       var logs = (d.logs || []).slice().sort(function (a, b) { return a.name < b.name ? 1 : -1; });
       var keep = el.logSelect.value;
@@ -4485,10 +4513,7 @@ function loadLogList() {
 function loadLog(name) {
   if (!name) return Promise.resolve();
   return fetch("/api/logs/" + encodeURIComponent(name))
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (d) {
       el.logView.textContent = d.text || "(empty)";
       // Newest lines are at the bottom, which is where a tail is read from.
@@ -4706,10 +4731,7 @@ loadSessions().then(function () {
     return;
   }
   return fetch("/api/sessions/" + encodeURIComponent(sessionId))
-    .then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })
+    .then(readJson)
     .then(function (data) {
       renderSessionHistory(data.messages || []);
       syncTranscriptEmpty();
