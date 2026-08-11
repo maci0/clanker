@@ -34,32 +34,6 @@ pub const RunStats = struct {
     /// Estimated USD cost for this run (from the active model's
     /// cost_per_1k_input / cost_per_1k_output).
     cost: f64 = 0,
-
-    /// Formats a human-readable summary of the stats into `buf`.
-    pub fn formatSummary(self: *const RunStats, buf: []u8) []const u8 {
-        const prompt_total = self.total_cache_hit_tokens + self.total_cache_miss_tokens;
-        const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
-        var w: std.Io.Writer = .fixed(buf);
-        w.print(
-            "Session stats:\n" ++
-                "  prompt tokens:     {d}\n" ++
-                "  completion tokens: {d}\n" ++
-                "  total tokens:      {d}\n" ++
-                "  cache hit:         {d} ({d:.0}%)\n" ++
-                "  cache miss:        {d}\n" ++
-                "  estimated cost:    ${d:.4}\n",
-            .{
-                self.total_prompt_tokens,
-                self.total_completion_tokens,
-                self.total_tokens,
-                self.total_cache_hit_tokens,
-                hit_rate,
-                self.total_cache_miss_tokens,
-                self.cost,
-            },
-        ) catch {};
-        return buf[0..w.end];
-    }
 };
 
 pub const Agent = struct {

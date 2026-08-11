@@ -181,27 +181,6 @@ pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *c
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = buf[0..w.end] });
 }
 
-const GraphFile = struct {
-    run_id: []const u8,
-    task: []const u8,
-    provider: []const u8 = "",
-    started_at: i64,
-    duration_ms: u64 = 0,
-    nodes: []const NodeFile = &.{},
-};
-
-const NodeFile = struct {
-    kind: []const u8,
-    iteration: u32 = 0,
-    label: []const u8 = "",
-    detail: []const u8 = "",
-    prompt_tokens: u32 = 0,
-    completion_tokens: u32 = 0,
-    result_bytes: usize = 0,
-    duration_ms: u64 = 0,
-    ok: bool = true,
-};
-
 test "truncatedPreview caps output at output_preview_cap bytes" {
     const short = "hello";
     try std.testing.expectEqualStrings(short, truncatedPreview(short));
