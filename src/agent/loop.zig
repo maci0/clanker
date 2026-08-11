@@ -1790,6 +1790,12 @@ pub const Agent = struct {
         defer pending.deinit(self.ctx.gpa);
 
         for (calls, 0..) |tc, i| {
+            // Already answered above (load_tools, which has no registry entry
+            // by design). Without this the lookup below fails and overwrites
+            // the answer with "unknown tool: load_tools", which is what the
+            // model then reads: the one call the catalog tells it to make
+            // came back rejected on every single turn.
+            if (results[i] != null) continue;
             if (seen.contains(tc.name)) continue; // duplicate -> sequential pass
             try seen.put(self.ctx.gpa, tc.name, {});
 
@@ -2112,12 +2118,20 @@ const ToolWorker = struct {
             .root_dir = self.cfg.agent.sandbox_root,
             .network_allow = self.tool.network_allow,
             .fs_prefixes = self.tool.fs_prefixes,
+            // Copied like every other policy field. Omitting them here did not
+            // make a worker safer, it made it wrong: a tool ran with no
+            // commands and no environment on the parallel path and the same
+            // tool ran with its descriptor's on the sequential one, so
+            // search_code was refused ripgrep for as long as it ran in
+            // parallel with anything.
+            .exec_allow = self.tool.exec_allow,
+            .env_allow = self.tool.env_allow,
             .environ_map = self.ctx.environ_map,
             .seed = self.cfg.agent.seed,
             .subagent_runner = self.subagent_runner,
             .cfg = self.cfg,
             .state_dir = self.cfg.agent.state_dir,
-            .config_json = try std.fmt.allocPrint(arena_state.allocator(), "{f}", .{std.json.fmt(self.tool.config, .{})}),
+            .config_json = self.tool.config_json,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ self.tool.name, self.arguments });

@@ -2048,8 +2048,15 @@ fn runDelta(delta: []const u8) void {
 /// Per-turn cap keeps the transcript small before each LLM call; the session
 /// cap bounds the persisted history so long sessions auto-compact instead of
 /// exceeding the context window.
-const max_turn_tokens = 4096;
-const max_session_tokens = 8192;
+/// 4096 and 8192 was a budget for a model with an 8K window, and it made the
+/// REPL single-turn without saying so: one turn that read a large file spent
+/// 190K tokens, and the next turn opened by discarding every message down to
+/// 4K, so the model answered "you asked me to implement these" with no idea
+/// what "these" was. Sized for the windows actually in use now (the smallest
+/// configured provider here is 128K); a turn still compacts, just not down to
+/// nothing.
+const max_turn_tokens = 96 * 1024;
+const max_session_tokens = 128 * 1024;
 
 /// Drops oldest non-system messages until the estimated token count fits under
 /// `max_tokens` so long sessions auto-compact instead of exceeding the context
@@ -2710,34 +2717,37 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
-        const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui") or
-            std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
-            std.mem.eql(u8, target, "/webui/van-boot.js") or
-            std.mem.eql(u8, target, "/webui/vendor/van.js") or std.mem.eql(u8, target, "/webui/vendor/van-ui.js") or
-            std.mem.startsWith(u8, target, "/webui/plugins/") or
-            std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, target, "/webui/vendor/hljs.min.js");
-        const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
-        const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify");
-        const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/message");
-        const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/chat/messages");
-        const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/chat/rooms");
-        const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/send");
-        const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/subscribe");
-        const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
-        const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_goals = std.mem.eql(u8, target, "/api/goals") and
+        // Routes match the path, never the whole target. Comparing the target
+        // meant any URL carrying a query string missed its route and 404'd —
+        // "/" was fine but "/?v=3" was not, and the board could not name its
+        // room until this was special-cased for one endpoint.
+        const path = target[0..(std.mem.indexOfScalar(u8, target, '?') orelse target.len)];
+        const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
+            std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
+            std.mem.eql(u8, path, "/webui/van-boot.js") or
+            std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
+            std.mem.startsWith(u8, path, "/webui/plugins/") or
+            std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
+        const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
+        const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
+        const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
+        const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/chat/messages");
+        const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
+        const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/send");
+        const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/subscribe");
+        const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/stats");
+        const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
-        // Matched on the path rather than the whole target: a board names its
-        // room with ?room=, and an exact compare 404'd every request that did.
-        const is_board = (std.mem.eql(u8, target, "/api/board") or std.mem.startsWith(u8, target, "/api/board?")) and
+        const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
+        const is_board = std.mem.eql(u8, path, "/api/board") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_webui_plugins = std.mem.eql(u8, target, "/api/webui/plugins") and
+        const is_webui_plugins = std.mem.eql(u8, path, "/api/webui/plugins") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugin_asset = std.mem.eql(u8, method, "GET") and
-            std.mem.startsWith(u8, target, "/webui/plugins/");
-        const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
-        const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
+            std.mem.startsWith(u8, path, "/webui/plugins/");
+        const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
+        const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
@@ -2748,33 +2758,33 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
-        } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
+        } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van.js")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van.js")) {
             respondJs(gpa, stream, webui_vendor_van, &gzip_van, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van-ui.js")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van-ui.js")) {
             respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and
-            (std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
-                std.mem.eql(u8, target, "/webui/van-boot.js")))
+            (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
+                std.mem.eql(u8, path, "/webui/van-boot.js")))
         {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js")) {
             respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/hljs.min.js")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/hljs.min.js")) {
             respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
             handleStatus(cfg, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.startsWith(u8, target, "/api/sessions") and
+        } else if (std.mem.startsWith(u8, path, "/api/sessions") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
             handleSessions(io, gpa, cfg, method, target, body, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
                 return;
@@ -2808,9 +2818,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleWebuiPluginAsset(io, gpa, target, stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
-        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
             respond(stream, 404, "Not Found", "{\"error\":\"not found\"}");
@@ -5180,6 +5190,28 @@ test "compactMessages drops oldest non-system messages over token budget" {
     try messages.append(allocator, .{ .role = .user, .content = "cccc" });
     compactMessages(&messages, 2);
     try std.testing.expect(messages.items.len == 2);
+}
+
+test "a turn that read a large file does not wipe the conversation" {
+    // The REPL's own budget, against a turn the size of one read_file call on
+    // this project's largest source file. Under the old 4K budget this left
+    // nothing but the system message and the next turn started blind.
+    const allocator = std.testing.allocator;
+    const big = try allocator.alloc(u8, 250 * 1024);
+    defer allocator.free(big);
+    @memset(big, 'x');
+
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(allocator);
+    try messages.append(allocator, .{ .role = .system, .content = "system" });
+    try messages.append(allocator, .{ .role = .user, .content = "implement the plan" });
+    try messages.append(allocator, .{ .role = .tool, .content = big });
+    try messages.append(allocator, .{ .role = .assistant, .content = "here is the plan" });
+
+    compactMessages(&messages, max_turn_tokens);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+    try std.testing.expectEqualStrings("here is the plan", messages.items[messages.items.len - 1].content.?);
+    try std.testing.expect(messages.items.len >= 3);
 }
 
 test "parseChoices reads an inline 'A, or B?' question" {
