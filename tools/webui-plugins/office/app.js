@@ -69,11 +69,8 @@ clanker.registerView({
        whiteboard beside it, and one desk per agent. Sizes vary with the room
        name and with how many people are in it, within bounds that keep every
        office legible next to its neighbours. */
-    function L_doorX(rand, w) { return 1 + Math.floor(rand() * (w - 3)); }
-
     function layoutFor(room, agentCount) {
       var rand = rng(hashString(room));
-      var doorX = L_doorX(rand, w_placeholder(rand));
       var w = 16;
       var desksNeeded = Math.max(1, agentCount);
       var rows = Math.ceil(desksNeeded / 3);
@@ -85,18 +82,20 @@ clanker.registerView({
         var row = Math.floor(i / 3);
         desks.push({ x: 2 + col * 5, y: 5 + row * 2 });
       }
-      var plants = [
-        { x: w - 2, y: h - 2 },
-        { x: 1, y: h - 2 }
-      ];
-      var bin = { x: Math.max(2, Math.min(w - 3, L_doorX(rand, w) + 2)), y: h - 2 };
+      // Drawn once and reused: the bin has to keep clear of the doorway, and
+      // rolling the die twice would put it somewhere else than the check.
+      var doorX = 2 + Math.floor(rand() * (w - 5));
+      var binX = doorX + 2 <= w - 3 ? doorX + 2 : doorX - 2;
       return {
         room: room,
         w: w,
         h: h,
-        plants: plants,
-        bin: bin,
-        door: { x: 1 + Math.floor(rand() * (w - 3)), y: h - 1 },
+        plants: [
+          { x: w - 2, y: h - 2 },
+          { x: 1, y: h - 2 }
+        ],
+        bin: { x: binX, y: h - 2 },
+        door: { x: doorX, y: h - 1 },
         board: { x: 1, y: 1, w: w - 6, h: 3 },
         whiteboard: { x: w - 5, y: 1, w: 4, h: 3 },
         desks: desks
