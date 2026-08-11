@@ -120,6 +120,10 @@ pub const Editor = struct {
     /// The in-progress line, parked while browsing history.
     pending: [max_line]u8 = undefined,
     pending_len: usize = 0,
+    /// True between paste_start and paste_end: Enter then inserts a literal
+    /// newline instead of finishing the line, so a pasted multi-line block
+    /// arrives as one input rather than one task per line.
+    in_paste: bool = false,
 
     pub fn deinit(self: *Editor) void {
         for (self.history.items) |h| self.gpa.free(h);
@@ -135,6 +139,7 @@ pub const Editor = struct {
         self.cursor = 0;
         self.hist_pos = self.history.items.len;
         self.pending_len = 0;
+        self.in_paste = false;
     }
 
     /// Adds a line to history unless it repeats the previous one — recall is
@@ -227,8 +232,15 @@ pub const Editor = struct {
                     self.setLine(self.history.items[self.hist_pos]);
                 }
             },
-            .enter => return true,
-            .clear_screen, .paste_start, .paste_end, .interrupt, .eof, .ignored => return false,
+            .enter => {
+                // Mid-paste an Enter is data, not submission: buffer it as a
+                // literal newline so the whole block lands as one line.
+                if (self.in_paste) return self.apply(.{ .char = '\n' });
+                return true;
+            },
+            .paste_start => self.in_paste = true,
+            .paste_end => self.in_paste = false,
+            .clear_screen, .interrupt, .eof, .ignored => return false,
         }
         return false;
     }
@@ -394,4 +406,24 @@ test "duplicate consecutive entries are not remembered twice" {
     ed.remember("same");
     ed.remember("other");
     try std.testing.expectEqual(@as(usize, 2), ed.history.items.len);
+}
+
+test "pasted newlines stay in the buffer instead of finishing the line" {
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+
+    _ = ed.apply(.paste_start);
+    for ("line one") |c| _ = ed.apply(.{ .char = c });
+    try std.testing.expect(!ed.apply(.enter));
+    for ("line two") |c| _ = ed.apply(.{ .char = c });
+    _ = ed.apply(.paste_end);
+    try std.testing.expectEqualStrings("line one\nline two", ed.line());
+
+    // Paste over: a typed Enter finishes the line again, and reset() drops
+    // any leftover paste state.
+    try std.testing.expect(ed.apply(.enter));
+    _ = ed.apply(.paste_start);
+    ed.reset();
+    try std.testing.expect(!ed.in_paste);
 }
