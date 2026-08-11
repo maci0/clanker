@@ -9,30 +9,15 @@ const config = @import("../config.zig");
 const client = @import("../llm/client.zig");
 const registry = @import("../tools/registry.zig");
 const types = @import("../llm/types.zig");
+const host = @import("../sandbox/host.zig");
 const Agent = @import("loop.zig").Agent;
 
 /// Bounded iteration budget for sub-agent runs.
 const sub_max_iterations: u32 = 6;
 
-/// What the parent hands down. A sub-agent starts with an empty transcript on
-/// purpose — the point of delegating is to keep that work out of the parent's
-/// context window, and copying the transcript back in would double the tokens
-/// and pass along every wrong turn the parent already took.
-///
-/// What it must not start without is the *brief*: the objective the work
-/// serves, the facts the parent already established, and where to look. Left
-/// to reconstruct those, a sub-agent re-reads what the parent just read and
-/// answers a question nobody asked.
-pub const Brief = struct {
-    /// The parent's own task, so the sub-task is read in service of something.
-    parent_task: []const u8 = "",
-    /// Facts, constraints and decisions the parent already has in hand.
-    context: []const []const u8 = &.{},
-    /// Paths worth reading first. Passed by reference, not by value: the
-    /// sub-agent reads them itself, which costs the parent nothing and keeps
-    /// the bytes out of both prompts until they are needed.
-    files: []const []const u8 = &.{},
-};
+/// The brief a parent hands down to a sub-agent; see `host.Brief`, whose
+/// shape this callback matches (`host.SubagentRunner`).
+pub const Brief = host.Brief;
 
 /// Renders the brief and the task into the sub-agent's opening message.
 pub fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]const u8 {

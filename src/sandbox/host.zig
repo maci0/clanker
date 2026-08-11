@@ -13,7 +13,6 @@ const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const config_mod = @import("../config.zig");
-const subagent_mod = @import("../agent/subagent.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const todos_mod = @import("../peers/todos.zig");
@@ -61,6 +60,27 @@ pub const AskFn = *const fn (
     options: []const []const u8,
 ) anyerror![]const u8;
 
+/// What the parent hands down to a sub-agent. A sub-agent starts with an
+/// empty transcript on purpose - the point of delegating is to keep that work
+/// out of the parent's context window, and copying the transcript back in
+/// would double the tokens and pass along every wrong turn the parent already
+/// took.
+///
+/// What it must not start without is the *brief*: the objective the work
+/// serves, the facts the parent already established, and where to look. Left
+/// to reconstruct those, a sub-agent re-reads what the parent just read and
+/// answers a question nobody asked.
+pub const Brief = struct {
+    /// The parent's own task, so the sub-task is read in service of something.
+    parent_task: []const u8 = "",
+    /// Facts, constraints and decisions the parent already has in hand.
+    context: []const []const u8 = &.{},
+    /// Paths worth reading first. Passed by reference, not by value: the
+    /// sub-agent reads them itself, which costs the parent nothing and keeps
+    /// the bytes out of both prompts until they are needed.
+    files: []const []const u8 = &.{},
+};
+
 /// Runs a nested sub-agent. The harness wires this in when modules.subagents
 /// is enabled; tools call it via ck_subagent.
 pub const SubagentRunner = *const fn (
@@ -70,7 +90,7 @@ pub const SubagentRunner = *const fn (
     cfg: *const config_mod.Config,
     task: []const u8,
     provider_name: ?[]const u8,
-    brief: subagent_mod.Brief,
+    brief: Brief,
 ) anyerror![]const u8;
 
 /// Per-tool sandbox policy, owned by the harness.
@@ -1781,7 +1801,7 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     }
     // The brief the parent hands down: what it already knows, and where to
     // look. Without it the sub-agent re-derives what the parent just learned.
-    var brief = subagent_mod.Brief{ .parent_task = h.sandbox.parent_task };
+    var brief = Brief{ .parent_task = h.sandbox.parent_task };
     brief.context = stringArray(arena, obj.get("context")) catch &.{};
     brief.files = stringArray(arena, obj.get("files")) catch &.{};
     const cfg = h.sandbox.cfg orelse return Err.not_found;
@@ -1795,7 +1815,7 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         cfg: *const config_mod.Config,
         task: []const u8,
         provider_name: ?[]const u8,
-        brief: subagent_mod.Brief,
+        brief: Brief,
         runner: SubagentRunner,
         result: ?[]const u8 = null,
         err: ?anyerror = null,
