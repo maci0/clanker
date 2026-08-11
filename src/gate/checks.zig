@@ -89,6 +89,8 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
     // needles make lintGate fail on checks.zig every single run.
     const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME" };
     var hits: usize = 0;
+    var hit_buf: [2048]u8 = undefined;
+    var hit_w: std.Io.Writer = .fixed(&hit_buf);
     for (changed_files) |f| {
         if (!std.mem.endsWith(u8, f, ".zig")) continue;
         const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
@@ -102,12 +104,15 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
         for (forbidden) |marker| {
             if (std.mem.indexOf(u8, content, marker) != null) {
                 log.log(.warn, "lint: {s} found in {s}", .{ marker, f });
+                hit_w.print("{s} in {s}; ", .{ marker, f }) catch {};
                 hits += 1;
             }
         }
     }
     if (hits > 0) {
-        return .{ .ok = false, .label = "lint", .detail = "forbidden markers found in changed files" };
+        const written = hit_buf[0..hit_w.end];
+        const detail_str = if (written.len > 0) written else "forbidden markers found in changed files";
+        return .{ .ok = false, .label = "lint", .detail = detail_str };
     }
     return .{ .ok = true, .label = "lint" };
 }
