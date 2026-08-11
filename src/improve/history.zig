@@ -912,6 +912,70 @@ fn copyFile(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, src: []const u
     try base.writeFile(io, .{ .sub_path = dst, .data = data });
 }
 
+/// Produces a short strategic hint for the next improve-self attempt based on
+/// recent history patterns: trailing streak direction, file diversity, and
+/// failure reasons. Returns an empty string when history is too short to
+/// say anything useful.
+pub fn strategyHint(self: *const History, arena: std.mem.Allocator) ![]const u8 {
+    if (self.entries.items.len == 0) return "";
+
+    const streak = self.trailingStreak();
+    const diversity = self.attemptDiversity(8);
+
+    var buf: std.ArrayList(u8) = .empty;
+
+    if (streak.len > 0 and !streak.accepted) {
+        // Consecutive failures: warn and suggest pivoting.
+        try buf.appendSlice(arena, "Recent streak: ");
+        try std.fmt.format(buf.writer(arena), "{d}", .{streak.len});
+        try buf.appendSlice(arena, " consecutive rejection(s). ");
+
+        if (diversity.unique_files > 0 and diversity.total_files > 0) {
+            const ratio = @as(f64, @floatFromInt(diversity.unique_files)) / @as(f64, @floatFromInt(diversity.total_files));
+            if (ratio < 0.4) {
+                try buf.appendSlice(arena, "File diversity is low (");
+                try std.fmt.format(buf.writer(arena), "{d}", .{diversity.unique_files});
+                try buf.appendSlice(arena, " unique out of ");
+                try std.fmt.format(buf.writer(arena), "{d}", .{diversity.total_files});
+                try buf.appendSlice(arena, " total); try a different area of the codebase. ");
+            }
+        }
+
+        // Surface the most recent failure reason if available.
+        const reasons = self.recentFailureReasons(3);
+        if (reasons.len > 0) {
+            try buf.appendSlice(arena, "Recent failure reasons: ");
+            for (reasons, 0..) |r, i| {
+                if (i > 0) try buf.appendSlice(arena, ", ");
+                const trimmed = if (r.len > 80) r[0..80] else r;
+                try buf.appendSlice(arena, trimmed);
+            }
+            try buf.appendSlice(arena, ". ");
+        }
+    } else if (streak.len >= 3 and streak.accepted) {
+        try buf.appendSlice(arena, "Good momentum: ");
+        try std.fmt.format(buf.writer(arena), "{d}", .{streak.len});
+        try buf.appendSlice(arena, " accepted in a row. Keep improving but watch for diminishing returns on the same files.");
+    }
+
+    // Check for cooldown files — files rejected too recently to retry.
+    const cooled = self.cooledDownFiles(5);
+    if (cooled.len > 0) {
+        if (buf.items.len > 0) try buf.appendSlice(arena, "\n");
+        try buf.appendSlice(arena, "Files on cooldown (recently rejected, avoid): ");
+        for (cooled, 0..) |f, i| {
+            if (i > 0) try buf.appendSlice(arena, ", ");
+            try buf.appendSlice(arena, f);
+            if (i >= 4) {
+                try buf.appendSlice(arena, ", ...");
+                break;
+            }
+        }
+    }
+
+    return buf.toOwnedSlice(arena);
+}
+
 // ------------------------------------------------------------------- tests --
 
 test "history append + revert round trip" {
