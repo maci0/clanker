@@ -1,0 +1,10 @@
+{
+  "name": "search_code_symbol",
+  "kind": "task",
+  "description": "search_code with engine rg must find a symbol that exists exactly once in the project.",
+  "prompt": "Use the search_code tool with engine 'rg' to search for the string 'parallel_tool_stack_floor_bytes' in path 'src'. How many files contain this string? Answer with only the number.",
+  "requires_tool": "search_code",
+  "criteria": [
+    {"includes": ["1"]}
+  ]
+}
