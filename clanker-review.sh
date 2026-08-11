@@ -26,7 +26,7 @@
 # repository with its own tools; nothing is patched unless --fix is given.
 
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -124,6 +124,13 @@ $FRAMING"
   fi
 
   words="$(wc -w <"$out")"
+  # An agent run that ends at its iteration limit exits 0 with partial work in
+  # the file, which reads as a short review rather than a failed one.
+  if grep -q 'did not produce a final answer' "$out.log" 2>/dev/null; then
+    warn "$name: hit the iteration limit without concluding; raise agent.max_iterations"
+    failed=$((failed + 1))
+    continue
+  fi
   info "$name: $words words"
 
   if [ "$FIX" -eq 1 ]; then
@@ -132,8 +139,18 @@ $FRAMING"
       printf 'Implement the single highest-value fix from the review below. Pick one finding, make the smallest correct change, and add a test that fails without it. Ignore findings that are already fixed in the current source.\n\n'
       cat "$out"
     } >"$out.instr"
-    ./clanker-improve.sh --provider "${PROVIDER:-}" --iters "$ITERS" \
-      --instruction-file "$out.instr" --skip-build || warn "$name: improve run failed"
+    IMPROVE_ARGS=(--iters "$ITERS" --instruction-file "$out.instr" --skip-build)
+    # Passing --provider "" is not the same as passing nothing: clanker reads
+    # the empty string as a provider name and fails with UnknownProvider, so
+    # every fix run without an explicit --provider died here.
+    [ -n "$PROVIDER" ] && IMPROVE_ARGS=(--provider "$PROVIDER" "${IMPROVE_ARGS[@]}")
+    ./clanker-improve.sh "${IMPROVE_ARGS[@]}"
+    rc=$?
+    if [ "$rc" -eq 75 ]; then
+      warn "$name: another improve-self holds the lock; the finding was not applied"
+    elif [ "$rc" -ne 0 ]; then
+      warn "$name: improve run failed (exit $rc)"
+    fi
   fi
 done
 

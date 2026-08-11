@@ -26,15 +26,21 @@
 #   --no-log                  don't write a log file
 #   -h, --help                show this help
 #
+# Exit status: clanker's own, except 75 when another improve-self already holds
+# the lock on this working tree and this run did nothing.
+#
 # Modes (mutually exclusive):
 #   review   (default)        the instruction below or --instruction(-file)
 #   roadmap                   --roadmap [N]: pick an unimplemented feature from
 #                             docs/ROADMAP.md and have clanker build it
 #
 # improve-self is a single-shot patch loop, not the agent tool loop: the model
-# sees src/, tools/, tests/, build.zig* and config.json, and answers with a
-# patch. It has no tools and cannot read or edit anything outside that context,
-# so docs/ and AGENTS.md stay this script's (and your) job.
+# is shown source files and answers with a patch, with no tools and no way to
+# look anything up. What it sees is chosen per instruction and bounded by a
+# byte budget, so it is a selection of src/, tools/, tests/, evals/,
+# tools/manifests/, build.zig* and config.json, not all of them; whatever did
+# not fit is listed by name in the prompt so nothing is patched blind. Files
+# the instruction names by path are always included whole.
 #
 # API keys are resolved automatically when the provider is known:
 #   deepseek    -> DEEPSEEK_API_KEY  <- env | ~/.secrets/deepseek.txt
@@ -259,7 +265,13 @@ load_key() {
   if [ -z "${!var:-}" ] && [ -n "$file" ] && [ -f "$file" ]; then
     export "$var=$(tr -d '\r\n' < "$file")"
   fi
-  [ -n "${!var:-}" ] || die "$var is not set (export it or add $file)"
+  # clanker reads .env itself at startup, so a key that lives only there is
+  # perfectly usable and this script has no business refusing the run.
+  if [ -z "${!var:-}" ] && [ -f .env ] && grep -q "^${var}=" .env; then
+    info "$var comes from .env"
+    return
+  fi
+  [ -n "${!var:-}" ] || die "$var is not set (export it, add $file, or put it in .env)"
 }
 load_key "$PROVIDER"
 
@@ -291,6 +303,15 @@ CLANKER_RC=${PIPESTATUS[0]}
 
 # One machine-readable line at the end: a loop driving this script should not
 # have to grep the whole log to find out whether anything landed.
+# Only one improve-self may touch a working tree at a time. Hitting that is a
+# "come back later", not a result: a loop that reads it as promoted=0 concludes
+# the model had nothing to say and moves on to the next instruction.
+if grep -q 'another improve-self is already running' "$RUN_LOG"; then
+  info "summary: skipped=locked exit=75"
+  warn "another improve-self holds the lock; nothing was attempted"
+  exit 75
+fi
+
 PROMOTED=$(grep -c 'promoted improvement' "$RUN_LOG" || true)
 GATE=$(grep -o 'final gate: [0-9.]*/[0-9]*' "$RUN_LOG" | tail -1)
 info "summary: promoted=$PROMOTED exit=$CLANKER_RC ${GATE:-gate=unknown}"
