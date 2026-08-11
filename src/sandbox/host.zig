@@ -955,6 +955,120 @@ pub fn globMatch(pattern: []const u8, name: []const u8) bool {
     return true;
 }
 
+/// ck_fs_grep(dir_path, pattern) — search for lines containing a literal
+/// substring in files under a sandbox directory. Returns a JSON array of
+/// `{"file":"<relative-path>","line":<number>,"text":"<line-content>"}` objects
+/// in the host arena. Searches recursively up to `fs_grep_max_depth` levels
+/// deep; stops after `fs_grep_max_results` matching lines. Binary files
+/// (containing null bytes in the first 512 bytes) are skipped. Enforces the
+/// same fs_prefixes policy as ck_fs_read.
+pub fn ckFsGrep(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const dir_path = sliceOf(bytes, dir_ptr, dir_len) orelse return Err.invalid;
+    const pattern = sliceOf(bytes, pat_ptr, pat_len) orelse return Err.invalid;
+    if (pattern.len == 0) return Err.invalid;
+    const full = safeJoin(h.sandbox, dir_path) catch return Err.denied;
+    defer h.sandbox.gpa.free(full);
+
+    var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
+    defer dir.close(h.sandbox.io);
+
+    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    var w: std.Io.Writer = .fixed(buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginArray() catch return Err.too_large;
+
+    var count: u32 = 0;
+    fsGrepRecurse(h, &s, dir, dir_path, pattern, 0, &count) catch return Err.too_large;
+
+    s.endArray() catch return Err.too_large;
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
+const fs_grep_max_depth: u32 = 12;
+const fs_grep_max_results: u32 = 200;
+const fs_grep_max_line: usize = 500;
+
+fn fsGrepRecurse(
+    h: *Host,
+    s: *std.json.Stringify,
+    dir: std.Io.Dir,
+    prefix: []const u8,
+    pattern: []const u8,
+    depth: u32,
+    count: *u32,
+) !void {
+    if (depth > fs_grep_max_depth) return;
+    if (count.* >= fs_grep_max_results) return;
+    var it = dir.iterate();
+    while (it.next(h.sandbox.io) catch null) |entry| {
+        if (count.* >= fs_grep_max_results) return;
+        if (entry.name.len == 0) continue;
+        const rel = std.fmt.allocPrint(h.sandbox.gpa, "{s}{s}{s}", .{
+            prefix,
+            if (prefix.len > 0) "/" else "",
+            entry.name,
+        }) catch return error.OutOfMemory;
+        defer h.sandbox.gpa.free(rel);
+
+        if (entry.kind == .directory) {
+            // Skip hidden directories (e.g. .git)
+            if (entry.name[0] == '.') continue;
+            var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
+            defer sub.close(h.sandbox.io);
+            try fsGrepRecurse(h, s, sub, rel, pattern, depth + 1, count);
+        } else if (entry.kind == .file) {
+            fsGrepFile(h, s, dir, entry.name, rel, pattern, count) catch continue;
+        }
+    }
+}
+
+fn fsGrepFile(
+    h: *Host,
+    s: *std.json.Stringify,
+    dir: std.Io.Dir,
+    name: []const u8,
+    rel_path: []const u8,
+    pattern: []const u8,
+    count: *u32,
+) !void {
+    // Read the file (up to max_fs_bytes).
+    const data = dir.readFileAlloc(h.sandbox.io, name, h.sandbox.gpa, .limited(h.sandbox.max_fs_bytes)) catch return;
+    defer h.sandbox.gpa.free(data);
+    if (data.len == 0) return;
+
+    // Skip binary files: check first 512 bytes for null.
+    const check_len = @min(data.len, 512);
+    for (data[0..check_len]) |b| {
+        if (b == 0) return;
+    }
+
+    // Scan line by line.
+    var line_no: u32 = 1;
+    var start: usize = 0;
+    while (start < data.len) {
+        if (count.* >= fs_grep_max_results) return;
+        const end = std.mem.indexOfScalarPos(u8, data, start, '\n') orelse data.len;
+        const line = data[start..end];
+        if (std.mem.indexOf(u8, line, pattern) != null) {
+            const display = if (line.len > fs_grep_max_line) line[0..fs_grep_max_line] else line;
+            s.beginObject() catch return error.OutOfMemory;
+            s.objectField("file") catch return error.OutOfMemory;
+            s.write(rel_path) catch return error.OutOfMemory;
+            s.objectField("line") catch return error.OutOfMemory;
+            s.print("{d}", .{line_no}) catch return error.OutOfMemory;
+            s.objectField("text") catch return error.OutOfMemory;
+            s.write(display) catch return error.OutOfMemory;
+            s.endObject() catch return error.OutOfMemory;
+            count.* += 1;
+        }
+        start = end + 1;
+        line_no += 1;
+    }
+}
+
 /// ck_fs_stat(path) — stat a path under the sandbox root.
 /// Returns a JSON object in the host arena:
 ///   {"exists":true,"kind":"file","size":1234}
