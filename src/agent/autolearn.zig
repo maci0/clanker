@@ -298,3 +298,45 @@ test "capUtf8 never splits a codepoint" {
     // the second "é" untouched rather than half of it.
     try std.testing.expectEqualStrings("aé", capUtf8("aéé", 3));
 }
+
+test "recordRunTo writes a run event with all fields" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tools = [_][]const u8{ "read_file", "git" };
+    recordRunTo(tmp.dir, io, std.testing.allocator, arena, .{
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 100,
+        .completion_tokens = 50,
+        .cache_hit = 10,
+        .cache_miss = 90,
+        .duration_ms = 1234,
+        .task = "summarize this repo",
+        .tools = &tools,
+    });
+
+    const raw = try tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("run", parsed.object.get("type").?.string);
+    try std.testing.expectEqualStrings("kimi-k3", parsed.object.get("provider").?.string);
+    try std.testing.expectEqualStrings("kimi-k3", parsed.object.get("model").?.string);
+    try std.testing.expectEqual(@as(i64, 100), parsed.object.get("prompt_tokens").?.integer);
+    try std.testing.expectEqual(@as(i64, 50), parsed.object.get("completion_tokens").?.integer);
+    try std.testing.expectEqual(@as(i64, 10), parsed.object.get("cache_hit").?.integer);
+    try std.testing.expectEqual(@as(i64, 90), parsed.object.get("cache_miss").?.integer);
+    try std.testing.expectEqual(@as(i64, 1234), parsed.object.get("duration_ms").?.integer);
+    try std.testing.expectEqualStrings("summarize this repo", parsed.object.get("task").?.string);
+    const arr = parsed.object.get("tools").?.array;
+    try std.testing.expectEqual(@as(usize, 2), arr.items.len);
+    try std.testing.expectEqualStrings("read_file", arr.items[0].string);
+    try std.testing.expectEqualStrings("git", arr.items[1].string);
+}
