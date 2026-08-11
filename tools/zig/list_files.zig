@@ -115,6 +115,11 @@ fn walk(
             break :blk true;
         };
 
+        // The same directories the host's name search skips: a recursive
+        // listing of the project should not be mostly build output and copies
+        // of itself.
+        if (is_dir and recursive and skipDir(name)) continue;
+
         if (is_dir) {
             if (entries.items.len >= max) {
                 truncated.* = true;
@@ -131,6 +136,13 @@ fn walk(
         }
         try entries.append(alloc, full);
     }
+}
+
+fn skipDir(name: []const u8) bool {
+    for ([_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "staging", "history" }) |d| {
+        if (std.mem.eql(u8, name, d)) return true;
+    }
+    return false;
 }
 
 fn str(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {

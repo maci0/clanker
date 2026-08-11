@@ -1,0 +1,26 @@
+{
+  "name": "find_files",
+  "description": "Finds files by name anywhere under a directory: pass pattern and optionally dir. A pattern with no wildcard matches any name containing it, and * and ? work as globs (e.g. \"*.tool.json\"). Use this when you have a name from a stack trace, an import or a half-remembered path; use list_files when you know the directory, and search_code when you know the contents rather than the name.",
+  "wasm": "zig-out/tools/find_files.wasm",
+  "enabled": true,
+  "category": "code",
+  "fs_prefixes": [
+    "."
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Part of a file name, e.g. \"loop\", or a glob such as \"*.tool.json\"."
+      },
+      "dir": {
+        "type": "string",
+        "description": "Directory to search under, relative to the sandbox root. Defaults to \".\"."
+      }
+    },
+    "required": [
+      "pattern"
+    ]
+  }
+}

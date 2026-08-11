@@ -690,6 +690,87 @@
   .more[open] > summary { color: var(--fg); border-color: var(--accent); }
   .more-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
 
+  .run-options {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-3);
+  }
+  .run-options > label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .params-grid { align-items: center; }
+  .params-grid label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .params-grid input[type="number"] { width: 6rem; }
+  .checkbox-row { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+
+  .transcript-tools {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-5);
+  }
+  .transcript-tools > label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .turn[hidden] { display: none; }
+  /* The match itself, not the whole turn: scanning a long answer for the word
+     you searched is the part a filter alone does not help with. */
+  mark {
+    background: var(--accent-dim); color: var(--fg);
+    border-radius: 2px; padding: 0 0.1em;
+  }
+
+  /* Fixed, not sticky: a long answer streaming in pushes the page down, and a
+     sticky control inside the column would ride away with it. */
+  .scroll-bottom {
+    position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: 10;
+    min-height: 32px; padding: 0 var(--space-4);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    background: var(--surface); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
+    box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 55%, transparent);
+  }
+  .scroll-bottom[hidden] { display: none; }
+  .scroll-bottom:hover { border-color: var(--accent); color: var(--accent); }
+
+  .suggestions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+  .suggestion {
+    min-height: 32px; padding: 0 var(--space-4); text-align: left;
+    border: 1px solid var(--rule); border-radius: var(--radius-pill);
+    background: var(--surface-2); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
+  }
+  .suggestion:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Rendered markdown. Sized against the mono body it sits in: headings step
+     up rather than shout, and every block keeps the reading measure. */
+  .turn-answer.md { white-space: normal; }
+  .md .md-p { margin: 0 0 var(--space-4); max-width: var(--measure); }
+  .md .md-p:last-child { margin-bottom: 0; }
+  .md .md-h {
+    font-family: var(--mono); font-size: var(--step-1); font-weight: 700;
+    color: var(--fg); margin: var(--space-5) 0 var(--space-3); line-height: 1.3;
+  }
+  .md h3.md-h { font-size: var(--step-2); }
+  .md .md-h:first-child { margin-top: 0; }
+  .md ul, .md ol { margin: 0 0 var(--space-4); padding-left: 1.4em; max-width: var(--measure); }
+  .md li { margin: var(--space-1) 0; }
+  .md li::marker { color: var(--fg-muted); }
+  .md blockquote {
+    margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-4);
+    border-left: 2px solid var(--accent); color: var(--fg-muted); max-width: var(--measure);
+  }
+  .md hr { border: 0; border-top: 1px solid var(--rule); margin: var(--space-5) 0; }
+  .md code {
+    font-family: var(--mono); font-size: 0.95em;
+    padding: 0.1em 0.35em; border-radius: var(--radius-sm);
+    background: var(--surface-2); color: var(--fg);
+  }
+  .md a { color: var(--accent); }
+  .md a:hover { text-decoration: underline; }
+  .md strong { color: var(--fg); font-weight: 700; }
+  /* Wide tables scroll in their own box; the page itself never scrolls sideways. */
+  .md-table-wrap { overflow-x: auto; margin: 0 0 var(--space-4); }
+  .md-table { border-collapse: collapse; font-family: var(--mono); font-size: var(--step-0); }
+  .md-table th, .md-table td {
+    padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--rule);
+    text-align: left; vertical-align: top; font-variant-numeric: tabular-nums;
+  }
+  .md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
   /* Todos */
   .todos { list-style: none; margin: var(--space-5) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
   .todo {
@@ -765,7 +846,8 @@
           <summary>More</summary>
           <div class="more-actions">
             <button type="button" class="secondary" id="session-compact" title="Drop the oldest exchanges from this conversation">Compact</button>
-            <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export</button>
+            <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export .md</button>
+            <button type="button" class="secondary" id="session-export-json" title="Download this conversation as JSON">Export .json</button>
             <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
           </div>
         </details>
@@ -773,13 +855,42 @@
       <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
     </div>
 
+    <div class="transcript-tools">
+      <label for="turn-filter">Search this conversation</label>
+      <input type="search" id="turn-filter" placeholder="Find in transcript…" autocomplete="off">
+      <span class="meta" id="turn-filter-count"></span>
+    </div>
+
     <div class="transcript" id="transcript"></div>
-    <p class="run-empty" id="transcript-empty" hidden>No turns in this conversation yet. Describe a task below, or press Ctrl+K to jump somewhere.</p>
+    <div class="run-empty" id="transcript-empty" hidden>
+      <p>No turns in this conversation yet.</p>
+      <!-- Suggestions are the shortest path from an empty page to seeing what
+           this thing does; each one is a real task against this repo. -->
+      <div class="suggestions" id="suggestions"></div>
+    </div>
+    <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest ↓</button>
 
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
       <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
+      <div class="run-options">
+        <label for="model-select">Model</label>
+        <select id="model-select" title="Which provider and model runs this task"></select>
+        <details class="more" id="params">
+          <summary>Options</summary>
+          <div class="more-actions params-grid">
+            <label for="param-temp">Temperature</label>
+            <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="config">
+            <label for="param-topp">Top-p</label>
+            <input type="number" id="param-topp" min="0" max="1" step="0.05" placeholder="config">
+            <label for="enter-sends" class="checkbox-row">
+              <input type="checkbox" id="enter-sends">
+              <span>Enter sends, Shift+Enter makes a new line</span>
+            </label>
+          </div>
+        </details>
+      </div>
       <div class="toolbar">
         <span class="meta" id="hint"></span>
         <div class="toolbar-actions">
@@ -1018,7 +1129,16 @@ document.addEventListener("DOMContentLoaded", function () {
     helpOpen: document.getElementById("help-open"),
     helpClose: document.getElementById("help-close"),
     shortcuts: document.getElementById("shortcuts"),
-    transcriptEmpty: document.getElementById("transcript-empty")
+    transcriptEmpty: document.getElementById("transcript-empty"),
+    suggestions: document.getElementById("suggestions"),
+    modelSelect: document.getElementById("model-select"),
+    paramTemp: document.getElementById("param-temp"),
+    paramTopP: document.getElementById("param-topp"),
+    enterSends: document.getElementById("enter-sends"),
+    turnFilter: document.getElementById("turn-filter"),
+    turnFilterCount: document.getElementById("turn-filter-count"),
+    scrollBottom: document.getElementById("scroll-bottom"),
+    sessionExportJson: document.getElementById("session-export-json")
   };
 
   /* Fetches a vendored library on first use and caches the promise, so the
@@ -1525,20 +1645,175 @@ document.addEventListener("DOMContentLoaded", function () {
      case for a coding agent's replies. Skipped for failed/stopped turns so
      the red [error] styling already in the DOM is never flattened back to
      plain text. */
+
+  /* ---------- markdown ----------
+     Answers arrive as Markdown and used to render as one flat wall of
+     monospace: headings, lists and tables were literal "##" and "|" characters.
+     Everything below is built with createElement and textContent, never
+     innerHTML, so markup a model writes lands as visible characters and is
+     never parsed as markup. */
+
+  var INLINE_RE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+
+  function inlineInto(parent, text) {
+    while (text.length) {
+      var m = INLINE_RE.exec(text);
+      if (!m) { parent.appendChild(document.createTextNode(text)); return; }
+      if (m.index > 0) parent.appendChild(document.createTextNode(text.slice(0, m.index)));
+      var tok = m[0], node;
+      if (tok.charAt(0) === "`") {
+        node = document.createElement("code");
+        node.textContent = tok.slice(1, -1);
+      } else if (tok.slice(0, 2) === "**") {
+        node = document.createElement("strong");
+        inlineInto(node, tok.slice(2, -2));
+      } else if (tok.charAt(0) === "*" || tok.charAt(0) === "_") {
+        node = document.createElement("em");
+        inlineInto(node, tok.slice(1, -1));
+      } else if (tok.charAt(0) === "[") {
+        var split = tok.indexOf("](");
+        node = document.createElement("a");
+        node.href = tok.slice(split + 2, -1);
+        node.rel = "noreferrer noopener";
+        inlineInto(node, tok.slice(1, split));
+      } else {
+        node = document.createElement("a");
+        node.href = tok;
+        node.rel = "noreferrer noopener";
+        node.textContent = tok;
+      }
+      parent.appendChild(node);
+      text = text.slice(m.index + tok.length);
+    }
+  }
+
+  /* A single newline inside a paragraph is kept as a line break rather than
+     collapsed to a space: agent output leans on hard-wrapped lines, and
+     joining them reflows tables of numbers into prose. */
+  function paragraphInto(parent, lines) {
+    lines.forEach(function (line, i) {
+      if (i) parent.appendChild(document.createElement("br"));
+      inlineInto(parent, line);
+    });
+  }
+
+  function tableRow(tr, cells, cellTag) {
+    cells.forEach(function (c) {
+      var cell = document.createElement(cellTag);
+      inlineInto(cell, c.trim());
+      tr.appendChild(cell);
+    });
+  }
+
+  function splitRow(line) {
+    var t = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return t.split("|");
+  }
+
+  function renderMarkdown(text) {
+    var frag = document.createDocumentFragment();
+    var lines = text.split("\n");
+    var i = 0;
+    function flushList(ordered) {
+      var list = document.createElement(ordered ? "ol" : "ul");
+      while (i < lines.length) {
+        var m = ordered ? /^\s*\d+[.)]\s+(.*)$/.exec(lines[i]) : /^\s*[-*+]\s+(.*)$/.exec(lines[i]);
+        if (!m) break;
+        var li = document.createElement("li");
+        inlineInto(li, m[1]);
+        list.appendChild(li);
+        i += 1;
+      }
+      frag.appendChild(list);
+    }
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line.trim()) { i += 1; continue; }
+      var head = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (head) {
+        // Answers live under the page's own h2, so the smallest heading a
+        // model writes still nests below it rather than competing with it.
+        var h = document.createElement("h" + Math.min(6, head[1].length + 2));
+        h.className = "md-h";
+        inlineInto(h, head[2]);
+        frag.appendChild(h);
+        i += 1;
+        continue;
+      }
+      if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) {
+        frag.appendChild(document.createElement("hr"));
+        i += 1;
+        continue;
+      }
+      if (/^\s*>\s?/.test(line)) {
+        var quote = document.createElement("blockquote");
+        var qlines = [];
+        while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+          qlines.push(lines[i].replace(/^\s*>\s?/, ""));
+          i += 1;
+        }
+        paragraphInto(quote, qlines);
+        frag.appendChild(quote);
+        continue;
+      }
+      if (/^\s*[-*+]\s+/.test(line)) { flushList(false); continue; }
+      if (/^\s*\d+[.)]\s+/.test(line)) { flushList(true); continue; }
+      // A table needs its separator row to be a table at all, which keeps a
+      // line that merely contains a pipe from becoming one.
+      if (line.indexOf("|") !== -1 && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+        var table = document.createElement("table");
+        table.className = "md-table";
+        var thead = document.createElement("thead");
+        var htr = document.createElement("tr");
+        tableRow(htr, splitRow(line), "th");
+        thead.appendChild(htr);
+        table.appendChild(thead);
+        var tbody = document.createElement("tbody");
+        i += 2;
+        while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
+          var btr = document.createElement("tr");
+          tableRow(btr, splitRow(lines[i]), "td");
+          tbody.appendChild(btr);
+          i += 1;
+        }
+        table.appendChild(tbody);
+        var wrap = document.createElement("div");
+        wrap.className = "md-table-wrap";
+        wrap.appendChild(table);
+        frag.appendChild(wrap);
+        continue;
+      }
+      var para = [];
+      while (i < lines.length && lines[i].trim() &&
+             !/^(#{1,6})\s|^\s*[-*+]\s|^\s*\d+[.)]\s|^\s*>/.test(lines[i])) {
+        para.push(lines[i]);
+        i += 1;
+      }
+      var p2 = document.createElement("p");
+      p2.className = "md-p";
+      paragraphInto(p2, para);
+      frag.appendChild(p2);
+    }
+    return frag;
+  }
+
   function finalizeAnswer(turn) {
     if (turn.answer.querySelector(".failed")) return;
     var raw = turn.answer.textContent;
-    if (raw.indexOf("```") === -1) return;
+    if (!raw) return;
     var frag = document.createDocumentFragment();
     var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
     var last = 0, m;
     while ((m = re.exec(raw))) {
-      if (m.index > last) frag.appendChild(document.createTextNode(raw.slice(last, m.index)));
+      if (m.index > last) frag.appendChild(renderMarkdown(raw.slice(last, m.index)));
       frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
       last = re.lastIndex;
     }
-    if (last < raw.length) frag.appendChild(document.createTextNode(raw.slice(last)));
+    if (last < raw.length) frag.appendChild(renderMarkdown(raw.slice(last)));
     turn.answer.textContent = "";
+    // Block elements do their own wrapping; leaving the container on pre-wrap
+    // would add the source's newlines on top of the markup's.
+    turn.answer.className = "turn-answer md";
     turn.answer.appendChild(frag);
   }
 
@@ -1671,6 +1946,20 @@ document.addEventListener("DOMContentLoaded", function () {
         el.form.requestSubmit();
       });
       turn.foot.appendChild(regenBtn);
+
+      var editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "secondary";
+      editBtn.textContent = "Edit & resend";
+      editBtn.title = "Put this task back in the composer to change it";
+      editBtn.addEventListener("click", function () {
+        el.task.value = task;
+        el.task.focus();
+        el.task.setSelectionRange(task.length, task.length);
+        syncControls();
+        scrollTo(el.task, "center");
+      });
+      turn.foot.appendChild(editBtn);
     }
   }
 
@@ -1869,6 +2158,7 @@ document.addEventListener("DOMContentLoaded", function () {
     startElapsed(startedAt);
     controller = new AbortController();
 
+    var opts = runOptions();
     var statsRendered = false;
     var splitter = makeLineSplitter(function (line) {
       if (line.charCodeAt(0) === 1) {
@@ -1883,7 +2173,10 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         return;
       }
+      var stick = nearBottom();
       appendText(turn, line + "\n", false);
+      if (stick) window.scrollTo(0, document.body.scrollHeight);
+      else syncScrollButton();
     });
 
     fetch("/api/run", {
@@ -1893,7 +2186,11 @@ document.addEventListener("DOMContentLoaded", function () {
         task: task,
         stream: true,
         session: sessionId,
-        images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; })
+        images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
+        provider: opts.provider || "",
+        model: opts.model || "",
+        temperature: typeof opts.temperature === "number" ? opts.temperature : null,
+        top_p: typeof opts.top_p === "number" ? opts.top_p : null
       }),
       signal: controller.signal
     }).then(function (resp) {
@@ -3546,6 +3843,210 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
 
+
+  /* ---------- model picker and sampling ---------- */
+
+  /* The CLI has --provider and config.json has temperature and top_p; the
+     composer had neither, so every run through the page used the default. */
+  function loadProviders() {
+    return fetch("/api/providers")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        el.modelSelect.textContent = "";
+        (d.providers || []).forEach(function (prov) {
+          var group = document.createElement("optgroup");
+          group.label = prov.name;
+          (prov.models || []).forEach(function (m) {
+            var opt = document.createElement("option");
+            opt.value = prov.name + " " + m.name;
+            opt.textContent = m.name + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+            if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
+            group.appendChild(opt);
+          });
+          el.modelSelect.appendChild(group);
+        });
+        var saved = null;
+        try { saved = window.localStorage.getItem("clanker.model"); } catch (e) {}
+        if (saved && el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
+          el.modelSelect.value = saved;
+        }
+      })
+      .catch(function () {
+        // Providers are informational: a failure here must not stop a run,
+        // which then simply uses whatever the config says.
+        var opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "config default";
+        el.modelSelect.appendChild(opt);
+      });
+  }
+
+  el.modelSelect.addEventListener("change", function () {
+    try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
+  });
+
+  /* Everything the composer adds to a run, in one place, so the submit handler
+     and any future caller cannot disagree about it. */
+  function runOptions() {
+    var out = {};
+    var pair = (el.modelSelect.value || "").split(" ");
+    if (pair[0]) out.provider = pair[0];
+    if (pair[1]) out.model = pair[1];
+    var t = parseFloat(el.paramTemp.value);
+    if (!isNaN(t)) out.temperature = t;
+    var tp = parseFloat(el.paramTopP.value);
+    if (!isNaN(tp)) out.top_p = tp;
+    return out;
+  }
+
+  /* Enter-to-send is the habit every other chat UI trains, but it also throws
+     away a half-written multi-line task, so it is opt-in and remembered. */
+  try { el.enterSends.checked = window.localStorage.getItem("clanker.entersends") === "1"; } catch (e) {}
+  el.enterSends.addEventListener("change", function () {
+    try { window.localStorage.setItem("clanker.entersends", el.enterSends.checked ? "1" : "0"); } catch (e) {}
+    syncSubmitLabel();
+  });
+
+  function syncSubmitLabel() {
+    el.submit.textContent = el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+  }
+
+  el.task.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!el.enterSends.checked) return;
+    e.preventDefault();
+    if (!busy && el.task.value.trim()) el.form.requestSubmit();
+  });
+
+  /* ---------- search inside the conversation ---------- */
+
+  function clearMarks(root) {
+    var marks = root.querySelectorAll("mark");
+    Array.prototype.forEach.call(marks, function (m) {
+      var text = document.createTextNode(m.textContent);
+      m.parentNode.replaceChild(text, m);
+    });
+    // Splitting a text node to highlight leaves neighbours behind; rejoining
+    // them keeps repeated searches from fragmenting the answer into hundreds
+    // of nodes.
+    if (root.normalize) root.normalize();
+  }
+
+  function markMatches(root, needle) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var targets = [];
+    var node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue.toLowerCase().indexOf(needle) !== -1) targets.push(node);
+    }
+    var hits = 0;
+    targets.forEach(function (text) {
+      var value = text.nodeValue;
+      var frag = document.createDocumentFragment();
+      var at = 0;
+      var idx = value.toLowerCase().indexOf(needle, at);
+      while (idx !== -1) {
+        if (idx > at) frag.appendChild(document.createTextNode(value.slice(at, idx)));
+        var mark = document.createElement("mark");
+        mark.textContent = value.substr(idx, needle.length);
+        frag.appendChild(mark);
+        hits += 1;
+        at = idx + needle.length;
+        idx = value.toLowerCase().indexOf(needle, at);
+      }
+      if (at < value.length) frag.appendChild(document.createTextNode(value.slice(at)));
+      text.parentNode.replaceChild(frag, text);
+    });
+    return hits;
+  }
+
+  function applyTurnFilter() {
+    var q = el.turnFilter.value.trim().toLowerCase();
+    var turns = el.transcript.querySelectorAll(".turn");
+    clearMarks(el.transcript);
+    if (!q) {
+      Array.prototype.forEach.call(turns, function (t) { t.hidden = false; });
+      el.turnFilterCount.textContent = "";
+      return;
+    }
+    var shown = 0, hits = 0;
+    Array.prototype.forEach.call(turns, function (t) {
+      var match = t.textContent.toLowerCase().indexOf(q) !== -1;
+      t.hidden = !match;
+      if (match) {
+        shown += 1;
+        hits += markMatches(t, q);
+      }
+    });
+    el.turnFilterCount.textContent = shown
+      ? hits + (hits === 1 ? " match in " : " matches in ") + shown + (shown === 1 ? " turn" : " turns")
+      : "No turns match.";
+  }
+
+  el.turnFilter.addEventListener("input", applyTurnFilter);
+
+  /* ---------- keeping up with a streaming answer ---------- */
+
+  function nearBottom() {
+    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function syncScrollButton() {
+    el.scrollBottom.hidden = nearBottom() || !el.transcript.querySelector(".turn");
+  }
+
+  el.scrollBottom.addEventListener("click", function () {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    el.task.focus();
+  });
+
+  window.addEventListener("scroll", syncScrollButton, { passive: true });
+  window.addEventListener("resize", syncScrollButton);
+
+  /* ---------- export ---------- */
+
+  el.sessionExportJson.addEventListener("click", function () {
+    fetch("/api/sessions/" + encodeURIComponent(sessionId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        downloadText("clanker-" + sessionId.slice(0, 8) + ".json", JSON.stringify(data, null, 2), "application/json");
+        el.sessionStatus.textContent = "Exported as JSON.";
+      })
+      .catch(function (err) { el.sessionStatus.textContent = "Export failed: " + err.message; });
+  });
+
+  /* ---------- first-run suggestions ---------- */
+
+  var SUGGESTIONS = [
+    "Summarise what this repository does, in five sentences.",
+    "List the tools you have and what each one is for.",
+    "Read src/agent/loop.zig and explain the agent loop.",
+    "What did the last recorded run do?"
+  ];
+
+  SUGGESTIONS.forEach(function (text) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "suggestion";
+    b.textContent = text;
+    b.addEventListener("click", function () {
+      el.task.value = text;
+      el.task.focus();
+      syncControls();
+    });
+    el.suggestions.appendChild(b);
+  });
+
   /* ---------- conversation utilities ---------- */
 
   el.sessionFilter.addEventListener("input", function () { renderSessionOptions(null); });
@@ -3941,6 +4442,8 @@ document.addEventListener("DOMContentLoaded", function () {
   // regardless of which view opened. Rooms wait for it because they need the
   // instance name to tell this clanker's messages from a peer's.
   loadStatus();
+  loadProviders();
+  syncSubmitLabel();
   // Only the opening view's data is fetched now; the rest load when opened.
   showView(window.location.hash.replace("#", ""), false);
   /* Reopening the page used to show an empty transcript even when the picker
@@ -3960,6 +4463,8 @@ document.addEventListener("DOMContentLoaded", function () {
       .then(function (data) {
         renderSessionHistory(data.messages || []);
         syncTranscriptEmpty();
+        applyTurnFilter();
+        syncScrollButton();
       })
       .catch(function () { syncTranscriptEmpty(); });
   });

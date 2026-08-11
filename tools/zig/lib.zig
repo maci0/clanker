@@ -17,6 +17,14 @@ extern fn ck_random() u64;
 extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_read_range(path_ptr: u32, path_len: u32, offset: u32, length: u32) u32;
+extern fn ck_fs_append(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
+extern fn ck_fs_copy(src_ptr: u32, src_len: u32, dst_ptr: u32, dst_len: u32) u32;
+extern fn ck_fs_rename(old_ptr: u32, old_len: u32, new_ptr: u32, new_len: u32) u32;
+extern fn ck_fs_delete(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_mkdir(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_stat(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_find(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
+extern fn ck_fs_grep(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
@@ -518,6 +526,77 @@ pub fn fsReadRange(path: []const u8, offset: usize, len: usize) FsError![]const 
 }
 
 /// Writes a file relative to the sandbox root.
+/// The host writes results into its arena, so anything returned here is only
+/// valid until the next host call: copy before calling again.
+fn fsPathOp(rc: u32) FsError!void {
+    return switch (rc) {
+        0 => {},
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
+fn fsPathQuery(rc: u32) FsError![]const u8 {
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
+/// Appends to a file, creating it when absent.
+pub fn fsAppend(path: []const u8, data: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    const d = sliceToMem(data);
+    return fsPathOp(ck_fs_append(p.ptr, p.len, d.ptr, d.len));
+}
+
+pub fn fsCopy(src: []const u8, dst: []const u8) FsError!void {
+    const a = sliceToMem(src);
+    const b = sliceToMem(dst);
+    return fsPathOp(ck_fs_copy(a.ptr, a.len, b.ptr, b.len));
+}
+
+pub fn fsRename(old_path: []const u8, new_path: []const u8) FsError!void {
+    const a = sliceToMem(old_path);
+    const b = sliceToMem(new_path);
+    return fsPathOp(ck_fs_rename(a.ptr, a.len, b.ptr, b.len));
+}
+
+pub fn fsDelete(path: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    return fsPathOp(ck_fs_delete(p.ptr, p.len));
+}
+
+pub fn fsMkdir(path: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    return fsPathOp(ck_fs_mkdir(p.ptr, p.len));
+}
+
+/// JSON: {"kind":"file"|"dir","size":N}
+pub fn fsStat(path: []const u8) FsError![]const u8 {
+    const p = sliceToMem(path);
+    return fsPathQuery(ck_fs_stat(p.ptr, p.len));
+}
+
+/// Paths under `dir` whose name contains `pattern`, as a JSON array.
+pub fn fsFind(dir: []const u8, pattern: []const u8) FsError![]const u8 {
+    const d = sliceToMem(dir);
+    const p = sliceToMem(pattern);
+    return fsPathQuery(ck_fs_find(d.ptr, d.len, p.ptr, p.len));
+}
+
+/// Lines under `dir` containing `pattern`, as a JSON array of "path:line:text".
+pub fn fsGrep(dir: []const u8, pattern: []const u8) FsError![]const u8 {
+    const d = sliceToMem(dir);
+    const p = sliceToMem(pattern);
+    return fsPathQuery(ck_fs_grep(d.ptr, d.len, p.ptr, p.len));
+}
+
 pub fn fsWrite(path: []const u8, data: []const u8) FsError!void {
     const p = sliceToMem(path);
     const d = sliceToMem(data);

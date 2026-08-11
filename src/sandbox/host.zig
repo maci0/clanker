@@ -912,6 +912,18 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
 
 const fs_find_max_depth: u32 = 12;
 
+/// Directories a name search should never descend into. Without this, a search
+/// of the project answers mostly with copies of it: build caches, vendored
+/// dependencies, and the staging trees the improvement engine leaves behind.
+const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "staging", "history" };
+
+fn skipDir(name: []const u8) bool {
+    for (fs_skip_dirs) |d| {
+        if (std.mem.eql(u8, name, d)) return true;
+    }
+    return false;
+}
+
 fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32) !void {
     if (depth > fs_find_max_depth) return;
     var it = dir.iterate();
@@ -925,6 +937,7 @@ fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []co
         defer h.sandbox.gpa.free(rel);
 
         if (entry.kind == .directory) {
+            if (skipDir(entry.name)) continue;
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
             try fsFindRecurse(h, s, sub, rel, pattern, depth + 1);
@@ -1102,24 +1115,18 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const full = safeJoin(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
-    // Try to stat as a file first, then as a directory.
+    // statFile answers for a directory too, so its own kind field decides
+    // what this is. Trying a file stat first and calling any success "file"
+    // reported every directory as a 190-byte file.
     const cwd = std.Io.Dir.cwd();
-    var kind_str: []const u8 = "other";
-    var size: u64 = 0;
-
-    if (cwd.statFile(h.sandbox.io, full)) |stat| {
-        kind_str = "file";
-        size = stat.size;
-    } else |_| {
-        // Not a file — try opening as a directory to distinguish dir vs not-found.
-        var dir = cwd.openDir(h.sandbox.io, full, .{}) catch |err| switch (err) {
-            error.FileNotFound => return Err.not_found,
-            else => return Err.not_found,
-        };
-        dir.close(h.sandbox.io);
-        kind_str = "directory";
-        size = 0;
-    }
+    const stat = cwd.statFile(h.sandbox.io, full, .{}) catch return Err.not_found;
+    const kind_str: []const u8 = switch (stat.kind) {
+        .file => "file",
+        .directory => "directory",
+        .sym_link => "symlink",
+        else => "other",
+    };
+    const size: u64 = if (stat.kind == .directory) 0 else stat.size;
 
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -1192,7 +1199,7 @@ pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u3
     defer h.sandbox.gpa.free(full_old);
     const full_new = safeJoin(h.sandbox, new_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full_new);
-    std.Io.Dir.cwd().rename(h.sandbox.io, full_old, full_new) catch |err| switch (err) {
+    std.Io.Dir.cwd().rename(full_old, std.Io.Dir.cwd(), full_new, h.sandbox.io) catch |err| switch (err) {
         error.FileNotFound => return Err.not_found,
         else => return Err.invalid,
     };
@@ -1290,8 +1297,9 @@ fn fsWriteRangeImpl(h: *Host, sub_path: []const u8, data: []const u8, offset: u3
     };
     defer file.close(h.sandbox.io);
 
-    file.seekTo(h.sandbox.io, @as(u64, offset)) catch return Err.invalid;
-    file.writeAll(h.sandbox.io, data) catch |err| switch (err) {
+    // Positional, because there is no seek on this File: the offset is part
+    // of the write rather than a mode the handle carries.
+    file.writePositionalAll(h.sandbox.io, data, @as(u64, offset)) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
@@ -1349,14 +1357,15 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     // syscall instead of open-fail-then-writeFile (truncate=false never
     // clobbers existing content).
     var file = std.Io.Dir.cwd().createFile(h.sandbox.io, full, .{ .truncate = false }) catch |err| switch (err) {
-        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
     defer file.close(h.sandbox.io);
-    // Seek to end and write.
-    file.seekToEnd(h.sandbox.io) catch return Err.invalid;
-    file.writeAll(h.sandbox.io, data) catch |err| switch (err) {
-        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+    // Append means writing at the current end, and this File has no seek: ask
+    // for the size and write there.
+    const end = (file.stat(h.sandbox.io) catch return Err.invalid).size;
+    file.writePositionalAll(h.sandbox.io, data, end) catch |err| switch (err) {
+        error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
     return Err.ok;
@@ -1857,8 +1866,22 @@ fn stringArray(arena: std.mem.Allocator, value: ?std.json.Value) ![]const []cons
 }
 
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
-    if (sub_path.len == 0) return error.PathOutsideSandbox;
-    if (sub_path[0] == '/') return error.PathOutsideSandbox;
+    if (sub_path[0..@min(sub_path.len, 1)].len > 0 and sub_path[0] == '/') return error.PathOutsideSandbox;
+    // The root itself, written "" or ".". Without this no host call could
+    // address the sandbox root: listing or searching the project as a whole
+    // was refused, and a tool given fs_prefixes ["."] still could not ask what
+    // was in it. Only a tool allowed everywhere gets the root; one confined to
+    // src/ has no business enumerating the tree above it.
+    if (sub_path.len == 0 or std.mem.eql(u8, sub_path, ".") or std.mem.eql(u8, sub_path, "./")) {
+        if (sb.fs_prefixes.len > 0) {
+            var root_ok = false;
+            for (sb.fs_prefixes) |p| {
+                if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) root_ok = true;
+            }
+            if (!root_ok) return error.PathOutsideSandbox;
+        }
+        return sb.gpa.dupe(u8, std.mem.trimEnd(u8, sb.root_dir, "/"));
+    }
     var it = std.mem.splitScalar(u8, sub_path, '/');
     while (it.next()) |comp| {
         if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
