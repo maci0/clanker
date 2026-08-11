@@ -146,6 +146,11 @@ pub const Sandbox = struct {
     fs_prefixes: []const []const u8 = &.{},
     max_http_bytes: usize = 1 << 20,
     max_fs_bytes: usize = 1 << 20,
+    /// Instruction budget (wasm fuel) for one call of this tool, from the
+    /// descriptor's `fuel` key. 0 means the runtime default; runtime.zig
+    /// clamps positive values to that default as a ceiling, so a descriptor
+    /// tightens its own budget but never raises it.
+    fuel: u64 = 0,
     environ_map: *std.process.Environ.Map,
     /// Deterministic seed for the tool RNG (from agent.seed).
     seed: u64 = 0,
@@ -275,6 +280,7 @@ pub fn sandboxFor(
         .exec_allow = tool.exec_allow,
         .env_allow = tool.env_allow,
         .fs_prefixes = tool.fs_prefixes,
+        .fuel = tool.fuel,
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
         .cfg = cfg,

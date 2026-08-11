@@ -16,6 +16,14 @@ const zwasm = @import("zwasm");
 
 /// Deterministic instruction budget per tool call (OutOfFuel trap).
 const default_fuel = 10_000_000_000;
+
+/// The effective budget for one call: a descriptor's `fuel` (0 = unset) may
+/// tighten the default but never exceed it — a fat-fingered manifest stays
+/// a setting, not an unmetered run (the same clamp philosophy as rlm's
+/// max_depth ceiling).
+fn fuelBudget(requested: u64) u64 {
+    return if (requested == 0) default_fuel else @min(requested, default_fuel);
+}
 /// Linear memory cap in wasm pages (64 KiB each): 256 pages = 16 MiB.
 const max_memory_pages = 256;
 
@@ -110,7 +118,7 @@ pub const ToolModule = struct {
         self.module = try self.engine.compile(wasm_bytes);
         try linkHostFns(&self.linker, self.h);
         self.inst = try self.linker.instantiate(&self.module, .{
-            .fuel = .{ .limited = default_fuel },
+            .fuel = .{ .limited = fuelBudget(sb.fuel) },
             .max_memory_pages = .{ .limited = max_memory_pages },
         });
         self.inst_initialized = true;
@@ -229,6 +237,44 @@ test "zwasm loads a Zig-compiled module and calls it" {
     var fn_ = mod.inst.typedFunc(fn (i32, i32) i32, "add");
     const res = try fn_.call(.{ 17, 25 });
     try std.testing.expectEqual(@as(i32, 42), res);
+}
+
+test "fuelBudget lets a descriptor tighten but never raise the default" {
+    try std.testing.expectEqual(@as(u64, default_fuel), fuelBudget(0));
+    try std.testing.expectEqual(@as(u64, 1_000), fuelBudget(1_000));
+    try std.testing.expectEqual(@as(u64, default_fuel), fuelBudget(default_fuel * 2));
+}
+
+test "a descriptor-tightened fuel budget traps a call that exceeds it" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tests/fixtures/tiny.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .fuel = 1,
+    };
+
+    // Instantiation itself may burn the single unit of fuel; either way the
+    // budget must surface as OutOfFuel, never as a successful call.
+    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch |err| {
+        try std.testing.expectEqual(error.OutOfFuel, err);
+        return;
+    };
+    defer mod.deinit();
+
+    var fn_ = mod.inst.typedFunc(fn (i32, i32) i32, "add");
+    try std.testing.expectError(error.OutOfFuel, fn_.call(.{ 17, 25 }));
 }
 
 test "zwasm executes on a worker thread" {

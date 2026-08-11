@@ -290,6 +290,7 @@ Every tool is a WASM plugin; the descriptor decides how much of the harness it g
 | `network_from_config` | `"peers"` or `"providers"`: the harness adds those configured hosts to `network_allow` at load |
 | `exec_allow` | Commands this tool may run through `ck_exec`; replaces the harness default set |
 | `fs_prefixes` / `network_allow` | Filesystem and network authority |
+| `fuel` | Instruction budget for one call (wasm fuel). Tightens the sandbox default (10B); values above it are clamped down, so a descriptor can never raise its own ceiling |
 
 ### Switching plugins on and off
 
