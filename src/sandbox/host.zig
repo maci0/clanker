@@ -383,19 +383,27 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         break :blk msgs;
     };
     var err_detail: ?[]const u8 = null;
-    const llm_start_ns = std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds;
+    // Announced before the call, not just after it: an LLM call is the longest
+    // thing a tool can do, and without the arrow a hanging request is
+    // indistinguishable from one that was never issued.
+    log.log(.info, "[llm] → ck_llm", .{});
+    // `.awake` is monotonic. Elapsed time measured against `.real` goes
+    // negative when NTP steps the wall clock mid-call, which is exactly the
+    // window a multi-second request sits in.
+    const llm_t0 = std.Io.Timestamp.now(h.sandbox.io, .awake);
     const resp = client.chat(access.ctx, arena, .{
         .provider = provider,
         .messages = messages,
         .max_tokens = max_tokens,
     }, &err_detail) catch |err| {
-        log.log(.warn, "[llm] call failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
+        const failed_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
+        log.log(.warn, "[llm] ✗ ck_llm … {d}ms — {s} ({s})", .{ failed_ms, @errorName(err), err_detail orelse "" });
         return Err.network;
     };
     const content = resp.message.content orelse "";
     // Approximate token usage: 4 bytes per token (rough heuristic).
     const est_tokens: u64 = @intCast(@min(content.len / 4, std.math.maxInt(u32)));
-    const llm_ms = @divTrunc(std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds - llm_start_ns, std.time.ns_per_ms);
+    const llm_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
     log.log(.info, "[llm] ✓ ck_llm … {d}ms (~{d} est. tokens)", .{ llm_ms, est_tokens });
     if (h.sandbox.session_token_budget > 0) {
         if (h.sandbox.used_session_tokens + est_tokens > h.sandbox.session_token_budget) {
@@ -1649,7 +1657,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     }
 
     log.log(.info, "[exec] → {s}", .{cmd});
-    const exec_start_ns = std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds;
+    const exec_t0 = std.Io.Timestamp.now(h.sandbox.io, .awake);
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
         .cwd = .{ .dir = exec_dir },
@@ -1660,7 +1668,10 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         // whose output overran the cap was reported to the guest as
         // "NetworkError", which sent the model looking for a connectivity
         // problem that never existed.
-        log.log(.warn, "[exec] {s} failed to run: {s}", .{ cmd, @errorName(err) });
+        // Carries the ✗ and a duration like the exit-code branch below, so
+        // every → has a finish line in the same shape whatever went wrong.
+        const failed_ms = @divTrunc(exec_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
+        log.log(.warn, "[exec] ✗ {s} … {d}ms — failed to run: {s}", .{ cmd, failed_ms, @errorName(err) });
         return switch (err) {
             error.FileNotFound => Err.not_found,
             error.StreamTooLong, error.FileTooBig, error.NoSpaceLeft => Err.too_large,
@@ -1674,7 +1685,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         .exited => |c| c,
         else => 1,
     };
-    const exec_ms = @divTrunc(std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds - exec_start_ns, std.time.ns_per_ms);
+    const exec_ms = @divTrunc(exec_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
     if (code == 0) {
         log.log(.info, "[exec] ✓ {s} … {d}ms", .{ cmd, exec_ms });
     } else {
