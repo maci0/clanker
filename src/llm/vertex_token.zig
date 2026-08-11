@@ -11,6 +11,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const gcp_jwt = @import("gcp_jwt.zig");
+const build_options = @import("build_options");
 
 const scope = "https://www.googleapis.com/auth/cloud-platform";
 const grant_type = "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer";
@@ -84,7 +85,7 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
         .payload = body,
         .headers = .{
             .content_type = .{ .override = "application/x-www-form-urlencoded" },
-            .user_agent = .{ .override = "clanker/0.1.0" },
+            .user_agent = .{ .override = "clanker/" ++ build_options.version },
         },
         .response_writer = &w,
     }) catch |err| {

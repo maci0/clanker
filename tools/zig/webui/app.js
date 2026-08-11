@@ -1014,6 +1014,15 @@ function showCaret(turn, on) {
 
 var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
 
+/* Answers are model output, and a prompt-injected tool result or RAG
+   document can steer the model into emitting a markdown link or image whose
+   target is a `javascript:` URL. Mirrors the scheme allowlist already used
+   for peer URLs below: only a scheme that cannot execute script is ever
+   assigned to href/src. */
+function isSafeLinkUrl(url) {
+  return /^(https?:|mailto:)/i.test(url);
+}
+
 function inlineInto(parent, text) {
   while (text.length) {
     var m = INLINE_RE.exec(text);
@@ -1043,17 +1052,28 @@ function inlineInto(parent, text) {
       // An image, not a link to one: the link branch below matched the second
       // half and left the "!" behind as text.
       var isplit = tok.indexOf("](");
-      node = document.createElement("img");
-      node.src = tok.slice(isplit + 2, -1);
-      node.alt = tok.slice(2, isplit);
-      node.className = "md-img";
-      node.loading = "lazy";
+      var isrc = tok.slice(isplit + 2, -1);
+      if (isSafeLinkUrl(isrc)) {
+        node = document.createElement("img");
+        node.src = isrc;
+        node.alt = tok.slice(2, isplit);
+        node.className = "md-img";
+        node.loading = "lazy";
+      } else {
+        node = document.createTextNode(tok);
+      }
     } else if (tok.charAt(0) === "[") {
       var split = tok.indexOf("](");
-      node = document.createElement("a");
-      node.href = tok.slice(split + 2, -1);
-      node.rel = "noreferrer noopener";
-      inlineInto(node, tok.slice(1, split));
+      var href = tok.slice(split + 2, -1);
+      if (isSafeLinkUrl(href)) {
+        node = document.createElement("a");
+        node.href = href;
+        node.rel = "noreferrer noopener";
+        inlineInto(node, tok.slice(1, split));
+      } else {
+        node = document.createDocumentFragment();
+        inlineInto(node, tok.slice(1, split));
+      }
     } else {
       node = document.createElement("a");
       node.href = tok;
@@ -1310,7 +1330,9 @@ function addToolEvent(turn, names) {
   spin.className = "spin";
   spin.setAttribute("aria-hidden", "true");
   var label = document.createElement("span");
-  label.textContent = "⚙ " + names;
+  // The spinner beside this already marks it as running; a gear glyph here
+  // would be exactly the "glyph stands in for an icon" this sheet forbids.
+  label.textContent = names;
   // Shown only under prefers-reduced-motion, where the spinner is hidden.
   var state = document.createElement("span");
   state.className = "run-state";
@@ -1404,7 +1426,7 @@ function answerAsk(row, id, opt) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: id, answer: opt })
   }).then(readJson).then(function () {
-    settleAsk(row, "→ " + opt);
+    settleAsk(row, opt, "chevron");
   }).catch(function (err) {
     // The run may have stopped waiting (timeout, or somebody else answered);
     // re-enabled buttons would pretend otherwise, so the row settles with
@@ -1414,13 +1436,15 @@ function answerAsk(row, id, opt) {
 }
 
 /* Answered or refused, the question is settled: the buttons go away and the
-   outcome stays in the transcript where the question was. */
-function settleAsk(row, text) {
+   outcome stays in the transcript where the question was. `iconName` marks
+   which option was chosen with the drawn icon set, not a typed arrow. */
+function settleAsk(row, text, iconName) {
   var group = row.querySelector(".ask-options");
   if (group) group.remove();
   var done = document.createElement("div");
   done.className = "ask-answered";
-  done.textContent = text;
+  if (iconName) done.appendChild(icon(iconName, 12));
+  done.appendChild(document.createTextNode(text));
   row.appendChild(done);
 }
 
@@ -3438,9 +3462,16 @@ function clearLoading(name) {
 }
 
 var viewSettled = false;
+var currentView = null;
 
 function showView(name, focusPanel) {
   if (VIEWS.indexOf(name) === -1) name = "chat";
+  // The rooms poll has no idea the view switched away from under it — only
+  // document.hidden stopped it before, so leaving Rooms for Chat or Board
+  // left it polling a chat log nobody could see. Stop it here, and pick back
+  // up where it left off if Rooms is reopened.
+  if (currentView === "rooms" && name !== "rooms") stopChatPoll();
+  currentView = name;
   VIEWS.forEach(function (v) {
     var tab = document.getElementById("tab-" + v);
     var panel = document.getElementById("view-" + v);
@@ -3476,6 +3507,8 @@ function showView(name, focusPanel) {
     } else {
       viewLoaded[name] = true;
     }
+  } else if (name === "rooms" && el.chatRoom.value) {
+    startChatPoll(el.chatRoom.value);
   }
 }
 
@@ -4985,6 +5018,27 @@ function closeOverlay(node) {
   lastFocus = null;
 }
 
+/* aria-modal="true" claims the rest of the page is unreachable while a dialog
+   is open, but nothing enforced that: Tab could walk off the last button in
+   the box and land on rail/header controls sitting under the scrim. This
+   wraps Tab back to the other end of the dialog instead. */
+function focusableIn(node) {
+  return Array.prototype.slice
+    .call(node.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+    .filter(function (n) { return n.getClientRects().length > 0; });
+}
+function trapOverlayTab(e, node) {
+  var items = focusableIn(node);
+  if (!items.length) { e.preventDefault(); return; }
+  var first = items[0], last = items[items.length - 1];
+  var atEdge = e.shiftKey ? (document.activeElement === first || !node.contains(document.activeElement))
+    : (document.activeElement === last || !node.contains(document.activeElement));
+  if (atEdge) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+  }
+}
+
 /* A styled replacement for window.prompt(): resolves to the entered text, or
    null if cancelled or dismissed. opts.suggestions backs the input with a
    datalist so a value that already exists (a workspace name, say) can be
@@ -5165,6 +5219,12 @@ el.paletteInput.addEventListener("keydown", function (e) {
 });
 
 document.addEventListener("keydown", function (e) {
+  if (e.key === "Tab") {
+    if (!el.textPrompt.hidden) { trapOverlayTab(e, el.textPrompt); return; }
+    if (!el.palette.hidden) { trapOverlayTab(e, el.palette); return; }
+    if (!el.help.hidden) { trapOverlayTab(e, el.help); return; }
+    return;
+  }
   if (e.key === "Escape") {
     if (!el.textPrompt.hidden) { finishTextPrompt(null); e.preventDefault(); return; }
     if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }

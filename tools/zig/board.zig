@@ -250,8 +250,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // is checked before the id so a request wrong in both ways is told the op is
     // not real: no id would have made it work.
     const known = [_][]const u8{
-        "create",     "add",            "update",         "move",   "claim",
-        "assign",     "close",          "delete",         "log",    "usage",
+        "create",      "add",            "update",         "move",       "claim",
+        "assign",      "close",          "delete",         "log",        "usage",
         "subtask_add", "subtask_toggle", "subtask_remove", "depend_add", "depend_remove",
     };
     var ok_op = false;

@@ -186,9 +186,9 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) vo
 ### D. Testability of a pure core
 
 Pull pure logic (the markdown-to-ANSI state machine, message compaction) into
-a small, tested unit: `MdStream` and `compactMessages` (both in `src/cli.zig`,
-tested at the bottom of the file) are the shape to match. Keep I/O and
-process orchestration outside the tested core.
+a small, tested unit: `MdStream` (`src/tui/transcript.zig`) and
+`compactMessages` (`src/cli.zig`, tested at the bottom of the file) are the
+shape to match. Keep I/O and process orchestration outside the tested core.
 
 ### E. Stdlib-shaped extension
 
@@ -230,10 +230,10 @@ Unless you add real policy (a fs-prefix check, a size cap, logging).
 - A second streaming-status channel beside `on_token`/`on_tool_call`/
   `on_tool_result`
 - A second session format or store beside `src/agent/session.zig`
-- A second markdown/ANSI renderer beside `MdStream` (the unused `format`
-  WASM tool is exactly this trap: don't let a "cleaner" second
-  implementation grow beside it either; either wire the existing one in or
-  remove it, don't add a third)
+- A second markdown/ANSI renderer beside `MdStream` (`tools/zig/format.zig`
+  used to be exactly this trap, a second implementation nothing called; it's
+  gone now, so treat any new renderer candidate the same way: wire it in or
+  don't add it, don't let a third grow)
 
 Delete or merge; do not "abstract over both."
 
@@ -304,7 +304,7 @@ If you cannot name it without "Manager", "Helper", "Util2", "Base", rethink.
 | `src/sandbox/` | `ck_*` host functions, zwasm wrapper, policy | Agent-loop orchestration |
 | `src/agent/` | Agent loop, session store, system prompt, execution graphs | Raw socket/process I/O beyond what the loop needs |
 | `src/tools/` | Registry (discovery/dispatch), WASM build pipeline (protected) | Agent orchestration logic |
-| `src/cli.zig` | Command dispatch, REPL/HTTP glue, streaming-status rendering (`MdStream`, spinner) | A second tool-dispatch or session mechanism |
+| `src/cli.zig` | Command dispatch, REPL/HTTP glue, streaming-status orchestration (spinner; feeds `src/tui/transcript.zig`'s `MdStream`) | A second tool-dispatch or session mechanism |
 | `src/improve/` | Self-improvement engine (protected) | - |
 | `src/gate/` | Deterministic verification | Anything that could grade its own change |
 | `tools/zig/`, `tools/manifests/` | Sandboxed tool logic + descriptors | Trust-root logic (see `wasm-review.md`) |
@@ -335,7 +335,7 @@ For each row: **keep / thin / move layer / merge / delete / do not add**.
 rg -n 'fn.*[Tt]ool.*[Cc]all|executeCalls' src/agent src/cli.zig   # one tool-dispatch path?
 rg -n 'on_token|on_tool_call|on_tool_result' src --type zig       # one status-hook shape, reused everywhere?
 rg -n 'loadSession|saveSession' src --type zig                    # one session store?
-rg -n 'MdStream|format\.zig' src tools/zig --type zig             # the unused `format` WASM tool vs MdStream: still two implementations of the same idea?
+rg -n 'MdStream|format\.zig' src tools/zig --type zig             # one markdown/ANSI renderer? (format.zig was removed as the old second one; a nonzero format.zig hit means it's back)
 ```
 
 ### 4. Streaming/loop-path check
@@ -436,16 +436,16 @@ Why: illegal "some counters updated, others not" state becomes hard to reach.
 // a tool is added or renamed, and duplicates what registry.zig already knows.
 ```
 
-### Bad: two abstractions for one job
+### Bad: two abstractions for one job (resolved precedent, watch for a repeat)
 
 ```text
-// tools/zig/format.zig (markdown -> ANSI) exists but is never called; the
-// REPL/CLI grew MdStream, a second, streaming-safe implementation of
-// nearly the same rules, instead of either wiring the tool in or deleting
-// it. Flag this explicitly: either delete format.zig (if MdStream fully
-// supersedes it) or document why both exist (e.g. format.zig is kept for a
-// different, non-streaming consumer). Don't let a third implementation
-// appear before this is resolved.
+// tools/zig/format.zig (markdown -> ANSI) once existed alongside MdStream, a
+// second, streaming-safe implementation of nearly the same rules, with
+// nothing calling the tool. It has since been deleted; MdStream is the one
+// renderer. This is the shape to catch early next time: two
+// implementations of the same idea, one of them dead weight. Flag it the
+// same way if a similar pair reappears (delete the redundant one, or
+// document why both are needed, before a third shows up).
 ```
 
 ---
@@ -459,7 +459,7 @@ Why: illegal "some counters updated, others not" state becomes hard to reach.
 | Favor reading over writing | Fewer layers; jump-to-definition should land on logic fast |
 | One obvious way | No dual paths; prefer std |
 | Compile errors > runtime crashes | Types/enums over stringly APIs where cheap |
-| Incremental improvements | Extract on third site; finish a migration fully rather than keeping both paths (the `format.zig`-vs-`MdStream` case above) |
+| Incremental improvements | Extract on third site; finish a migration fully rather than keeping both paths (the resolved `format.zig`-vs-`MdStream` case above) |
 | Avoid local maximums | Do not keep a raw syscall because a wrapper is "done" |
 | Reduce what one must remember | Caps and policies in one place (`max_session_chars`, `max_per_turn_tokens`) |
 | Memory is a resource | No alloc-hiding helpers on the streaming/loop path |
@@ -486,4 +486,4 @@ Why: illegal "some counters updated, others not" state becomes hard to reach.
 - "Focus on deleting dual paths (tool dispatch, status hooks, session store)."
 - "Propose extractions where >= 3 copy-pastes exist; do not implement."
 - "Implement P0/P1 verdicts only."
-- "Resolve the format.zig-vs-MdStream duplication as part of this pass."
+- "Resolve any dual-renderer or dual-dispatch finding as part of this pass, not just report it."

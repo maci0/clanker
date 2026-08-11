@@ -42,6 +42,11 @@ pub const Key = union(enum) {
     eof,
     /// A byte sequence this editor has no meaning for.
     ignored,
+    /// Not decoded from bytes: a SIGWINCH wakeup handed back by
+    /// `input.KeyReader.next` so the caller can redraw immediately. The
+    /// editor itself has no notion of terminal size; this is always a no-op
+    /// here, same as `.tab`.
+    resize,
 };
 
 /// A decoded key and the bytes it consumed.
@@ -246,7 +251,7 @@ pub const Editor = struct {
             .paste_end => self.in_paste = false,
             // Tab has no meaning to the editor itself; a caller that wants
             // completion intercepts it before calling apply (not yet wired).
-            .clear_screen, .interrupt, .eof, .ignored, .tab => return false,
+            .clear_screen, .interrupt, .eof, .ignored, .tab, .resize => return false,
         }
         return false;
     }

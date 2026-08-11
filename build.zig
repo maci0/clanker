@@ -1,7 +1,15 @@
 const std = @import("std");
+const build_zon = @import("build.zig.zon");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
+
+    // Single source of truth for the version clanker reports (`--version`,
+    // the `clanker/<version>` user agent): build.zig.zon's `.version` field,
+    // piped through as a build option so it can never drift from a
+    // hand-copied literal.
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", build_zon.version);
 
     // The host, with one adjustment: zwasm links libc, and on a glibc host the
     // crt1.o carries SFrame relocations this lld cannot resolve, so linux
@@ -33,6 +41,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
+                .{ .name = "build_options", .module = build_options.createModule() },
             },
         }),
     });
@@ -56,6 +65,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zwasm", .module = zwasm_mod },
+            .{ .name = "build_options", .module = build_options.createModule() },
         },
     });
     const exe_tests = b.addTest(.{ .root_module = test_mod });

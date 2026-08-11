@@ -75,8 +75,14 @@ fn tryCreate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, path: []const 
     defer gpa.free(text);
     var buf: [64]u8 = undefined;
     var w = file.writer(io, &buf);
-    w.interface.writeAll(text) catch {};
-    w.interface.flush() catch {};
+    w.interface.writeAll(text) catch |err| {
+        dir.deleteFile(io, path) catch {};
+        return err;
+    };
+    w.interface.flush() catch |err| {
+        dir.deleteFile(io, path) catch {};
+        return err;
+    };
 
     return .{ .dir = dir, .io = io, .path = path, .held = true };
 }
@@ -97,9 +103,13 @@ fn selfPid() u32 {
 fn processExists(io: std.Io, gpa: std.mem.Allocator, pid: u32) bool {
     const path = std.fmt.allocPrint(gpa, "/proc/{d}", .{pid}) catch return true;
     defer gpa.free(path);
-    // On any doubt, treat the lock as held: refusing to start is recoverable,
-    // two runs corrupting a tree is not.
-    var d = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    // Only a confirmed absence (ENOENT) means the process is dead. Any other
+    // failure (permission, transient EMFILE, ...) is doubt, and the comment
+    // above promises doubt treats the lock as held: refusing to start is
+    // recoverable, two runs corrupting a tree is not. Folding every error
+    // into "dead" would reclaim a live process's lock on nothing more than a
+    // hiccup opening /proc.
+    var d = std.Io.Dir.cwd().openDir(io, path, .{}) catch |err| return err != error.FileNotFound;
     d.close(io);
     return true;
 }

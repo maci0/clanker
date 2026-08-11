@@ -28,3 +28,6 @@ chatrooms.jsonl
 # tree-sitter grammars built by tools/grammars/build.sh
 tools/grammars/*.so
 .playwright-mcp/
+
+# Runtime lock for the self-improvement review loop.
+.review-loop.lock

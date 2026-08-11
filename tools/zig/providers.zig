@@ -118,7 +118,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
         const t0 = lib.nowSeconds();
         if (lib.llmWith("ping", name, 1)) |_| {
-            const ms: u64 = @intFromFloat(@max(0.0, (lib.nowSeconds() - t0) * 1000.0));
+            const ms: u64 = @trunc(@max(0.0, (lib.nowSeconds() - t0) * 1000.0));
             try s.objectField("status");
             try s.write("ok");
             try s.objectField("ms");

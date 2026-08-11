@@ -565,7 +565,17 @@ pub const Engine = struct {
             // can't even `zig build` (the state/history snapshot above is
             // the recovery path for a half-promoted *set* of files, but
             // each individual file write still has to be all-or-nothing).
-            try atomic_write.writeFile(self.ctx.io, std.Io.Dir.cwd(), c.file, data);
+            atomic_write.writeFile(self.ctx.io, std.Io.Dir.cwd(), c.file, data) catch |err| {
+                // A write failing partway through the set (disk full,
+                // permission error, ...) must not leave the live tree with
+                // some files promoted and others not: nothing here has been
+                // recorded to history yet, so it would look, to the next
+                // run, like a half-applied change nobody knows about.
+                log.log(.error_, "promotion of '{s}' failed: {s} — restoring the pre-promotion snapshot", .{ c.file, @errorName(err) });
+                self.hist.restoreFiles(id, files);
+                self.removeTree(staging);
+                return err;
+            };
         }
 
         // Recorded before git commit and peer notification, which are
@@ -646,7 +656,10 @@ pub const Engine = struct {
         const msg = std.fmt.allocPrint(self.ctx.gpa, "clanker: {s} [{s}]", .{ summary, id }) catch return;
         defer self.ctx.gpa.free(msg);
         const commit_argv = [_][]const u8{ "git", "commit", "-m", msg };
-        const commit = std.process.run(self.ctx.gpa, self.ctx.io, .{ .argv = &commit_argv }) catch return;
+        const commit = std.process.run(self.ctx.gpa, self.ctx.io, .{ .argv = &commit_argv }) catch |err| {
+            log.log(.warn, "git commit failed to spawn: {s}; change is only in the state/history snapshot", .{@errorName(err)});
+            return;
+        };
         defer self.ctx.gpa.free(commit.stdout);
         defer self.ctx.gpa.free(commit.stderr);
         const ok = switch (commit.term) {
@@ -656,7 +669,7 @@ pub const Engine = struct {
         if (ok) {
             log.log(.info, "committed as git change: {s}", .{msg});
         } else {
-            log.log(.debug, "git commit output: {s}", .{commit.stderr});
+            log.log(.warn, "git commit failed; change is only in the state/history snapshot: {s}", .{commit.stderr});
         }
     }
 
@@ -704,10 +717,20 @@ pub const Engine = struct {
         return std.fmt.allocPrint(self.ctx.gpa, "imp-{d}", .{ns});
     }
 
+    fn gateEvalNamed(name: []const u8) scorers.Eval {
+        const kind: scorers.Kind = if (std.mem.eql(u8, name, "selfhost_build"))
+            .selfhost_build
+        else if (std.mem.eql(u8, name, "selfhost_tests"))
+            .selfhost_tests
+        else
+            .selfhost_tools;
+        return .{ .name = name, .kind = kind };
+    }
+
     fn gateScore(self: *Engine) !struct { score: f64, total: usize } {
         var passing: usize = 0;
         for (gate_evals) |name| {
-            const e = scorers.Eval{ .name = name, .kind = if (std.mem.eql(u8, name, "selfhost_build")) .selfhost_build else if (std.mem.eql(u8, name, "selfhost_tests")) .selfhost_tests else .selfhost_tools };
+            const e = gateEvalNamed(name);
             const res = try self.runGateEval(&e);
             if (res.ok) passing += 1;
         }
@@ -730,7 +753,7 @@ pub const Engine = struct {
     fn gateErrorTail(self: *Engine) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
         for (gate_evals) |name| {
-            const e = scorers.Eval{ .name = name, .kind = if (std.mem.eql(u8, name, "selfhost_build")) .selfhost_build else if (std.mem.eql(u8, name, "selfhost_tests")) .selfhost_tests else .selfhost_tools };
+            const e = gateEvalNamed(name);
             const res = try self.runGateEval(&e);
             if (!res.ok) {
                 try buf.appendSlice(self.arena, res.detail);
@@ -1411,36 +1434,6 @@ fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
 }
 
 // ------------------------------------------------------------- tree utils --
-
-fn appendFile(io: std.Io, arena: std.mem.Allocator, rel: []const u8, buf: *std.ArrayList(u8), max_bytes: usize) !void {
-    if (buf.items.len >= max_bytes) return;
-    const data = std.Io.Dir.cwd().readFileAlloc(io, rel, arena, .limited(1 << 20)) catch return;
-    const header = try std.fmt.allocPrint(arena, "\n===== FILE: {s} =====\n", .{rel});
-    const remaining = max_bytes - buf.items.len;
-    const take_header = @min(header.len, remaining);
-    const take_data = @min(data.len, remaining - take_header);
-    try buf.appendSlice(arena, header[0..take_header]);
-    try buf.appendSlice(arena, data[0..take_data]);
-}
-
-fn walkInto(io: std.Io, arena: std.mem.Allocator, rel: []const u8, buf: *std.ArrayList(u8), max_bytes: usize) !void {
-    var dir = std.Io.Dir.cwd().openDir(io, rel, .{ .iterate = true }) catch return;
-    defer dir.close(io);
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (buf.items.len >= max_bytes) return;
-        const sub = std.fmt.allocPrint(arena, "{s}/{s}", .{ rel, entry.name }) catch continue;
-        switch (entry.kind) {
-            .directory => try walkInto(io, arena, sub, buf, max_bytes),
-            .file => {
-                if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon") and !std.mem.endsWith(u8, entry.name, ".html")) continue;
-                if (std.mem.endsWith(u8, entry.name, ".wasm")) continue;
-                try appendFile(io, arena, sub, buf, max_bytes);
-            },
-            else => {},
-        }
-    }
-}
 
 fn copyTreeInto(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rel: []const u8, staging: []const u8) !void {
     // Handle a plain file root (e.g. build.zig, config.json) directly.

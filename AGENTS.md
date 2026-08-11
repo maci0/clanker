@@ -42,7 +42,7 @@ through a gated loop. Follow these conventions when changing this codebase.
   or `evals/` in a single pass (anti-cheat boundary).
 - `tools/zig/` — WASM tool sources (Zig); `tools/ts/` — AssemblyScript
   sources; `tools/manifests/` — descriptors; `tools/bin/` — committed AS build output
-  (built via `npm run build` in `tools/ts/`; guest ABI: exports
+  (built via `npm run build:all` in `tools/ts/`; guest ABI: exports
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
   output (`zig build tools`), gitignored.
 

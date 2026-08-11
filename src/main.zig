@@ -108,7 +108,10 @@ pub fn main(init: std.process.Init) !void {
             else => log.log(.error_, "{s}", .{@errorName(err)}),
         }
         cli.printUsage(init.io);
-        return;
+        // Usage errors (bad/missing args) are the caller's fault, not
+        // clanker's: exit nonzero so scripts and `&&` chains don't mistake a
+        // rejected invocation for success.
+        std.process.exit(2);
     };
 
     if (opts.verbose) log.setLevel(.debug);

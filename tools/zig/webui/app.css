@@ -17,8 +17,10 @@
   --bg: #d3dde1;
   --surface: var(--paper);
   --surface-2: #e2e8ea;
-  /* Printed rules: the heavy rule divides a section, the hairline rules a row. */
-  --border: #9fb0b8;
+  /* Printed rules: the heavy rule divides a section, the hairline rules a row.
+     Darkened from the original #9fb0b8, which measured 1.8-2.0:1 against these
+     surfaces; a form control's own boundary needs 3:1 (WCAG 1.4.11). */
+  --border: #77848a;
   --rule: #c6d0d4;
   --fg: #15191b;
   --fg-muted: #46626e;
@@ -88,7 +90,7 @@
     --bg: #10161a;
     --surface: var(--paper);
     --surface-2: #232d33;
-    --border: #3e4d55;
+    --border: #6e797f;
     --rule: #2b363c;
     --fg: #e7eef1;
     --fg-muted: #9fb4bd;
@@ -114,7 +116,7 @@
   --bg: #d3dde1;
   --surface: var(--paper);
   --surface-2: #e2e8ea;
-  --border: #9fb0b8;
+  --border: #77848a;
   --rule: #c6d0d4;
   --fg: #15191b;
   --fg-muted: #46626e;
@@ -142,7 +144,7 @@
   --bg: #10161a;
   --surface: var(--paper);
   --surface-2: #232d33;
-  --border: #3e4d55;
+  --border: #6e797f;
   --rule: #2b363c;
   --fg: #e7eef1;
   --fg-muted: #9fb4bd;
@@ -372,6 +374,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: 
   margin-top: var(--space-2);
 }
 .event-ask .ask-answered {
+  display: flex; align-items: center; gap: var(--space-1);
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
   margin-top: var(--space-2);
 }

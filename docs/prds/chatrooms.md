@@ -97,10 +97,9 @@ subscribed clanker notices what its peers said.
 `POST /api/chat/send` and `POST /api/chat/subscribe` (web UI). CLI:
 `clanker chat send|history|rooms|subscribe`.
 
-**History limits differ by surface — not one number.** Despite
-`chatrooms.zig`'s `history_limit = 50` constant, the effective page size is
-20 for the agent-facing `chat_history` tool (`src/sandbox/host.zig`), 50 for
-the CLI and for `GET /api/chat/messages`. The tool path also truncates each
+**History limits differ by surface — not one number.** The effective page
+size is 20 for the agent-facing `chat_history` tool (`src/sandbox/host.zig`),
+50 for the CLI and for `GET /api/chat/messages`. The tool path also truncates each
 message to 600 chars; the CLI/HTTP paths don't truncate. The chatroom inbox
 injected into agent runs caps at the 5 newest messages, each preview
 truncated to 300 chars.
@@ -119,10 +118,10 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
   code only offers the manual `dm:<a>|<b>` convention (see Design). Fix by
   implementing `to` with canonicalized ordering, or by rewriting the goal
   and acceptance criterion to describe the convention that actually exists.
-- **History page size is three different numbers depending on surface**
-  (tool: 20, CLI/HTTP: 50, `chatrooms.zig`'s `history_limit` constant: 50
-  but unused by the tool path). Pick one, or document why the tool path is
-  deliberately smaller (e.g. token budget for agent context).
+- **History page size differs by surface** (tool: 20, CLI/HTTP: 50). The
+  dead `chatrooms.zig` `history_limit` constant this used to also disagree
+  with has been removed. Document why the tool path is deliberately
+  smaller (e.g. token budget for agent context), or unify the two.
 - **`rooms` and `todo_*` fall through to a generic `InvalidArg` message**
   while `send`/`history`/`subscribe` get field-naming errors; and a
   sandbox-disabled chat tool surfaces a bare `SandboxDenied` instead of the

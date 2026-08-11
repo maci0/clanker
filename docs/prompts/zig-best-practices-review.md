@@ -82,10 +82,14 @@ src/agent/*          agent loop, system prompt assembly, session store,
                       execution graphs, sub-agents, autolearn
 src/tools/*          tool registry (registry.zig); WASM build pipeline
                       (builder.zig, protected)
+src/tui/*            REPL terminal UI: raw-mode/size (term.zig), multiline
+                      input, approval prompts, status bar, theming, transcript
 src/mcp/*            Model Context Protocol server (stdio JSON-RPC)
-src/peers/*          peer notify / phonebook
-src/patch/*          patch application (exact-match old -> new)
-src/util/*           logging, dotenv
+src/peers/*          peer chatrooms (notify/phonebook and patch application
+                      moved to the sandboxed `peers`/`patch_apply` WASM tools)
+src/util/*           logging, dotenv, file lock/atomic-write helpers
+src/stats/*          token usage stats (tokens.zig): logged at the LLM
+                      client choke point, aggregated per provider+model
 src/evals/*          eval harness (protected)
 src/gate/*           deterministic gate checks (build/test/tools/fmt/lint)
 src/improve/*        self-improvement engine (protected)

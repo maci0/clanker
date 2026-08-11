@@ -18,6 +18,7 @@ const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const filelock = @import("../util/filelock.zig");
 const token_stats = @import("../stats/tokens.zig");
+const build_options = @import("build_options");
 const zwasm = @import("zwasm");
 
 /// Model access for tools whose descriptor sets `"llm": true` (a translate or
@@ -648,7 +649,8 @@ const ChatOp = struct {
     todo: ?[]const u8 = null,
 };
 
-/// ck_chat(op_json) — chatroom operations for the chat_* and todo_* tools.
+/// ck_chat(op_json) — chatroom operations for the chat_* tools, plus the
+/// private-list todo_* ops (see below).
 /// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
 ///          "room":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
 /// Output (in the host arena):
@@ -657,17 +659,12 @@ const ChatOp = struct {
 ///   rooms:     {"ok":true,"rooms":[{room,messages,last_ts,last_from,last_text}],
 ///               "subscribed":["dev"]}
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
-///   todo_add:  {"ok":true,"todo":"<id>","ts":...}
-///   todo_claim/todo_close: {"ok":true,"todo":"<id>","status":...,
-///               "claimed_by":...,"closed_by":...,"yours":bool}
-///   todo_list: {"ok":true,"todos":[{todo,title,status,created_by,claimed_by,ts},...]}
-/// Todo actions are plain chatroom messages (`@todo {...}` text, see
-/// src/peers/todos.zig), so they reuse the same log, fan-out, and
-/// subscription filter; a claim can lose to a concurrent claim already in
-/// the log, which is why todo_claim reports the winner.
-/// Exception: a todo_* op with no "room" targets the run's private list
-/// (sub-agent runs only; src/agent/private_todos.zig) — same ops and
-/// response shapes, but in-memory, single-owner, and never fanned out.
+/// Room-scoped todo_* ops were removed once the board covered that need
+/// (ADR 0002, docs/adrs/0002-private-todos-vs-shared-board.md); a todo_* op
+/// naming a "room" now fails with a pointer to the board_* tools below.
+/// The only surviving todo_* path is a run's private list (sub-agent runs
+/// only; src/agent/private_todos.zig): same op names and response shapes,
+/// but in-memory, single-owner, and never fanned out.
 /// The fan-out, subscription filter, and persistence all live host-side so
 /// the WASM module stays thin; the descriptor config pins which op a tool is.
 pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
@@ -691,7 +688,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     if (std.mem.startsWith(u8, op, "todo_") and (parsed.room == null or parsed.room.?.len == 0)) {
         const list = h.sandbox.private_todos orelse
             return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no \\\"room\\\" given, and private todo lists exist only inside sub-agent runs; pass \\\"room\\\" to use a shared room list\"}");
-        const out = private_todos_mod.handleOp(list, arena, op, parsed.title, parsed.todo) catch return Err.too_large;
+        const out = private_todos_mod.applyTodoOp(list, arena, op, parsed.title, parsed.todo) catch return Err.too_large;
         return h.writeResult(bytes, out);
     }
 
@@ -928,7 +925,7 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         .location = .{ .url = url },
         .method = req_method,
         .payload = if (has_body) body else null,
-        .headers = .{ .user_agent = .{ .override = "clanker-tool/0.1.0" } },
+        .headers = .{ .user_agent = .{ .override = "clanker-tool/" ++ build_options.version } },
         .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
         .response_writer = &w,
     }) catch return Err.network;
@@ -1850,7 +1847,10 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     };
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
     th.join();
-    if (call.err != null) return Err.invalid;
+    if (call.err) |e| {
+        log.log(.error_, "subagent '{s}' failed: {s}", .{ task, @errorName(e) });
+        return Err.invalid;
+    }
     const result = call.result orelse "";
     const rc = h.writeResult(bytes, result);
     if (result.len > 0) h.sandbox.gpa.free(@constCast(result));

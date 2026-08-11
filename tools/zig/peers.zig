@@ -178,7 +178,7 @@ fn sendNotify(alloc: std.mem.Allocator, peer: Peer, req: Request) !void {
     try bs.objectField("payload");
     try bs.write(req.message);
     try bs.objectField("ts");
-    try bs.print("{d}", .{@as(i64, @intFromFloat(lib.nowSeconds()))});
+    try bs.print("{d}", .{@as(i64, @trunc(lib.nowSeconds()))});
     try bs.endObject();
 
     const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});

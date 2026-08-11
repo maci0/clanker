@@ -1,7 +1,7 @@
 //! Inline approval prompt: `ask_user`'s terminal side. Fires mid-turn (the
 //! agent is blocked on an answer and the REPL's own input loop is not
 //! running), so this owns the terminal for its duration: enters raw mode,
-//! reads through the same `lineedit.Editor` + `input.readKey` path the main
+//! reads through the same `lineedit.Editor` + `input.KeyReader` path the main
 //! input box uses, and re-prompts on anything unparseable or out-of-range
 //! instead of silently picking the first option.
 //!
@@ -53,15 +53,19 @@ pub fn ask(
     defer reg.deinit();
     var err_buf: [96]u8 = undefined;
     var err_line: []const u8 = "";
+    var key_reader = input.KeyReader{};
 
     while (true) {
         var frame_arena = std.heap.ArenaAllocator.init(gpa);
         defer frame_arena.deinit();
         try redraw(frame_arena.allocator(), out_w, theme, &editor, &reg, err_line);
 
-        const key = try input.readKey(stdin_file) orelse return finish(out_w, theme, &reg, gpa, options[0]);
+        const key = try key_reader.next(stdin_file) orelse return cancel(out_w, theme, &reg);
         switch (key) {
-            .interrupt, .eof => return finish(out_w, theme, &reg, gpa, options[0]),
+            // Ctrl-C/Ctrl-D bail out of the question; they must not read as
+            // "the user picked option 1", which is what returning options[0]
+            // here used to do silently.
+            .interrupt, .eof => return cancel(out_w, theme, &reg),
             .enter => {
                 const typed = std.mem.trim(u8, editor.line(), " \t.)");
                 const idx = std.fmt.parseInt(usize, typed, 10) catch 0;
@@ -96,4 +100,16 @@ fn finish(out_w: *std.Io.File.Writer, theme: *const Theme, reg: *const region.Bo
     try out_w.interface.print("\r\n{s}\xe2\x86\x92 {s}{s}\n", .{ theme.dim, chosen, theme.reset });
     try out_w.interface.flush();
     return gpa.dupe(u8, chosen);
+}
+
+/// Same cursor bookkeeping as `finish`, but for a question the user backed
+/// out of instead of answered. Returns `error.NoUser`, the same signal a
+/// closed browser tab or a headless run gives ckAsk, so the caller falls
+/// back to "let the model decide" rather than treating a bail-out as a pick.
+fn cancel(out_w: *std.Io.File.Writer, theme: *const Theme, reg: *const region.BottomRegion) anyerror![]const u8 {
+    const rows = reg.lineCount();
+    if (rows > 1) try out_w.interface.print("\x1b[{d}B", .{rows - 1});
+    try out_w.interface.print("\r\n{s}\xe2\x86\x92 cancelled{s}\n", .{ theme.dim, theme.reset });
+    try out_w.interface.flush();
+    return error.NoUser;
 }

@@ -12,6 +12,7 @@
 const std = @import("std");
 const lineedit = @import("../util/lineedit.zig");
 const width = @import("width.zig");
+const term = @import("term.zig");
 
 /// Used when the terminal size can't be queried (should not happen once
 /// `readLineRaw` is only entered on a real tty, but a safe fallback beats a
@@ -19,29 +20,67 @@ const width = @import("width.zig");
 pub const default_cols: usize = 80;
 
 /// Reads raw bytes from `stdin_file` until `lineedit.decode` resolves a
-/// whole key, holding onto partial escape sequences across reads the same
-/// way the main input loop always has. Shared by the main input loop and
-/// any other raw-mode reader (e.g. the approval prompt) so there is exactly
-/// one place that turns bytes into keys, not one per caller. `null` means
-/// the stream ended (fd EOF, not the decoded `.eof` key).
-pub fn readKey(stdin_file: std.Io.File) !?lineedit.Key {
-    var pending: [64]u8 = undefined;
-    var pending_len: usize = 0;
-    while (true) {
-        var byte: [1]u8 = undefined;
-        const n = std.posix.read(stdin_file.handle, &byte) catch |err| switch (err) {
-            error.WouldBlock => continue,
-            else => return err,
-        };
-        if (n == 0) return null;
-        if (pending_len == pending.len) pending_len = 0; // never seen; stay safe
-        pending[pending_len] = byte[0];
-        pending_len += 1;
+/// whole key. Shared by the main input loop and any other raw-mode reader
+/// (e.g. the approval prompt) so there is exactly one place that turns bytes
+/// into keys, not one per caller.
+pub const KeyReader = struct {
+    /// Bytes read but not yet consumed by a decoded key. `decode` sometimes
+    /// resolves on fewer bytes than have arrived (e.g. a bare Esc followed
+    /// immediately by a normal keystroke decodes as `.ignored, len=2` even
+    /// though a 3rd byte is already buffered) — carrying the remainder over
+    /// to the next call keeps that byte from being silently dropped.
+    pending: [64]u8 = undefined,
+    pending_len: usize = 0,
 
-        const decoded = lineedit.decode(pending[0..pending_len]) orelse continue;
-        return decoded.key;
+    /// `null` means the stream ended (fd EOF, not the decoded `.eof` key).
+    /// Blocks in `poll()` on both `stdin_file` and the resize self-pipe
+    /// (`term.resizeReadFd`) rather than reading stdin directly, so a
+    /// SIGWINCH while genuinely idle wakes this immediately instead of
+    /// waiting for the next real keystroke — see `term.zig`'s doc comment
+    /// on `resize_pending` for why. A resize wakeup is drained and returned
+    /// as `.resize` without touching `pending`, so a real keystroke already
+    /// buffered is left exactly where it was, decoded on the next call.
+    pub fn next(self: *KeyReader, stdin_file: std.Io.File) !?lineedit.Key {
+        while (true) {
+            if (self.pending_len > 0) {
+                if (lineedit.decode(self.pending[0..self.pending_len])) |decoded| {
+                    const rest = self.pending_len - decoded.len;
+                    std.mem.copyForwards(u8, self.pending[0..rest], self.pending[decoded.len..self.pending_len]);
+                    self.pending_len = rest;
+                    return decoded.key;
+                }
+            }
+
+            // A negative fd (no self-pipe) is simply ignored by poll(), so
+            // this degrades to "wait on stdin only" with no branching.
+            var pfds = [_]std.posix.pollfd{
+                .{ .fd = stdin_file.handle, .events = std.posix.POLL.IN, .revents = 0 },
+                .{ .fd = term.resizeReadFd(), .events = std.posix.POLL.IN, .revents = 0 },
+            };
+            _ = try std.posix.poll(&pfds, -1);
+
+            if (pfds[1].revents & std.posix.POLL.IN != 0) {
+                var drain: [64]u8 = undefined;
+                while (true) {
+                    const n = std.posix.read(term.resizeReadFd(), &drain) catch break;
+                    if (n < drain.len) break;
+                }
+                return .resize;
+            }
+            if (pfds[0].revents & std.posix.POLL.IN == 0) continue; // spurious wake
+
+            var byte: [1]u8 = undefined;
+            const n = std.posix.read(stdin_file.handle, &byte) catch |err| switch (err) {
+                error.WouldBlock => continue,
+                else => return err,
+            };
+            if (n == 0) return null;
+            if (self.pending_len == self.pending.len) self.pending_len = 0; // never seen; stay safe
+            self.pending[self.pending_len] = byte[0];
+            self.pending_len += 1;
+        }
     }
-}
+};
 
 pub const Wrapped = struct {
     rows: []const []const u8,
@@ -124,6 +163,28 @@ pub fn frame(arena: std.mem.Allocator, editor: *const lineedit.Editor, cols: usi
     for (w.rows[1..], 1..) |r, i| rows[i] = r;
     const cursor_col = if (w.cursor_row == 0) w.cursor_col + prompt_width else w.cursor_col;
     return .{ .rows = rows, .cursor_row = w.cursor_row, .cursor_col = cursor_col };
+}
+
+test "KeyReader hands back a byte the decoder left unconsumed" {
+    var fds: [2]std.posix.fd_t = undefined;
+    switch (std.posix.errno(std.posix.system.pipe2(&fds, .{}))) {
+        .SUCCESS => {},
+        else => return error.SkipZigTest,
+    }
+    defer _ = std.os.linux.close(fds[0]);
+    defer _ = std.os.linux.close(fds[1]);
+
+    // Esc followed immediately by 'h' then 'i': decodeEscape resolves the
+    // Esc+'h' pair as `.ignored` as soon as a 3rd byte is available to look
+    // at, even though that 3rd byte ('i') is not part of the sequence. A
+    // reader that discards everything but the decoded key would lose 'i'.
+    const msg = "\x1bhi";
+    _ = std.posix.system.write(fds[1], msg.ptr, msg.len);
+
+    const stdin_file = std.Io.File{ .handle = fds[0], .flags = .{ .nonblocking = false } };
+    var kr = KeyReader{};
+    try std.testing.expectEqual(lineedit.Key.ignored, (try kr.next(stdin_file)).?);
+    try std.testing.expectEqual(lineedit.Key{ .char = 'i' }, (try kr.next(stdin_file)).?);
 }
 
 test "frame prepends the prompt to row 0 only, and offsets its cursor column" {

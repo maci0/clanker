@@ -34,7 +34,6 @@ pub const Kind = enum {
 
 pub const Eval = struct {
     name: []const u8,
-    description: []const u8 = "",
     kind: Kind = .task,
     /// Prompt for `.task` evals.
     prompt: []const u8 = "",
@@ -68,7 +67,6 @@ pub const Eval = struct {
             else => return error.EvalNotObject,
         };
         var e = Eval{ .name = try strField(obj, "name") };
-        if (obj.get("description")) |d| e.description = try strVal(d);
         if (obj.get("kind")) |k| {
             const ks = try strVal(k);
             e.kind = if (std.mem.eql(u8, ks, "task")) .task else if (std.mem.eql(u8, ks, "selfhost_build")) .selfhost_build else if (std.mem.eql(u8, ks, "selfhost_tests")) .selfhost_tests else if (std.mem.eql(u8, ks, "selfhost_tools")) .selfhost_tools else return error.UnknownEvalKind;

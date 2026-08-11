@@ -15,6 +15,19 @@ const toolout = @import("../util/toolout.zig");
 const protocol_version = "2024-11-05";
 const max_line = 1 << 20;
 
+/// Compiled tool modules, keyed by tool name and kept for the life of the
+/// stdio session. Without this, every `tools/call` re-read the .wasm file and
+/// re-parsed/re-linked/re-instantiated it from scratch — the agent loop
+/// avoids exactly this cost with its own `wasm_cache`/`self.modules`, and an
+/// MCP client issuing many calls in a session deserves the same reuse.
+const ModuleCache = std.StringHashMapUnmanaged(*runtime.ToolModule);
+
+fn deinitModuleCache(gpa: std.mem.Allocator, cache: *ModuleCache) void {
+    var it = cache.valueIterator();
+    while (it.next()) |m| m.*.deinit();
+    cache.deinit(gpa);
+}
+
 pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map) !void {
     const reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
@@ -28,6 +41,17 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
     defer gpa.free(read_buf);
     var stdin_file = std.Io.File.stdin();
     var reader = stdin_file.reader(io, read_buf);
+
+    // Long-lived: every cached module's sandbox is built once against this
+    // context and this arena, so both must outlive every call that might
+    // still be reusing a module they were built with (io/gpa/environ_map/cfg
+    // never change across a session, so sharing them is safe).
+    var llm_ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    var module_cache: ModuleCache = .empty;
+    defer deinitModuleCache(gpa, &module_cache);
+    var cache_arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer cache_arena_state.deinit();
+    const cache_arena = cache_arena_state.allocator();
 
     while (true) {
         const raw = reader.interface.takeDelimiter('\n') catch |e| switch (e) {
@@ -45,8 +69,8 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
         } orelse break; // stdin EOF
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0) continue;
-        log.log(.debug, "mcp handling line: {s}", .{line});
-        handleLine(io, gpa, cfg, environ_map, &reg, tool_defs, line) catch |err| {
+        log.log(.debug, "mcp handling line ({d} bytes): {s}", .{ line.len, line[0..@min(line.len, 300)] });
+        handleLine(io, gpa, cache_arena, cfg, environ_map, &reg, tool_defs, &module_cache, &llm_ctx, line) catch |err| {
             log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
         };
     }
@@ -88,8 +112,25 @@ fn respondText(s: *json.Stringify, text: []const u8, is_error: bool) !void {
     try s.endArray();
 }
 
-fn handleLine(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, tool_defs: []const types.ToolDef, line: []const u8) !void {
-    const req = try json.parseFromSliceLeaky(Request, gpa, line, .{ .ignore_unknown_fields = true });
+fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, tool_defs: []const types.ToolDef, module_cache: *ModuleCache, llm_ctx: *client.Ctx, line: []const u8) !void {
+    // A client that sends one request and blocks on the reply (every
+    // interactive MCP client) must get a response even to garbage input, or
+    // it hangs forever: JSON-RPC 2.0 requires an id-less error response when
+    // the id itself could not be parsed, rather than silence.
+    const req = json.parseFromSliceLeaky(Request, gpa, line, .{ .ignore_unknown_fields = true }) catch {
+        var out_buf: [512]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&out_buf);
+        var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+        try s.beginObject();
+        try s.objectField("jsonrpc");
+        try s.write("2.0");
+        try s.objectField("id");
+        try s.write(.null);
+        try respondError(&s, -32700, "Parse error");
+        try s.endObject();
+        writeResponse(io, out_buf[0..w.end]);
+        return;
+    };
     if (req.method) |m| {
         // Notifications (initialized, cancelled, ...) never get a response.
         if (std.mem.startsWith(u8, m, "notifications/")) return;
@@ -142,7 +183,7 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, env
             }
             try s.endArray();
         } else if (std.mem.eql(u8, m, "tools/call")) {
-            try handleToolCall(&s, io, gpa, cfg, environ_map, reg, req.params);
+            try handleToolCall(&s, io, gpa, cache_arena, cfg, environ_map, reg, module_cache, llm_ctx, req.params);
         } else {
             // Unknown method: a JSON-RPC response must not contain both
             // "result" and "error". Discard the half-written result object
@@ -182,13 +223,13 @@ fn writeResponse(io: std.Io, bytes: []const u8) void {
     out_w.interface.flush() catch {};
 }
 
-fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, params: ?json.Value) !void {
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+/// Pulls the "name" and "arguments" fields a tools/call request carries out of
+/// whatever `params` the client sent, re-serializing arguments into `arg_buf`.
+/// Split out from handleToolCall so the untrusted-input parsing can be fuzzed
+/// without touching the sandbox, the registry, or stdout.
+fn extractToolCall(params: ?json.Value, arg_buf: []u8) struct { name: []const u8, arg_text: []const u8, too_large: bool = false } {
     var name: []const u8 = "";
     var arg_text: []const u8 = "{}";
-    var arg_buf: [256 * 1024]u8 = undefined;
     if (params) |p| {
         switch (p) {
             .object => |o| {
@@ -197,20 +238,48 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cfg: *
                     else => {},
                 };
                 if (o.get("arguments")) |args| {
-                    var w: std.Io.Writer = .fixed(&arg_buf);
-                    json.Stringify.value(args, .{}, &w) catch {};
+                    var w: std.Io.Writer = .fixed(arg_buf);
+                    json.Stringify.value(args, .{}, &w) catch {
+                        // The fixed buffer overflowed: arg_buf now holds a
+                        // partial, invalid-JSON prefix. Handing that to a
+                        // tool as its arguments is worse than rejecting the
+                        // call outright, since the truncation is invisible
+                        // to both the tool and the caller.
+                        return .{ .name = name, .arg_text = "{}", .too_large = true };
+                    };
                     arg_text = arg_buf[0..w.end];
                 }
             },
             else => {},
         }
     }
+    return .{ .name = name, .arg_text = arg_text };
+}
 
-    // The real process environment, including anything dotenv loaded: an empty
-    // map here means every API key lookup inside a tool silently comes back
-    // missing, and the tool reports a misleading "not configured".
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, reg, name, &ctx) catch |err| {
+/// Returns the cached module for `name`, loading and caching it on first use.
+/// `cache_arena` never resets for the life of the session, matching the
+/// module's lifetime: its sandbox must outlive every later call that reuses
+/// the module from the cache.
+fn getOrLoadModule(gpa: std.mem.Allocator, io: std.Io, cache_arena: std.mem.Allocator, environ_map: *std.process.Environ.Map, cfg: *const config.Config, reg: *const registry.Registry, module_cache: *ModuleCache, llm_ctx: *client.Ctx, name: []const u8) !*runtime.ToolModule {
+    if (module_cache.get(name)) |m| return m;
+    const mod = try runtime.loadNamedTool(gpa, io, cache_arena, environ_map, cfg, reg, name, llm_ctx);
+    errdefer mod.deinit();
+    const key = try cache_arena.dupe(u8, name);
+    try module_cache.put(gpa, key, mod);
+    return mod;
+}
+
+fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, module_cache: *ModuleCache, llm_ctx: *client.Ctx, params: ?json.Value) !void {
+    var arg_buf: [256 * 1024]u8 = undefined;
+    const call = extractToolCall(params, &arg_buf);
+    if (call.too_large) {
+        try respondText(s, "arguments too large", true);
+        return;
+    }
+    const name = call.name;
+    const arg_text = call.arg_text;
+
+    const mod = getOrLoadModule(gpa, io, cache_arena, environ_map, cfg, reg, module_cache, llm_ctx, name) catch |err| {
         const msg: []const u8 = switch (err) {
             error.UnknownTool => "unknown tool",
             error.FileNotFound => "wasm missing (run zig build tools)",
@@ -219,7 +288,6 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cfg: *
         try respondText(s, msg, true);
         return;
     };
-    defer mod.deinit();
 
     const out = mod.executeTool(arg_text) catch |err| {
         try respondText(s, @errorName(err), true);
@@ -231,4 +299,27 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cfg: *
     // and this is the surface tools are usually probed from.
     toolout.warnIfMalformedAlloc(gpa, name, out);
     try respondText(s, out, false);
+}
+
+test "fuzz: a JSON-RPC line from stdin never crashes the parse/dispatch path" {
+    // handleLine and extractToolCall see whatever bytes an MCP client writes
+    // to stdin, unauthenticated and outside any sandbox: the property under
+    // test is that no line, however malformed or adversarially structured,
+    // panics or overflows arg_buf.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const line = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const req = json.parseFromSliceLeaky(Request, arena, line, .{ .ignore_unknown_fields = true }) catch return;
+            var arg_buf: [4096]u8 = undefined;
+            _ = extractToolCall(req.params, &arg_buf);
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
 }

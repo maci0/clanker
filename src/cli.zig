@@ -29,11 +29,13 @@ const tui_palette = @import("tui/palette.zig");
 const tui_approval = @import("tui/approval.zig");
 const tui_theme = @import("tui/theme.zig");
 const chatrooms = @import("peers/chatrooms.zig");
+const phonebook = @import("peers/phonebook.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const diskcap = @import("util/diskcap.zig");
 const runlock = @import("util/runlock.zig");
+const filelock = @import("util/filelock.zig");
 const gate_checks = @import("gate/checks.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
@@ -45,8 +47,13 @@ const webui_vendor_vanui = @embedFile("webui_vendor/van-ui.js");
 const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
 const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
 
+/// Sourced from build.zig.zon's `.version` field via the `build_options`
+/// module (see build.zig), so the two can no longer drift apart.
+pub const version = @import("build_options").version;
+
 pub const Command = enum {
     help,
+    version,
     init,
     providers_check,
     run,
@@ -118,10 +125,16 @@ pub fn parse(args: []const []const u8) !Options {
             continue;
         }
 
-        // Help flags act as the help command regardless of position.
+        // Help/version flags act as their own command regardless of position.
         if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
             if (cmd_seen) return error.UnknownArg;
             opts.command = .help;
+            cmd_seen = true;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--version")) {
+            if (cmd_seen) return error.UnknownArg;
+            opts.command = .version;
             cmd_seen = true;
             continue;
         }
@@ -297,12 +310,16 @@ const usage_text =
     \\  clanker phonebook               list peer agent cards
     \\  clanker git <args...>           passthrough to git (e.g. clanker git status)
     \\  clanker --verbose               enable debug logging
+    \\  clanker --help                  show this usage text
+    \\  clanker --version               print the clanker version
     \\
 ;
 
 pub fn run(init: std.process.Init, opts: Options) !void {
     switch (opts.command) {
-        .help => try writeStdErr(init.io, usage_text),
+        // Requested output (--help, --version), not an error: stdout, exit 0.
+        .help => try writeStdOut(init.io, usage_text),
+        .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
         .init => try cmdInit(init),
         .providers_check => try cmdProvidersCheck(init, opts),
         .run => try cmdRun(init, opts),
@@ -317,7 +334,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .notify => try cmdNotify(init, opts),
         .chat => try cmdChat(init, opts),
         .stats => try cmdStats(init),
-        .phonebook => try cmdPhonebook(init),
+        .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
         .repl => try cmdRepl(init, opts),
         .graph => try cmdGraph(init, opts),
@@ -328,6 +345,10 @@ pub fn run(init: std.process.Init, opts: Options) !void {
 
 fn writeStdErr(io: std.Io, bytes: []const u8) !void {
     try std.Io.File.stderr().writeStreamingAll(io, bytes);
+}
+
+fn writeStdOut(io: std.Io, bytes: []const u8) !void {
+    try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
 // -------------------------------------------------------------------- gate --
@@ -440,8 +461,7 @@ const local_template =
     \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 }}
     \\  }},
     \\  "instance": {{ "name": "{s}", "id": "{s}" }},
-    \\  "agent": {{ "max_iterations": 12 }},
-    \\  "improve": {{ "min_delta": 0.05 }}
+    \\  "agent": {{ "max_iterations": 12 }}
     \\}}
     \\
 ;
@@ -498,10 +518,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         var err_detail: ?[]const u8 = null;
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = client.chat(&ctx, arena, .{ .provider = &p, .messages = &messages, .max_tokens = 1 }, &err_detail) catch |err| {
-            switch (err) {
-                error.ApiError => log.log(.error_, "{s}: {s}", .{ name, err_detail orelse "API error" }),
-                else => log.log(.error_, "{s}: {s}", .{ name, @errorName(err) }),
-            }
+            log.log(.error_, "{s}: {s}", .{ name, err_detail orelse @errorName(err) });
             continue;
         };
         const t1 = std.Io.Timestamp.now(io, .awake);
@@ -629,7 +646,7 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
     var buf: [1 << 20]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var headers: std.http.Client.Request.Headers = .{
-        .user_agent = .{ .override = "clanker/0.1.0" },
+        .user_agent = .{ .override = "clanker/" ++ version },
     };
     if (bearer) |b| headers.authorization = .{ .override = b };
     const res = try http.fetch(.{
@@ -717,6 +734,34 @@ fn reportUnfinishedRun(
     }
 }
 
+/// The provider named by `--provider` (or the config default), with
+/// `--model` applied as a one-off override of its `default_model`.
+fn resolveProvider(cfg: *const config.Config, opts: Options) !config.Provider {
+    var provider = (try cfg.provider(opts.provider)).*;
+    if (opts.model) |m| provider.default_model = m;
+    return provider;
+}
+
+/// Looks up `goal_id` in state/goals.json and formats its objective,
+/// completion criterion and boundaries as a task-prompt preamble. Returns
+/// null if the file, the entry, or the JSON shape isn't there.
+fn findGoalSection(arena: std.mem.Allocator, io: std.Io, goal_id: []const u8) !?[]const u8 {
+    const goals_raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
+    if (root != .array) return null;
+    for (root.array.items) |item| {
+        if (item != .object) continue;
+        const obj = item.object;
+        const idv = obj.get("id") orelse continue;
+        if (idv != .string or !std.mem.eql(u8, idv.string, goal_id)) continue;
+        const objective = if (obj.get("objective")) |v| if (v == .string) v.string else "" else "";
+        const completion = if (obj.get("completion_criterion")) |v| if (v == .string) v.string else "" else "";
+        const boundaries = if (obj.get("boundaries")) |v| if (v == .string) v.string else "" else "";
+        return try std.fmt.allocPrint(arena, "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n", .{ objective, completion, boundaries });
+    }
+    return null;
+}
+
 fn cmdRun(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -724,10 +769,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
-    var provider = try cfg.provider(opts.provider);
-    var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.default_model = m;
-    provider = &provider_copy;
+    var provider_val = try resolveProvider(&cfg, opts);
+    const provider = &provider_val;
 
     // Make sure the sandbox root exists.
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
@@ -757,32 +800,11 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
     var task_text = opts.task.?;
     if (opts.goal) |goal_id| {
-        var goal_found = false;
-        const goals_raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch null;
-        if (goals_raw) |raw| {
-            const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch null;
-            if (parsed) |root| {
-                if (root == .array) {
-                    for (root.array.items) |item| {
-                        if (item == .object) {
-                            const obj = item.object;
-                            if (obj.get("id")) |idv| {
-                                if (idv == .string and std.mem.eql(u8, idv.string, goal_id)) {
-                                    const objective = if (obj.get("objective")) |v| if (v == .string) v.string else "" else "";
-                                    const completion = if (obj.get("completion_criterion")) |v| if (v == .string) v.string else "" else "";
-                                    const boundaries = if (obj.get("boundaries")) |v| if (v == .string) v.string else "" else "";
-                                    const goal_section = try std.fmt.allocPrint(arena, "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n", .{ objective, completion, boundaries });
-                                    task_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ goal_section, opts.task.? });
-                                    goal_found = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if (try findGoalSection(arena, io, goal_id)) |goal_section| {
+            task_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ goal_section, opts.task.? });
+        } else {
+            log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
         }
-        if (!goal_found) log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
     }
     compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
@@ -859,10 +881,8 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
-    var provider = try cfg.provider(opts.provider);
-    var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.default_model = m;
-    provider = &provider_copy;
+    var provider_val = try resolveProvider(&cfg, opts);
+    const provider = &provider_val;
 
     // Make sure the sandbox root exists.
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
@@ -1294,12 +1314,20 @@ fn readLineRaw(
     region.reset();
     try redrawRegion(gpa, out_w, editor, region, status);
 
+    var key_reader = tui_input.KeyReader{};
     while (true) {
-        const key = try tui_input.readKey(stdin_file) orelse return null;
+        const key = try key_reader.next(stdin_file) orelse return null;
 
         switch (key) {
             .interrupt => {
-                try out_w.interface.writeAll("^C\n");
+                // Advance past whatever region rows still sit below the
+                // cursor (the input box's closing "╰─" line) before writing
+                // "^C" as its own clean line, same as the Enter handler
+                // below — otherwise "^C" lands glued onto the box's input
+                // row instead of visibly below the whole box.
+                const extra = region.lineCount() - 1 - region.cursorRow();
+                if (extra > 0) try out_w.interface.print("\x1b[{d}B", .{extra});
+                try out_w.interface.writeAll("\n^C\n");
                 try out_w.interface.flush();
                 editor.reset();
                 region.reset(); // the ^C line above is outside the region's own tracking
@@ -1323,11 +1351,24 @@ fn readLineRaw(
                 try redrawRegion(gpa, out_w, editor, region, status);
                 continue;
             },
+            .resize => {
+                // A SIGWINCH wakeup while idle at the prompt: redrawRegion
+                // itself consumes term.resize_pending and resets the region
+                // at the new width, so there's nothing else to do here.
+                try redrawRegion(gpa, out_w, editor, region, status);
+                continue;
+            },
             else => {},
         }
         const done = editor.apply(key);
         try redrawRegion(gpa, out_w, editor, region, status);
         if (done) {
+            // Advance past whatever region rows still sit below the
+            // cursor's row (e.g. the input box's closing "╰─" line) before
+            // moving one further row down, so a following print (spinner,
+            // response) doesn't land on top of and erase them.
+            const extra = region.lineCount() - 1 - region.cursorRow();
+            if (extra > 0) try out_w.interface.print("\x1b[{d}B", .{extra});
             try out_w.interface.writeAll("\n");
             try out_w.interface.flush();
             return editor.line();
@@ -1383,12 +1424,18 @@ fn redrawRegion(
         .budget = if (status.budget) |b| @intCast(b) else null,
         .extra = repl_statusline_extra,
     });
-    const f = try tui_input.frame(arena, editor, cols, repl_prompt, repl_prompt_width);
+    // Reserve 2 columns for the "│ " left-bar border (same style as tool
+    // cards — see transcript.zig's doc comment on why a left bar, not a
+    // full right-hand-bordered box) so wrapped rows don't overflow it.
+    const box_cols = if (cols > 2) cols - 2 else 1;
+    const f = try tui_input.frame(arena, editor, box_cols, repl_prompt, repl_prompt_width);
 
-    var lines = try arena.alloc([]const u8, 1 + f.rows.len);
+    var lines = try arena.alloc([]const u8, 3 + f.rows.len);
     lines[0] = status_line;
-    for (f.rows, 0..) |r, i| lines[1 + i] = r;
-    try region.render(&out_w.interface, lines, 1 + f.cursor_row, f.cursor_col);
+    lines[1] = try std.fmt.allocPrint(arena, "{s}\xe2\x95\xad\xe2\x94\x80{s}", .{ repl_theme.dim, repl_theme.reset });
+    for (f.rows, 0..) |r, i| lines[2 + i] = try std.fmt.allocPrint(arena, "{s}\xe2\x94\x82 {s}{s}", .{ repl_theme.dim, repl_theme.reset, r });
+    lines[2 + f.rows.len] = try std.fmt.allocPrint(arena, "{s}\xe2\x95\xb0\xe2\x94\x80{s}", .{ repl_theme.dim, repl_theme.reset });
+    try region.render(&out_w.interface, lines, 2 + f.cursor_row, 2 + f.cursor_col);
     try out_w.interface.flush();
 }
 
@@ -2320,10 +2367,8 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
-    var provider = try cfg.provider(opts.provider);
-    var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.default_model = m;
-    provider = &provider_copy;
+    var provider_val = try resolveProvider(&cfg, opts);
+    const provider = &provider_val;
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
 
@@ -2365,10 +2410,8 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
-    var provider = try cfg.provider(opts.provider);
-    var provider_copy = provider.*;
-    if (opts.model) |m| provider_copy.default_model = m;
-    provider = &provider_copy;
+    var provider_val = try resolveProvider(&cfg, opts);
+    const provider = &provider_val;
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
@@ -2756,6 +2799,17 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // "/" was fine but "/?v=3" was not, and the board could not name its
         // room until this was special-cased for one endpoint.
         const path = target[0..(std.mem.indexOfScalar(u8, target, '?') orelse target.len)];
+        // The listen socket is 127.0.0.1-only, but any page open in the
+        // user's browser can still reach it: every non-GET route here either
+        // runs the agent, execs sandboxed tools, or writes state, so a
+        // cross-origin POST from an unrelated site the user happens to have
+        // open is CSRF, not a hypothetical. A request with no Origin header
+        // (curl, or the raw API used directly) is not a browser cross-site
+        // request and is let through.
+        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port)) {
+            respond(stream, 403, "Forbidden", "{\"error\":\"cross-origin request refused\"}");
+            return;
+        }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
@@ -2821,7 +2875,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify")) {
             handleNotify(io, gpa, body) catch |err| {
                 log.log(.error_, "POST /api/notify: {s}", .{@errorName(err)});
-                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"notify failed\"}");
                 return;
             };
             respond(stream, 200, "OK", "{\"ok\":true}");
@@ -2944,16 +2998,16 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
     const arena = arena_state.allocator();
 
     const parsed = std.json.parseFromSliceLeaky(ChatMessageBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"error\":\"bad request\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"error\":\"missing room\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
     };
     const text = parsed.text orelse "";
     if (text.len > chatrooms.max_text_len) {
-        respond(stream, 400, "Bad Request", "{\"error\":\"text too long\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text too long\"}");
         return;
     }
     const msg = chatrooms.Message{
@@ -2961,7 +3015,10 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
         .from = parsed.from orelse "unknown",
         .text = text,
         .ts = parsed.ts orelse 0,
-        .id = parsed.id orelse "peer",
+        // Empty, not a shared sentinel: a fixed placeholder for every id-less
+        // sender would make chatrooms.append's dedup treat unrelated messages
+        // from old peers as duplicates of each other. Empty id skips dedup.
+        .id = parsed.id orelse "",
     };
     const accepted = chatrooms.receive(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg) catch false;
     var buf: [64]u8 = undefined;
@@ -2993,12 +3050,12 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         }
     }
     if (room.len == 0) {
-        respond(stream, 400, "Bad Request", "{\"error\":\"missing room\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
     }
     const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, after, 50) catch |err| {
         log.log(.error_, "GET /api/chat/messages room={s}: {s}", .{ room, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
         return;
     };
     var buf: [64 * 1024]u8 = undefined;
@@ -3102,7 +3159,7 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
     };
     chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, parsed.on) catch |err| {
         log.log(.error_, "POST /api/chat/subscribe room={s}: {s}", .{ room, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"subscribe failed\"}");
         return;
     };
     respond(stream, 200, "OK", "{\"ok\":true}");
@@ -3167,7 +3224,7 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 
     const rooms = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch |err| {
         log.log(.error_, "GET /api/chat/rooms: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"room list failed\"}");
         return;
     };
     const subs = chatrooms.subscribedRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch &[_][]const u8{};
@@ -3210,12 +3267,12 @@ fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, st
 
     const stats = token_stats.aggregate(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch |err| {
         log.log(.error_, "GET /api/stats: aggregate failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"stats aggregate failed\"}");
         return;
     };
     const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch |err| {
         log.log(.error_, "GET /api/stats: encode failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"stats encode failed\"}");
         return;
     };
     respond(stream, 200, "OK", json_out);
@@ -3245,7 +3302,7 @@ fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16,
     s.write("goals") catch return;
     s.endArray() catch return;
     s.objectField("version") catch return;
-    s.write("0.1.0") catch return;
+    s.write(version) catch return;
     s.objectField("capabilities") catch return;
     s.beginObject() catch return;
     s.objectField("streaming") catch return;
@@ -4044,7 +4101,7 @@ fn handleWebuiPlugins(
 
         var enc: std.Io.Writer.Allocating = .init(arena);
         std.json.Stringify.value(state, .{}, &enc.writer) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
         atomic_write.writeFile(io, std.Io.Dir.cwd(), webui_plugins_state, enc.written()) catch {
@@ -4219,7 +4276,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
     var list: std.ArrayList(StoredGoal) = .empty;
     if (std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
         list.appendSlice(arena, existing) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
     }
@@ -4239,7 +4296,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             return;
         }
         const id = std.fmt.allocPrint(arena, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
         list.append(arena, .{
@@ -4249,7 +4306,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             .created = now,
             .updated = now,
         }) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
     } else if (req.id) |id| {
@@ -4285,7 +4342,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
 
     var enc: std.Io.Writer.Allocating = .init(arena);
     std.json.Stringify.value(list.items, .{}, &enc.writer) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     atomic_write.writeFile(io, std.Io.Dir.cwd(), goals_path, enc.written()) catch {
@@ -4670,7 +4727,7 @@ fn handlePlugins(
             return;
         }
         args = std.fmt.allocPrint(arena, "{s} {s}", .{ if (req.on) "on" else "off", name }) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
     }
@@ -4787,20 +4844,20 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
     var set = wanted.iterator();
     while (set.next()) |entry| {
         merged.put(arena, entry.key_ptr.*, entry.value_ptr.*) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
     }
     var out_store = store.object.clone(arena) catch store.object;
     out_store.put(arena, name, .{ .object = merged }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
 
     var doc: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &doc.writer, .options = .{} };
     s.write(std.json.Value{ .object = out_store }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     atomic_write.writeFile(io, std.Io.Dir.cwd(), registry.plugin_config_state_path, doc.written()) catch {
@@ -4869,17 +4926,17 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
     };
     var out: std.Io.Writer.Allocating = .init(arena);
     out.writer.writeAll("{\"ok\":true,\"goals\":") catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     // Passed through verbatim: it is already the array this endpoint returns,
     // and re-encoding it would only add a way for the two to drift.
     out.writer.writeAll(std.mem.trim(u8, raw, " \t\r\n")) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     out.writer.writeAll("}") catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     respond(stream, 200, "OK", out.written());
@@ -4994,7 +5051,17 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // `clanker run --session` / the REPL.
     const has_session = cfg.modules.sessions and req.session.len > 0;
     var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    // Held from the load below through both saveSession calls further down:
+    // serve runs one thread per connection, so two requests naming the same
+    // session (a double-submit, two tabs) would otherwise both load the same
+    // messages, both append their own turn, and the second save would
+    // silently discard the first turn's messages (a lost update). The lock
+    // is per session id, so unrelated sessions never contend.
+    var session_lock: filelock.Guard = .{ .io = io };
+    defer session_lock.release();
     if (has_session) {
+        std.Io.Dir.cwd().createDirPath(io, "state/sessions") catch {};
+        session_lock = filelock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
             created = s.created;
             for (s.messages) |m| {
@@ -5216,7 +5283,10 @@ var gzip_hljs: GzipCache = .{};
 fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, accepts_gzip: bool, body: []const u8) void {
     // Below roughly a packet's worth, gzip costs more than it saves.
     const worth_it = accepts_gzip and body.len >= 1024;
-    const gzipped = if (worth_it) gzipAlloc(arena, body) else null;
+    // .default, not .best: this body is unique to this request (a session
+    // list, a run graph) and thrown away right after, so extra compression
+    // effort here is paid on every single request rather than once.
+    const gzipped = if (worth_it) gzipAlloc(arena, body, .default) else null;
     const out = gzipped orelse body;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
@@ -5233,7 +5303,10 @@ fn gzipCached(gpa: std.mem.Allocator, cache: *GzipCache, raw: []const u8) ?[]con
     }
     if (cache.state.cmpxchgStrong(.idle, .compressing, .acq_rel, .acquire) != null) return null;
 
-    const compressed = gzipAlloc(gpa, raw) orelse {
+    // .best, not .default: this runs once per process and the result is
+    // reused for every request after, so the extra CPU here is paid once
+    // while the smaller body is what every visitor actually downloads.
+    const compressed = gzipAlloc(gpa, raw, .best) orelse {
         cache.state.store(.failed, .release);
         return null;
     };
@@ -5244,7 +5317,7 @@ fn gzipCached(gpa: std.mem.Allocator, cache: *GzipCache, raw: []const u8) ?[]con
     return compressed;
 }
 
-fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8) ?[]const u8 {
+fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8, level: std.compress.flate.Compress.Options) ?[]const u8 {
     // Sized to the input: a compressed form that needs more room than the
     // original is not worth serving, and running out of space here just means
     // falling back to the identity encoding.
@@ -5256,7 +5329,7 @@ fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8) ?[]const u8 {
     defer gpa.free(window);
 
     var out: std.Io.Writer = .fixed(dest);
-    var compress = std.compress.flate.Compress.init(&out, window, .gzip, .default) catch {
+    var compress = std.compress.flate.Compress.init(&out, window, .gzip, level) catch {
         gpa.free(dest);
         return null;
     };
@@ -5300,6 +5373,43 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
 
 /// True when the request's Accept-Encoding lists gzip. Scoped to that header's
 /// own line so a request target that happens to contain "gzip" cannot flip it.
+/// The (trimmed) value of the first header line named `name`, matched
+/// case-insensitively on the header name only.
+fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
+    while (lines.next()) |line| {
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        if (!std.ascii.eqlIgnoreCase(line[0..colon], name)) continue;
+        return std.mem.trim(u8, line[colon + 1 ..], " ");
+    }
+    return null;
+}
+
+/// True when the request carries an `Origin` header naming something other
+/// than this server itself. Browsers attach `Origin` to every cross-site
+/// fetch/XHR/form submission (and to same-origin ones too, which is why a
+/// same-host origin is accepted alongside the missing-header case rather than
+/// rejected as "not GET/HEAD").
+fn crossOriginRequest(headers_raw: []const u8, port: u16) bool {
+    const origin = headerValue(headers_raw, "origin") orelse return false;
+    var buf: [40]u8 = undefined;
+    const want_ip = std.fmt.bufPrint(&buf, "http://127.0.0.1:{d}", .{port}) catch return true;
+    if (std.mem.eql(u8, origin, want_ip)) return false;
+    var buf2: [40]u8 = undefined;
+    const want_host = std.fmt.bufPrint(&buf2, "http://localhost:{d}", .{port}) catch return true;
+    if (std.mem.eql(u8, origin, want_host)) return false;
+    return true;
+}
+
+test "crossOriginRequest allows same-origin and no-Origin requests, refuses others" {
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: x\r\n", 4173));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:4173\r\n", 4173));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173\r\n", 4173));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:9999\r\n", 4173));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: null\r\n", 4173));
+}
+
 fn acceptsGzip(headers_raw: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
@@ -5346,76 +5456,6 @@ test "ifNoneMatchHits matches only its own header line and exact value" {
     try std.testing.expect(!ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"abc\"\r\n", "\"def\""));
     try std.testing.expect(!ifNoneMatchHits("GET /x HTTP/1.1\r\nHost: If-None-Match: \"def\"\r\n", "\"def\""));
     try std.testing.expect(!ifNoneMatchHits("", "\"def\""));
-}
-
-// -------------------------------------------------------------- phonebook --
-
-const AgentCard = struct {
-    name: ?[]const u8 = null,
-    description: ?[]const u8 = null,
-    url: ?[]const u8 = null,
-    skills: ?[]const []const u8 = null,
-    version: ?[]const u8 = null,
-};
-
-const PeerScan = struct {
-    card: ?AgentCard = null,
-    status: []const u8 = "ok",
-};
-
-fn fetchAgentCard(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8) PeerScan {
-    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer http_client.deinit();
-    var response_buf: [1 << 20]u8 = undefined;
-    var rw: std.Io.Writer = .fixed(&response_buf);
-    const result = http_client.fetch(.{
-        .location = .{ .url = url },
-        .method = .GET,
-        .headers = .{ .user_agent = .{ .override = "clanker/0.1.0" } },
-        .response_writer = &rw,
-    }) catch |err| {
-        return .{ .status = @errorName(err) };
-    };
-    if (@intFromEnum(result.status) >= 400) return .{ .status = "http_error" };
-    const body = response_buf[0..rw.end];
-    const card = std.json.parseFromSliceLeaky(AgentCard, arena, body, .{ .ignore_unknown_fields = true }) catch |err| {
-        return .{ .status = @errorName(err) };
-    };
-    return .{ .card = card };
-}
-
-fn cmdPhonebook(init: std.process.Init) !void {
-    const gpa = init.gpa;
-    const io = init.io;
-    const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    if (!cfg.modules.peers) {
-        log.log(.error_, "peers module is disabled...", .{});
-        return error.ModuleDisabled;
-    }
-    const out = std.Io.File.stdout();
-    try out.writeStreamingAll(io, "name\turl\tskills\tstatus\n");
-
-    for (cfg.peers) |peer| {
-        const base = std.mem.trimEnd(u8, peer.url, "/");
-        const url = try std.fmt.allocPrint(arena, "{s}/.well-known/agent.json", .{base});
-        const scan = fetchAgentCard(io, gpa, arena, url);
-
-        const name = if (scan.card) |c| c.name orelse peer.name else peer.name;
-        var skills_joined: []const u8 = "";
-        if (scan.card) |c| {
-            if (c.skills) |skills| {
-                var buf: std.ArrayList(u8) = .empty;
-                for (skills, 0..) |s, i| {
-                    if (i > 0) try buf.append(arena, ',');
-                    try buf.appendSlice(arena, s);
-                }
-                if (buf.items.len > 0) skills_joined = try buf.toOwnedSlice(arena);
-            }
-        }
-        const line = try std.fmt.allocPrint(arena, "{s}\t{s}\t{s}\t{s}\n", .{ name, peer.url, skills_joined, scan.status });
-        try out.writeStreamingAll(io, line);
-    }
 }
 
 test "compactMessages drops oldest non-system messages over token budget" {
@@ -5516,6 +5556,7 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     // An explicit command still wins, and help stays reachable.
     try std.testing.expectEqual(Command.run, (try parse(&.{ "clanker", "run", "hi" })).command);
     try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" })).command);
+    try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" })).command);
     // A typo is still a typo, not a silent REPL start.
     try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }));
 }

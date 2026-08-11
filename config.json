@@ -125,14 +125,6 @@
     "seed": 0,
     "compact_threshold_bytes": 0
   },
-  "improve": {
-    "min_delta": 0.05,
-    "default_iters": 3,
-    "max_staged_bytes": 262144,
-    "max_tool_source_bytes": 65536,
-    "max_skill_bytes": 32768,
-    "max_proposal_bytes": 524288
-  },
   "instance": {
     "name": "clanker",
     "id": "main"

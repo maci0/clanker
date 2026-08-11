@@ -22,7 +22,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
 
-    const secs: u64 = @intFromFloat(lib.nowSeconds());
+    const secs: u64 = @trunc(lib.nowSeconds());
     const day_secs = secs % 86400;
     const h = day_secs / 3600;
     const m = (day_secs % 3600) / 60;

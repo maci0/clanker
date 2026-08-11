@@ -425,11 +425,25 @@ pub const Agent = struct {
                     .messages = messages.items,
                     .tools = self.tool_defs,
                 }, err_detail);
-                break :blk try client.chatStream(self.ctx, self.arena, .{
+                break :blk client.chatStream(self.ctx, self.arena, .{
                     .provider = self.provider,
                     .messages = messages.items,
                     .tools = self.tool_defs,
-                }, err_detail, cb);
+                }, err_detail, cb, self.stop_flag) catch |err| {
+                    if (err != error.Interrupted) return err;
+                    // Same outcome as the between-iterations stopRequested()
+                    // check above, for a Ctrl-C that instead landed mid-stream.
+                    _ = self.stopRequested(); // consume the flag
+                    log.log(.debug, "run stopped mid-stream at iteration {d}", .{iteration + 1});
+                    try g.add(self.ctx.gpa, .{
+                        .kind = .final,
+                        .iteration = iteration,
+                        .label = "stopped",
+                        .output = "",
+                        .ok = false,
+                    });
+                    return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
+                };
             } else try client.chat(self.ctx, self.arena, .{
                 .provider = self.provider,
                 .messages = messages.items,
@@ -695,9 +709,8 @@ pub const Agent = struct {
                         for (calls) |tc| {
                             var found = false;
                             for (trailing) |tm| {
-                                if (tm.tool_call_id) |tid| {
-                                    if (std.mem.eql(u8, tc.id, tid)) found = true;
-                                }
+                                const tid = tm.tool_call_id orelse continue;
+                                if (std.mem.eql(u8, tc.id, tid)) found = true;
                             }
                             if (!found) {
                                 complete = false;
@@ -956,6 +969,9 @@ pub const Agent = struct {
 
         // Cap the total summary size so it does not itself blow the context.
         const max_summary: usize = 4000;
+        const content_preview_chars = 200;
+        const tool_result_preview_chars = 150;
+        const args_preview_chars = 120;
         var tool_calls_seen: std.StringArrayHashMapUnmanaged(void) = .empty;
         defer tool_calls_seen.deinit(self.ctx.gpa);
 
@@ -964,10 +980,10 @@ pub const Agent = struct {
             switch (m.role) {
                 .user => {
                     if (m.content) |c| {
-                        const preview = if (c.len > 200) c[0..200] else c;
+                        const preview = if (c.len > content_preview_chars) c[0..content_preview_chars] else c;
                         buf.appendSlice(self.ctx.gpa, "- User: ") catch continue;
                         buf.appendSlice(self.ctx.gpa, preview) catch continue;
-                        if (c.len > 200) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                        if (c.len > content_preview_chars) buf.appendSlice(self.ctx.gpa, "...") catch {};
                         buf.append(self.ctx.gpa, '\n') catch continue;
                     }
                 },
@@ -979,12 +995,12 @@ pub const Agent = struct {
                             buf.appendSlice(self.ctx.gpa, "- Called tool: ") catch continue;
                             buf.appendSlice(self.ctx.gpa, tc.name) catch continue;
                             // Include a short preview of arguments for context.
-                            if (tc.arguments.len > 0 and tc.arguments.len <= 120) {
+                            if (tc.arguments.len > 0 and tc.arguments.len <= args_preview_chars) {
                                 buf.appendSlice(self.ctx.gpa, " args=") catch {};
                                 buf.appendSlice(self.ctx.gpa, tc.arguments) catch {};
-                            } else if (tc.arguments.len > 120) {
+                            } else if (tc.arguments.len > args_preview_chars) {
                                 buf.appendSlice(self.ctx.gpa, " args=") catch {};
-                                buf.appendSlice(self.ctx.gpa, tc.arguments[0..120]) catch {};
+                                buf.appendSlice(self.ctx.gpa, tc.arguments[0..args_preview_chars]) catch {};
                                 buf.appendSlice(self.ctx.gpa, "...") catch {};
                             }
                             buf.append(self.ctx.gpa, '\n') catch continue;
@@ -992,22 +1008,22 @@ pub const Agent = struct {
                     }
                     if (m.content) |c| {
                         if (c.len > 0) {
-                            const preview = if (c.len > 200) c[0..200] else c;
+                            const preview = if (c.len > content_preview_chars) c[0..content_preview_chars] else c;
                             buf.appendSlice(self.ctx.gpa, "- Assistant: ") catch continue;
                             buf.appendSlice(self.ctx.gpa, preview) catch continue;
-                            if (c.len > 200) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                            if (c.len > content_preview_chars) buf.appendSlice(self.ctx.gpa, "...") catch {};
                             buf.append(self.ctx.gpa, '\n') catch continue;
                         }
                     }
                 },
                 .tool => {
                     if (m.content) |c| {
-                        // For tool results, extract the first 150 chars as a preview
-                        // so key values (numbers, paths, statuses) survive compaction.
-                        const preview = if (c.len > 150) c[0..150] else c;
+                        // Extract a preview so key values (numbers, paths, statuses)
+                        // survive compaction.
+                        const preview = if (c.len > tool_result_preview_chars) c[0..tool_result_preview_chars] else c;
                         buf.appendSlice(self.ctx.gpa, "- Tool result: ") catch continue;
                         buf.appendSlice(self.ctx.gpa, preview) catch continue;
-                        if (c.len > 150) buf.appendSlice(self.ctx.gpa, "...") catch {};
+                        if (c.len > tool_result_preview_chars) buf.appendSlice(self.ctx.gpa, "...") catch {};
                         buf.append(self.ctx.gpa, '\n') catch continue;
                     }
                 },
@@ -1702,7 +1718,7 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plugin disabled: {s}\"}}", .{tc.name});
         }
 
-        log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ tc.name, tc.arguments });
+        log.log(.debug, "running tool '{s}' in sandbox args ({d} bytes)={s}", .{ tc.name, tc.arguments.len, tc.arguments[0..@min(tc.arguments.len, 300)] });
         const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
         const mod = if (self.modules.get(tc.name)) |m|
@@ -1903,15 +1919,22 @@ pub const Agent = struct {
                 log.log(.error_, "tool '{s}' failed: {s}", .{ h.worker.tool.name, @errorName(e) });
                 results[h.slot] = std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ h.worker.tool.name, @errorName(e) }) catch "{{\"ok\":false,\"error\":\"tool execution failed\"}}";
             } else if (h.worker.out) |out| {
-                const owned = try self.arena.dupe(u8, out);
-                self.ctx.gpa.free(out);
-                // After-transforms run here, on the main thread after the
-                // join, so no worker ever touches the shared transform cache.
-                const transformed = self.runChain(h.worker.tool.name, .after, owned) catch owned;
-                // A tool (or its after-transform chain) may legitimately
-                // produce zero bytes; the conversation must never see a
-                // zero-length tool result.
-                results[h.slot] = if (transformed.len == 0) "{\"ok\":true,\"result\":\"\"}" else transformed;
+                // Handled without `try`: an error here would return through
+                // the enclosing defer, which joins and frees every handle a
+                // second time (the join/destroy loops above already ran).
+                if (self.arena.dupe(u8, out)) |owned| {
+                    self.ctx.gpa.free(out);
+                    // After-transforms run here, on the main thread after the
+                    // join, so no worker ever touches the shared transform cache.
+                    const transformed = self.runChain(h.worker.tool.name, .after, owned) catch owned;
+                    // A tool (or its after-transform chain) may legitimately
+                    // produce zero bytes; the conversation must never see a
+                    // zero-length tool result.
+                    results[h.slot] = if (transformed.len == 0) "{\"ok\":true,\"result\":\"\"}" else transformed;
+                } else |_| {
+                    self.ctx.gpa.free(out);
+                    results[h.slot] = "{\"ok\":false,\"error\":\"out of memory\"}";
+                }
             } else {
                 results[h.slot] = "{\"ok\":false,\"error\":\"tool produced no output\"}";
             }
@@ -2187,7 +2210,7 @@ const ToolWorker = struct {
             .config_json = self.tool.config_json,
         };
 
-        log.log(.debug, "running tool '{s}' in sandbox args={s}", .{ self.tool.name, self.arguments });
+        log.log(.debug, "running tool '{s}' in sandbox args ({d} bytes)={s}", .{ self.tool.name, self.arguments.len, self.arguments[0..@min(self.arguments.len, 300)] });
         const t0 = std.Io.Timestamp.now(io, .awake);
 
         var mod = try runtime.ToolModule.load(self.ctx.gpa, io, &sb, self.wasm_bytes);

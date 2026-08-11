@@ -15,14 +15,17 @@ agent harness written in Zig 0.16 that runs its tools as sandboxed WebAssembly
 modules via zwasm. You are already in its repository; every path below is
 relative to that checkout.
 
-AGENTS.md states the house preference plainly: *"Prefer implementing
-functionality as WASM tools."* Your job is to turn that into a concrete,
-file-by-file verdict: for each candidate, does it belong in the native
-harness (`src/`) or as a sandboxed tool (`tools/zig/` + a `tools/manifests/*.tool.json`
+AGENTS.md states the house preference plainly: *"Anything that can be a WASM
+tool must be one."* Your job is to turn that into a concrete, file-by-file
+verdict: for each candidate, does it belong in the native harness (`src/`) or
+as a sandboxed tool (`tools/zig/` + a `tools/manifests/*.tool.json`
 descriptor)?
 
-This is **not** a correctness review and **not** a style review. Only judge
-placement: native harness vs. sandboxed WASM tool.
+This is **not** a correctness review and **not** a style review: those are
+`zig-idiomatic-review.md`, `zig-0.16-changelog-review.md`, and
+`zig-best-practices-review.md`'s territory, and "should this helper exist at
+all" is `abstractions-review.md`'s. Only judge placement: native harness vs.
+sandboxed WASM tool.
 
 ## Read first
 
@@ -189,15 +192,15 @@ native; say why in one line.
 
 ## Known starting candidates (seed the inventory, verify each: don't trust this list blindly)
 
-This list dates from an earlier state of the tree and at least one row has
+This list dates from an earlier state of the tree and at least two rows have
 already been acted on. Verify every one against current source before repeating
 it: the codebase rewrites itself, and a "lean" here is a starting hypothesis,
 not a finding.
 
 | Path | Shape today | Lean |
 |---|---|---|
-| `src/peers/notify.zig` (`notifyAll`) | Fan-out `POST /api/notify` to configured peers over plain HTTP | **Check first: `tools/zig/peers.zig` already exists.** If the native path is still the one the agent loop calls, the question is now "why two", not "should this move". |
-| `src/patch/apply.zig` | Exact-match `old -> new` string replacement | **Move, carefully.** Pure logic, no privileged host access even needed: but it's called from `src/improve/engine.zig` (protected). Moving the *transform* is fine; the engine's decision to *apply and promote* stays native. Don't let the split blur who verifies the result. |
+| `src/peers/notify.zig` | Peer notify fan-out | **Already moved.** `src/patch/` and the notify half of `src/peers/` no longer exist; both live in `tools/zig/peers.zig` and `tools/zig/patch_apply.zig` per AGENTS.md. Confirm no native path was reintroduced rather than re-litigating the move. |
+| `src/patch/apply.zig` | Exact-match `old -> new` string replacement | **Already moved.** See above; the file is gone from `src/`. If `src/improve/engine.zig` still calls a native apply path, that's a regression to flag, not a fresh move proposal. |
 | `src/agent/autolearn.zig` | Reads/appends `state/autolearn.jsonl`, aggregates into roadmap suggestions | **Partial.** The read/aggregate side is the same shape as the existing `roadmap`/`history`/`learnings` tools (all fs-scoped readers): a natural sibling. The write-on-every-run hook inside `Agent.run`'s defer is call-frequency-sensitive (step 7); check whether it's cheap enough per run (not per token) before moving. |
 | `src/agent/graph.zig` (`write`) | Serializes the execution graph to `state/runs/run-<id>.json` once per run | **Consider.** fs-write-only, once per run, low frequency: good shape. The graph *recording* (`g.add` calls threaded through the loop) stays native; only the final serialize-and-write is separable. |
 | `src/gate/checks.zig` | Shells out to `zig build`/`zig build test`/`zig build tools`/`zig fmt`/lint | **Native. Do not move.** It decides whether a self-authored change gets promoted, so moving it would let a future change alter its own gate. `tools/zig/gate.zig` runs the same commands on demand for an agent checking its own work, which is a different job: the tool answers a question, the native gate makes a decision. |
@@ -234,7 +237,7 @@ blocker)**.
 ```text
 rg -n 'ck_http' src/                              # native code doing what fetch_web/git-style tools do
 rg -n 'std.process.run|std.process.spawn' src/    # native shelling out, next to ck_exec-gated tools
-rg -n 'readFileAlloc|writeFile' src/agent src/peers src/patch   # native fs work outside the sandbox
+rg -n 'readFileAlloc|writeFile' src/agent src/peers   # native fs work outside the sandbox
 ls tools/manifests/*.tool.json | xargs -n1 basename            # what exists, so you propose no duplicate
 ```
 
@@ -293,15 +296,6 @@ moved, whether `zig build tools && zig build test` ran.
 ---
 
 ## Worked examples (clanker-shaped)
-
-### Good: bounded HTTP fan-out, no trust role
-
-```text
-src/peers/notify.zig: notifyAll() loops configured peers and POSTs JSON.
-No different in shape from tools/zig/fetch_web.zig, which already does an
-allowlisted HTTP GET. Move to tools/zig/notify.zig with
-network_allow = peer hosts from config, fs_prefixes = [].
-```
 
 ### Good: fs-scoped reader matching an existing pattern
 

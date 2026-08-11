@@ -187,6 +187,26 @@ pub const History = struct {
         }
     }
 
+    /// Restores files straight from an id's snapshot, given the file list
+    /// directly rather than looking it up from a logged entry. For unwinding
+    /// a promotion that failed partway through, before any log entry for
+    /// `id` exists (`revert` cannot find it without one). Best-effort per
+    /// file: a file that fails to restore is logged, not propagated, so one
+    /// bad copy does not stop the rest of the set from being undone.
+    pub fn restoreFiles(self: *History, id: []const u8, files: []const []const u8) void {
+        for (files) |f| {
+            const src = std.fmt.allocPrint(self.gpa, "{s}/{s}/{s}", .{ self.history_dir, id, f }) catch {
+                log.log(.error_, "restore of '{s}' failed: out of memory", .{f});
+                continue;
+            };
+            defer self.gpa.free(src);
+            copyFile(self.io, self.gpa, self.base, src, f) catch |err| {
+                log.log(.error_, "restore of '{s}' failed: {s}", .{ f, @errorName(err) });
+            };
+        }
+        log.log(.info, "restored the pre-promotion snapshot for improvement {s} ({d} file(s))", .{ id, files.len });
+    }
+
     /// Restores files for an improvement id from its snapshot.
     pub fn revert(self: *History, id: []const u8) !void {
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);

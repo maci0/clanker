@@ -38,28 +38,38 @@ pub fn enterRaw(fd: std.posix.fd_t) !RawGuard {
 /// render loop polls and clears it. Async-signal-safe code can do almost
 /// nothing — no allocation, no I/O, nothing that could touch a lock the
 /// interrupted thread already held — so the handler's entire body is this
-/// one store, nothing more.
-///
-/// This means a resize is only picked up the next time something already
-/// reads from stdin (the next keystroke) or explicitly polls this flag —
-/// there's no `EINTR`-driven redraw of a truly idle prompt. Interrupting the
-/// blocking `read()` in `input.readKey` would need disabling `SA_RESTART`
-/// (a portability landmine) or a self-pipe (extra fd plumbing) for a
-/// cosmetic win: a resize during a genuinely idle prompt looks stale until
-/// the user's next keystroke. Accepted, not chased.
+/// one store plus a best-effort nudge on `resize_pipe_fds` (see below).
 pub var resize_pending: std.atomic.Value(bool) = .init(false);
+
+/// A self-pipe nudged on every SIGWINCH so a blocked `poll()` in the input
+/// loop (`input.KeyReader.next`) wakes immediately instead of only noticing
+/// a resize on the next real keystroke. `{-1,-1}` (creation never attempted,
+/// or failed) is a safe sentinel: `poll()` ignores a negative fd, so a
+/// caller degrades to the old "next keystroke" behavior with no branching
+/// of its own — see `resizeReadFd`.
+var resize_pipe_fds: [2]std.posix.fd_t = .{ -1, -1 };
+
+/// Read end of the resize self-pipe, or `-1` if it doesn't exist.
+pub fn resizeReadFd() std.posix.fd_t {
+    return resize_pipe_fds[0];
+}
 
 fn onSigWinch(sig: std.posix.SIG) callconv(.c) void {
     _ = sig;
     resize_pending.store(true, .release);
+    // Single-byte, best-effort, non-blocking: the atomic flag above (not
+    // the byte count) is the real signal, so a full pipe or a dropped byte
+    // changes nothing — multiple rapid resizes just coalesce into one wake.
+    if (resize_pipe_fds[1] >= 0) _ = std.posix.system.write(resize_pipe_fds[1], &[1]u8{1}, 1);
 }
 
 var resize_handler_installed = false;
 
 /// Registers the SIGWINCH handler described by `resize_pending`'s doc
-/// comment. Idempotent — safe to call once per REPL start even if that ever
-/// happens more than once in a process (e.g. a future session-switch that
-/// re-enters the interactive loop).
+/// comment, and creates the self-pipe `resizeReadFd` reads. Idempotent —
+/// safe to call once per REPL start even if that ever happens more than
+/// once in a process (e.g. a future session-switch that re-enters the
+/// interactive loop).
 pub fn installResizeHandler() void {
     if (resize_handler_installed) return;
     resize_handler_installed = true;
@@ -69,6 +79,14 @@ pub fn installResizeHandler() void {
         .flags = std.posix.SA.RESTART,
     };
     std.posix.sigaction(.WINCH, &act, null);
+
+    // Both ends non-blocking: the write end because a signal handler must
+    // never block, the read end so the drain loop in KeyReader can empty it
+    // without blocking. Failure (fd exhaustion) just leaves both at -1.
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.posix.errno(std.posix.system.pipe2(&fds, .{ .NONBLOCK = true })) == .SUCCESS) {
+        resize_pipe_fds = fds;
+    }
 }
 
 /// Set (from the signal handler) when a SIGINT arrives while a turn is

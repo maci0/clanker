@@ -6,19 +6,15 @@ const std = @import("std");
 const rawhttp = @import("../util/rawhttp.zig");
 
 pub const Mode = enum {
-    openai_text,
-    openai_tool_call,
     openai_stream,
     anthropic_text,
     /// Anthropic/Vertex SSE carrying a tool call that takes no arguments, and
     /// ending without the terminating blank line (as a truncated or
     /// close-delimited stream does).
     anthropic_stream,
-    error_401,
 };
 
 pub const Captured = struct {
-    method: []const u8,
     target: []const u8,
     headers_raw: []const u8,
     body: []const u8,
@@ -77,7 +73,6 @@ pub const MockServer = struct {
         } else |_| {}
         self.thread.join();
         for (self.captured.items) |c| {
-            self.gpa.free(c.method);
             self.gpa.free(c.target);
             self.gpa.free(c.headers_raw);
             self.gpa.free(c.body);
@@ -119,21 +114,19 @@ pub const MockServer = struct {
         if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| {
             const headers_raw = total.items[0..hdr_end];
             const body = total.items[hdr_end + 4 ..];
-            var method: []const u8 = "";
             var target: []const u8 = "";
             if (std.mem.indexOf(u8, headers_raw, "\r\n")) |line_end| {
                 var it = std.mem.tokenizeAny(u8, headers_raw[0..line_end], " ");
-                method = it.next() orelse "";
+                _ = it.next(); // HTTP method, unused
                 target = it.next() orelse "";
             }
-            self.record(method, target, headers_raw, body);
+            self.record(target, headers_raw, body);
         }
         self.respond(stream);
     }
 
-    fn record(self: *MockServer, method: []const u8, target: []const u8, headers_raw: []const u8, body: []const u8) void {
+    fn record(self: *MockServer, target: []const u8, headers_raw: []const u8, body: []const u8) void {
         const cap = Captured{
-            .method = self.gpa.dupe(u8, method) catch return,
             .target = self.gpa.dupe(u8, target) catch return,
             .headers_raw = self.gpa.dupe(u8, headers_raw) catch return,
             .body = self.gpa.dupe(u8, body) catch return,
@@ -145,20 +138,6 @@ pub const MockServer = struct {
 
     fn respond(self: *MockServer, stream: std.Io.net.Stream) void {
         const pair = switch (self.mode) {
-            .openai_text => .{
-                \\{"id":"chatcmpl-mock0","object":"chat.completion","created":1,"model":"mock","choices":[{"index":0,"message":{"role":"assistant","content":"Hello from the mock provider"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":6,"total_tokens":13}}
-                ,
-                @as(u16, 200),
-                @as([]const u8, "OK"),
-                @as([]const u8, "application/json"),
-            },
-            .openai_tool_call => .{
-                \\{"id":"chatcmpl-mock1","object":"chat.completion","created":1,"model":"mock","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_mock","type":"function","function":{"name":"calculator","arguments":"{\"a\":2,\"b\":3}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}
-                ,
-                @as(u16, 200),
-                @as([]const u8, "OK"),
-                @as([]const u8, "application/json"),
-            },
             .openai_stream => .{
                 \\data: {"id":"chatcmpl-mock2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}
                 \\
@@ -196,13 +175,6 @@ pub const MockServer = struct {
                 @as(u16, 200),
                 @as([]const u8, "OK"),
                 @as([]const u8, "text/event-stream"),
-            },
-            .error_401 => .{
-                \\{"error":{"message":"Invalid API key provided","type":"invalid_request_error"}}
-                ,
-                @as(u16, 401),
-                @as([]const u8, "Unauthorized"),
-                @as([]const u8, "application/json"),
             },
         };
         const body = pair[0];

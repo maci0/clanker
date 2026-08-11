@@ -81,6 +81,14 @@ pub const BottomRegion = struct {
         return self.prev_lines.items.len;
     }
 
+    /// The row (within this region) the cursor was last parked at by
+    /// `render` — paired with `lineCount()` so a caller can compute how many
+    /// rows still lie below the cursor before it can safely print something
+    /// outside the region without clobbering them.
+    pub fn cursorRow(self: *const BottomRegion) usize {
+        return self.prev_cursor_row;
+    }
+
     pub fn render(self: *BottomRegion, w: *std.Io.Writer, lines: []const []const u8, cursor_row: usize, cursor_col: usize) !void {
         try diff(w, self.prev_lines.items, lines, self.prev_cursor_row, cursor_row, cursor_col);
 

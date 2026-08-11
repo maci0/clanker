@@ -1,5 +1,6 @@
 //! Per-subagent private todo lists: a nested run's own scratch list, distinct
-//! from the shared room lists in src/peers/todos.zig. Private to one run and
+//! from the shared Kanban board (the `board` tool; see
+//! docs/adrs/0002-private-todos-vs-shared-board.md). Private to one run and
 //! held in memory only — never written to the chatroom log, never fanned out
 //! to peers — and discarded when the run returns. What survives is a summary
 //! appended to the sub-agent's final answer, so the parent can see how far a
@@ -50,9 +51,11 @@ pub const List = struct {
     }
 
     fn find(self: *List, arena: std.mem.Allocator, id: []const u8) !?*Item {
+        _ = arena;
+        if (id.len < 2 or id[0] != 'p') return null;
+        const wanted = std.fmt.parseInt(u32, id[1..], 10) catch return null;
         for (self.items.items) |*it| {
-            const rendered = try std.fmt.allocPrint(arena, "p{d}", .{it.id});
-            if (std.mem.eql(u8, rendered, id)) return it;
+            if (it.id == wanted) return it;
         }
         return null;
     }
@@ -66,7 +69,7 @@ fn fail(arena: std.mem.Allocator, msg: []const u8) ![]const u8 {
 /// arena-owned. Response shapes mirror ck_chat's shared-list responses so the
 /// model sees one vocabulary; fields that carry no information on a
 /// single-owner list (created_by, claimed_by, ts) are simply absent.
-pub fn handleOp(
+pub fn applyTodoOp(
     list: *List,
     arena: std.mem.Allocator,
     op: []const u8,
@@ -169,18 +172,18 @@ test "add, claim, close, list round-trip with private ids" {
     var list = List{ .alloc = t_alloc };
     defer list.deinit();
 
-    const added = try handleOp(&list, arena, "todo_add", "read the file", null);
+    const added = try applyTodoOp(&list, arena, "todo_add", "read the file", null);
     try std.testing.expect(std.mem.indexOf(u8, added, "\"todo\":\"p1\"") != null);
-    _ = try handleOp(&list, arena, "todo_add", "write the tests", null);
+    _ = try applyTodoOp(&list, arena, "todo_add", "write the tests", null);
 
-    const claimed = try handleOp(&list, arena, "todo_claim", null, "p1");
+    const claimed = try applyTodoOp(&list, arena, "todo_claim", null, "p1");
     try std.testing.expect(std.mem.indexOf(u8, claimed, "\"status\":\"claimed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, claimed, "\"yours\":true") != null);
 
-    const closed = try handleOp(&list, arena, "todo_close", null, "p1");
+    const closed = try applyTodoOp(&list, arena, "todo_close", null, "p1");
     try std.testing.expect(std.mem.indexOf(u8, closed, "\"status\":\"closed\"") != null);
 
-    const listed = try handleOp(&list, arena, "todo_list", null, null);
+    const listed = try applyTodoOp(&list, arena, "todo_list", null, null);
     try std.testing.expect(std.mem.indexOf(u8, listed, "\"todo\":\"p1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, listed, "\"title\":\"write the tests\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, listed, "\"status\":\"open\"") != null);
@@ -194,12 +197,12 @@ test "bad arguments answer ok:false instead of erroring" {
     var list = List{ .alloc = t_alloc };
     defer list.deinit();
 
-    const no_title = try handleOp(&list, arena, "todo_add", null, null);
+    const no_title = try applyTodoOp(&list, arena, "todo_add", null, null);
     try std.testing.expect(std.mem.indexOf(u8, no_title, "\"ok\":false") != null);
-    const unknown = try handleOp(&list, arena, "todo_close", null, "p99");
+    const unknown = try applyTodoOp(&list, arena, "todo_close", null, "p99");
     try std.testing.expect(std.mem.indexOf(u8, unknown, "unknown todo id") != null);
     // A shared-list message id must not resolve against the private list.
-    const shared_id = try handleOp(&list, arena, "todo_claim", null, "m1");
+    const shared_id = try applyTodoOp(&list, arena, "todo_claim", null, "m1");
     try std.testing.expect(std.mem.indexOf(u8, shared_id, "\"ok\":false") != null);
 }
 
@@ -212,9 +215,9 @@ test "summary reports progress and is empty for an unused list" {
     defer list.deinit();
     try std.testing.expectEqualStrings("", try summary(&list, arena));
 
-    _ = try handleOp(&list, arena, "todo_add", "step one", null);
-    _ = try handleOp(&list, arena, "todo_add", "step two", null);
-    _ = try handleOp(&list, arena, "todo_close", null, "p1");
+    _ = try applyTodoOp(&list, arena, "todo_add", "step one", null);
+    _ = try applyTodoOp(&list, arena, "todo_add", "step two", null);
+    _ = try applyTodoOp(&list, arena, "todo_close", null, "p1");
 
     const sum = try summary(&list, arena);
     try std.testing.expect(std.mem.indexOf(u8, sum, "1/2 closed") != null);

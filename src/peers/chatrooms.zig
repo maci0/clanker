@@ -16,6 +16,7 @@
 const std = @import("std");
 const config_mod = @import("../config.zig");
 const log = @import("../util/log.zig");
+const build_options = @import("build_options");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
 /// trimming, which replaces the log, cannot invalidate a held lock.
@@ -25,8 +26,6 @@ pub const log_path = "chatrooms.jsonl";
 pub const sub_path = "chatrooms-sub.json";
 pub const cursor_path = "chatrooms-cursor.json";
 pub const max_text_len = 4096;
-/// Messages handed back per history call.
-pub const history_limit = 50;
 /// Newest messages injected into the agent inbox per run.
 pub const inbox_limit = 5;
 
@@ -200,6 +199,24 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     defer if (maybe_existing) |e| gpa.free(e);
     const existing = maybe_existing orelse &[_]u8{};
 
+    // A peer redelivering a message (retry after a lost response, at-least-once
+    // delivery) must not duplicate it. Checked under the same lock as the
+    // write below, so two racing deliveries of the same id cannot both pass
+    // the check and both append. Empty ids (messages from a peer too old to
+    // send one) are never deduped, matching the pre-existing behaviour for
+    // them. The retained window is exactly what trimLog already keeps, so
+    // this adds no unbounded state.
+    if (msg.id.len > 0) {
+        var existing_msgs: std.ArrayList(Message) = .empty;
+        parseLog(arena, existing, &existing_msgs) catch {};
+        for (existing_msgs.items) |m| {
+            if (std.mem.eql(u8, m.id, msg.id)) {
+                log.log(.debug, "[chat] duplicate message id '{s}' ignored", .{msg.id});
+                return;
+            }
+        }
+    }
+
     var line_buf: [64 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&line_buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -277,6 +294,9 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
     if (!cfg.chatrooms.on) return;
     if (cfg.peers.len == 0) return;
 
+    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer http_client.deinit();
+
     for (cfg.peers) |peer| {
         const url = std.fmt.allocPrint(gpa, "{s}/api/chat/message", .{std.mem.trimEnd(u8, peer.url, "/")}) catch |err| {
             log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
@@ -301,23 +321,24 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
         s.endObject() catch continue;
         const body = body_buf[0..w.end];
 
-        var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
-        defer http_client.deinit();
         var response_buf: [64 * 1024]u8 = undefined;
         var rw: std.Io.Writer = .fixed(&response_buf);
         const result = http_client.fetch(.{
             .location = .{ .url = url },
             .method = .POST,
             .payload = body,
-            .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/0.1.0" } },
+            .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/" ++ build_options.version } },
             .response_writer = &rw,
         }) catch |err| {
             log.log(.error_, "chat to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
             continue;
         };
         const status = result.status;
-        const response = response_buf[0..rw.end];
-        log.log(.info, "chat {s}: HTTP {d} ({s})", .{ peer.name, @intFromEnum(status), response });
+        // Body is a peer-controlled response, not delivery confirmation content
+        // worth surfacing at the default log level; a status code is enough to
+        // know the send worked, and skipping the body keeps a peer echoing
+        // message text (or anything else) out of this instance's logs.
+        log.log(.info, "chat {s}: HTTP {d}", .{ peer.name, @intFromEnum(status) });
     }
 }
 
@@ -543,6 +564,38 @@ test "receive filters by subscription" {
 
     const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "other", 0, 10);
     try std.testing.expectEqual(@as(usize, 0), hist.len);
+}
+
+test "receive ignores a redelivered message id" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+
+    const msg = Message{ .room = "dev", .from = "peer", .text = "hi", .ts = 1, .id = "dup-1" };
+    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
+    // Redelivered (e.g. the sender retried after losing the response): same
+    // state as running once, not a second entry.
+    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
+
+    const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 10);
+    try std.testing.expectEqual(@as(usize, 1), hist.len);
+
+    // An id-less message (an old peer that never sent one) is never deduped.
+    const no_id = Message{ .room = "dev", .from = "peer", .text = "no id here", .ts = 2, .id = "" };
+    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
+    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
+    const hist2 = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 10);
+    try std.testing.expectEqual(@as(usize, 3), hist2.len);
 }
 
 test "messages from concurrent senders are all kept" {

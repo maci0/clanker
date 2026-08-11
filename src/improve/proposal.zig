@@ -54,7 +54,23 @@ pub fn isAppendOnly(path: []const u8) bool {
     return std.mem.startsWith(u8, path, "evals/");
 }
 
+/// True if `path` is absolute or has a `..` component. `validatePath` below
+/// only ever does a prefix match against `allowed_prefixes`, so without this
+/// check `src/../../../etc/passwd` (which starts with `"src/"`) would pass:
+/// the engine joins accepted paths onto the staging dir and, at promotion,
+/// onto the live tree's cwd directly, so a path that escapes the prefix
+/// escapes the repo entirely.
+fn hasUnsafeSegment(path: []const u8) bool {
+    if (path.len == 0 or path[0] == '/') return true;
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, "..")) return true;
+    }
+    return false;
+}
+
 pub fn validatePath(path: []const u8) bool {
+    if (hasUnsafeSegment(path)) return false;
     for (allowed_prefixes) |p| {
         if (std.mem.startsWith(u8, path, p)) {
             // An eval is a task descriptor and nothing else; the runner loads
@@ -206,6 +222,13 @@ test "validatePath" {
     try std.testing.expect(!validatePath("tools/bin/calc_ts.wasm"));
     try std.testing.expect(!validatePath("../etc/passwd"));
     try std.testing.expect(!validatePath("vendor/foo"));
+    // A path that starts inside an allowed prefix but climbs out of it via
+    // `..` must not pass: the engine joins it onto the staging dir and,
+    // at promotion, onto the live tree's cwd directly.
+    try std.testing.expect(!validatePath("src/../../../etc/passwd"));
+    try std.testing.expect(!validatePath("src/foo/../../../etc/passwd"));
+    try std.testing.expect(!validatePath("/etc/passwd"));
+    try std.testing.expect(!validatePath(""));
 }
 
 test "stripMarkdownFence and parse fenced proposal" {

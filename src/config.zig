@@ -149,8 +149,6 @@ pub const Agent = struct {
 pub const ConfirmWrites = enum { never, browser, always };
 
 pub const Improve = struct {
-    min_delta: f64 = 0.05,
-    default_iters: u32 = 3,
     /// null (or 0 in the file) means the engine sizes the context from the
     /// model's own window. A fixed number here overrides that, and a stale one
     /// silently keeps a 1M-window model on a 64 KiB diet.
@@ -165,10 +163,6 @@ pub const Improve = struct {
     /// stops self-improvement completely. Dropping it costs about a second,
     /// because the artifacts themselves live in zig's global cache. 0 disables.
     max_cache_bytes: u64 = 4 << 30,
-    max_staged_bytes: usize = 256 * 1024,
-    max_tool_source_bytes: usize = 64 * 1024,
-    max_skill_bytes: usize = 32 * 1024,
-    max_proposal_bytes: usize = 512 * 1024,
 };
 
 /// A peer clanker instance that may be notified about events.
@@ -269,6 +263,11 @@ pub const Config = struct {
         // design, and warning about it points at a config that is in fact fine.
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{file_name});
+        } else if (cfg.providers.get(cfg.default_provider) == null) {
+            // Otherwise a typo'd default_provider loads clean and only fails
+            // on the first chat request, far from the config that caused it.
+            log.log(.error_, "default_provider '{s}' is not in \"providers\"", .{cfg.default_provider});
+            return error.DefaultProviderUnknown;
         }
         return cfg;
     }
@@ -294,6 +293,11 @@ pub const Config = struct {
             .object => |o| o,
             else => return error.ConfigNotObject,
         };
+        warnUnknownKeys(obj, &.{
+            "default_provider", "agent", "improve", "providers",
+            "instance",         "peers", "notify",  "chatrooms",
+            "modules",
+        }, "config");
 
         if (obj.get("default_provider")) |v| {
             cfg.default_provider = try jsonStr(v, "default_provider");
@@ -355,6 +359,14 @@ pub const Config = struct {
             .name = name,
             .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
         };
+        warnUnknownKeys(obj, &.{
+            "base_url",    "kind",                 "project",          "location",
+            "api_key_env", "service_account_file", "path",             "default_model",
+            "models",
+            // Legacy names: flagged with a dedicated error below, not a warning.
+                 "model",                "max_tokens",       "context_window",
+            "temperature", "top_p",                "reasoning_effort",
+        }, name);
         // Settings that belong to a model are rejected on the provider: they
         // differ per model on the same endpoint, and silently accepting them
         // here is how a config ends up meaning something other than it reads.
@@ -401,6 +413,22 @@ pub const Config = struct {
             }
         }
 
+        // vertex_anthropic addresses the model by project/location in the URL
+        // and authenticates from one of two credential sources; missing either
+        // currently only surfaces as error.VertexProjectMissing (or a bare
+        // MissingApiKey) on the first request, far from the config that caused
+        // it. Same "checked at startup" reasoning as the models check below.
+        if (p.kind == .vertex_anthropic) {
+            if (p.project.len == 0 or p.location.len == 0) {
+                log.log(.error_, "provider '{s}': kind \"vertex_anthropic\" requires \"project\" and \"location\"", .{name});
+                return error.VertexProjectMissing;
+            }
+            if (p.api_key_env == null and p.service_account_file.len == 0) {
+                log.log(.error_, "provider '{s}': kind \"vertex_anthropic\" requires \"api_key_env\" or \"service_account_file\"", .{name});
+                return error.VertexCredentialMissing;
+            }
+        }
+
         // One shape, checked at startup: a provider names its models and picks
         // one. Both failures below would otherwise surface as a confusing error
         // on the first request instead of at load.
@@ -420,12 +448,15 @@ pub const Config = struct {
     }
 
     fn parseModel(name: []const u8, v: json.Value) !Model {
-        _ = name;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ModelNotObject,
         };
         var m = Model{};
+        warnUnknownKeys(obj, &.{
+            "context_window",   "max_tokens", "temperature",       "top_p",
+            "reasoning_effort", "display",    "cost_per_1m_input", "cost_per_1m_output",
+        }, name);
         if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
         if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
@@ -443,6 +474,7 @@ pub const Config = struct {
             else => return error.InstanceNotObject,
         };
         var inst = Instance{};
+        warnUnknownKeys(obj, &.{ "name", "id" }, "instance");
         if (obj.get("name")) |k| {
             inst.name = try jsonStr(k, "name");
         } else {
@@ -465,6 +497,7 @@ pub const Config = struct {
                 .object => |o| o,
                 else => return error.PeerNotObject,
             };
+            warnUnknownKeys(obj, &.{ "name", "url" }, "peers[]");
             try out.append(arena, .{
                 .name = try jsonStr(try required(obj, "name"), "name"),
                 .url = try jsonStr(try required(obj, "url"), "url"),
@@ -480,6 +513,7 @@ pub const Config = struct {
             else => return error.NotifyNotObject,
         };
         var n = Notify{};
+        warnUnknownKeys(obj, &.{ "on", "topic" }, "notify");
         if (obj.get("on")) |k| n.on = switch (k) {
             .bool => |b| b,
             else => return error.FieldNotBool,
@@ -494,6 +528,7 @@ pub const Config = struct {
             else => return error.ChatroomsNotObject,
         };
         var c = Chatrooms{};
+        warnUnknownKeys(obj, &.{ "on", "rooms", "max_history" }, "chatrooms");
         if (obj.get("on")) |k| c.on = switch (k) {
             .bool => |b| b,
             else => return error.FieldNotBool,
@@ -524,6 +559,14 @@ pub const Config = struct {
             else => return error.AgentNotObject,
         };
         var a = Agent{};
+        warnUnknownKeys(obj, &.{
+            "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
+            "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
+            "hot_tools",           "tools_dir",               "skills_dir",
+            "system_prompt_file",  "learnings_file",          "state_dir",
+            "sandbox_root",        "git_commit",              "seed",
+            "ask_timeout_seconds",
+        }, "agent");
         if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
         if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
         if (obj.get("max_total_tokens")) |k| a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
@@ -539,6 +582,11 @@ pub const Config = struct {
             .bool => |b| b,
             else => a.git_commit,
         };
+        if (obj.get("tool_catalog")) |k| a.tool_catalog = switch (k) {
+            .bool => |b| b,
+            else => a.tool_catalog,
+        };
+        if (obj.get("hot_tools")) |k| a.hot_tools = @intCast(try jsonInt(k, "hot_tools"));
         if (obj.get("seed")) |k| a.seed = @intCast(try jsonInt(k, "seed"));
         if (obj.get("ask_timeout_seconds")) |k| a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
         if (obj.get("confirm_writes")) |k| {
@@ -556,8 +604,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        if (obj.get("min_delta")) |k| im.min_delta = try jsonFloat(k, "min_delta");
-        if (obj.get("default_iters")) |k| im.default_iters = @intCast(try jsonInt(k, "default_iters"));
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
@@ -567,10 +614,6 @@ pub const Config = struct {
             else => im.capability_gate,
         };
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
-        if (obj.get("max_staged_bytes")) |k| im.max_staged_bytes = @intCast(try jsonInt(k, "max_staged_bytes"));
-        if (obj.get("max_tool_source_bytes")) |k| im.max_tool_source_bytes = @intCast(try jsonInt(k, "max_tool_source_bytes"));
-        if (obj.get("max_skill_bytes")) |k| im.max_skill_bytes = @intCast(try jsonInt(k, "max_skill_bytes"));
-        if (obj.get("max_proposal_bytes")) |k| im.max_proposal_bytes = @intCast(try jsonInt(k, "max_proposal_bytes"));
         return im;
     }
 
@@ -623,6 +666,12 @@ pub const Config = struct {
             .{ .key = "chatrooms", .ptr = &m.chatrooms },
             .{ .key = "token_stats", .ptr = &m.token_stats },
         };
+        warnUnknownKeys(obj, &.{
+            "mcp",        "peers",       "a2a",          "webui",     "graphs",
+            "sessions",   "goal",        "token_budget", "streaming", "dotenv",
+            "hot_reload", "autolearn",   "subagents",    "rlm",       "multimodal",
+            "chatrooms",  "token_stats",
+        }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
                 if (val == .bool) f.ptr.* = val.bool;
@@ -635,6 +684,22 @@ pub const Config = struct {
 
     fn required(obj: json.ObjectMap, key: []const u8) !json.Value {
         return obj.get(key) orelse error.MissingField;
+    }
+
+    /// Warns (never fails the load) about a key in `obj` that isn't in
+    /// `known`. `.ignore_unknown_fields` lets the JSON parser accept
+    /// anything, so a misspelled key like `mx_iterations` would otherwise
+    /// load clean and silently fall back to its default with no signal.
+    fn warnUnknownKeys(obj: json.ObjectMap, known: []const []const u8, context: []const u8) void {
+        var it = obj.iterator();
+        while (it.next()) |kv| {
+            const key = kv.key_ptr.*;
+            for (known) |name| {
+                if (std.mem.eql(u8, key, name)) break;
+            } else {
+                log.log(.warn, "config: unknown key '{s}' in {s} (ignored — check spelling)", .{ key, context });
+            }
+        }
     }
 
     fn jsonStr(v: json.Value, key: []const u8) ![]const u8 {
@@ -886,6 +951,50 @@ test "a local override with only default_provider keeps the base providers" {
     try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
 }
 
+test "a vertex_anthropic provider missing project/location is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"v","providers":{"v":{"kind":"vertex_anthropic","base_url":"https://x.test","api_key_env":"TOK","models":{"m":{}}}}}
+        ,
+    });
+    // Caught at startup rather than as error.VertexProjectMissing on the
+    // first request, far from the config that caused it.
+    try std.testing.expectError(
+        error.VertexProjectMissing,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+    );
+}
+
+test "a vertex_anthropic provider missing both credential sources is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"v","providers":{"v":{"kind":"vertex_anthropic","base_url":"https://x.test","project":"p","location":"us-central1","models":{"m":{}}}}}
+        ,
+    });
+    try std.testing.expectError(
+        error.VertexCredentialMissing,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+    );
+}
+
 test "a provider with no models is rejected at load" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -927,4 +1036,70 @@ test "a default_model with no matching entry is rejected at load" {
         error.ProviderDefaultModelUnknown,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
     );
+}
+
+test "a default_provider naming no provider is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"typo","providers":{"real":{"base_url":"https://x.test","models":{"m":{}}}}}
+        ,
+    });
+    // A typo'd default_provider must fail at startup, not on the first chat
+    // request from whichever caller happens to run first.
+    try std.testing.expectError(
+        error.DefaultProviderUnknown,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+    );
+}
+
+test "agent.tool_catalog and hot_tools load from config" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","models":{"m":{}}}},"agent":{"tool_catalog":false,"hot_tools":3}}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
+    try std.testing.expectEqual(false, cfg.agent.tool_catalog);
+    try std.testing.expectEqual(@as(u32, 3), cfg.agent.hot_tools);
+}
+
+test "an unknown key in a known section does not fail the load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","models":{"m":{}}}},"agent":{"mx_iterations":5}}
+        ,
+    });
+    // A misspelled key only warns (logged, not asserted here); the load must
+    // still succeed with the real default rather than silently misbehaving.
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
+    try std.testing.expectEqual(@as(u32, 24), cfg.agent.max_iterations);
 }

@@ -10,8 +10,11 @@
 set -euo pipefail
 
 OUT_DIR="${CLANKER_GRAMMAR_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-SRC_DIR="${TMPDIR:-/tmp}/clanker-grammars"
+SRC_DIR="${CLANKER_GRAMMAR_SRC_DIR:-$HOME/.cache/clanker-grammars}"
 REPO_ZIG="https://github.com/tree-sitter-grammars/tree-sitter-zig.git"
+# Pinned commit (tag v1.1.2), not a branch: a floating clone would fetch
+# different source on every run with no way to tell the versions apart.
+REF_ZIG="b670c8df85a1568f498aa5c8cae42f51a90473c0"
 
 lang="${1:-zig}"
 [ "$lang" = "zig" ] || { printf 'error: only zig is supported so far\n' >&2; exit 1; }
@@ -19,11 +22,11 @@ lang="${1:-zig}"
 command -v cc >/dev/null || { printf 'error: a C compiler is required\n' >&2; exit 1; }
 
 mkdir -p "$OUT_DIR" "$SRC_DIR"
-if [ -d "$SRC_DIR/tree-sitter-zig/.git" ]; then
-  git -C "$SRC_DIR/tree-sitter-zig" pull --ff-only --quiet
-else
-  git clone --depth 1 --quiet "$REPO_ZIG" "$SRC_DIR/tree-sitter-zig"
+if [ ! -d "$SRC_DIR/tree-sitter-zig/.git" ]; then
+  git clone --quiet "$REPO_ZIG" "$SRC_DIR/tree-sitter-zig"
 fi
+git -C "$SRC_DIR/tree-sitter-zig" fetch --quiet origin "$REF_ZIG"
+git -C "$SRC_DIR/tree-sitter-zig" checkout --quiet --detach "$REF_ZIG"
 
 cd "$SRC_DIR/tree-sitter-zig"
 # Some grammars ship an external scanner; zig currently does not, so it is

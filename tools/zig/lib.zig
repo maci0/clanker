@@ -694,8 +694,6 @@ pub fn execStdin(cmd: []const u8, args: []const []const u8, input: []const u8) E
 }
 
 pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.heap.wasm_allocator);
     const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
@@ -708,9 +706,8 @@ pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     for (args) |a| try s.write(a);
     try s.endArray();
     try s.endObject();
-    try buf.appendSlice(std.heap.wasm_allocator, w.buffer[0..w.end]);
 
-    const b = sliceToMem(buf.items);
+    const b = sliceToMem(wbuf[0..w.end]);
     const rc = ck_exec(b.ptr, b.len);
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
@@ -725,7 +722,7 @@ pub const DockerError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidA
 /// Calls the harness's Docker-socket host function with a JSON request
 /// {"method": "...", "path": "..."}; returns the raw response body.
 pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u8 {
-    const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.InvalidArg;
+    const wbuf = std.heap.wasm_allocator.alloc(u8, 8 * 1024) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -736,7 +733,7 @@ pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u
     try s.write(path);
     try s.endObject();
 
-    const req = sliceToMem(w.buffer[0..w.end]);
+    const req = sliceToMem(wbuf[0..w.end]);
     const rc = ck_docker(req.ptr, req.len);
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,

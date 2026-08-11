@@ -9,6 +9,20 @@ const log = @import("../util/log.zig");
 const vertex_token = @import("vertex_token.zig");
 const mock_server = @import("mock_server.zig");
 const token_stats = @import("../stats/tokens.zig");
+const build_options = @import("build_options");
+
+/// Reported to providers as the `User-Agent` header. Built from
+/// build.zig.zon's `.version` so it can never drift from a hand-copied
+/// literal.
+const user_agent = "clanker/" ++ build_options.version;
+
+/// Ceiling on the tool-call block index a stream frame may address. Both the
+/// OpenAI and Anthropic event shapes carry this as a bare `usize` straight
+/// from the wire; a malformed or hostile response with `index: 999999999`
+/// used to grow `call_args`/`call_ids`/`call_names` one element at a time up
+/// to that value, which is an unbounded allocation from an attacker-chosen
+/// number rather than an actual block count.
+const max_tool_call_slots: usize = 256;
 
 pub const Ctx = struct {
     io: std.Io,
@@ -123,7 +137,7 @@ pub fn chat(
     const body = try providers.buildRequest(ctx.gpa, params);
     defer ctx.gpa.free(body);
 
-    const url = try endpointUrl(ctx.gpa, provider, true);
+    const url = try endpointUrl(ctx.gpa, provider, false);
     defer ctx.gpa.free(url);
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
@@ -138,7 +152,10 @@ pub fn chat(
             const delay = attempt * std.time.ns_per_s;
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}s (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_s, attempt, max_attempts });
             ctx.gpa.free(outcome.body);
-            std.Io.sleep(ctx.io, .{ .nanoseconds = @intCast(delay) }, .awake) catch {};
+            // A cancellation during the backoff sleep must abort the retry,
+            // not fall through and hammer the provider immediately with no
+            // delay at all.
+            try std.Io.sleep(ctx.io, .{ .nanoseconds = @intCast(delay) }, .awake);
             continue;
         }
         break;
@@ -266,7 +283,7 @@ fn doFetch(
 
     var headers: std.http.Client.Request.Headers = .{
         .content_type = .{ .override = "application/json" },
-        .user_agent = .{ .override = "clanker/0.1.0" },
+        .user_agent = .{ .override = user_agent },
     };
 
     var extra: [2]std.http.Header = undefined;
@@ -281,6 +298,11 @@ fn doFetch(
         .response_writer = &w,
     }) catch |err| {
         log.log(.error_, "request to '{s}' failed: {s}", .{ url, @errorName(err) });
+        // Unlike an HTTP error status, this never reaches `err_detail` below,
+        // so every caller that reports `err_detail orelse @errorName(err)`
+        // would otherwise show the user a bare Zig error name (e.g.
+        // "ConnectionRefused") instead of a sentence.
+        err_detail.* = std.fmt.allocPrint(arena, "couldn't reach '{s}' ({s})", .{ provider.name, @errorName(err) }) catch null;
         return err;
     };
 
@@ -313,6 +335,7 @@ pub fn chatStream(
     params: providers.RequestParams,
     err_detail: *?[]const u8,
     on_delta: *const fn ([]const u8) void,
+    stop_flag: ?*std.atomic.Value(bool),
 ) !types.ChatResponse {
     const provider = params.provider;
     const llm_t0 = std.Io.Timestamp.now(ctx.io, .awake);
@@ -333,7 +356,7 @@ pub fn chatStream(
 
     var headers: std.http.Client.Request.Headers = .{
         .content_type = .{ .override = "application/json" },
-        .user_agent = .{ .override = "clanker/0.1.0" },
+        .user_agent = .{ .override = user_agent },
     };
     var extra: [2]std.http.Header = undefined;
     const extra_len = applyAuthHeaders(ctx, provider, bearer, &headers, &extra);
@@ -417,9 +440,18 @@ pub fn chatStream(
     var finish_reason: ?[]const u8 = null;
     var at_eof = false;
     while (!sse_done) {
+        // A peek, not a consuming swap: Agent.stopRequested() is the one
+        // place that consumes the flag, so a Ctrl-C caught here still gets
+        // cleared correctly by the caller's catch block below.
+        if (stop_flag) |f| if (f.load(.acquire)) return error.Interrupted;
         const n = reader.readSliceShort(&buf) catch |err| {
+            // A dropped connection mid-stream must not read as a clean
+            // completion: falling through to build a ChatResponse from
+            // whatever was collected so far would hand the caller a
+            // silently truncated "success" with no way to tell it apart
+            // from a model that actually finished.
             log.log(.error_, "stream read failed: {s}", .{@errorName(err)});
-            break;
+            return err;
         };
         if (n == 0) {
             // A stream that ends without the terminating blank line still has
@@ -436,6 +468,13 @@ pub fn chatStream(
             var frame_done = false;
             var it = std.mem.splitScalar(u8, frame, '\n');
             while (it.next()) |raw_line| {
+                // Every payload the chunk_arena feeds into (usage, finish
+                // reason, tool-call fragments) is copied out via arena.dupe
+                // or an appendSlice into a gpa-backed list before this
+                // iteration ends, so nothing outlives the reset: without it,
+                // a long stream re-parses every frame into an arena that
+                // never shrinks until the whole response finishes.
+                defer _ = chunk_arena_state.reset(.retain_capacity);
                 const line = std.mem.trimEnd(u8, raw_line, "\r");
                 if (!std.mem.startsWith(u8, line, "data:")) continue;
                 const payload = std.mem.trimStart(u8, line[5..], " ");
@@ -447,7 +486,13 @@ pub fn chatStream(
                     try handleAnthropicEvent(ctx, arena, chunk_arena, payload, on_delta, &content, &call_ids, &call_names, &call_args, &stream_usage, &finish_reason);
                     continue;
                 }
-                const chunk = std.json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch continue;
+                const chunk = std.json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
+                    // Dropping a frame silently hides truncated or re-framed
+                    // streams as "the model said nothing"; the payload is
+                    // the only clue left. Mirrors the Anthropic event path.
+                    log.log(.debug, "unparseable stream frame ({d} bytes): {s}", .{ payload.len, payload[0..@min(payload.len, 300)] });
+                    continue;
+                };
                 // The final chunk may carry usage with an empty choices list;
                 // capture it before the choices guard.
                 if (chunk.usage) |u| {
@@ -465,6 +510,7 @@ pub fn chatStream(
                 if (choice.delta.tool_calls) |tcs| {
                     for (tcs) |frag| {
                         const idx = frag.index;
+                        if (idx >= max_tool_call_slots) continue;
                         while (call_args.items.len <= idx) {
                             try call_args.append(ctx.gpa, .empty);
                             try call_ids.append(ctx.gpa, "");
@@ -600,7 +646,7 @@ fn handleAnthropicEvent(
     const ev = std.json.parseFromSliceLeaky(AnthropicEvent, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
         // Dropping a frame silently hides truncated or re-framed streams as
         // "the model said nothing"; the payload is the only clue left.
-        log.log(.debug, "unparseable stream frame ({d} bytes): {s}", .{ payload.len, payload });
+        log.log(.debug, "unparseable stream frame ({d} bytes): {s}", .{ payload.len, payload[0..@min(payload.len, 300)] });
         return;
     };
 
@@ -614,6 +660,7 @@ fn handleAnthropicEvent(
     if (std.mem.eql(u8, ev.type, "content_block_start")) {
         const block = ev.content_block orelse return;
         if (!std.mem.eql(u8, block.type, "tool_use")) return;
+        if (ev.index >= max_tool_call_slots) return;
         while (call_args.items.len <= ev.index) {
             try call_args.append(ctx.gpa, .empty);
             try call_ids.append(ctx.gpa, "");
@@ -635,6 +682,7 @@ fn handleAnthropicEvent(
         }
         if (d.partial_json) |frag| {
             if (frag.len == 0) return;
+            if (ev.index >= max_tool_call_slots) return;
             while (call_args.items.len <= ev.index) {
                 try call_args.append(ctx.gpa, .empty);
                 try call_ids.append(ctx.gpa, "");
@@ -799,7 +847,7 @@ test "streaming chat assembles SSE deltas" {
     const resp = try chatStream(&ctx, arena, .{
         .provider = &provider,
         .messages = &messages,
-    }, &err_detail, Sink.cb);
+    }, &err_detail, Sink.cb, null);
 
     defer {
         for (Sink.collected.items) |_| {}
@@ -880,6 +928,53 @@ test "anthropic stream events fold into text, tool calls and usage" {
     try std.testing.expectEqual(@as(u32, 8), u.prompt_cache_hit_tokens);
     try std.testing.expectEqual(@as(u32, 89), u.completion_tokens);
     try std.testing.expectEqual(@as(u32, 569), u.total_tokens);
+}
+
+test "fuzz: anthropic stream events never hang or crash on malformed payloads" {
+    // handleAnthropicEvent parses whatever the wire sends as a stream frame,
+    // including a bare `index` field that used to drive an unbounded
+    // call_args/call_ids/call_names growth loop (index: 999999999999 would
+    // try to allocate that many slots). The property here is just: no crash,
+    // no unbounded allocation, for any bytes.
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var ctx = Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+
+    const Noop = struct {
+        fn onDelta(_: []const u8) void {}
+    };
+
+    const FCtx = struct {
+        ctx: *Ctx,
+        fn one(self: @This(), smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const payload = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            var content: std.ArrayList(u8) = .empty;
+            defer content.deinit(self.ctx.gpa);
+            var ids: std.ArrayList([]const u8) = .empty;
+            defer ids.deinit(self.ctx.gpa);
+            var names: std.ArrayList([]const u8) = .empty;
+            defer names.deinit(self.ctx.gpa);
+            var args: std.ArrayList(std.ArrayList(u8)) = .empty;
+            defer {
+                for (args.items) |*a| a.deinit(self.ctx.gpa);
+                args.deinit(self.ctx.gpa);
+            }
+            var usage: ?StreamUsage = null;
+            var finish_reason: ?[]const u8 = null;
+
+            try handleAnthropicEvent(self.ctx, arena, arena, payload, &Noop.onDelta, &content, &ids, &names, &args, &usage, &finish_reason);
+        }
+    };
+    try std.testing.fuzz(FCtx{ .ctx = &ctx }, FCtx.one, .{});
 }
 
 test "a no-argument tool call survives the stream" {
@@ -1038,7 +1133,7 @@ test "vertex stream: no-arg tool call and a frame with no trailing blank line" {
     const resp = try chatStream(&ctx, arena, .{
         .provider = &provider,
         .messages = &messages,
-    }, &err_detail, Noop.cb);
+    }, &err_detail, Noop.cb, null);
 
     try std.testing.expectEqualStrings("Checking the roadmap", resp.message.content orelse "");
     const calls = resp.message.tool_calls orelse return error.ToolCallDropped;
@@ -1055,6 +1150,48 @@ test "vertex stream: no-arg tool call and a frame with no trailing blank line" {
     const captured = mock.lastCaptured().?;
     try std.testing.expect(std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
     try std.testing.expect(std.mem.indexOf(u8, captured.body, "\"stream\":true") != null);
+}
+
+test "vertex non-stream chat hits rawPredict, not streamRawPredict" {
+    // chat() never sets params.stream, so it must ask endpointUrl for the
+    // blocking verb; passing `true` here previously sent a plain chat() call
+    // at Vertex's SSE-only :streamRawPredict endpoint.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .anthropic_text);
+    defer mock.stop();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_VERTEX_TOKEN", "test-token");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "vertex-mock", base_url, .vertex_anthropic, "claude-opus-4-6", .{
+        .context_window = 1_048_576,
+        .max_tokens = 4096,
+    });
+    provider.api_key_env = "MOCK_VERTEX_TOKEN";
+    provider.project = "p";
+    provider.location = "us-east5";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+    _ = try chat(&ctx, arena, .{ .provider = &provider, .messages = &messages }, &err_detail);
+
+    const captured = mock.lastCaptured().?;
+    try std.testing.expect(std.mem.endsWith(u8, captured.target, ":rawPredict"));
+    try std.testing.expect(!std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
+    try std.testing.expect(std.mem.indexOf(u8, captured.body, "\"stream\":true") == null);
 }
 
 test "cached prompt tokens are billed at the cache-read rate" {

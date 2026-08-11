@@ -85,7 +85,13 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
     var hits: usize = 0;
     for (changed_files) |f| {
         if (!std.mem.endsWith(u8, f, ".zig")) continue;
-        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch continue;
+        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
+            // A file the scan cannot read must not pass as clean: a proposal
+            // could otherwise promote a change whose forbidden-marker check
+            // silently never ran.
+            log.log(.warn, "lint: could not read {s}: {s}", .{ f, @errorName(err) });
+            return .{ .ok = false, .label = "lint", .detail = "a changed file could not be scanned" };
+        };
         defer gpa.free(content);
         for (forbidden) |marker| {
             if (std.mem.indexOf(u8, content, marker) != null) {
@@ -98,6 +104,49 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
         return .{ .ok = false, .label = "lint", .detail = "forbidden markers found in changed files" };
     }
     return .{ .ok = true, .label = "lint" };
+}
+
+test "lintGate flags forbidden markers only in changed .zig files" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "dirty.zig", .data = "// TO" ++ "DO: finish this\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "clean.zig", .data = "const x = 1;\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "dirty.md", .data = "TO" ++ "DO markers in non-zig files don't count" });
+
+    const clean = try lintGate(gpa, io, tmp.dir, &.{ "clean.zig", "dirty.md" });
+    try std.testing.expect(clean.ok);
+
+    const dirty = try lintGate(gpa, io, tmp.dir, &.{"dirty.zig"});
+    try std.testing.expect(!dirty.ok);
+    try std.testing.expectEqualStrings("lint", dirty.label);
+}
+
+test "fmtGate and formatFiles short-circuit when there is nothing to format" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var empty_result = try fmtGate(gpa, io, tmp.dir, &.{});
+    defer empty_result.deinit(gpa);
+    try std.testing.expect(empty_result.ok);
+
+    var non_zig_result = try fmtGate(gpa, io, tmp.dir, &.{"config.json"});
+    defer non_zig_result.deinit(gpa);
+    try std.testing.expect(non_zig_result.ok);
+
+    var format_result = try formatFiles(gpa, io, tmp.dir, &.{"config.json"});
+    defer format_result.deinit(gpa);
+    try std.testing.expect(format_result.ok);
 }
 
 fn runZig(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, args: []const []const u8, label: []const u8) !GateResult {

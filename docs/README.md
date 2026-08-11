@@ -60,6 +60,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_http` | Make an HTTP request |
 | `ck_fs_read`, `ck_fs_read_range` | Read a file, or a byte range of one |
 | `ck_fs_write`, `ck_fs_write_range` | Write a file, or patch a range of one |
+| `ck_fs_write_if` | Compare-and-swap write: replace a file's contents only if its current SHA-256 matches the expected hex digest |
 | `ck_fs_append` | Append to a file, creating it when absent; locked, so parallel tools cannot overwrite each other |
 | `ck_fs_list`, `ck_fs_stat` | List a directory (directories come back with a trailing slash), stat a path |
 | `ck_fs_find`, `ck_fs_grep` | Find files by name glob, search file contents |
@@ -107,7 +108,7 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 
 ### Peers (`tools/zig/peers.zig`)
 
-`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL. Both CLI commands dispatch into the sandboxed `peers` WASM tool (`src/cli.zig`'s `cmdNotify`/`cmdPhonebook`) rather than a native HTTP client, so peer traffic is gated by that tool's `network_from_config` allowlist like any model-initiated call.
+`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL. Both CLI commands dispatch into the sandboxed `peers` WASM tool (`cmdNotify` in `src/cli.zig`, `cmdPhonebook` in `src/peers/phonebook.zig`) rather than a native HTTP client, so peer traffic is gated by that tool's `network_from_config` allowlist like any model-initiated call.
 
 ### Token usage stats (`src/stats/tokens.zig`)
 
@@ -135,14 +136,17 @@ peer keeps the message only when it subscribes to that room.
 - WASM tools: `chat_send`, `chat_history`, `chat_rooms`, `chat_subscribe`
   (one `chat.wasm` module; the descriptor `config` pins the op). They are
   marked `sequential` so concurrent tool calls never race on the log file.
-- Shared todos: `todo_add`, `todo_claim`, `todo_close`, `todo_list` (same
-  `chat.wasm` module) keep a per-room todo list any subscriber can work.
-  A todo action is a plain chat message (`@todo {...}` text), so it reuses
-  the log, fan-out, and subscription filter; state is an order-independent
-  fold of the log (`src/peers/todos.zig`) and racing claims resolve
-  deterministically (lowest `(ts, id)` wins — `todo_claim` returns the
-  winner and a `yours` flag).
-- Private sub-agent todos: the same `todo_*` tools called without a `room`
+- Shared board: room-scoped `todo_*` (a `room` param on the shared list) was
+  removed once the board covered the same need (see
+  `docs/adrs/0002-private-todos-vs-shared-board.md`). `board_add`, `board_move`,
+  `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`,
+  `board_cost`, `board_list`, `board_delete` (`tools/zig/board.zig`, one
+  `board.wasm` module, one op each) work a shared Kanban board at
+  `state/board.json`, with subtasks, dependencies, a work log and accrued
+  cost per card. A move or claim is announced in the board's chatroom, so
+  `todo_*` with a `room` set now fails with a pointer to the `board_*`
+  replacement.
+- Private sub-agent todos: `todo_*` tools called without a `room`
   operate on a per-nested-run in-memory list (`src/agent/private_todos.zig`),
   wired only by `subagent.runNested`. Nothing is logged or fanned out; the
   list is discarded when the run returns, and its final state is appended to
@@ -253,6 +257,7 @@ changes as tools are added.
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
+| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (`state/board.json`): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
 Internal tools, never offered to the model:
 
@@ -267,6 +272,7 @@ Internal tools, never offered to the model:
 | `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
+| `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `board_*` tools instead (same wasm, one op each) |
 
 `tools/manifests/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
 
@@ -287,6 +293,10 @@ Every tool is a WASM plugin; the descriptor decides how much of the harness it g
 
 ### Switching plugins on and off
 
+`/plugins` in the REPL lists every tool with its state; `/plugins off <name>` and `/plugins on <name>` toggle one. The choice is written to `state/plugins.json` (`{"disabled": [...], "enabled": [...]}`, machine-local, gitignored) and the running REPL reloads its registry immediately.
+
+Core tools cannot be switched off: those are the `internal` tools with no `transform`, since they back the REPL slash commands and the HTTP routes. Transforms are internal too, but toggling them is the point, so they stay switchable.
+
 ### Tools that reach outside the sandbox
 
 Two descriptor keys widen a tool's reach, both opt-in per tool:
@@ -302,10 +312,6 @@ The `opencv` tool is the shape to copy when a capability has no in-process WASM 
 The **Runs** panel picks any recorded run and draws its graph: one row per node, grouped by iteration, with a bar whose width is that node's share of the slowest node in the run. LLM rows carry prompt/completion tokens, tool rows the result size, and the closing `final` row the answer size. The `final` node repeats the duration of the LLM call that produced it, so it is deliberately drawn without a bar rather than counting that time twice.
 
 The panel reads `GET /api/runs` and `GET /api/runs/<run-id>`, both answered by the `cmd_graph` plugin's `json` modes. The harness never reads `state/runs/` itself: run ids are validated as `run-<digits>` before they reach the plugin, and the graph is parsed and re-emitted rather than passed through, so a hand-edited file under `state/runs/` cannot become a response body verbatim.
-
-`/plugins` in the REPL lists every tool with its state; `/plugins off <name>` and `/plugins on <name>` toggle one. The choice is written to `state/plugins.json` (`{"disabled": [...], "enabled": [...]}`, machine-local, gitignored) and the running REPL reloads its registry immediately.
-
-Core tools cannot be switched off: those are the `internal` tools with no `transform`, since they back the REPL slash commands and the HTTP routes. Transforms are internal too, but toggling them is the point, so they stay switchable.
 
 ### Transform chains
 
@@ -413,8 +419,11 @@ The pre-`models` form is **rejected**, not silently accepted:
 | `max_tokens` / `context_window` / `temperature` / `reasoning_effort` on the provider | `ProviderLegacyModelFields` — move it into the model |
 | no `"models"` at all | `ProviderMissingModel` |
 | `default_model` naming an absent entry | `ProviderDefaultModelUnknown` |
+| `default_provider` naming a provider that isn't defined | `DefaultProviderUnknown` |
 
-Each names the provider and the fix. All four fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
+Each names the provider and the fix. All five fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
+
+A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
 Full example:
 
@@ -437,14 +446,14 @@ Full example:
   ],
   "instance": { "name": "clanker-1", "id": "abc" },
   "notify": { "topic": "updates" },
-  "improve": { "min_delta": 0.05 }
+  "improve": { "capability_gate": true }
 }
 ```
 
 Fields:
 - `providers`: map of provider name → config.
   - `kind`: `"openai_compat"` or `"anthropic"`.
-  - `base_url`, `api_key_env`, `model`, `max_tokens`.
+  - `base_url`, `api_key_env`, `default_model` (only needed with more than one model), `models` (map of model name → `context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`).
   - `kimi-k3` supports reasoning (returns `reasoning` field).
 - `agent`:
   - `max_iterations`: max agent loop iterations.
@@ -454,10 +463,12 @@ Fields:
   - `sandbox_root`: base directory for file operations in tools.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
   - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions. Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
+  - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
+  - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.
 - `instance`: identity of this agent.
 - `notify`: default topic for notifications.
-- `improve`: settings for self-improvement (`min_delta` etc.).
+- `improve`: settings for self-improvement (`max_context_bytes`, `capability_gate`, `max_cache_bytes`).
 
 ## HTTP server
 
@@ -474,6 +485,20 @@ Fields:
 | `/api/a2a/message` | POST | A2A message handler |
 | `/api/run` | POST | Run an agent task and return the response |
 | `/api/ask` | POST | Answer an `ask` or `confirm` event a streaming run raised |
+| `/api/stats` | GET | Aggregated token usage per provider/model (JSON) |
+| `/api/providers` | GET | Configured providers and models (JSON) |
+| `/api/goals` | GET, POST | Read or write the persisted structured goal |
+| `/api/plugins` | GET, POST | List plugins, or toggle one on/off |
+| `/api/plugins/config` | POST | Update a plugin's `config` object |
+| `/api/board` | GET, POST | Read or mutate the shared Kanban board |
+| `/api/logs` | GET | Tail the instance's log output |
+| `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
+| `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
+| `/api/chat/message` | POST | Receive a chatroom message fanned out from a peer |
+| `/api/chat/messages` | GET | Read a room's message log after a cursor |
+| `/api/chat/rooms` | GET | List subscribed chatrooms |
+| `/api/chat/send` | POST | Send a message to a chatroom |
+| `/api/chat/subscribe` | POST | Join or leave a chatroom |
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
 

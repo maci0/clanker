@@ -345,7 +345,8 @@ table below (from AGENTS.md).
 | `src/llm/` | Provider adapters (openai_compat, anthropic), HTTP/SSE client | Tool dispatch, sandbox policy |
 | `src/sandbox/` | zwasm runtime wrapper, `ck_*` host functions, policy | Agent-loop orchestration, provider calls |
 | `src/agent/` | Agent loop, system prompt assembly, session store, execution graphs, sub-agents, autolearn | Raw socket/process I/O beyond what the loop needs |
-| `src/mcp/`, `src/peers/`, `src/patch/`, `src/util/` | MCP server, peer notify/phonebook, patch application, logging/dotenv | Agent-loop logic |
+| `src/tui/` | REPL terminal UI: raw mode/size, multiline input, approval prompts, status bar, theming | Agent-loop or provider logic |
+| `src/mcp/`, `src/peers/`, `src/util/`, `src/stats/` | MCP server, peer chatrooms, logging/dotenv/lock/io helpers, token usage stats | Agent-loop logic |
 | `src/evals/` + `src/gate/` | Eval harness, deterministic gates | Nothing outside verification |
 | `src/improve/` | Self-improvement engine (**protected**: see `wasm-review.md`'s trust-boundary section) | - |
 | `src/tools/` | Tool registry (`registry.zig`) and the WASM build pipeline (`builder.zig`, **protected**) | Agent orchestration |
