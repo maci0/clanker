@@ -298,6 +298,18 @@
     </section>
     <section>
       <div class="section-head">
+        <h2>Web UI plugins</h2>
+        <button type="button" class="secondary" id="webui-plugins-refresh">Refresh</button>
+      </div>
+      <!-- A plugin contributes script to this page, so its presence on disk is
+           not consent to run it: each is off until turned on here, and a
+           disabled plugin's assets are not served at all. -->
+      <div id="webui-plugins"></div>
+      <p class="sr-only" id="webui-plugins-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <div class="section-head">
         <h2>Logs</h2>
         <button type="button" class="secondary" id="logs-refresh">Refresh</button>
       </div>

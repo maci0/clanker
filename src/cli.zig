@@ -2700,6 +2700,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui") or
             std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
+            std.mem.startsWith(u8, target, "/webui/plugins/") or
             std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, target, "/webui/vendor/hljs.min.js");
         const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify");
@@ -2714,6 +2715,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
         const is_board = std.mem.eql(u8, target, "/api/board") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_webui_plugins = std.mem.eql(u8, target, "/api/webui/plugins") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_webui_plugin_asset = std.mem.eql(u8, method, "GET") and
+            std.mem.startsWith(u8, target, "/webui/plugins/");
         const is_room_todos = std.mem.startsWith(u8, target, "/api/room-todos") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
@@ -2779,6 +2784,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleBoard(io, gpa, cfg, method, body, stream);
         } else if (is_room_todos) {
             handleRoomTodos(io, gpa, cfg, method, target, body, stream);
+        } else if (is_webui_plugins) {
+            handleWebuiPlugins(io, gpa, method, body, stream);
+        } else if (is_webui_plugin_asset) {
+            handleWebuiPluginAsset(io, gpa, target, stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
@@ -3599,6 +3608,213 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+const webui_plugins_dir = "tools/webui-plugins";
+const webui_plugins_state = "state/webui_plugins.json";
+
+const WebuiPlugin = struct {
+    name: []const u8 = "",
+    title: []const u8 = "",
+    description: []const u8 = "",
+    group: []const u8 = "Watch",
+};
+
+const WebuiPluginState = struct {
+    enabled: []const []const u8 = &.{},
+};
+
+const WebuiPluginPost = struct {
+    name: ?[]const u8 = null,
+    enabled: ?bool = null,
+};
+
+/// A plugin directory name reaches the filesystem, so it is restricted to the
+/// shape a directory here is allowed to have. Traversal is refused, not
+/// sanitised, the way session ids are.
+fn validPluginName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 64) return false;
+    for (name) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+    return true;
+}
+
+test validPluginName {
+    try std.testing.expect(validPluginName("activity"));
+    try std.testing.expect(validPluginName("board-burndown"));
+    try std.testing.expect(!validPluginName("../../etc/passwd"));
+    try std.testing.expect(!validPluginName("a/b"));
+    try std.testing.expect(!validPluginName("a.b"));
+    try std.testing.expect(!validPluginName(""));
+    try std.testing.expect(!validPluginName("x" ** 65));
+}
+
+/// Only these two files are served from a plugin directory. Anything else it
+/// happens to contain — notes, sources, a stray key — stays on disk.
+fn pluginAssetType(file: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, file, "app.js")) return "text/javascript; charset=utf-8";
+    if (std.mem.eql(u8, file, "app.css")) return "text/css; charset=utf-8";
+    return null;
+}
+
+test pluginAssetType {
+    try std.testing.expect(pluginAssetType("app.js") != null);
+    try std.testing.expect(pluginAssetType("app.css") != null);
+    try std.testing.expect(pluginAssetType("plugin.json") == null);
+    try std.testing.expect(pluginAssetType("../app.js") == null);
+    try std.testing.expect(pluginAssetType("secrets.env") == null);
+}
+
+fn pluginEnabled(state: WebuiPluginState, name: []const u8) bool {
+    for (state.enabled) |e| {
+        if (std.mem.eql(u8, e, name)) return true;
+    }
+    return false;
+}
+
+/// Which plugins exist and which are turned on. A plugin is off until someone
+/// turns it on: it contributes script to the page, so its presence on disk is
+/// not consent to run it.
+fn handleWebuiPlugins(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    method: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch "{}";
+    var state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
+
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(WebuiPluginPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        const name = req.name orelse {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
+            return;
+        };
+        if (!validPluginName(name)) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
+            return;
+        }
+        const on = req.enabled orelse !pluginEnabled(state, name);
+        var next: std.ArrayList([]const u8) = .empty;
+        for (state.enabled) |e| {
+            if (std.mem.eql(u8, e, name)) continue;
+            next.append(arena, e) catch {};
+        }
+        if (on) next.append(arena, name) catch {};
+        state.enabled = next.items;
+
+        var enc: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(state, .{}, &enc.writer) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+        atomic_write.writeFile(io, std.Io.Dir.cwd(), webui_plugins_state, enc.written()) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
+            return;
+        };
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("plugins") catch return;
+    s.beginArray() catch return;
+
+    var dir = std.Io.Dir.cwd().openDir(io, webui_plugins_dir, .{ .iterate = true }) catch {
+        s.endArray() catch return;
+        s.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    };
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        if (!validPluginName(entry.name)) continue;
+        const manifest_path = std.fmt.allocPrint(arena, "{s}/{s}/plugin.json", .{ webui_plugins_dir, entry.name }) catch continue;
+        const manifest_raw = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(1 << 16)) catch continue;
+        var plugin = std.json.parseFromSliceLeaky(WebuiPlugin, arena, manifest_raw, .{ .ignore_unknown_fields = true }) catch continue;
+        // The directory is the identity: a manifest naming itself something
+        // else would serve assets from a path that does not exist.
+        plugin.name = entry.name;
+        const css_path = std.fmt.allocPrint(arena, "{s}/{s}/app.css", .{ webui_plugins_dir, entry.name }) catch continue;
+        const has_css = std.Io.Dir.cwd().statFile(io, css_path, .{}) catch null;
+
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(plugin.name) catch return;
+        s.objectField("title") catch return;
+        s.write(if (plugin.title.len > 0) plugin.title else plugin.name) catch return;
+        s.objectField("description") catch return;
+        s.write(plugin.description) catch return;
+        s.objectField("group") catch return;
+        s.write(plugin.group) catch return;
+        s.objectField("enabled") catch return;
+        s.write(pluginEnabled(state, entry.name)) catch return;
+        s.objectField("has_css") catch return;
+        s.write(has_css != null) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `GET /webui/plugins/<name>/app.js|app.css`. Served from disk rather than
+/// embedded: a plugin can be dropped in without rebuilding clanker, which is
+/// the point of it being a plugin. Only an enabled plugin's assets are served,
+/// so turning one off actually stops its code reaching the browser.
+fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/webui/plugins/".len..];
+    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        return;
+    };
+    const name = rest[0..slash];
+    const file = rest[slash + 1 ..];
+    if (!validPluginName(name)) {
+        respond(stream, 400, "Bad Request", "{\"error\":\"bad plugin name\"}");
+        return;
+    }
+    const content_type = pluginAssetType(file) orelse {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        return;
+    };
+
+    const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch "{}";
+    const state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
+    if (!pluginEnabled(state, name)) {
+        respond(stream, 404, "Not Found", "{\"error\":\"plugin is not enabled\"}");
+        return;
+    }
+
+    const path = std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ webui_plugins_dir, name, file }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+        return;
+    };
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        return;
+    };
+    var hbuf: [512]u8 = undefined;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, bytes.len }) catch return;
+    writeAllFd(stream.socket.handle, hdr);
+    writeAllFd(stream.socket.handle, bytes);
 }
 
 const RoomTodoPost = struct {

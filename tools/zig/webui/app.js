@@ -75,6 +75,9 @@ var el = {
   roomTodoTitle: document.getElementById("room-todo-title"),
   roomTodosRefresh: document.getElementById("room-todos-refresh"),
   roomTodosStatus: document.getElementById("room-todos-status"),
+  webuiPlugins: document.getElementById("webui-plugins"),
+  webuiPluginsRefresh: document.getElementById("webui-plugins-refresh"),
+  webuiPluginsStatus: document.getElementById("webui-plugins-status"),
   logSelect: document.getElementById("log-select"),
   logView: document.getElementById("log-view"),
   logsRefresh: document.getElementById("logs-refresh"),
@@ -2922,7 +2925,7 @@ var viewLoaders = {
   goals: loadGoals,
   board: function () { return Promise.all([loadBoard(), loadRoomTodos()]); },
   tools: loadTools,
-  system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList()]); }
+  system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
 
 function showView(name, focusPanel) {
@@ -2947,8 +2950,8 @@ function showView(name, focusPanel) {
   }
 }
 
-VIEWS.forEach(function (v, i) {
-  var tab = document.getElementById("tab-" + v);
+function wireTab(tab, i) {
+  var v = tab.getAttribute("data-view");
   tab.addEventListener("click", function () { showView(v, false); });
   tab.addEventListener("keydown", function (e) {
     // The tablist is a column now, so it answers to Up and Down. Left and
@@ -2970,6 +2973,10 @@ VIEWS.forEach(function (v, i) {
       document.getElementById("tab-" + edge).focus();
     }
   });
+}
+
+VIEWS.forEach(function (v, i) {
+  wireTab(document.getElementById("tab-" + v), i);
 });
 
 window.addEventListener("hashchange", function () {
@@ -3247,7 +3254,7 @@ if (window.MutationObserver) {
       showToast(text);
     });
   });
-  ["session-status", "run-status", "chat-status", "board-status", "room-todos-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+  ["session-status", "run-status", "chat-status", "board-status", "room-todos-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
@@ -4080,6 +4087,210 @@ el.cardForm.addEventListener("submit", function (e) {
 
 el.boardRefresh.addEventListener("click", function () { loadBoard(); });
 
+
+/* ---------- web UI plugins ----------
+
+   The page is itself served by a WASM tool, so it is already a plugin; this
+   lets it host plugins of its own. A plugin is a directory under
+   tools/webui-plugins/ with a manifest and an app.js, served same-origin so
+   the strict CSP covers it without widening: no eval, no other origin, and a
+   disabled plugin's assets are never served at all.
+
+   A view a plugin registers is an ordinary view: same rail button, same panel,
+   same digit shortcut, same URL fragment. */
+
+var pluginViews = {};
+
+function pluginApi() {
+  return {
+    getJSON: function (path) {
+      return fetch(path).then(function (r) {
+        return r.json().then(function (d) {
+          if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+          return d;
+        });
+      });
+    },
+    el: function (tag, className, text) {
+      var node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    },
+    status: function (message) { el.webuiPluginsStatus.textContent = message; },
+    // The page's own formatters, so a plugin's numbers read like the rest.
+    fmt: { bytes: fmtBytes, int: fmtInt, cost: fmtCost, time: formatChatTime },
+    showView: function (id) { showView(id, false); }
+  };
+}
+
+/* The whole surface a plugin sees. Deliberately small: everything here is
+   something the page is promising to keep working. */
+window.clanker = {
+  registerView: function (spec) {
+    if (!spec || !spec.id || typeof spec.mount !== "function") return;
+    if (VIEWS.indexOf(spec.id) !== -1) return;
+    var group = spec.group || "Watch";
+
+    var panel = document.createElement("div");
+    panel.className = "view";
+    panel.id = "view-" + spec.id;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", "tab-" + spec.id);
+    panel.tabIndex = -1;
+    panel.hidden = true;
+    var section = document.createElement("section");
+    panel.appendChild(section);
+    document.getElementById("main").appendChild(panel);
+
+    var tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "rail-tab";
+    tab.setAttribute("role", "tab");
+    tab.id = "tab-" + spec.id;
+    tab.setAttribute("aria-controls", "view-" + spec.id);
+    tab.setAttribute("aria-selected", "false");
+    tab.tabIndex = -1;
+    tab.setAttribute("data-view", spec.id);
+    tab.textContent = spec.title || spec.id;
+
+    // Placed under its group's heading rather than appended, so a plugin's
+    // view sits where its kind of thing already lives.
+    var nav = document.querySelector(".rail-nav");
+    var headings = nav.querySelectorAll(".rail-group");
+    var placed = false;
+    for (var i = 0; i < headings.length; i++) {
+      if (headings[i].textContent !== group) continue;
+      var at = headings[i].nextElementSibling;
+      while (at && at.nextElementSibling && !at.nextElementSibling.classList.contains("rail-group")) {
+        at = at.nextElementSibling;
+      }
+      nav.insertBefore(tab, at ? at.nextElementSibling : null);
+      placed = true;
+      break;
+    }
+    if (!placed) nav.appendChild(tab);
+
+    VIEWS.push(spec.id);
+    pluginViews[spec.id] = { spec: spec, section: section };
+    var mounted = false;
+    viewLoaders[spec.id] = function () {
+      if (!mounted) {
+        mounted = true;
+        return spec.mount.call(spec, section, pluginApi());
+      }
+      if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi());
+      return null;
+    };
+    wireTab(tab, VIEWS.length - 1);
+  }
+};
+
+function loadPluginAssets(list) {
+  var pending = [];
+  list.forEach(function (p) {
+    if (!p.enabled) return;
+    if (p.has_css && !document.querySelector('link[data-plugin="' + p.name + '"]')) {
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "/webui/plugins/" + encodeURIComponent(p.name) + "/app.css";
+      link.setAttribute("data-plugin", p.name);
+      document.head.appendChild(link);
+    }
+    if (document.querySelector('script[data-plugin="' + p.name + '"]')) return;
+    pending.push(new Promise(function (resolve) {
+      var s = document.createElement("script");
+      s.src = "/webui/plugins/" + encodeURIComponent(p.name) + "/app.js";
+      s.setAttribute("data-plugin", p.name);
+      // A plugin that fails to load must not take the page down with it.
+      s.onload = function () { resolve(true); };
+      s.onerror = function () {
+        el.webuiPluginsStatus.textContent = "Plugin " + p.name + " failed to load.";
+        resolve(false);
+      };
+      document.head.appendChild(s);
+    }));
+  });
+  return Promise.all(pending);
+}
+
+function loadWebuiPlugins() {
+  return fetch("/api/webui/plugins")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      renderWebuiPlugins(d.plugins || []);
+      return loadPluginAssets(d.plugins || []);
+    })
+    .catch(function (err) { el.webuiPluginsStatus.textContent = "Could not load plugins: " + err.message; });
+}
+
+function renderWebuiPlugins(list) {
+  el.webuiPlugins.textContent = "";
+  if (!list.length) {
+    var none = document.createElement("p");
+    none.className = "run-empty";
+    none.textContent = "No plugins installed. A plugin is a directory under tools/webui-plugins/ — see its README.";
+    el.webuiPlugins.appendChild(none);
+    return;
+  }
+  list.forEach(function (p) {
+    var row = document.createElement("div");
+    row.className = "webui-plugin";
+
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = "plugin-" + p.name;
+    box.checked = !!p.enabled;
+    box.addEventListener("change", function () {
+      box.disabled = true;
+      fetch("/api/webui/plugins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: p.name, enabled: box.checked })
+      })
+        .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+        .then(function (d) {
+          var nowOn = box.checked;
+          renderWebuiPlugins(d.plugins || []);
+          if (nowOn) {
+            return loadPluginAssets(d.plugins || []).then(function () {
+              el.webuiPluginsStatus.textContent = (p.title || p.name) + " enabled.";
+            });
+          }
+          // Script already run cannot be recalled, and saying otherwise would
+          // misdescribe what is running.
+          el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload to remove it from this page.";
+        })
+        .catch(function (err) { el.webuiPluginsStatus.textContent = "Plugin: " + err.message; })
+        .then(function () { box.disabled = false; });
+    });
+
+    var name = document.createElement("label");
+    name.className = "webui-plugin-name";
+    name.htmlFor = box.id;
+    name.textContent = p.title || p.name;
+
+    var desc = document.createElement("span");
+    desc.className = "webui-plugin-desc";
+    desc.textContent = p.description || "";
+
+    var group = document.createElement("span");
+    group.className = "webui-plugin-group";
+    group.textContent = p.group || "";
+
+    row.appendChild(box);
+    row.appendChild(name);
+    row.appendChild(desc);
+    row.appendChild(group);
+    el.webuiPlugins.appendChild(row);
+  });
+}
+
+el.webuiPluginsRefresh.addEventListener("click", function () { loadWebuiPlugins(); });
+
 /* ---------- room todos ---------- */
 
 /* A second list, deliberately: board cards are this instance's plan, room
@@ -4437,6 +4648,12 @@ setBusy(false);
 // instance name to tell this clanker's messages from a peer's.
 loadStatus();
 loadProviders();
+// Enabled plugins register their views before the opening view is settled, so
+// a deep link to a plugin's view survives a cold load.
+loadWebuiPlugins().then(function () {
+  var wanted = window.location.hash.replace("#", "");
+  if (wanted && VIEWS.indexOf(wanted) !== -1) showView(wanted, false);
+});
 syncSubmitLabel();
 // Only the opening view's data is fetched now; the rest load when opened.
 showView(window.location.hash.replace("#", ""), false);
