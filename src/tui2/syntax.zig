@@ -460,21 +460,25 @@ pub const Style = struct {
     builtin: []const u8,
     preproc: []const u8,
     reset: []const u8,
+    /// Set when the theme is a 24-bit palette; the vaxis renderer uses it so
+    /// the TUI shows the same colours the ANSI path writes.
+    rgb: ?theme_mod.Rgb = null,
 
     pub fn fromTheme(t: *const theme_mod.Theme) Style {
-        // Magenta keywords / green strings / dim comments / cyan numbers is
-        // the de-facto terminal palette (also what the web UI's hljs token
-        // mapping uses). All gated on reset being non-empty so mono stays
-        // byte-identical to unhighlighted text.
+        // The theme owns these now, so a palette like Catppuccin sets its own
+        // rather than having magenta/green/cyan hardcoded underneath it. The
+        // fallbacks keep any theme that predates the fields (and `mono`, whose
+        // fields are all empty) behaving exactly as before.
         const on = t.reset.len > 0;
         return .{
-            .keyword = if (on) "\x1b[35m" else "",
-            .string = if (on) "\x1b[32m" else "",
+            .keyword = if (t.syn_keyword.len > 0) t.syn_keyword else if (on) "\x1b[35m" else "",
+            .string = if (t.syn_string.len > 0) t.syn_string else if (on) "\x1b[32m" else "",
             .comment = t.dim,
-            .number = t.code, // cyan
-            .builtin = if (on) "\x1b[36m" else "",
-            .preproc = if (on) "\x1b[33m" else "",
+            .number = if (t.syn_number.len > 0) t.syn_number else t.code,
+            .builtin = if (t.syn_builtin.len > 0) t.syn_builtin else if (on) "\x1b[36m" else "",
+            .preproc = if (t.syn_preproc.len > 0) t.syn_preproc else if (on) "\x1b[33m" else "",
             .reset = t.reset,
+            .rgb = t.rgb,
         };
     }
 
@@ -492,6 +496,19 @@ pub const Style = struct {
 
     pub fn vaxisFor(self: *const Style, kind: Kind) vaxis.Style {
         if (self.reset.len == 0) return .{};
+        if (self.rgb) |c| {
+            // A 24-bit theme names exact colours; the 16 indexed slots would
+            // round them to whatever the terminal happens to have there.
+            return switch (kind) {
+                .plain => .{},
+                .keyword => .{ .fg = .{ .rgb = c.keyword } },
+                .string => .{ .fg = .{ .rgb = c.string } },
+                .comment => .{ .fg = .{ .rgb = c.comment } },
+                .number => .{ .fg = .{ .rgb = c.number } },
+                .builtin => .{ .fg = .{ .rgb = c.builtin } },
+                .preproc => .{ .fg = .{ .rgb = c.preproc } },
+            };
+        }
         return switch (kind) {
             .plain => .{},
             .keyword => .{ .fg = .{ .index = 5 } }, // magenta
@@ -778,4 +795,25 @@ test "other languages still use the hand-rolled lexer" {
     try kindsOf(gpa, "python", "def f(): # hi", &toks);
     try std.testing.expectEqual(Kind.keyword, findKind(toks.items, "def").?);
     try std.testing.expectEqual(Kind.comment, findKind(toks.items, "# hi").?);
+}
+
+test "a 24-bit theme reaches both renderers" {
+    const style = Style.fromTheme(&theme_mod.Theme.mocha);
+    // The ANSI path writes mocha's own sequences, not the built-in magenta.
+    try std.testing.expectEqualStrings(theme_mod.Theme.mocha.syn_keyword, style.keyword);
+    try std.testing.expect(std.mem.indexOf(u8, style.string, "38;2;") != null);
+    // The vaxis path sets the same colour as an rgb cell rather than rounding
+    // it to one of the 16 indexed slots.
+    const vx = style.vaxisFor(.keyword);
+    try std.testing.expectEqual(theme_mod.mocha_palette.mauve, vx.fg.rgb);
+
+    // The default theme keeps its indexed colours, so nothing changes for it.
+    const plain = Style.fromTheme(&theme_mod.Theme.default);
+    try std.testing.expectEqualStrings("\x1b[35m", plain.keyword);
+    try std.testing.expectEqual(@as(u8, 5), plain.vaxisFor(.keyword).fg.index);
+
+    // mono stays colourless in both.
+    const off = Style.fromTheme(&theme_mod.Theme.mono);
+    try std.testing.expectEqualStrings("", off.keyword);
+    try std.testing.expectEqual(vaxis.Style{}, off.vaxisFor(.keyword));
 }

@@ -129,6 +129,15 @@ const Line = struct {
     fence_lang: ?[]const u8 = null,
 };
 
+/// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "mono",
+/// "default"). An env var rather than a flag because the REPL is also reached
+/// through `clanker` with no arguments, and a theme is a property of the
+/// terminal you are sitting at rather than of one invocation.
+fn themeName(environ_map: *const std.process.Environ.Map) ?[]const u8 {
+    const v = environ_map.get("CLANKER_THEME") orelse return null;
+    return if (v.len > 0) v else null;
+}
+
 const Model = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -371,11 +380,13 @@ const Model = struct {
         const start = tailStart(self.lines.items, avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
-        const fence_on = blk: {
-            const t = theme_mod.select(null, self.ctx.environ_map);
-            break :blk t.reset.len > 0;
-        };
-        var syn_style = syntax.Style.fromTheme(&theme_mod.Theme.default);
+        // One theme decides both. The style was built from Theme.default
+        // regardless of what select() returned, so NO_COLOR (and any chosen
+        // theme) reached the fence check and then got ignored by the
+        // highlighter that actually draws the colours.
+        const active = theme_mod.select(themeName(self.ctx.environ_map), self.ctx.environ_map);
+        const fence_on = active.reset.len > 0;
+        var syn_style = syntax.Style.fromTheme(&active);
         var i: usize = start;
         while (i < self.lines.items.len and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
