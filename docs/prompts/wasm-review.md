@@ -10,9 +10,10 @@ Copy everything below the line into a fresh agent session (or `@` this file).
 
 ## Role
 
-You are reviewing **where logic lives** in **clanker**
-(`/home/maci/Desktop/clanker`): a self-improving AI agent harness written in
-Zig 0.16 that runs its tools as sandboxed WebAssembly modules via zwasm.
+You are reviewing **where logic lives** in **clanker**: a self-improving AI
+agent harness written in Zig 0.16 that runs its tools as sandboxed WebAssembly
+modules via zwasm. You are already in its repository; every path below is
+relative to that checkout.
 
 AGENTS.md states the house preference plainly: *"Prefer implementing
 functionality as WASM tools."* Your job is to turn that into a concrete,
@@ -39,14 +40,25 @@ placement: native harness vs. sandboxed WASM tool.
 - **No em dashes. No AI attribution.**
 - **Trust boundary first, ergonomics second.** A candidate that scores well on
   "could be a tool" but fails the trust check (below) is still a **no**.
-- **The protected surface never moves, and nothing in it gets easier to
-  bypass.** Per AGENTS.md, clanker cannot modify `src/improve/`, `src/evals/`,
-  `src/tools/builder.zig`, or `evals/` in a single pass. Do not propose moving
-  logic out of those paths into a WASM tool that a later pass (or the agent
-  itself) *could* modify: that would smuggle a bypass around the anti-cheat
-  boundary. Gate/verification logic (`src/gate/checks.zig` included, even
-  though it sits outside the protected paths) stays native for the same
-  reason: a tool cannot be trusted to grade or gate its own promotion.
+- **Nothing may get easier to bypass by moving.** The protected surface is
+  narrower than it used to be, so check `src/improve/proposal.zig` for what it
+  is today rather than quoting this list back. As of now: `src/evals/` and
+  `src/tools/builder.zig` are closed outright; `evals/` is add-only (a pass may
+  create a case, never edit one); `src/improve/` is open **except**
+  `proposal.zig`, which defines the modifiable surface itself. What keeps that
+  safe is that gates run from the binary already on disk, never the patched
+  one, plus `gate_invariants` in `src/improve/engine.zig`, which asserts the
+  load-bearing gate calls still exist in the staged text.
+
+  So the rule for this review is not "these directories are frozen" but: **a
+  move must not put anything that grades, gates or promotes a change somewhere
+  a later pass could rewrite it.** `src/gate/checks.zig` stays native for that
+  reason even though it sits outside the protected paths.
+
+  Note the trap here: `tools/zig/gate.zig` already exists and is *not* a
+  counterexample. It runs `zig build` on demand for an agent that wants to
+  check its own work. The promotion gate is `src/gate/checks.zig`, called by
+  the engine, and that is the one that must not move.
 - **Match the existing tool shape.** New candidates should look like the
   tools already in `tools/manifests/`: one JSON in, one JSON out, a narrow
   `fs_prefixes`/`network_allow`, `internal: true` if the model should never
@@ -70,16 +82,32 @@ Default: **Review only** unless the user asks for code.
 Everything a tool can touch is a `ck_*` host function in `src/sandbox/host.zig`,
 gated by its descriptor:
 
+Do not trust this table over the source: the authoritative list is whatever
+`src/sandbox/runtime.zig` registers with the linker, and a function present in
+`host.zig` but absent there is unreachable however good it looks.
+
+```text
+rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
+```
+
 | Host fn | Grants | Descriptor gate |
 |---|---|---|
-| `ck_fs_read` / `ck_fs_write` | Read/write inside `fs_prefixes` | `fs_prefixes` (empty = no filesystem at all) |
+| `ck_fs_read`, `ck_fs_read_range` | Read a file, or a byte range of one | `fs_prefixes` (empty = no filesystem at all) |
+| `ck_fs_write`, `ck_fs_write_range`, `ck_fs_append` | Write, patch a range, append | `fs_prefixes` |
+| `ck_fs_list`, `ck_fs_stat`, `ck_fs_find`, `ck_fs_grep` | List a directory, stat a path, find by name, search contents | `fs_prefixes` |
+| `ck_fs_copy`, `ck_fs_rename`, `ck_fs_delete`, `ck_fs_mkdir` | Move it, copy it, remove it, create a directory | `fs_prefixes` |
 | `ck_http` | Outbound HTTP | `network_allow` (empty = no network at all) |
-| `ck_exec` | Run a subprocess | Denies tokens outside an allowlist (see `host.zig`); still bounded, not arbitrary shell |
+| `ck_exec` | Run a subprocess | `exec_allow`, plus a deny list for destructive git verbs and flags that make a command run something else. argv goes to execve, never a shell |
 | `ck_docker` | Talk to the local Docker socket | `"docker"`-class tools only |
 | `ck_llm` | One-shot model completion | `"llm": true` on the descriptor; forces sequential execution |
-| `ck_subagent` | Nested bounded agent run | `modules.subagents` |
-| `ck_getenv` | Read one env var | Always available, still logged |
-| `ck_now`, `ck_random`, `ck_log`, `ck_config` | Time, randomness, logging, its own config | Always available |
+| `ck_subagent` | Nested bounded agent run | `modules.subagents`, and a parent agent run to attach to |
+| `ck_ask` | Put a multiple-choice question to the human | Only answerable when a human is attached (the REPL) |
+| `ck_chat` | Send to / read a chatroom | `modules.chat` |
+| `ck_env`, `ck_getenv` | Read one environment variable | `env_allow`. A tool that declares nothing gets a fixed harmless set (`PWD`, `HOME`, `PATH` and similar); a tool that declares any variable gets exactly those. This process loads API keys from `.env`, so the default is deny |
+| `ck_std_api` | Look up a symbol in the Zig standard library source | Always available |
+| `ck_stats`, `ck_config` | Token usage, the tool's own config | Always available |
+| `ck_hash` | SHA-256 of a buffer | Always available |
+| `ck_now`, `ck_random`, `ck_log` | Time, randomness, logging | Always available |
 
 If a candidate needs something **not** on this list (raw socket listen/accept,
 spawning a long-lived OS thread, terminal raw-mode I/O, holding a mutable
@@ -99,11 +127,13 @@ Run this on every file/function in scope.
    sandbox/runtime.zig, tools/registry.zig, the ck_* boundary)?
    YES → native. STOP. (A tool cannot host the thing that runs tools.)
 
-2. Is it under the protected surface (src/improve/, src/evals/,
-   src/tools/builder.zig, evals/), or does it grade/gate a promotion
-   (src/gate/checks.zig)?
-   YES → native. STOP. (Anti-cheat boundary; a tool cannot verify or promote
-   its own or anyone else's change.)
+2. Does it grade, gate or promote a change (src/gate/checks.zig, the promotion
+   path in src/improve/engine.zig), or is it closed outright (src/evals/,
+   src/tools/builder.zig, src/improve/proposal.zig)?
+   YES → native. STOP. (A tool cannot verify or promote its own or anyone
+   else's change. Check src/improve/proposal.zig for today's surface: most of
+   src/improve/ is modifiable, which is exactly why the gating inside it must
+   not become something a pass can rewrite.)
 
 3. Does it need a capability with no ck_* equivalent (socket listen, thread
    spawn held across the run, raw terminal mode, direct stdin/stdout fd
@@ -159,13 +189,18 @@ native; say why in one line.
 
 ## Known starting candidates (seed the inventory, verify each: don't trust this list blindly)
 
+This list dates from an earlier state of the tree and at least one row has
+already been acted on. Verify every one against current source before repeating
+it: the codebase rewrites itself, and a "lean" here is a starting hypothesis,
+not a finding.
+
 | Path | Shape today | Lean |
 |---|---|---|
-| `src/peers/notify.zig` (`notifyAll`) | Fan-out `POST /api/notify` to configured peers over plain HTTP | **Move.** Same shape as `fetch_web`/`git`: bounded HTTP, no trust role. `network_allow` = configured peer hosts. |
+| `src/peers/notify.zig` (`notifyAll`) | Fan-out `POST /api/notify` to configured peers over plain HTTP | **Check first: `tools/zig/peers.zig` already exists.** If the native path is still the one the agent loop calls, the question is now "why two", not "should this move". |
 | `src/patch/apply.zig` | Exact-match `old -> new` string replacement | **Move, carefully.** Pure logic, no privileged host access even needed: but it's called from `src/improve/engine.zig` (protected). Moving the *transform* is fine; the engine's decision to *apply and promote* stays native. Don't let the split blur who verifies the result. |
 | `src/agent/autolearn.zig` | Reads/appends `state/autolearn.jsonl`, aggregates into roadmap suggestions | **Partial.** The read/aggregate side is the same shape as the existing `roadmap`/`history`/`learnings` tools (all fs-scoped readers): a natural sibling. The write-on-every-run hook inside `Agent.run`'s defer is call-frequency-sensitive (step 7); check whether it's cheap enough per run (not per token) before moving. |
 | `src/agent/graph.zig` (`write`) | Serializes the execution graph to `state/runs/run-<id>.json` once per run | **Consider.** fs-write-only, once per run, low frequency: good shape. The graph *recording* (`g.add` calls threaded through the loop) stays native; only the final serialize-and-write is separable. |
-| `src/gate/checks.zig` | Shells out to `zig build`/`zig build test`/`zig build tools`/`zig fmt`/lint | **Native. Do not move.** Explicitly outside the protected paths in its own doc comment, but it *is* the thing that decides whether a self-authored change gets promoted: moving it into a WASM tool would let a future change alter its own gate. Good worked "no" example. |
+| `src/gate/checks.zig` | Shells out to `zig build`/`zig build test`/`zig build tools`/`zig fmt`/lint | **Native. Do not move.** It decides whether a self-authored change gets promoted, so moving it would let a future change alter its own gate. `tools/zig/gate.zig` runs the same commands on demand for an agent checking its own work, which is a different job: the tool answers a question, the native gate makes a decision. |
 | `src/llm/client.zig`, `src/llm/providers.zig` | The actual provider HTTP/SSE client the agent loop runs on, holds API keys via env | **Native. Do not move.** This is what `ck_llm` is *built on top of* for tools: it's the trust root for model access, and `Agent.on_token` streaming is tightly coupled to it. If a tool needs model access, it already has `ck_llm`; it does not need this. |
 | `src/sandbox/*`, `src/tools/registry.zig`, `src/tools/builder.zig` | The sandbox runtime and tool discovery/build pipeline | **Native. Do not move.** Defines what a WASM tool *is*; `builder.zig` is also explicitly protected. |
 | `src/cli.zig` (REPL loop, HTTP `serve` accept loop, spinner threads) | Raw stdin read loop, `std.Io.net` listen/accept, `std.Thread.spawn` for the spinner | **Native. Do not move.** No `ck_*` equivalent for socket listen/accept, raw fd control, or a thread held across a whole interactive session. The parts of `cli.zig` that already dispatch to tools (`/`-prefixed REPL commands -> `cmd_*` WASM tools) are the right pattern to extend for *new* commands: don't reinvent that dispatch, use it. |
@@ -197,17 +232,34 @@ blocker)**.
 ### 3. Overlap check
 
 ```text
-rg -n 'ck_http' src/                    # native code already doing what fetch_web/git-style tools do?
-rg -n 'std.process.Child' src/          # native shelling out: compare to ck_exec-gated tools
-rg -n 'readFileAlloc|writeFile' src/agent src/peers src/patch  # native fs work outside the sandbox
-ls tools/manifests/*.tool.json | xargs -n1 basename   # what already exists, so you don't propose a duplicate
+rg -n 'ck_http' src/                              # native code doing what fetch_web/git-style tools do
+rg -n 'std.process.run|std.process.spawn' src/    # native shelling out, next to ck_exec-gated tools
+rg -n 'readFileAlloc|writeFile' src/agent src/peers src/patch   # native fs work outside the sandbox
+ls tools/manifests/*.tool.json | xargs -n1 basename            # what exists, so you propose no duplicate
 ```
+
+Also worth one minute, because it has been wrong twice: host functions that
+exist and are unreachable. Nothing calls them, so nothing compiles them either,
+and they rot against API changes silently.
+
+```text
+comm -23 <(rg -o '^pub fn ck[A-Za-z]+' src/sandbox/host.zig | sed 's/pub fn //' | sort -u) \
+         <(rg -o '&host\.ck[A-Za-z]+' src/sandbox/runtime.zig | sed 's/&host\.//' | sort -u)
+```
+
+An unregistered host function is not a capability a tool can be given: it is
+work someone already did that nobody can reach. Report it as a finding.
 
 ### 4. Protected-surface check
 
 ```text
-rg -n 'src/improve/|src/evals/|src/tools/builder.zig' AGENTS.md
+rg -n 'allowed_prefixes|isAppendOnly|validatePath' -A 20 src/improve/proposal.zig
+rg -n 'gate_invariants' -A 12 src/improve/engine.zig
 ```
+
+The first says what a self-improvement pass may write. The second says which
+calls must survive in a patched engine. Together they are the current boundary;
+AGENTS.md prose about it may lag.
 
 Confirm every "move" verdict is outside this set and outside anything that
 grades/gates/promotes a change. If a candidate is adjacent (calls into or is
@@ -295,9 +347,11 @@ within one `run`, if a future tool genuinely needs a progress channel.
 
 - [ ] Every file in scope has a verdict and a one-line reason
 - [ ] Every "move" verdict passed steps 1-4 of the decision tree explicitly
-- [ ] Protected-surface and trust-root candidates are called out even when
-      superficially "bounded" (gate/checks.zig and llm/client.zig are the
-      canonical traps: check both by name)
+- [ ] Gate and trust-root candidates are called out even when superficially
+      "bounded" (gate/checks.zig and llm/client.zig are the canonical traps:
+      check both by name, and do not mistake tools/zig/gate.zig for a
+      precedent)
+- [ ] Unregistered host functions reported, if the check above found any
 - [ ] Overlap check run: no proposed tool duplicates an existing one in `tools/manifests/`
 - [ ] ABI gaps (if any) come with a named host fn, not a vague "not possible"
 - [ ] `docs/reviews/WASM_REVIEW.md` written
