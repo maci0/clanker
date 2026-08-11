@@ -236,6 +236,10 @@ const Model = struct {
         if (task.len == 0) return;
         self.text_field.reset();
 
+        // A quit command has to set `ctx.quit`, rather than merely stop the
+        // input handler: App.run returns on that flag and its caller's defer
+        // then restores the alternate screen, raw input, mouse mode, and
+        // bracketed paste before the shell regains the terminal.
         if (isQuitCommand(task)) {
             ctx.quit = true;
             return;

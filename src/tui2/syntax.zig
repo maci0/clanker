@@ -53,70 +53,71 @@ const Lang = struct {
 };
 
 const zig_keywords = [_][]const u8{
-    "addrspace",    "align",        "allowzero",   "and",          "anyframe",
-    "anytype",      "asm",          "async",       "await",        "break",
-    "callconv",     "catch",        "comptime",    "const",        "continue",
-    "defer",        "else",         "enum",        "errdefer",     "error",
-    "export",       "extern",       "false",       "fn",           "for",
-    "if",           "inline",       "linksection", "noinline",     "nosuspend",
-    "null",         "opaque",       "or",          "orelse",       "packed",
-    "pub",          "resume",       "return",      "struct",       "suspend",
-    "switch",       "test",         "threadlocal", "true",         "try",
-    "undefined",    "union",        "unreachable", "usingnamespace",
-    "var",          "volatile",     "while",
+    "addrspace", "align",  "allowzero",   "and",            "anyframe",
+    "anytype",   "asm",    "async",       "await",          "break",
+    "callconv",  "catch",  "comptime",    "const",          "continue",
+    "defer",     "else",   "enum",        "errdefer",       "error",
+    "export",    "extern", "false",       "fn",             "for",
+    "if",        "inline", "linksection", "noinline",       "nosuspend",
+    "null",      "opaque", "or",          "orelse",         "packed",
+    "pub",       "resume", "return",      "struct",         "suspend",
+    "switch",    "test",   "threadlocal", "true",           "try",
+    "undefined", "union",  "unreachable", "usingnamespace", "var",
+    "volatile",  "while",
 };
 
 const zig_builtins = [_][]const u8{
-    "i8",      "i16",    "i32",    "i64",    "i128",         "isize",
-    "u8",      "u16",    "u32",    "u64",    "u128",         "usize",
-    "f16",     "f32",    "f64",    "f80",    "f128",         "c_int",
-    "c_uint",  "c_long", "c_ulong", "c_char", "bool",        "void",
-    "noreturn", "type",  "comptime_int", "comptime_float",   "anyerror",
+    "i8",       "i16",    "i32",          "i64",            "i128",     "isize",
+    "u8",       "u16",    "u32",          "u64",            "u128",     "usize",
+    "f16",      "f32",    "f64",          "f80",            "f128",     "c_int",
+    "c_uint",   "c_long", "c_ulong",      "c_char",         "bool",     "void",
+    "noreturn", "type",   "comptime_int", "comptime_float", "anyerror",
 };
 
 const py_keywords = [_][]const u8{
-    "and",   "as",       "assert", "async", "await",  "break",
-    "class", "continue", "def",    "del",   "elif",   "else",
-    "except", "finally", "for",    "from",  "global", "if",
-    "import", "in",      "is",     "lambda", "nonlocal", "not",
-    "or",    "pass",     "raise",  "return", "try",   "while",
-    "with",  "yield",    "match",  "case",
+    "and",    "as",       "assert", "async",  "await",    "break",
+    "class",  "continue", "def",    "del",    "elif",     "else",
+    "except", "finally",  "for",    "from",   "global",   "if",
+    "import", "in",       "is",     "lambda", "nonlocal", "not",
+    "or",     "pass",     "raise",  "return", "try",      "while",
+    "with",   "yield",    "match",  "case",
 };
 
 const py_builtins = [_][]const u8{
-    "True",    "False", "None",  "self", "cls",  "print",
-    "len",     "range", "str",   "int",  "float", "list",
-    "dict",    "set",   "tuple", "type", "isinstance", "super",
-    "open",    "enumerate", "zip", "map", "filter",
+    "True", "False",     "None",  "self", "cls",        "print",
+    "len",  "range",     "str",   "int",  "float",      "list",
+    "dict", "set",       "tuple", "type", "isinstance", "super",
+    "open", "enumerate", "zip",   "map",  "filter",
 };
 
 const js_keywords = [_][]const u8{
-    "async",    "await",    "break",   "case",     "catch",   "class",
-    "const",    "continue", "debugger", "default", "delete",  "do",
-    "else",     "export",   "extends", "finally",  "for",     "from",
-    "function", "if",       "import",  "in",       "instanceof", "let",
-    "new",      "of",       "return",  "static",   "super",   "switch",
-    "throw",    "try",      "typeof",  "var",      "void",    "while",
-    "with",     "yield",    "interface", "type",   "enum",    "implements",
-    "readonly", "declare",  "abstract", "as",
+    "async",    "await",    "break",     "case",    "catch",      "class",
+    "const",    "continue", "debugger",  "default", "delete",     "do",
+    "else",     "export",   "extends",   "finally", "for",        "from",
+    "function", "if",       "import",    "in",      "instanceof", "let",
+    "new",      "of",       "return",    "static",  "super",      "switch",
+    "throw",    "try",      "typeof",    "var",     "void",       "while",
+    "with",     "yield",    "interface", "type",    "enum",       "implements",
+    "readonly", "declare",  "abstract",  "as",
 };
 
 const js_builtins = [_][]const u8{
-    "true",    "false",  "null",   "undefined", "this",   "NaN",
-    "Infinity", "console", "window", "document", "process", "require",
-    "module",  "exports",
+    "true",     "false",   "null",   "undefined", "this",    "NaN",
+    "Infinity", "console", "window", "document",  "process", "require",
+    "module",   "exports",
 };
 
 const sh_keywords = [_][]const u8{
-    "if",   "then", "else", "elif", "fi",   "for",  "while",
-    "until", "do",  "done", "case", "esac", "in",   "function",
+    "if",     "then", "else",   "elif", "fi",   "for", "while",
+    "until",  "do",   "done",   "case", "esac", "in",  "function",
     "select", "time", "coproc",
 };
 
 const sh_builtins = [_][]const u8{
-    "echo",  "cd",   "pwd",    "export", "local", "readonly",
-    "unset", "shift", "return", "exit",  "set",   "source",
-    "alias", "eval",  "exec",   "trap",  "test",  "true", "false",
+    "echo",  "cd",    "pwd",    "export", "local", "readonly",
+    "unset", "shift", "return", "exit",   "set",   "source",
+    "alias", "eval",  "exec",   "trap",   "test",  "true",
+    "false",
 };
 
 fn langFor(name: []const u8) Lang {

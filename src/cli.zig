@@ -553,7 +553,6 @@ fn commandAccepts(cmd: Command, flag: Flag) bool {
     return false;
 }
 
-
 pub fn run(init: std.process.Init, opts: Options) !void {
     switch (opts.command) {
         // Requested output (--help, --version), not an error: stdout, exit 0.
@@ -945,8 +944,8 @@ fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id:
     };
     const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
     return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\n", .{
-        provider_id, model_id, @as(i64, @intFromFloat(ctx)), @as(i64, @intFromFloat(out_limit)),
-        cost_in, cost_out, if (reasoning) "yes" else "no",
+        provider_id, model_id, @as(i64, @intFromFloat(ctx)),   @as(i64, @intFromFloat(out_limit)),
+        cost_in,     cost_out, if (reasoning) "yes" else "no",
     });
 }
 
@@ -1368,7 +1367,6 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         });
     }
 }
-
 
 const ToolResult = struct { ok: bool = false, text: []const u8 = "", err: []const u8 = "" };
 
