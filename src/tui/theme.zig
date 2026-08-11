@@ -503,6 +503,27 @@ test "the other three Catppuccin flavours use their own palette's values" {
     try std.testing.expectEqualStrings("\x1b[38;2;166;218;149m", Theme.macchiato.syn_string);
 }
 
+test "the RGB table carries the vaxis REPL's chrome roles too, not just syntax" {
+    // The vaxis REPL has no ANSI escape codes to read (it sets cell colours
+    // directly), so a theme that only fills in syn_* here would leave the
+    // box border, status/tool lines, and error text uncoloured no matter
+    // what CLANKER_THEME says.
+    const mocha_rgb = Theme.mocha.rgb.?;
+    try std.testing.expectEqual(mocha_palette.overlay0, mocha_rgb.rule);
+    try std.testing.expectEqual(mocha_palette.subtext0, mocha_rgb.dim);
+    try std.testing.expectEqual(mocha_palette.blue, mocha_rgb.tool);
+    try std.testing.expectEqual(mocha_palette.red, mocha_rgb.err);
+
+    const night_rgb = Theme.tokyo_night.rgb.?;
+    try std.testing.expectEqual(tokyo_night_palette.dark3, night_rgb.rule);
+    try std.testing.expectEqual(tokyo_night_palette.comment, night_rgb.dim);
+    try std.testing.expectEqual(tokyo_night_palette.blue, night_rgb.tool);
+    try std.testing.expectEqual(tokyo_night_palette.red, night_rgb.err);
+
+    try std.testing.expect(Theme.default.rgb == null);
+    try std.testing.expect(Theme.mono.rgb == null);
+}
+
 test "select accepts every Catppuccin flavour by name" {
     var map = std.process.Environ.Map.init(std.testing.allocator);
     defer map.deinit();

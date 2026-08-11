@@ -496,7 +496,15 @@ const Model = struct {
         const max = ctx.max.size();
 
         var surface = try vxfw.Surface.init(ctx.arena, self.widget(), max);
-        const dim: vaxis.Style = .{ .dim = true };
+        // Computed up front (draw order used to put this after the box/status
+        // were already painted in the theme-less default style, so a chosen
+        // CLANKER_THEME only ever showed up inside fenced code — everywhere
+        // else in the vaxis REPL's chrome ignored it).
+        const active = theme_mod.select(themeName(self.ctx.environ_map), self.ctx.environ_map);
+        const dim: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.dim } } else .{ .dim = true };
+        const rule_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.rule } } else .{};
+        const tool_style: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.tool } } else dim;
+        const err_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.err } } else .{};
         @memset(surface.buffer, .{ .style = .{}, .default = true });
 
         g_mutex.lockUncancelable(g_io);
@@ -516,7 +524,7 @@ const Model = struct {
 
         const box_h: u16 = 3;
         const box_y = max.height -| box_h;
-        drawBox(surface, 0, box_y, max.width, box_h);
+        drawBox(surface, 0, box_y, max.width, box_h, rule_style);
         const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
         var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
         children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
@@ -530,11 +538,6 @@ const Model = struct {
         const start = tailStart(self.lines.items, avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
-        // One theme decides both. The style was built from Theme.default
-        // regardless of what select() returned, so NO_COLOR (and any chosen
-        // theme) reached the fence check and then got ignored by the
-        // highlighter that actually draws the colours.
-        const active = theme_mod.select(themeName(self.ctx.environ_map), self.ctx.environ_map);
         const fence_on = active.reset.len > 0;
         var syn_style = syntax.Style.fromTheme(&active);
         var i: usize = start;
@@ -551,7 +554,15 @@ const Model = struct {
             } else {
                 // Completed lines wrap like the live stream does; writeRow
                 // would clip a long turn's reply to a single terminal row.
-                writeWrapped(surface, &row, bottom, max.width, l.text, if (l.dim) dim else .{});
+                // Tool-call/result lines (dim) and an error turn's "[error: "
+                // prefix each get their own tint instead of sharing one grey.
+                const style = if (std.mem.startsWith(u8, l.text, "[error:"))
+                    err_style
+                else if (l.dim)
+                    (if (std.mem.startsWith(u8, l.text, "\xe2\x9a\x99") or std.mem.startsWith(u8, l.text, "  \xe2\x86\xb3")) tool_style else dim)
+                else
+                    vaxis.Style{};
+                writeWrapped(surface, &row, bottom, max.width, l.text, style);
             }
         }
         if (streaming and row < bottom and stream_snapshot.len > 0) {
@@ -662,8 +673,7 @@ fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text:
     }
 }
 
-fn drawBox(surface: vxfw.Surface, x: u16, y: u16, w: u16, h: u16) void {
-    const style: vaxis.Style = .{};
+fn drawBox(surface: vxfw.Surface, x: u16, y: u16, w: u16, h: u16, style: vaxis.Style) void {
     if (w == 0 or h == 0) return;
     surface.writeCell(x, y, .{ .char = .{ .grapheme = "\xe2\x95\xad", .width = 1 }, .style = style });
     surface.writeCell(x + w -| 1, y, .{ .char = .{ .grapheme = "\xe2\x95\xae", .width = 1 }, .style = style });

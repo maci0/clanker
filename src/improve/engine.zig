@@ -1440,17 +1440,27 @@ fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
 fn copyTreeInto(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rel: []const u8, staging: []const u8) !void {
     // Handle a plain file root (e.g. build.zig, config.json) directly.
     if (!isDir(base, io, rel)) {
-        const data = base.readFileAlloc(io, rel, gpa, .limited(1 << 24)) catch return;
+        const data = base.readFileAlloc(io, rel, gpa, .limited(1 << 24)) catch |err| {
+            log.log(.warn, "stage copy: read '{s}' failed: {s}", .{ rel, @errorName(err) });
+            return;
+        };
         defer gpa.free(data);
         const dst = std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging, rel }) catch return;
         defer gpa.free(dst);
         const d = std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging, dirOf(rel) }) catch return;
         defer gpa.free(d);
-        std.Io.Dir.cwd().createDirPath(io, d) catch {};
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch return;
+        std.Io.Dir.cwd().createDirPath(io, d) catch |err| {
+            log.log(.warn, "stage copy: mkdir '{s}' failed: {s}", .{ d, @errorName(err) });
+        };
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err| {
+            log.log(.warn, "stage copy: write '{s}' failed: {s}", .{ dst, @errorName(err) });
+        };
         return;
     }
-    var dir = base.openDir(io, rel, .{ .iterate = true }) catch return;
+    var dir = base.openDir(io, rel, .{ .iterate = true }) catch |err| {
+        log.log(.warn, "stage copy: open dir '{s}' failed: {s}", .{ rel, @errorName(err) });
+        return;
+    };
     defer dir.close(io);
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
@@ -1459,14 +1469,21 @@ fn copyTreeInto(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rel: []con
         switch (entry.kind) {
             .directory => try copyTreeInto(io, gpa, base, sub, staging),
             .file => {
-                const data = dir.readFileAlloc(io, entry.name, gpa, .limited(1 << 24)) catch continue;
+                const data = dir.readFileAlloc(io, entry.name, gpa, .limited(1 << 24)) catch |err| {
+                    log.log(.warn, "stage copy: read '{s}' failed: {s}", .{ sub, @errorName(err) });
+                    continue;
+                };
                 defer gpa.free(data);
                 const dst = std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging, sub }) catch continue;
                 defer gpa.free(dst);
                 const d = std.fmt.allocPrint(gpa, "{s}", .{dirOf(dst)}) catch continue;
                 defer gpa.free(d);
-                std.Io.Dir.cwd().createDirPath(io, d) catch {};
-                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch continue;
+                std.Io.Dir.cwd().createDirPath(io, d) catch |err| {
+                    log.log(.warn, "stage copy: mkdir '{s}' failed: {s}", .{ d, @errorName(err) });
+                };
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err| {
+                    log.log(.warn, "stage copy: write '{s}' failed: {s}", .{ dst, @errorName(err) });
+                };
             },
             else => {},
         }

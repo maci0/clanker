@@ -226,7 +226,10 @@ pub fn cmdSetup(init: std.process.Init) !void {
         out.interface.flush() catch {};
         std.process.exit(1);
     }
-    dir.createDirPath(io, "state") catch {};
+    dir.createDirPath(io, "state") catch |err| {
+        log.log(.warn, "setup: mkdir 'state' failed: {s}", .{@errorName(err)});
+        w.print("  state/ could not be created: {s}. Check the directory is writable.\n", .{@errorName(err)}) catch {};
+    };
 
     const cfg = config.Config.load(io, arena, dir, "config.json", "config.local.json") catch |err| {
         w.print("  config does not load: {s}\n", .{@errorName(err)}) catch {};

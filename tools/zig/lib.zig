@@ -38,6 +38,7 @@ extern fn ck_config() u32;
 extern fn ck_result() u64;
 extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
 extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
+extern fn ck_swarm(json_ptr: u32, json_len: u32) u32;
 extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
 
 const scratch_cap = 64 * 1024;
@@ -329,6 +330,21 @@ pub fn subagentBriefed(input: []const u8, task: []const u8, provider: ?[]const u
     return switch (rc) {
         0 => readResult() orelse error.IoError,
         2 => error.NotFound,
+        else => error.IoError,
+    };
+}
+
+/// Fans a batch of tasks out to concurrent sub-agents, forwarding the
+/// caller's whole input object ("tasks", "provider") untouched — the host
+/// parses it directly, so re-encoding here would only be a chance to drop a
+/// field. Returns a JSON array of {task, ok, text|error}, one entry per task.
+pub fn swarm(input: []const u8) FsError![]const u8 {
+    const req = sliceToMem(input);
+    const rc = ck_swarm(req.ptr, req.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        2 => error.NotFound,
+        3 => error.TooLarge,
         else => error.IoError,
     };
 }

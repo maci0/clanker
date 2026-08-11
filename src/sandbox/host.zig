@@ -2000,6 +2000,130 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     return rc;
 }
 
+/// Bound on tasks per ck_swarm call: each spawns its own 128 MiB-stack
+/// thread and a full nested agent, so this is a real resource ceiling, not
+/// an arbitrary one.
+const max_swarm_tasks: usize = 8;
+
+/// Fans `tasks` out to that many nested agents on their own threads
+/// (reusing the same subagent_runner as ck_subagent — a swarm member is
+/// just a subagent run, bounded iterations and all), running concurrently,
+/// then joins every one before returning. The join is load-bearing for the
+/// same reason ck_subagent's is: it is what keeps the parent parked on this
+/// llm:true tool call for the whole batch, so ParentAsk stays safe and the
+/// caller never observes a partially-finished swarm.
+pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
+    const runner = h.sandbox.subagent_runner orelse return Err.not_found;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_input, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const tasks = stringArray(arena, obj.get("tasks")) catch return Err.invalid;
+    if (tasks.len == 0) return Err.invalid;
+    if (tasks.len > max_swarm_tasks) return Err.too_large;
+    var provider_name: ?[]const u8 = null;
+    if (obj.get("provider")) |p| {
+        if (p == .string and p.string.len > 0) provider_name = p.string;
+    }
+    const cfg = h.sandbox.cfg orelse return Err.not_found;
+    // Each member gets the same brief a lone subagent would: what larger
+    // work this serves. Unlike subagent, there is no per-task context/files
+    // — a swarm task is expected to be a complete, self-contained brief
+    // since members cannot see each other or the parent's transcript.
+    const brief = Brief{ .parent_task = h.sandbox.parent_task };
+
+    const SwarmCall = struct {
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        environ_map: *std.process.Environ.Map,
+        cfg: *const config_mod.Config,
+        task: []const u8,
+        provider_name: ?[]const u8,
+        brief: Brief,
+        parent_ask: ?ParentAsk,
+        parent_run_id: []const u8,
+        runner: SubagentRunner,
+        result: ?[]const u8 = null,
+        err: ?anyerror = null,
+        fn run(self: *@This()) void {
+            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask, self.parent_run_id) catch |e| {
+                self.err = e;
+                return;
+            };
+        }
+    };
+
+    const calls = arena.alloc(SwarmCall, tasks.len) catch return Err.too_large;
+    for (tasks, 0..) |task, i| {
+        calls[i] = .{
+            .io = h.sandbox.io,
+            .gpa = h.sandbox.gpa,
+            .environ_map = h.sandbox.environ_map,
+            .cfg = cfg,
+            .task = task,
+            .provider_name = provider_name,
+            .brief = brief,
+            .parent_ask = h.sandbox.own_ask,
+            .parent_run_id = h.sandbox.parent_run_id,
+            .runner = runner,
+        };
+    }
+
+    const threads = arena.alloc(std.Thread, calls.len) catch return Err.too_large;
+    var spawned: usize = 0;
+    while (spawned < calls.len) : (spawned += 1) {
+        threads[spawned] = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SwarmCall.run, .{&calls[spawned]}) catch break;
+    }
+    for (threads[0..spawned]) |th| th.join();
+    // Any call past `spawned` never ran: result and err both stay null,
+    // which the encoding loop below reports as "spawn failed" — the same
+    // shape as a member that ran and errored, so the batch's other results
+    // are never lost to one thread-spawn failure.
+
+    defer for (calls) |call| {
+        if (call.result) |r| h.sandbox.gpa.free(@constCast(r));
+    };
+
+    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    var w: std.Io.Writer = .fixed(buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginArray() catch return Err.too_large;
+    var failures: usize = 0;
+    for (calls) |call| {
+        s.beginObject() catch return Err.too_large;
+        s.objectField("task") catch return Err.too_large;
+        s.write(call.task) catch return Err.too_large;
+        if (call.result) |r| {
+            s.objectField("ok") catch return Err.too_large;
+            s.write(true) catch return Err.too_large;
+            s.objectField("text") catch return Err.too_large;
+            s.write(r) catch return Err.too_large;
+        } else {
+            failures += 1;
+            s.objectField("ok") catch return Err.too_large;
+            s.write(false) catch return Err.too_large;
+            s.objectField("error") catch return Err.too_large;
+            const msg: []const u8 = if (call.err) |e| @errorName(e) else "spawn failed";
+            s.write(msg) catch return Err.too_large;
+        }
+        s.endObject() catch return Err.too_large;
+    }
+    s.endArray() catch return Err.too_large;
+    if (failures > 0) log.log(.warn, "swarm: {d}/{d} members failed", .{ failures, calls.len });
+
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;

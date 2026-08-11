@@ -21,6 +21,7 @@ clanker.registerView({
     var T = van.tags;
 
     var TILE = 16; // sprite grid; the whole scene is a multiple of this
+    var dirty = true;
     var status = van.state("");
 
     var canvas = document.createElement("canvas");
@@ -128,9 +129,40 @@ clanker.registerView({
       while (logList.childNodes.length > 40) logList.removeChild(logList.lastChild);
     }
 
+    /* ---------- sprites ----------
+       Kenney's RPG Urban Pack, CC0; see ART.md for the licence and why this
+       pack rather than the reference project's. One 17 KB sheet, 27x18 tiles
+       of 16px, fetched only when this view opens. Until it loads (or if it
+       fails) every draw falls back to the coloured rectangles below, so the
+       floor is never blank and never blocks on the network. */
+    var SHEET = new Image();
+    var sheetReady = false;
+    SHEET.onload = function () { sheetReady = true; dirty = true; };
+    SHEET.src = "/webui/plugins/office/sprites.png";
+
+    var TS = 16;
+    // Tile picks, by grid coordinate on the sheet.
+    var S_FLOOR = [11, 0];
+    var S_WALL = [18, 1];
+    var S_DESK = [4, 11];
+    var S_BOARD = [13, 12];
+    var S_WHITEBOARD = [9, 14];
+    var S_JANITOR = [25, 6];
+    var S_AGENTS = [[23, 0], [24, 0], [25, 0], [26, 0], [23, 2], [24, 2], [25, 2], [26, 2]];
+
+    function tile(t, dx, dy) {
+      if (!sheetReady) return false;
+      ctx2d.drawImage(SHEET, t[0] * TS, t[1] * TS, TS, TS, dx, dy, TILE, TILE);
+      return true;
+    }
+
+    function spriteFor(name) {
+      return S_AGENTS[hashString(name) % S_AGENTS.length];
+    }
+
     /* ---------- drawing ----------
-       Primitives for now: the sprite sheet lands in a later step, and drawing
-       from theme tokens means the scene follows light/dark/mocha for free. */
+       Colours come from theme tokens where sprites do not, so the parts this
+       still draws follow light, dark and the Catppuccin themes. */
 
     function cssVar(name, fallback) {
       var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -144,15 +176,23 @@ clanker.registerView({
       var ink = cssVar("--fg", "#111");
       var muted = cssVar("--fg-muted", "#666");
 
-      ctx2d.fillStyle = floor;
-      ctx2d.fillRect(ox, oy, L.w * TILE, L.h * TILE);
-      ctx2d.strokeStyle = wall;
-      ctx2d.lineWidth = 2;
-      ctx2d.strokeRect(ox + 1, oy + 1, L.w * TILE - 2, L.h * TILE - 2);
-
-      // Door: a gap in the wall, drawn as floor over the stroke.
-      ctx2d.fillStyle = floor;
-      ctx2d.fillRect(ox + L.door.x * TILE, oy + L.h * TILE - 3, TILE, 4);
+      if (sheetReady) {
+        for (var ty = 0; ty < L.h; ty++) {
+          for (var tx = 0; tx < L.w; tx++) {
+            var edge = tx === 0 || ty === 0 || tx === L.w - 1 || ty === L.h - 1;
+            var isDoor = ty === L.h - 1 && tx === L.door.x;
+            tile(edge && !isDoor ? S_WALL : S_FLOOR, ox + tx * TILE, oy + ty * TILE);
+          }
+        }
+      } else {
+        ctx2d.fillStyle = floor;
+        ctx2d.fillRect(ox, oy, L.w * TILE, L.h * TILE);
+        ctx2d.strokeStyle = wall;
+        ctx2d.lineWidth = 2;
+        ctx2d.strokeRect(ox + 1, oy + 1, L.w * TILE - 2, L.h * TILE - 2);
+        ctx2d.fillStyle = floor;
+        ctx2d.fillRect(ox + L.door.x * TILE, oy + L.h * TILE - 3, TILE, 4);
+      }
 
       // Room name above its own office.
       ctx2d.fillStyle = muted;
@@ -163,9 +203,13 @@ clanker.registerView({
       drawWhiteboard(o, ox, oy);
 
       // Desks.
-      ctx2d.fillStyle = cssVar("--rule", "#ccc");
       L.desks.forEach(function (d) {
-        ctx2d.fillRect(ox + d.x * TILE, oy + d.y * TILE, TILE * 2, TILE);
+        if (!tile(S_DESK, ox + d.x * TILE, oy + d.y * TILE)) {
+          ctx2d.fillStyle = cssVar("--rule", "#ccc");
+          ctx2d.fillRect(ox + d.x * TILE, oy + d.y * TILE, TILE * 2, TILE);
+        } else {
+          tile(S_DESK, ox + (d.x + 1) * TILE, oy + d.y * TILE);
+        }
       });
 
       o.agents.forEach(function (a) { drawAgent(a, ox, oy, ink); });
@@ -184,11 +228,13 @@ clanker.registerView({
       ctx2d.stroke();
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
       ctx2d.fillRect(px + 4 + janitor.dir * 5, py + 13, 8, 3); // mop head
-      ctx2d.fillStyle = cssVar("--warn", "#e8c34a");           // hi-vis
-      ctx2d.fillRect(px + 4, py + 2, 8, 12);
-      ctx2d.fillStyle = ink;
-      ctx2d.fillRect(px + 6, py + 4, 2, 2);
-      ctx2d.fillRect(px + 10, py + 4, 2, 2);
+      if (!tile(S_JANITOR, px, py)) {
+        ctx2d.fillStyle = cssVar("--warn", "#e8c34a");
+        ctx2d.fillRect(px + 4, py + 2, 8, 12);
+        ctx2d.fillStyle = ink;
+        ctx2d.fillRect(px + 6, py + 4, 2, 2);
+        ctx2d.fillRect(px + 10, py + 4, 2, 2);
+      }
       if (janitor.quip) {
         var w = Math.min(190, janitor.quip.length * 4.4 + 10);
         ctx2d.fillStyle = cssVar("--surface", "#fff");
@@ -207,11 +253,19 @@ clanker.registerView({
       var by = oy + L.board.y * TILE;
       var bw = L.board.w * TILE;
       var bh = L.board.h * TILE;
-      ctx2d.fillStyle = cssVar("--surface", "#fff");
-      ctx2d.fillRect(bx, by, bw, bh);
-      ctx2d.strokeStyle = cssVar("--border", "#888");
-      ctx2d.lineWidth = 1;
-      ctx2d.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+      if (sheetReady) {
+        for (var by2 = 0; by2 < L.board.h; by2++) {
+          for (var bx2 = 0; bx2 < L.board.w; bx2++) {
+            tile(S_BOARD, bx + bx2 * TILE, by + by2 * TILE);
+          }
+        }
+      } else {
+        ctx2d.fillStyle = cssVar("--surface", "#fff");
+        ctx2d.fillRect(bx, by, bw, bh);
+        ctx2d.strokeStyle = cssVar("--border", "#888");
+        ctx2d.lineWidth = 1;
+        ctx2d.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+      }
 
       // A post-it per card, in its column's band. The column decides the
       // horizontal band, so a card moving column visibly moves across the
@@ -236,10 +290,18 @@ clanker.registerView({
       var L = o.layout;
       var wx = ox + L.whiteboard.x * TILE;
       var wy = oy + L.whiteboard.y * TILE;
-      ctx2d.fillStyle = cssVar("--paper", "#fff");
-      ctx2d.fillRect(wx, wy, L.whiteboard.w * TILE, L.whiteboard.h * TILE);
-      ctx2d.strokeStyle = cssVar("--border", "#888");
-      ctx2d.strokeRect(wx + 0.5, wy + 0.5, L.whiteboard.w * TILE - 1, L.whiteboard.h * TILE - 1);
+      if (sheetReady) {
+        for (var wy2 = 0; wy2 < L.whiteboard.h; wy2++) {
+          for (var wx2 = 0; wx2 < L.whiteboard.w; wx2++) {
+            tile(S_WHITEBOARD, wx + wx2 * TILE, wy + wy2 * TILE);
+          }
+        }
+      } else {
+        ctx2d.fillStyle = cssVar("--paper", "#fff");
+        ctx2d.fillRect(wx, wy, L.whiteboard.w * TILE, L.whiteboard.h * TILE);
+        ctx2d.strokeStyle = cssVar("--border", "#888");
+        ctx2d.strokeRect(wx + 0.5, wy + 0.5, L.whiteboard.w * TILE - 1, L.whiteboard.h * TILE - 1);
+      }
       // Goals as lines of "writing": the text itself is in the Goals view.
       ctx2d.fillStyle = cssVar("--fg-muted", "#666");
       goals.slice(0, 4).forEach(function (g, i) {
@@ -251,11 +313,13 @@ clanker.registerView({
     function drawAgent(a, ox, oy, ink) {
       var px = ox + a.x * TILE;
       var py = oy + a.y * TILE;
-      ctx2d.fillStyle = agentColor(a.name);
-      ctx2d.fillRect(px + 4, py + 2, 8, 12);  // body
-      ctx2d.fillStyle = ink;
-      ctx2d.fillRect(px + 6, py + 4, 2, 2);   // eyes
-      ctx2d.fillRect(px + 10, py + 4, 2, 2);
+      if (!tile(spriteFor(a.name), px, py)) {
+        ctx2d.fillStyle = agentColor(a.name);
+        ctx2d.fillRect(px + 4, py + 2, 8, 12);
+        ctx2d.fillStyle = ink;
+        ctx2d.fillRect(px + 6, py + 4, 2, 2);
+        ctx2d.fillRect(px + 10, py + 4, 2, 2);
+      }
       if (a.bubble) {
         ctx2d.fillStyle = cssVar("--surface", "#fff");
         ctx2d.fillRect(px + 12, py - 10, 46, 11);
@@ -489,7 +553,6 @@ clanker.registerView({
       if (stepAgents(dt) | stepJanitor(dt, now) || dirty) { draw(); dirty = false; }
       raf = window.requestAnimationFrame(frame);
     }
-    var dirty = true;
     var raf = window.requestAnimationFrame(frame);
     var timer = window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
     var janitorTimer = window.setInterval(function () {
