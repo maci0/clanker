@@ -4,6 +4,12 @@ const build_zon = @import("build.zig.zon");
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
+    // Keep the package version machine-checkable. Release policy and notes live
+    // in RELEASES.md and CHANGELOG.md; this catches malformed SemVer before it
+    // can become a binary version, user agent, package version, or tag.
+    _ = std.SemanticVersion.parse(build_zon.version) catch
+        @panic("build.zig.zon .version must be valid SemVer");
+
     // Single source of truth for the version clanker reports (`--version`,
     // the `clanker/<version>` user agent): build.zig.zon's `.version` field,
     // piped through as a build option so it can never drift from a

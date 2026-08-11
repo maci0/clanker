@@ -151,6 +151,38 @@ function bind(node, state, render) {
   });
 }
 
+function skeletonRows(container, n) {
+  if (!container) return;
+  container.textContent = "";
+  container.setAttribute("aria-busy", "true");
+  for (var i = 0; i < n; i++) {
+    var row = document.createElement("div");
+    row.className = "skeleton";
+    container.appendChild(row);
+    var r = document.createElement("div");
+    r.className = "skeleton-row";
+    for (var j = 0; j < 3; j++) {
+      var bar = document.createElement("div");
+      bar.className = "skeleton-bar";
+      r.appendChild(bar);
+    }
+    container.appendChild(r);
+  }
+}
+
+function setTurnPhase(turn, phase) {
+  if (!turn || !turn.root || !turn.root.setAttribute) return;
+  if (!turn.root.isConnected) return;
+  var cur = turn.root.getAttribute("data-phase");
+  if (phase) {
+    if (cur === phase) return;
+    turn.root.setAttribute("data-phase", phase);
+  } else {
+    if (cur === null) return;
+    turn.root.removeAttribute("data-phase");
+  }
+}
+
 /* ---------- icons ----------
 
    Drawn, not typed. A star glyph and a multiplication sign were standing in
@@ -1309,8 +1341,30 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
     btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
     group.appendChild(btn);
   });
+  // Keyboard: trap focus within row, Esc denies
+  group.addEventListener("keydown", function (e) {
+    if (e.key === "Tab") {
+      var items = Array.prototype.slice.call(group.querySelectorAll("button:not([disabled])"));
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      var deny = null;
+      for (var di = 0; di < evt.options.length; di++) {
+        if (typeof evt.options[di] === "string" && evt.options[di].toLowerCase() === "deny") { deny = evt.options[di]; break; }
+      }
+      answerAsk(row, evt.id, deny || evt.options[evt.options.length - 1] || "deny");
+    }
+  });
   row.appendChild(group);
   turn.events.appendChild(row);
+  // Announce question via per-turn live region and fleet-status fallback
+  var fleetSt = document.getElementById("fleet-status");
+  if (fleetSt) fleetSt.textContent = ariaLabel;
   var first = group.querySelector("button");
   if (first) first.focus();
 }
@@ -1322,6 +1376,9 @@ function addAskEvent(turn, evt) {
   if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
   var row = document.createElement("div");
   row.className = "event-ask";
+  row.setAttribute("role", "alertdialog");
+  row.setAttribute("aria-live", "assertive");
+  row.setAttribute("aria-label", evt.question || "Choose an option");
   var q = document.createElement("div");
   q.className = "ask-question";
   q.textContent = evt.question || "";
@@ -1339,9 +1396,13 @@ function addConfirmEvent(turn, evt) {
   if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
   var row = document.createElement("div");
   row.className = "event-ask event-confirm";
+  row.setAttribute("role", "alertdialog");
+  row.setAttribute("aria-live", "assertive");
+  var label = "Allow this " + (evt.tool || "tool") + " call?";
+  row.setAttribute("aria-label", label);
   var q = document.createElement("div");
   q.className = "ask-question";
-  q.textContent = "Allow this " + (evt.tool || "tool") + " call?";
+  q.textContent = label;
   row.appendChild(q);
   if (evt.args_preview) {
     var pre = document.createElement("pre");
@@ -1349,7 +1410,7 @@ function addConfirmEvent(turn, evt) {
     pre.textContent = evt.args_preview;
     row.appendChild(pre);
   }
-  addAskOptionsGroup(turn, row, evt, q.textContent);
+  addAskOptionsGroup(turn, row, evt, label);
 }
 
 function answerAsk(row, id, opt) {
@@ -1679,6 +1740,7 @@ el.form.addEventListener("submit", function (e) {
     turn.root.querySelector(".turn-you").appendChild(planBadge);
   }
   scrollTo(turn.root, "start");
+  setTurnPhase(turn, "llm");
 
   // Submit is about to be disabled. If it holds focus, focus would fall to
   // <body> and a keyboard user would have to tab the whole page to reach
@@ -1699,19 +1761,21 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") addToolEvent(turn, evt.names);
-      else if (evt.type === "tool_result") settleLastToolEvent(turn, evt.ms);
-      else if (evt.type === "ask") addAskEvent(turn, evt);
-      else if (evt.type === "confirm") addConfirmEvent(turn, evt);
-      else if (evt.type === "error") appendText(turn, "\n[" + evt.message + "]\n", true);
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names); setTurnPhase(turn, "tool"); }
+      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); }
+      else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
+      else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
+      else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
         statsRendered = true;
+        setTurnPhase(turn, "");
       }
       return;
     }
     var stick = nearBottom();
     appendText(turn, line + "\n", false);
+    setTurnPhase(turn, "llm");
     if (stick) window.scrollTo(0, document.body.scrollHeight);
     else syncScrollButton();
   });
@@ -1735,7 +1799,14 @@ el.form.addEventListener("submit", function (e) {
     }),
     signal: controller.signal
   }).then(function (resp) {
-    if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
+    if (!resp.ok) {
+      return resp.text().then(function (t) {
+        var msg = t;
+        try { var j = JSON.parse(t); msg = j.error || j.message || t; } catch (e2) {}
+        throw new Error((msg && String(msg).trim()) ? String(msg).trim() : "server responded HTTP " + resp.status);
+      });
+    }
+    if (!resp.body) throw new Error("server responded HTTP " + resp.status);
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     return (function pump() {
@@ -1780,6 +1851,7 @@ el.form.addEventListener("submit", function (e) {
   }).finally(function () {
     showCaret(turn, false);
     turn.root.removeAttribute("data-live");
+    setTurnPhase(turn, "");
     // A run that errored or was stopped never emits `done`, so the turn
     // would end with no way to copy what did arrive and no way to retry the
     // task that just failed — the two things most wanted after a failure.
@@ -1869,9 +1941,13 @@ function announceRunMatches(query, count) {
 }
 
 function loadRuns() {
+  el.runGraph.setAttribute("aria-busy", "true");
+  el.runStatus.textContent = "Loading runs…";
+  if (!el.runGraph.childNodes.length) skeletonRows(el.runGraph, 3);
   return fetch("/api/runs")
     .then(readJson)
     .then(function (runs) {
+      el.runGraph.removeAttribute("aria-busy");
       allRuns = runs;
       // A run asked for by name wins over the filter's first match, which was
       // otherwise a race between two graph fetches on first open.
@@ -1885,8 +1961,10 @@ function loadRuns() {
       }
       var wanted = renderRunOptions(el.runFilter.value);
       if (wanted) return loadRun(wanted);
+      el.runStatus.textContent = "";
     })
     .catch(function (err) {
+      el.runGraph.removeAttribute("aria-busy");
       showRunsError("Could not load runs: " + err.message);
     });
 }
@@ -1918,10 +1996,19 @@ function openRun(id) {
 }
 
 function loadRun(id) {
+  el.runGraph.textContent = "";
+  skeletonRows(el.runGraph, 2);
+  // skeletonRows already set aria-busy; keep specific id in status line for screen readers
+  el.runStatus.textContent = "Loading run " + id + "…";
   return fetch("/api/runs/" + encodeURIComponent(id))
     .then(readJson)
-    .then(drawRun)
+    .then(function (g) {
+      el.runGraph.textContent = "";
+      el.runGraph.removeAttribute("aria-busy");
+      drawRun(g);
+    })
     .catch(function (err) {
+      // Ensure no stale skeleton remains; showRunsError clears graph
       showRunsError("Could not load that run: " + err.message);
     });
 }
@@ -1956,11 +2043,17 @@ function buildStages(nodes) {
 var lastGraph = null;
 var lastBuilt = null;
 var resizeTimer = null;
-window.addEventListener("resize", function () {
+var resizeHandler = function () {
   if (resizeTimer) window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(function () {
     if (lastGraph) drawRun(lastGraph);
   }, 150);
+};
+window.addEventListener("resize", resizeHandler);
+// Cleaned up on pagehide to avoid handler leak after bfcache restore
+window.addEventListener("pagehide", function () {
+  window.removeEventListener("resize", resizeHandler);
+  if (resizeTimer) window.clearTimeout(resizeTimer);
 });
 
 function drawRun(g) {
@@ -3427,11 +3520,7 @@ function markLoading(name) {
   if (!id) return;
   var node = document.getElementById(id);
   if (!node || node.childNodes.length) return;
-  node.setAttribute("aria-busy", "true");
-  var p = document.createElement("p");
-  p.className = "meta";
-  p.textContent = "Loading…";
-  node.appendChild(p);
+  skeletonRows(node, 2);
 }
 
 function clearLoading(name) {
@@ -5300,14 +5389,19 @@ function fuzzyMatch(query, text) {
 }
 
 function renderPalette() {
-  var q = el.paletteInput.value.trim().toLowerCase();
+  var rawQ = el.paletteInput.value.trim();
+  var q = rawQ.toLowerCase();
+  var empty = !q;
+  // fuzzyMatch is case-insensitive (lowercases text) — query already lowered
   var all = paletteEntries();
   paletteItems = [];
   el.paletteList.textContent = "";
   for (var i = 0; i < all.length && paletteItems.length < 40; i++) {
-    if (!fuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
+    if (!empty && !fuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
     paletteItems.push(all[i]);
   }
+  // When query empty, show grouped views→actions→sessions/runs/tools (paletteEntries already ordered)
+  // textContent only — never innerHTML — verified below for XSS
   if (paletteIndex >= paletteItems.length) paletteIndex = 0;
   paletteItems.forEach(function (entry, i) {
     var li = document.createElement("li");

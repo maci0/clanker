@@ -69,7 +69,10 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
         } orelse break; // stdin EOF
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0) continue;
-        log.log(.debug, "mcp handling line ({d} bytes): {s}", .{ line.len, line[0..@min(line.len, 300)] });
+        // JSON-RPC params routinely contain prompts, file content, and tool
+        // arguments. Logging even a prefix leaks data without adding much
+        // diagnostic value; the byte count still identifies framing issues.
+        log.log(.debug, "mcp handling line bytes={d}", .{line.len});
         handleLine(io, gpa, cache_arena, cfg, environ_map, &reg, tool_defs, &module_cache, &llm_ctx, line) catch |err| {
             log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
         };

@@ -1687,6 +1687,11 @@ h2#session-title {
 .fleet-dm-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
 .fleet-dm-badge { font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase; }
 .fleet-dm-preview { margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.fleet-a2a { margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
+.fleet-a2a-head { font-family: var(--mono); font-size: var(--step--1); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: var(--space-2); }
+.fleet-a2a-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); overflow-wrap: anywhere; }
+.fleet-a2a-id { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); overflow-wrap: anywhere; }
+.fleet-a2a-skills { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); margin-top: var(--space-1); overflow-wrap: anywhere; }
 .fleet-toggle { min-height: 32px; padding: 0.25rem 0.7rem; font-size: var(--step--1); }
 .fleet-card--collapsed { opacity: 0.96; }
 .fleet-detail-simple { margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }

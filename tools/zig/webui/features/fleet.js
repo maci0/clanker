@@ -73,11 +73,13 @@ function renderError(container, msg, retryFn) {
   }
 }
 
-function renderRoster(container, status) {
+function renderRoster(container, status, a2a) {
   container.textContent = "";
   container.className = "fleet-roster";
   if (!status || !status.instance) {
     container.appendChild(el("p", "run-empty", "No status yet."));
+    // still render self card if available even when status missing
+    if (a2a) renderA2ACard(container, a2a);
     return;
   }
   var inst = status.instance;
@@ -87,18 +89,47 @@ function renderRoster(container, status) {
   var peers = status.peers || [];
   if (!peers.length) {
     container.appendChild(el("p", "run-empty", "No peers configured."));
+  } else {
+    var ul = el("ul", "fleet-roster-list");
+    ul.setAttribute("role", "list");
+    peers.forEach(function (p) {
+      var li = el("li", "fleet-meta");
+      li.setAttribute("role", "listitem");
+      li.textContent = p.name + " \u2014 " + p.url;
+      li.title = p.url;
+      ul.appendChild(li);
+    });
+    container.appendChild(ul);
+  }
+  if (a2a !== undefined) renderA2ACard(container, a2a);
+}
+
+function renderA2ACard(container, card) {
+  var wrap = el("div", "fleet-a2a");
+  wrap.setAttribute("role", "group");
+  wrap.setAttribute("aria-label", "This agent");
+  var head = el("div", "fleet-a2a-head", "This agent");
+  wrap.appendChild(head);
+  if (!card) {
+    wrap.appendChild(el("p", "fleet-meta", "A2A card unavailable."));
+    container.appendChild(wrap);
     return;
   }
-  var ul = el("ul", "fleet-roster-list");
-  ul.setAttribute("role", "list");
-  peers.forEach(function (p) {
-    var li = el("li", "fleet-meta");
-    li.setAttribute("role", "listitem");
-    li.textContent = p.name + " \u2014 " + p.url;
-    li.title = p.url;
-    ul.appendChild(li);
-  });
-  container.appendChild(ul);
+  var name = card.name || card.displayName || card.id || "";
+  var disp = card.displayName || card.id || "";
+  if (name) wrap.appendChild(el("div", "fleet-a2a-name", name));
+  if (disp && disp !== name) wrap.appendChild(el("div", "fleet-a2a-id", disp));
+  else if (card.id) wrap.appendChild(el("div", "fleet-a2a-id", String(card.id).slice(0, 32)));
+  var skills = card.skills || card.capabilities;
+  var summary = "";
+  if (Array.isArray(skills)) summary = skills.join(", ");
+  else if (skills && typeof skills === "object") {
+    var keys = Object.keys(skills);
+    summary = keys.length ? keys.join(", ") : "";
+  } else if (typeof skills === "string") summary = skills;
+  if (summary) wrap.appendChild(el("div", "fleet-a2a-skills", summary));
+  else wrap.appendChild(el("div", "fleet-meta", "A2A card available"));
+  container.appendChild(wrap);
 }
 
 function isDmRoom(room) { return typeof room === "string" && room.indexOf("dm:") === 0; }
@@ -432,6 +463,7 @@ export function initFleet() {
     skeleton(runsEl, 3);
     if (dmsEl) skeleton(dmsEl, 2);
     var statusP = fetch("/api/status").then(readJson).catch(function (e) { return { __err: e }; });
+    var a2aP = fetch("/.well-known/agent.json").then(readJson).catch(function () { return null; });
     var runsP = fetch("/api/runs").then(readJson).then(function (d) {
       var txt = d.text || "";
       if (txt) { try { return JSON.parse(txt); } catch (_) { return []; } }
@@ -441,12 +473,13 @@ export function initFleet() {
       if (d && d.ok === false && /disabled/i.test(d.error || "")) return null;
       return d;
     }).catch(function () { return null; });
-    return Promise.all([statusP, runsP, roomsP]).then(function (vals) {
+    return Promise.all([statusP, a2aP, runsP, roomsP]).then(function (vals) {
       var s = vals[0];
-      var r = vals[1];
-      var c = vals[2];
+      var a2a = vals[1];
+      var r = vals[2];
+      var c = vals[3];
       if (s && s.__err) renderError(roster, "Could not load roster: " + s.__err.message, doRefresh);
-      else renderRoster(roster, s);
+      else renderRoster(roster, s, a2a);
       if (dmsEl) renderDMs(dmsEl, c);
       if (r && r.__err) renderError(runsEl, "Could not load runs: " + r.__err.message, doRefresh);
       else renderRuns(runsEl, detail, r || []);
