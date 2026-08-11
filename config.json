@@ -131,6 +131,12 @@
     "name": "clanker",
     "id": "main"
   },
+  "peers": [
+    {
+      "name": "dummy-down",
+      "url": "http://127.0.0.1:9"
+    }
+  ],
   "modules": {
     "mcp": true,
     "peers": true,
