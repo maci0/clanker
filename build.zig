@@ -37,12 +37,20 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // ------------------------------------------------------------------ tests
-    // Tests run on the host. The x86_64-linux-musl pin above is a workaround for
-    // a linux-host lld problem with the shipped binary; reusing it here made
-    // `zig build test` unrunnable on any non-x86_64-linux dev machine.
+    // Tests run on the host's own architecture, so `zig build test` works on any
+    // dev machine rather than only an x86_64 linux one. On linux they keep the
+    // musl ABI: the glibc crt1.o that the host target would pull in carries
+    // SFrame relocations lld cannot resolve, which is the same problem the
+    // shipped binary's musl pin exists to avoid. Same architecture as the host
+    // either way, so the binary still runs here.
+    const host = b.graph.host.result;
+    const test_target = if (host.os.tag == .linux)
+        b.resolveTargetQuery(.{ .cpu_arch = host.cpu.arch, .os_tag = .linux, .abi = .musl })
+    else
+        b.graph.host;
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
-        .target = b.graph.host,
+        .target = test_target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zwasm", .module = zwasm_mod },
