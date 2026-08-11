@@ -33,7 +33,10 @@ pub const RunEvent = struct {
 
 /// Appends one event line to state/autolearn.jsonl (best effort).
 pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
-    std.Io.Dir.cwd().createDirPath(io, "state") catch return;
+    std.Io.Dir.cwd().createDirPath(io, "state") catch |err| {
+        std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
+        return;
+    };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
 
     var buf: [2048]u8 = undefined;
