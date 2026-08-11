@@ -181,17 +181,106 @@ pub const State = struct {
     in_string: u8 = 0, // 0, '\'', '"', or '`' (JS template literal)
     in_block_comment: bool = false,
     lang: Lang = .{},
+    /// Zig is tokenized by std.zig.Tokenizer instead of the lexer below.
+    use_zig_tokenizer: bool = false,
 
     pub fn init(fence_lang: []const u8) State {
-        return .{ .lang = langFor(fence_lang) };
+        return .{
+            .lang = langFor(fence_lang),
+            .use_zig_tokenizer = eqAny(fence_lang, &.{ "zig", "zon" }),
+        };
     }
 };
+
+/// Zig, tokenized by the compiler's own tokenizer rather than the hand-rolled
+/// lexer below.
+///
+/// std.zig.Tokenizer is the real thing: it classifies exactly what the
+/// compiler classifies, so `@"quoted identifiers"`, `\\` multiline strings,
+/// character literals, `0x1F_FF` and every keyword come out right without a
+/// keyword table that drifts from the language.
+///
+/// Line at a time is safe for Zig specifically: it has no block comments, and
+/// a `\\` multiline string is a token per line, so no construct spans a line
+/// boundary. That is a property of the language, not a shortcut, which is why
+/// this is not done for the C-like languages below.
+///
+/// Returns false when the line cannot be tokenized (allocation failure), so
+/// the caller can fall back rather than lose the line.
+fn zigLine(gpa: std.mem.Allocator, line: []const u8, out: *std.ArrayList(Token)) bool {
+    // The tokenizer wants a sentinel-terminated buffer.
+    const buf = gpa.allocSentinel(u8, line.len, 0) catch return false;
+    // Freed on the way out: every token below slices `line`, not this copy,
+    // so nothing outlives it. Without this the transcript leaks a buffer per
+    // line drawn, every frame.
+    defer gpa.free(buf);
+    @memcpy(buf, line);
+
+    var tz = std.zig.Tokenizer.init(buf);
+    var prev_end: usize = 0;
+    while (true) {
+        const tok = tz.next();
+        if (tok.tag == .eof) break;
+        // Whatever sat between two tokens (spaces, and comments, which this
+        // tokenizer skips rather than emits) is re-read from the line so
+        // nothing is dropped and the output still concatenates to the input.
+        if (tok.loc.start > prev_end) {
+            if (!emitGap(gpa, line[prev_end..tok.loc.start], out)) return false;
+        }
+        const text = line[tok.loc.start..tok.loc.end];
+        var kind = kindOfZigTag(tok.tag);
+        // Primitive types are identifiers to the compiler, not keywords, so
+        // the tokenizer is right to call them that and the reader still wants
+        // `u32` to stand out. The same table the generic lexer uses decides.
+        if (kind == .plain and tok.tag == .identifier and inList(&zig_builtins, text)) kind = .builtin;
+        out.append(gpa, .{ .text = text, .kind = kind }) catch return false;
+        prev_end = tok.loc.end;
+    }
+    if (prev_end < line.len) {
+        if (!emitGap(gpa, line[prev_end..], out)) return false;
+    }
+    return true;
+}
+
+/// The run between two tokens: whitespace, and comments, which the tokenizer
+/// skips rather than emitting. The comment is split off from the whitespace
+/// before it so the coloured span starts at `//` rather than at the indent
+/// preceding it.
+fn emitGap(gpa: std.mem.Allocator, gap: []const u8, out: *std.ArrayList(Token)) bool {
+    if (std.mem.indexOf(u8, gap, "//")) |at| {
+        if (at > 0) out.append(gpa, .{ .text = gap[0..at], .kind = .plain }) catch return false;
+        out.append(gpa, .{ .text = gap[at..], .kind = .comment }) catch return false;
+    } else {
+        out.append(gpa, .{ .text = gap, .kind = .plain }) catch return false;
+    }
+    return true;
+}
+
+fn kindOfZigTag(tag: std.zig.Token.Tag) Kind {
+    return switch (tag) {
+        .string_literal, .multiline_string_literal_line, .char_literal => .string,
+        .number_literal => .number,
+        .builtin => .builtin,
+        .doc_comment, .container_doc_comment => .comment,
+        else => blk: {
+            // Every keyword tag is spelled "keyword_...", so this needs no
+            // second list to keep in step with the language.
+            const name = @tagName(tag);
+            break :blk if (std.mem.startsWith(u8, name, "keyword_")) .keyword else .plain;
+        },
+    };
+}
 
 /// One full line of code (no trailing \n) becomes a list of styled tokens.
 /// `out` is cleared and refilled; tokens borrow `line`.
 /// Precondition: `line` contains no '\n'.
 pub fn highlightLine(state: *State, gpa: std.mem.Allocator, line: []const u8, out: *std.ArrayList(Token)) !void {
     out.clearRetainingCapacity();
+    if (state.use_zig_tokenizer) {
+        if (zigLine(gpa, line, out)) return;
+        // Fall through to the generic lexer if that could not allocate.
+        out.clearRetainingCapacity();
+    }
     const lang = state.lang;
     var i: usize = 0;
     var plain_start: usize = 0;
@@ -623,4 +712,70 @@ test "vaxis spans carry styles and strip controls" {
         try std.testing.expect(std.mem.indexOfScalar(u8, s.text, 0x1b) == null);
     }
     try std.testing.expect(saw_kw);
+}
+
+fn kindsOf(gpa: std.mem.Allocator, lang: []const u8, line: []const u8, out: *std.ArrayList(Token)) !void {
+    var st = State.init(lang);
+    try highlightLine(&st, gpa, line, out);
+}
+
+fn findKind(toks: []const Token, text: []const u8) ?Kind {
+    for (toks) |t| {
+        if (std.mem.eql(u8, t.text, text)) return t.kind;
+    }
+    return null;
+}
+
+test "zig is tokenized by the compiler's tokenizer" {
+    const gpa = std.testing.allocator;
+    var toks: std.ArrayList(Token) = .empty;
+    defer toks.deinit(gpa);
+
+    try kindsOf(gpa, "zig", "const x: u32 = 0x1F_FF; // note", &toks);
+    try std.testing.expectEqual(Kind.keyword, findKind(toks.items, "const").?);
+    // A hand-rolled number scanner tends to stop at the underscore.
+    try std.testing.expectEqual(Kind.number, findKind(toks.items, "0x1F_FF").?);
+
+    // @"..." is one identifier, not a builtin followed by a string.
+    try kindsOf(gpa, "zig", "var @\"if\" = 1;", &toks);
+    try std.testing.expect(findKind(toks.items, "@\"if\"") != null);
+
+    // A builtin is a builtin, and a char literal is a string, not a number.
+    try kindsOf(gpa, "zig", "@memcpy(d, 'a');", &toks);
+    try std.testing.expectEqual(Kind.builtin, findKind(toks.items, "@memcpy").?);
+    try std.testing.expectEqual(Kind.string, findKind(toks.items, "'a'").?);
+}
+
+test "a zig line always concatenates back to itself" {
+    // The renderer draws the tokens in order, so anything dropped between them
+    // would silently vanish from the transcript.
+    const gpa = std.testing.allocator;
+    var toks: std.ArrayList(Token) = .empty;
+    defer toks.deinit(gpa);
+
+    const lines = [_][]const u8{
+        "const std = @import(\"std\");",
+        "    if (x) return error.Nope; // why",
+        "\\\\a multiline string line",
+        "",
+        "   ",
+        "fn f() void {}",
+    };
+    for (lines) |line| {
+        try kindsOf(gpa, "zig", line, &toks);
+        var rebuilt: std.ArrayList(u8) = .empty;
+        defer rebuilt.deinit(gpa);
+        for (toks.items) |t| try rebuilt.appendSlice(gpa, t.text);
+        try std.testing.expectEqualStrings(line, rebuilt.items);
+    }
+}
+
+test "other languages still use the hand-rolled lexer" {
+    const gpa = std.testing.allocator;
+    var toks: std.ArrayList(Token) = .empty;
+    defer toks.deinit(gpa);
+
+    try kindsOf(gpa, "python", "def f(): # hi", &toks);
+    try std.testing.expectEqual(Kind.keyword, findKind(toks.items, "def").?);
+    try std.testing.expectEqual(Kind.comment, findKind(toks.items, "# hi").?);
 }
