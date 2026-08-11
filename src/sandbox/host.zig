@@ -1179,9 +1179,15 @@ const exec_deny_tokens = [_][]const u8{
     "||",     ";",      ">",         "<",        "`",
 };
 
-/// Looks up a symbol in the Zig standard library source and returns up to 40
-/// matching lines (signatures + doc comments). Powers the std_api tool so the
-/// agent can verify Zig 0.16 APIs before proposing patches.
+/// ck_std_api: look up a symbol name in the Zig 0.16 standard library source
+/// tree and return up to 40 matching lines (signatures, doc comments, usage).
+///
+/// Use this to verify that a function, type, or field actually exists in
+/// std before writing code that calls it — especially after a Zig version
+/// bump when APIs may have changed.  The search is a literal substring match
+/// (not fuzzy), so pass the shortest unambiguous fragment (e.g.
+/// "splitScalar" not "std.mem.splitScalar").  Do NOT use this for non-std
+/// symbols or project-internal code; use search_code / read_file instead.
 pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -1198,12 +1204,25 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     return h.writeResult(bytes, res.stdout);
 }
 
-/// Delegates a task to a nested sub-agent run (see subagent tool).
-/// ck_ask: put a multiple-choice question to the human and return their answer.
+/// ck_subagent: spawn a nested sub-agent to perform an independent task and
+/// return its final answer as a string.
 ///
-/// The sandbox has no terminal, so the decision is made host-side by whoever
-/// installed `ask_fn` (the REPL). Without one there is no human attached, and
-/// saying so lets the model decide for itself rather than hang.
+/// Use this when a task is self-contained ("summarize this file", "write unit
+/// tests for X") and does not need to share mutable state with the caller.
+/// Do NOT use it for tasks that are trivial enough to do inline — every
+/// sub-agent call pays a full agent-loop startup cost — or when you need the
+/// sub-agent to modify files you are currently editing (it works on a
+/// snapshot, not on your live state).
+///
+/// ck_ask: put a multiple-choice question to the human and return their pick.
+///
+/// Use this when a decision is genuinely ambiguous and the user's preference
+/// matters (e.g. choosing between two valid refactoring strategies).  Do NOT
+/// use it for yes/no confirmations you can resolve yourself, or when the
+/// options list has fewer than 2 entries (the call will fail).  The sandbox
+/// has no terminal, so the decision is made host-side by whoever installed
+/// `ask_fn` (the REPL).  Without one there is no human attached, and the
+/// call returns Err.not_found so the model can decide for itself.
 pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
