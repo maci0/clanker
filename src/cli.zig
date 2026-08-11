@@ -1180,6 +1180,15 @@ fn readLineRaw(
     raw.lflag.ISIG = false;
     std.posix.tcsetattr(stdin_file.handle, .FLUSH, raw) catch return error.NotATerminal;
     defer std.posix.tcsetattr(stdin_file.handle, .FLUSH, original) catch {};
+    // Bracketed paste: the terminal wraps a pasted block in ESC[200~/201~,
+    // which the line editor reads as literal newlines instead of submits, so
+    // a multi-line paste lands as one input rather than one turn per line.
+    try out_w.interface.writeAll("\x1b[?2004h");
+    try out_w.interface.flush();
+    defer {
+        out_w.interface.writeAll("\x1b[?2004l") catch {};
+        out_w.interface.flush() catch {};
+    }
     _ = io;
 
     editor.reset();
