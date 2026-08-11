@@ -2002,13 +2002,11 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     // was in it. Only a tool allowed everywhere gets the root; one confined to
     // src/ has no business enumerating the tree above it.
     if (sub_path.len == 0 or std.mem.eql(u8, sub_path, ".") or std.mem.eql(u8, sub_path, "./")) {
-        if (sb.fs_prefixes.len > 0) {
-            var root_ok = false;
-            for (sb.fs_prefixes) |p| {
-                if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) root_ok = true;
-            }
-            if (!root_ok) return error.PathOutsideSandbox;
+        var root_ok = false;
+        for (sb.fs_prefixes) |p| {
+            if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) root_ok = true;
         }
+        if (!root_ok) return error.PathOutsideSandbox;
         return sb.gpa.dupe(u8, std.mem.trimEnd(u8, sb.root_dir, "/"));
     }
     var it = std.mem.splitScalar(u8, sub_path, '/');
@@ -2016,7 +2014,13 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
         if (comp.len == 0) return error.PathOutsideSandbox;
     }
-    if (sb.fs_prefixes.len > 0) {
+    {
+        // An empty list is no authority, not unlimited authority. This used to
+        // skip the check entirely, so a descriptor written as "fs_prefixes":
+        // [] - which reads as "this tool touches no files" and is what the
+        // documentation says it means - handed the tool every file under the
+        // sandbox root instead. Least privilege has to be the default that
+        // costs nothing to ask for.
         var allowed = false;
         for (sb.fs_prefixes) |p| {
             // "." means the sandbox root itself: every relative path under it
@@ -2623,4 +2627,34 @@ test "parallel appends to one file all land" {
     const raw = try tmp.dir.readFileAlloc(io, "log.txt", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
     try std.testing.expectEqual(@as(usize, writers * per_writer * line.len), raw.len);
+}
+
+test "a tool with no declared prefixes reaches no file at all" {
+    // An empty fs_prefixes used to skip the check, so a descriptor saying
+    // "this tool touches no files" granted every file under the sandbox root.
+    // The image tool shipped that way and read whatever path it was handed.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = undefined,
+    };
+
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "src/main.zig"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "."));
+
+    // A declared prefix grants exactly what it names.
+    const only_state = [_][]const u8{"state"};
+    sb.fs_prefixes = &only_state;
+    const inside = try safeJoin(&sb, "state/notes.md");
+    std.testing.allocator.free(inside);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "src/main.zig"));
+
+    // "." is how a tool asks for the whole tree, and still cannot escape it.
+    const everything = [_][]const u8{"."};
+    sb.fs_prefixes = &everything;
+    const anywhere = try safeJoin(&sb, "src/main.zig");
+    std.testing.allocator.free(anywhere);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "../outside"));
 }

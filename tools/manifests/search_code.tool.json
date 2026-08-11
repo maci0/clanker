@@ -25,5 +25,8 @@
       "query"
     ]
   },
-  "category": "code"
+  "category": "code",
+  "fs_prefixes": [
+    "."
+  ]
 }
