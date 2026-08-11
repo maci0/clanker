@@ -5,27 +5,37 @@
 // window.ckUtil, van-boot-style, because app.js is still a classic script
 // that cannot import. The bridge dies with the last classic script.
 export function fmtBytes(n) {
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
-  return (n / (1024 * 1024)).toFixed(1) + " MB";
+  var value = n;
+  var unit = "byte";
+  if (n >= 1024 * 1024) { value = n / (1024 * 1024); unit = "megabyte"; }
+  else if (n >= 1024) { value = n / 1024; unit = "kilobyte"; }
+  return new Intl.NumberFormat(undefined, {
+    style: "unit", unit: unit, unitDisplay: "short",
+    maximumFractionDigits: unit === "megabyte" ? 1 : 0
+  }).format(value);
 }
 
 export function clip(text, max) {
-  if (text.length <= max) return text;
-  var cut = text.slice(0, max);
+  var chars = Array.from(String(text));
+  if (chars.length <= max) return String(text);
+  var cut = chars.slice(0, max).join("");
   var space = cut.lastIndexOf(" ");
   return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-]+$/, "") + "\u2026";
 }
 
 export function fuzzyMatch(query, text) {
   if (!query) return true;
-  var t = String(text).toLowerCase();
-  var q = String(query).toLowerCase();
+  var t = searchFold(text);
+  var q = searchFold(query);
   var qi = 0;
   for (var i = 0; i < t.length && qi < q.length; i++) {
     if (t.charAt(i) === q.charAt(qi)) qi += 1;
   }
   return qi === q.length;
+}
+
+export function searchFold(value) {
+  return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
 }
 
 export function escapeHtml(s) {
@@ -36,10 +46,13 @@ export function escapeHtml(s) {
 
 export function fmtMs(ms) {
   if (typeof ms !== "number" || !isFinite(ms)) return "";
-  if (ms < 1000) return ms + "ms";
-  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  if (ms < 1000) return new Intl.NumberFormat(undefined, { style: "unit", unit: "millisecond", unitDisplay: "narrow" }).format(ms);
+  if (ms < 60000) return new Intl.NumberFormat(undefined, { style: "unit", unit: "second", unitDisplay: "narrow", maximumFractionDigits: 1 }).format(ms / 1000);
   var mins = Math.floor(ms / 60000);
-  return mins + "m " + Math.round((ms % 60000) / 1000) + "s";
+  var seconds = Math.round((ms % 60000) / 1000);
+  var minuteText = new Intl.NumberFormat(undefined, { style: "unit", unit: "minute", unitDisplay: "narrow" }).format(mins);
+  var secondText = new Intl.NumberFormat(undefined, { style: "unit", unit: "second", unitDisplay: "narrow" }).format(seconds);
+  return minuteText + " " + secondText;
 }
 
 export function fmtInt(n) {
@@ -47,7 +60,9 @@ export function fmtInt(n) {
 }
 
 export function fmtCost(n) {
-  return "$" + (typeof n === "number" ? n : 0).toFixed(4);
+  return new Intl.NumberFormat(undefined, {
+    style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 4
+  }).format(typeof n === "number" ? n : 0);
 }
 
 export function formatChatTime(ts) {
@@ -138,6 +153,7 @@ if (typeof window !== "undefined") window.ckUtil = {
   fmtBytes: fmtBytes,
   clip: clip,
   fuzzyMatch: fuzzyMatch,
+  searchFold: searchFold,
   escapeHtml: escapeHtml,
   fmtMs: fmtMs,
   fmtInt: fmtInt,
