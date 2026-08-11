@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "description": "read the roadmap; list planned (unchecked) items",
+  "description": "read the roadmap (docs/ROADMAP.md); list planned items — the bullets outside the Done section. {\"list\":\"all\"} includes Done, grouped under section headings.",
   "wasm": "zig-out/tools/roadmap.wasm",
   "input_schema": {
     "type": "object",

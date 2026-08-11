@@ -1,5 +1,9 @@
 //! roadmap: read the project roadmap (docs/ROADMAP.md), list the planned
-//! (unchecked) items so tasks can pick the next one to implement.
+//! items so tasks can pick the next one to implement.
+//! The roadmap keeps items as plain "- " bullets grouped under "## " section
+//! headings ("Done", "Planned", "Autolearn"); everything outside "## Done" is
+//! open work. Checkbox bullets ("- [ ]" / "- [x]") are also understood, and
+//! their mark wins over the section they sit in.
 //! Input:  {"list": "planned" | "all"}
 //! Output: {"ok": true, "text": "<roadmap items>"}
 
@@ -22,16 +26,33 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(lib.alloc);
+    // Only end-trimmed: a bullet counts when "- " starts at column 0, so the
+    // indented sub-bullets under a multi-line item stay part of their parent
+    // instead of showing up as items of their own.
+    var in_done = false;
     var it = std.mem.splitScalar(u8, md, '\n');
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (std.mem.startsWith(u8, trimmed, "- [ ]")) {
-            if (text.items.len > 0) try text.append(lib.alloc, '\n');
-            try text.appendSlice(lib.alloc, trimmed);
-        } else if (want_all and std.mem.startsWith(u8, trimmed, "- [x]")) {
-            if (text.items.len > 0) try text.append(lib.alloc, '\n');
-            try text.appendSlice(lib.alloc, trimmed);
+        const trimmed = std.mem.trimEnd(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, trimmed, "## ")) {
+            in_done = std.mem.eql(u8, trimmed[3..], "Done");
+            // In "all" mode the headings are what tells done and planned
+            // apart, since plain bullets carry no mark of their own.
+            if (want_all) {
+                if (text.items.len > 0) try text.append(lib.alloc, '\n');
+                try text.appendSlice(lib.alloc, trimmed);
+            }
+            continue;
         }
+        if (!std.mem.startsWith(u8, trimmed, "- ")) continue;
+        const done = if (std.mem.startsWith(u8, trimmed, "- [x]"))
+            true
+        else if (std.mem.startsWith(u8, trimmed, "- [ ]"))
+            false
+        else
+            in_done;
+        if (done and !want_all) continue;
+        if (text.items.len > 0) try text.append(lib.alloc, '\n');
+        try text.appendSlice(lib.alloc, trimmed);
     }
     if (text.items.len == 0) try text.appendSlice(lib.alloc, "(no planned items)");
 

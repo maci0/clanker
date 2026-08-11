@@ -579,6 +579,77 @@ test "cmd_sessions and cmd_graph report empty when the state dir does not exist"
     }
 }
 
+test "roadmap wasm tool lists planned items from the real bullet format" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // The fixture mirrors docs/ROADMAP.md's actual shape: plain "- " bullets
+    // grouped under "## " headings, no checkboxes. The tool used to grep for
+    // "- [ ]" and so reported every real roadmap as "(no planned items)".
+    try tmp.dir.createDirPath(io, "docs");
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/ROADMAP.md", .data =
+        \\# Roadmap
+        \\
+        \\## Done
+        \\
+        \\- **Shipped thing** — landed last week.
+        \\
+        \\## Planned
+        \\
+        \\- **Plugin SDK** — manifest format for third-party tools.
+        \\  - a sub-bullet that must not surface as its own item
+        \\- [x] checked item, done wherever it sits
+        \\
+        \\## Autolearn
+        \\
+        \\Observed from usage patterns.
+        \\
+        \\- Optimize the most-used tools.
+        \\
+    });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"docs/"},
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/roadmap.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const planned = try mod.executeTool("{}");
+    defer std.testing.allocator.free(planned);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "Plugin SDK") != null);
+    // Autolearn bullets are open work too — only "## Done" is excluded.
+    try std.testing.expect(std.mem.indexOf(u8, planned, "Optimize the most-used tools") != null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "Shipped thing") == null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "checked item") == null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "sub-bullet") == null);
+    try std.testing.expect(std.mem.indexOf(u8, planned, "no planned items") == null);
+
+    const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod2.deinit();
+    const all = try mod2.executeTool("{\"list\":\"all\"}");
+    defer std.testing.allocator.free(all);
+    try std.testing.expect(std.mem.indexOf(u8, all, "Shipped thing") != null);
+    try std.testing.expect(std.mem.indexOf(u8, all, "checked item") != null);
+    try std.testing.expect(std.mem.indexOf(u8, all, "## Done") != null);
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
