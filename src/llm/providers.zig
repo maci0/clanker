@@ -17,6 +17,7 @@ pub const RequestParams = struct {
     messages: []const types.Message,
     tools: ?[]const types.ToolDef = null,
     temperature: ?f64 = null,
+    top_p: ?f64 = null,
     max_tokens: ?u32 = null,
     response_format_json: bool = false,
     /// Ask the provider to stream the response (SSE). Consumed by
@@ -24,11 +25,12 @@ pub const RequestParams = struct {
     stream: bool = false,
 };
 
-pub const BuildError = error{ OutOfMemory, BodyTooLarge } || std.Io.Writer.Error;
+pub const BuildError = error{OutOfMemory} || std.Io.Writer.Error;
 
-/// Upper bound for request bodies (large tool schemas).
-const body_cap = 1 << 20;
-
+/// The body grows to fit. It used to be capped at 1 MiB, which was ample for
+/// tool schemas and then became a ceiling on how much source the
+/// self-improvement engine could send: a context near the cap failed the whole
+/// request with a bare WriteFailed, naming nothing.
 /// Serializes a request body for the provider into a newly allocated buffer
 /// (caller frees).
 pub fn buildRequest(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
@@ -41,28 +43,24 @@ pub fn buildRequest(gpa: std.mem.Allocator, params: RequestParams) BuildError![]
 }
 
 fn newBuilder(gpa: std.mem.Allocator) !Builder {
-    const buf = try gpa.alloc(u8, body_cap);
-    return .{ .buf = buf, .w = .fixed(buf), .gpa = gpa };
+    return .{ .out = .init(gpa), .gpa = gpa };
 }
 
 const Builder = struct {
-    buf: []u8,
-    w: std.Io.Writer,
+    out: std.Io.Writer.Allocating,
     gpa: std.mem.Allocator,
 };
 
 /// Creates a Stringify writing into the builder's writer. The returned
 /// Stringify is only valid while the Builder is alive.
 fn begin(b: *Builder) json.Stringify {
-    return .{ .writer = &b.w, .options = .{ .emit_null_optional_fields = false } };
+    return .{ .writer = &b.out.writer, .options = .{ .emit_null_optional_fields = false } };
 }
 
-/// Shrinks the buffer to the exact bytes written; the returned slice is the
-/// exact allocation, so it can be freed with the builder's allocator.
+/// Hands over the exact bytes written; the caller frees them with the
+/// builder's allocator.
 fn finish(b: *Builder) ![]u8 {
-    const end = b.w.end;
-    b.buf = try b.gpa.realloc(b.buf, end);
-    return b.buf;
+    return b.out.toOwnedSlice();
 }
 
 fn jstr(s: *json.Stringify, value: []const u8) !void {
@@ -77,7 +75,7 @@ fn jval(s: *json.Stringify, value: anytype) !void {
 
 fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     var b = try newBuilder(gpa);
-    errdefer gpa.free(b.buf);
+    errdefer b.out.deinit();
     var s = begin(&b);
 
     try s.beginObject();
@@ -173,6 +171,14 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
     }
+    // Only sent when configured. Both knobs narrow the same distribution, so a
+    // model left at its provider default is deliberately left there rather
+    // than given a value this harness invented.
+    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
+    if (nucleus) |tp| {
+        try s.objectField("top_p");
+        try s.print("{d}", .{tp});
+    }
     // Clamp the requested output budget to fit the model's context window:
     // never ask for more completion tokens than half the window.
     const active = params.provider.activeModel();
@@ -250,10 +256,14 @@ const OpenAIResponse = struct {
     @"error": ?OpenAIError = null,
 };
 
-fn parseOpenAI(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
+fn parseOpenAI(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]const u8) !types.ChatResponse {
     const parsed = try json.parseFromSliceLeaky(OpenAIResponse, arena, body, .{ .ignore_unknown_fields = true });
     if (parsed.@"error") |e| {
-        _ = e;
+        // A 200 carrying an error body never reaches the HTTP error path, so
+        // this is the only place the provider's reason is visible: log it AND
+        // hand it to the caller, or a rate limit reads identically to a bad key.
+        log.log(.error_, "openai provider error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
+        if (err_detail) |d| d.* = if (e.message) |m| try arena.dupe(u8, m) else e.type;
         return error.ApiError;
     }
     if (parsed.choices.len == 0) return error.EmptyChoices;
@@ -334,7 +344,7 @@ const AnthropicError = struct {
 
 fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     var b = try newBuilder(gpa);
-    errdefer gpa.free(b.buf);
+    errdefer b.out.deinit();
     // Scratch space for re-parsing tool arguments; freed when the body is
     // built, so the parsed values never outlive this call.
     var scratch_state = std.heap.ArenaAllocator.init(gpa);
@@ -374,19 +384,26 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
     }
     if (system_parts.items.len > 0) {
         try s.objectField("system");
-        // Always the block form, so the last block can carry a cache
-        // breakpoint. Tools and the system prompt are the stable prefix of
-        // every turn in a run, and they render ahead of the messages, so one
-        // breakpoint here caches both: without it a long system prompt is
-        // re-billed in full on every iteration.
+        // Always the block form, so a block can carry a cache breakpoint.
+        // Tools and the system prompt are the stable prefix of every turn in a
+        // run, and they render ahead of the messages, so a breakpoint here
+        // caches both: without it a long system prompt is re-billed in full on
+        // every iteration.
+        //
+        // The last two blocks are marked rather than only the last. A lookup
+        // matches the longest cached prefix, so a caller that puts what changes
+        // in its final block keeps the bulk cached when that block changes.
+        // The improve engine does exactly this: the file it is about to patch
+        // sits alone at the end, and everything before it survives the patch.
         try s.beginArray();
+        const first_marked = system_parts.items.len -| 2;
         for (system_parts.items, 0..) |part, i| {
             try s.beginObject();
             try s.objectField("type");
             try jstr(&s, "text");
             try s.objectField("text");
             try jstr(&s, part);
-            if (i == system_parts.items.len - 1) {
+            if (i >= first_marked) {
                 try s.objectField("cache_control");
                 try s.beginObject();
                 try s.objectField("type");
@@ -492,6 +509,14 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
         try s.objectField("temperature");
         try s.print("{d}", .{t});
     }
+    // Only sent when configured. Both knobs narrow the same distribution, so a
+    // model left at its provider default is deliberately left there rather
+    // than given a value this harness invented.
+    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
+    if (nucleus) |tp| {
+        try s.objectField("top_p");
+        try s.print("{d}", .{tp});
+    }
     try s.endObject();
 
     return try finish(&b);
@@ -520,12 +545,14 @@ const AnthropicResponse = struct {
     } = null,
 };
 
-fn parseAnthropic(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
+fn parseAnthropic(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]const u8) !types.ChatResponse {
     const parsed = try json.parseFromSliceLeaky(AnthropicResponse, arena, body, .{ .ignore_unknown_fields = true });
     if (parsed.@"error") |e| {
         // A 200 carrying an error body never reaches the HTTP error path, so
-        // this is the only place the reason is visible.
+        // this is the only place the reason is visible: log it AND hand it to
+        // the caller.
         log.log(.error_, "anthropic error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
+        if (err_detail) |d| d.* = if (e.message) |m| try arena.dupe(u8, m) else e.type;
         return error.ApiError;
     }
 
@@ -588,10 +615,10 @@ fn parseAnthropic(arena: std.mem.Allocator, body: []const u8) !types.ChatRespons
 
 // ------------------------------------------------------------------ public --
 
-pub fn parseResponse(arena: std.mem.Allocator, kind: config.ProviderKind, body: []const u8) !types.ChatResponse {
+pub fn parseResponse(arena: std.mem.Allocator, kind: config.ProviderKind, body: []const u8, err_detail: ?*?[]const u8) !types.ChatResponse {
     return switch (kind) {
-        .openai_compat => parseOpenAI(arena, body),
-        .anthropic, .vertex_anthropic => parseAnthropic(arena, body),
+        .openai_compat => parseOpenAI(arena, body, err_detail),
+        .anthropic, .vertex_anthropic => parseAnthropic(arena, body, err_detail),
     };
 }
 
@@ -628,7 +655,7 @@ test "openai response parse with tool call" {
     const body =
         \\{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"calculator","arguments":"{\"a\":2}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}
     ;
-    const resp = try parseOpenAI(arena, body);
+    const resp = try parseOpenAI(arena, body, null);
     try std.testing.expectEqual(types.Role.assistant, resp.message.role);
     try std.testing.expectEqual(@as(usize, 1), resp.message.tool_calls.?.len);
     try std.testing.expectEqualStrings("call_1", resp.message.tool_calls.?[0].id);
@@ -741,7 +768,7 @@ test "anthropic response parse keeps a no-argument tool call and counts cached p
         \\{"type":"tool_use","id":"toolu_2","name":"history","input":{"n":3}}
         \\],"stop_reason":"tool_use","usage":{"input_tokens":40,"output_tokens":35,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}
     ;
-    const resp = try parseAnthropic(arena, body);
+    const resp = try parseAnthropic(arena, body, null);
 
     try std.testing.expectEqualStrings("Checking.", resp.message.content.?);
     const calls = resp.message.tool_calls.?;
@@ -775,7 +802,7 @@ test "a large tool input is not truncated" {
         "{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"write\",\"input\":{{\"text\":\"{s}\"}}}}]}}",
         .{big},
     );
-    const resp = try parseAnthropic(arena, body);
+    const resp = try parseAnthropic(arena, body, null);
 
     const args = resp.message.tool_calls.?[0].arguments;
     const reparsed = try json.parseFromSliceLeaky(json.Value, arena, args, .{});
@@ -829,4 +856,29 @@ test "an assistant turn with empty content emits no text block" {
     // An empty text block is rejected by the API; only the tool_use survives.
     try std.testing.expectEqual(@as(usize, 1), blocks.len);
     try std.testing.expectEqualStrings("tool_use", blocks[0].object.get("type").?.string);
+}
+
+test "an error body in a 200 surfaces the provider's message to the caller" {
+    // The HTTP error path never sees these bodies, so without err_detail the
+    // caller gets a bare error.ApiError and no idea what the provider said.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const openai_body =
+        \\{"error":{"message":"Rate limit reached for requests","type":"rate_limit_error"}}
+    ;
+    var detail: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, parseOpenAI(arena, openai_body, &detail));
+    try std.testing.expectEqualStrings("Rate limit reached for requests", detail.?);
+
+    const anthropic_body =
+        \\{"error":{"message":"model: claude-nope not found","type":"not_found_error"}}
+    ;
+    detail = null;
+    try std.testing.expectError(error.ApiError, parseAnthropic(arena, anthropic_body, &detail));
+    try std.testing.expectEqualStrings("model: claude-nope not found", detail.?);
+
+    // A null out-param (tests, future callers) still parses successfully.
+    try std.testing.expectError(error.ApiError, parseOpenAI(arena, openai_body, null));
 }

@@ -425,7 +425,7 @@ fn makeId(arena: std.mem.Allocator, ts: i64) ![]const u8 {
     // Zig 0.16; chat tools are `sequential` and serve is single-threaded, so
     // the counter needs no atomics here.)
     id_counter +%= 1;
-    const pid = std.os.linux.getpid();
+    const pid = std.c.getpid();
     return std.fmt.allocPrint(arena, "m{d}-{d}-{x}", .{ ts, pid, id_counter });
 }
 

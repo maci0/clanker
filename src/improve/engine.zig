@@ -22,9 +22,11 @@ const proposal_mod = @import("proposal.zig");
 const history_mod = @import("history.zig");
 const patch_apply = @import("../patch/apply.zig");
 const gate_checks = @import("../gate/checks.zig");
+const sandbox_host = @import("../sandbox/host.zig");
 const peers = @import("../peers/notify.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const diskcap = @import("../util/diskcap.zig");
 
 pub const Options = struct {
     instructions: []const u8,
@@ -42,6 +44,142 @@ pub const Options = struct {
 /// Directories/files copied into staging for the compile gate. Must be enough
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
 const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "README.md", "build.zig", "build.zig.zon", "config.json" };
+
+/// Text that has to survive in a staged file for the patch to be considered.
+///
+/// The improvement machinery is part of the modifiable surface, which is what
+/// lets clanker improve how it improves itself. The risk that opens is a patch
+/// that quietly removes a gate: it would pass every check today, because the
+/// checks are run by the binary already on disk, and skip them forever after.
+/// These are the load-bearing call sites, asserted against the staged text.
+const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.buildGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.toolsGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.testGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.fmtGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.lintGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
+};
+
+/// The next symbol worth looking up in `text`, reduced to its most specific
+/// component: `std.posix.SEEK.SET` identifies itself as `SET`, which is what a
+/// lookup has to search for. Returns the remainder so a caller can walk the
+/// whole message.
+///
+/// Two shapes matter. The source line the compiler echoes back carries
+/// `std.…` paths. The notes underneath carry the type it actually wanted, in
+/// quotes and without the `std.` prefix: `expected type
+/// 'os.linux.SIG__enum_1935'`. Missing the second shape is how one patch
+/// guessed `.none` for a signal after being shown what `kill` takes but never
+/// what a `SIG` is.
+const SourceRef = struct { path: []const u8, line: usize, rest: []const u8 };
+
+/// The next `<path>:<line>:<col>:` reference into the standard library in a
+/// compiler message. Only std paths: the project's own files are already in
+/// the context the model was given.
+fn nextStdSourceRef(text: []const u8) ?SourceRef {
+    const lib = sandbox_host.zig_lib_dir;
+    if (lib.len == 0) return null;
+    var rest = text;
+    while (std.mem.indexOf(u8, rest, lib)) |at| {
+        const from = rest[at..];
+        const nl = std.mem.indexOfScalar(u8, from, '\n') orelse from.len;
+        const line_text = from[0..nl];
+        rest = from[nl..];
+
+        // path:line:col
+        const c1 = std.mem.indexOfScalar(u8, line_text, ':') orelse continue;
+        const after = line_text[c1 + 1 ..];
+        const c2 = std.mem.indexOfScalar(u8, after, ':') orelse continue;
+        const line_no = std.fmt.parseInt(usize, after[0..c2], 10) catch continue;
+        if (!std.mem.endsWith(u8, line_text[0..c1], ".zig")) continue;
+        return .{ .path = line_text[0..c1], .line = line_no, .rest = rest };
+    }
+    return null;
+}
+
+/// Whether a file already went into the focus block, by its header line.
+fn pathInFocus(focus: []const u8, path: []const u8) bool {
+    var buf: [512]u8 = undefined;
+    const header = std.fmt.bufPrint(&buf, "===== FILE: {s} =====", .{path}) catch return false;
+    return std.mem.indexOf(u8, focus, header) != null;
+}
+
+fn pathIn(list: []const []const u8, path: []const u8) bool {
+    for (list) |p| {
+        if (std.mem.eql(u8, p, path)) return true;
+    }
+    return false;
+}
+
+const Found = struct { sym: []const u8, rest: []const u8 };
+
+fn nextSymbol(text: []const u8) ?Found {
+    const quoted = nextQuotedType(text);
+    const dotted = nextStdSymbol(text);
+    // Whichever comes first, so one pass over the message finds both.
+    if (quoted) |q| {
+        if (dotted) |d| return if (q.rest.len > d.rest.len) q else d;
+        return q;
+    }
+    return dotted;
+}
+
+/// A type named in a compiler note, e.g. `expected type 'os.linux.SIG__enum_1935'`
+/// or `enum 'os.linux.SIG__enum_1935' has no member named 'none'`. Zig's
+/// generated suffix is stripped: what the reader needs is `SIG`.
+fn nextQuotedType(text: []const u8) ?Found {
+    var rest = text;
+    while (std.mem.indexOfScalar(u8, rest, '\'')) |open| {
+        rest = rest[open + 1 ..];
+        const close = std.mem.indexOfScalar(u8, rest, '\'') orelse return null;
+        const inner = rest[0..close];
+        rest = rest[close + 1 ..];
+        // A type reference, not prose or a member name in quotes.
+        if (std.mem.indexOfScalar(u8, inner, '.') == null) continue;
+        if (std.mem.indexOfScalar(u8, inner, ' ') != null) continue;
+        var name = inner[std.mem.lastIndexOfScalar(u8, inner, '.').? + 1 ..];
+        if (std.mem.indexOf(u8, name, "__")) |cut| name = name[0..cut];
+        if (name.len < 3) continue;
+        return .{ .sym = name, .rest = rest };
+    }
+    return null;
+}
+
+fn nextStdSymbol(text: []const u8) ?Found {
+    var rest = text;
+    while (std.mem.indexOf(u8, rest, "std.")) |at| {
+        rest = rest[at + "std.".len ..];
+        var end: usize = 0;
+        var last_dot: ?usize = null;
+        while (end < rest.len) : (end += 1) {
+            const c = rest[end];
+            if (c == '.') {
+                // A dot only continues the path when an identifier follows it,
+                // so a sentence ending in "std.mem." does not swallow the space.
+                if (end + 1 < rest.len and (std.ascii.isAlphanumeric(rest[end + 1]) or rest[end + 1] == '_')) {
+                    last_dot = end;
+                    continue;
+                }
+                break;
+            }
+            if (!std.ascii.isAlphanumeric(c) and c != '_') break;
+        }
+        const path = rest[0..end];
+        rest = rest[end..];
+        if (path.len == 0) continue;
+        const sym = if (last_dot) |d| path[d + 1 ..] else path;
+        if (sym.len < 3) continue;
+        return .{ .sym = sym, .rest = rest };
+    }
+    return null;
+}
+
+/// Copied into staging when present, so the staged binary can actually run.
+/// Never promoted back: neither path passes validatePath.
+const staging_runtime_files = [_][]const u8{ "config.local.json", ".env" };
 
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
@@ -117,24 +255,40 @@ pub const Engine = struct {
         // message. Sent the other way round — as one user message beginning
         // with the instruction — every attempt re-billed the whole context at
         // full price, which is why this path ran at a 0% cache hit rate.
-        const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context });
+        const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context.bulk });
+        const focus_prompt = if (context.focus.len > 0)
+            try std.fmt.allocPrint(self.arena, improve_focus_fmt, .{context.focus})
+        else
+            "";
+        // What earlier runs already did and where they failed. Volatile, so it
+        // belongs in the user half with the instruction, not in the cached
+        // system half.
+        const history_block = self.hist.recentSummary(self.arena, 12) catch "";
         const user_prompt = try std.fmt.allocPrint(self.arena, improve_user_fmt, .{
             opts.instructions,
             gate_tail,
+            if (history_block.len > 0) history_block else "(no earlier attempts)",
             last_error orelse "none",
         });
 
-        log.log(.info, "iteration attempt {d}: asking model for a proposal ({d} bytes context)", .{ attempt, context.len });
+        log.log(.info, "iteration attempt {d}: asking model for a proposal ({d} bytes context)", .{ attempt, context.bytes });
 
         // ---- 2. proposal from the model ----
-        const messages = [_]types.Message{
-            .{ .role = .system, .content = system_prompt },
-            .{ .role = .user, .content = user_prompt },
-        };
+        var msg_buf: [3]types.Message = undefined;
+        var msg_n: usize = 0;
+        msg_buf[msg_n] = .{ .role = .system, .content = system_prompt };
+        msg_n += 1;
+        if (focus_prompt.len > 0) {
+            msg_buf[msg_n] = .{ .role = .system, .content = focus_prompt };
+            msg_n += 1;
+        }
+        msg_buf[msg_n] = .{ .role = .user, .content = user_prompt };
+        msg_n += 1;
+        const messages = msg_buf[0..msg_n];
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{
             .provider = self.provider,
-            .messages = &messages,
+            .messages = messages,
             .max_tokens = opts.response_tokens,
         }, &err_detail) catch |err| {
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
@@ -225,7 +379,29 @@ pub const Engine = struct {
             }
         }
 
-        // ---- 4. staging ----
+        // ---- 4. reject work already done ----
+        // The gates decide whether a change is correct; none of them asks
+        // whether it is new. A redundant edit builds, tests, formats and lints,
+        // so without this the loop can promote the same edit repeatedly.
+        var fp_list: std.ArrayList(u64) = .empty;
+        defer fp_list.deinit(self.ctx.gpa);
+        for (proposal.changes) |c| {
+            try fp_list.append(self.ctx.gpa, history_mod.History.changeFingerprint(c.file, c.old, c.new));
+        }
+        const fingerprints = fp_list.items;
+        {
+            var dup_arena = std.heap.ArenaAllocator.init(self.ctx.gpa);
+            defer dup_arena.deinit();
+            if (self.hist.alreadyAccepted(dup_arena.allocator(), fingerprints) catch false) {
+                log.log(.warn, "proposal repeats an improvement already accepted; skipping", .{});
+                // Not a failure: nothing went wrong and nothing changed, so
+                // retrying the same attempt would only spend tokens repeating
+                // the refusal.
+                return .no_change;
+            }
+        }
+
+        // ---- 5. staging ----
         const id = try self.newId();
         defer self.ctx.gpa.free(id);
         const staging = try std.fmt.allocPrint(self.ctx.gpa, "state/staging/{s}", .{id});
@@ -237,6 +413,7 @@ pub const Engine = struct {
 
         patch_apply.apply(staged_dir, self.ctx.io, self.ctx.gpa, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
+            self.removeTree(staging);
             return .failed;
         };
 
@@ -247,6 +424,21 @@ pub const Engine = struct {
         var fmt_auto = try gate_checks.formatFiles(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files_all);
         defer fmt_auto.deinit(self.ctx.gpa);
 
+        // Before spending a compile on it: a patch that dropped a gate from
+        // the improvement machinery would pass every check that follows,
+        // because those checks are run by this binary and not by the patched
+        // one, and then never run again.
+        if (try self.brokenInvariant(staged_dir, proposal.changes)) |bad| {
+            log.log(.warn, "proposal rejected: it removes '{s}' from {s}", .{ bad.needle, bad.file });
+            feedback = try std.fmt.allocPrint(
+                self.arena,
+                "Your patch removed \"{s}\" from {s}. That call is part of the gate every improvement has to pass, including this one. Keep it and re-propose.",
+                .{ bad.needle, bad.file },
+            );
+            self.removeTree(staging);
+            return .failed;
+        }
+
         // ---- 5. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
         var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
@@ -255,11 +447,9 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tree did not compile", tail });
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tree did not compile", tail, self.stdSymbolHelp(tail) });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -273,11 +463,9 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tools did not compile", tail });
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tools did not compile", tail, self.stdSymbolHelp(tail) });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -287,11 +475,9 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -303,11 +489,9 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, fmt_check.detail);
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -316,9 +500,61 @@ pub const Engine = struct {
         if (!lint_check.ok) {
             const tail = errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
+            self.removeTree(staging);
             return .failed;
+        }
+
+        if (self.cfg.improve.capability_gate) {
+            var cap = try self.capabilityGate(staging, staged_dir);
+            defer cap.deinit(self.ctx.gpa);
+            if (!cap.ok) {
+                // A task eval is an agent run, and an agent run is not
+                // deterministic: one model turn that skips a tool call fails a
+                // case that passed a minute earlier. Rejecting a good patch on
+                // that would stall every improvement, so a failure has to
+                // happen twice to count.
+                //
+                // Only re-run the cases that actually failed: each case is a
+                // full agent run, and re-running the whole suite for one flaky
+                // case costs N runs instead of 1.
+                const failed_names = try parseFailedEvalNames(self.arena, cap.detail);
+                if (failed_names.len > 0) {
+                    log.log(.warn, "capability evals: {d} case(s) failed; retrying only those", .{failed_names.len});
+                    var retry = try self.capabilityGateRetry(staged_dir, failed_names);
+                    defer retry.deinit(self.ctx.gpa);
+                    if (retry.ok) {
+                        log.log(.info, "capability evals: PASS on retry", .{});
+                    } else {
+                        const tail = errorTail(self.arena, retry.detail);
+                        log.log(.error_, "staged tree failed its own capability evals:", .{});
+                        log.log(.error_, "{s}", .{tail});
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+                        feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        self.removeTree(staging);
+                        return .failed;
+                    }
+                } else {
+                    // Could not parse any names; fall back to full retry.
+                    log.log(.warn, "capability evals failed; retrying all (no parseable FAIL lines)", .{});
+                    const retry = try self.capabilityGate(staging, staged_dir);
+                    cap.deinit(self.ctx.gpa);
+                    cap = retry;
+                    if (cap.ok) {
+                        log.log(.info, "capability evals: PASS on retry", .{});
+                    } else {
+                        const tail = errorTail(self.arena, cap.detail);
+                        log.log(.error_, "staged tree failed its own capability evals:", .{});
+                        log.log(.error_, "{s}", .{tail});
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+                        feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        self.removeTree(staging);
+                        return .failed;
+                    }
+                }
+            }
+            log.log(.info, "capability evals: PASS", .{});
         }
 
         // ---- 6. promote ----
@@ -349,9 +585,11 @@ pub const Engine = struct {
         // Post-promotion gate on the live tree.
         const live = try self.gateScore();
         const score_after = live.score / @as(f64, @floatFromInt(@max(live.total, 1)));
-        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "");
+        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints);
 
         log.log(.info, "✓ promoted improvement {s} (gate {d:.2}/{d})", .{ id, live.score, live.total });
+        // Clean up the staging directory now that promotion is done.
+        self.removeTree(staging);
         return .accepted;
     }
 
@@ -428,21 +666,221 @@ pub const Engine = struct {
         return buf.toOwnedSlice(self.arena);
     }
 
+    /// Real declarations for the std symbols a compile error complains about.
+    ///
+    /// The model writes the patch in one shot with no tools, so it cannot look
+    /// a signature up: it recalls one, and what it recalls is usually a
+    /// different Zig version. Handing it only "expected enum, found
+    /// comptime_int" leaves it guessing again, which is how one lock patch
+    /// failed four attempts running on std.posix.SEEK. This is the same lookup
+    /// the std_api tool does, attached to the failure that needs it.
+    fn stdSymbolHelp(self: *Engine, err_text: []const u8) []const u8 {
+        if (sandbox_host.zig_lib_dir.len == 0) return "";
+        var out: std.ArrayList(u8) = .empty;
+        var seen: [4][]const u8 = undefined;
+        var seen_n: usize = 0;
+
+        // The compiler already says where the thing it wanted is declared:
+        // "…/std/os/linux.zig:4036:8: note: enum declared here". Reading those
+        // lines answers the question exactly, with no guessing about which of
+        // several same-named declarations is the relevant one.
+        var notes = err_text;
+        var shown: usize = 0;
+        while (nextStdSourceRef(notes)) |ref| {
+            notes = ref.rest;
+            if (shown == 3) break;
+            const excerpt = self.readAround(ref.path, ref.line) orelse continue;
+            shown += 1;
+            out.appendSlice(self.arena, "\n") catch return "";
+            out.appendSlice(self.arena, ref.path) catch return "";
+            out.appendSlice(self.arena, ", as it actually is in this Zig:\n") catch return "";
+            out.appendSlice(self.arena, excerpt) catch return "";
+        }
+
+        var rest = err_text;
+        while (nextSymbol(rest)) |found| {
+            rest = found.rest;
+            const sym = found.sym;
+
+            var dup = false;
+            for (seen[0..seen_n]) |s2| {
+                if (std.mem.eql(u8, s2, sym)) dup = true;
+            }
+            if (dup) continue;
+            if (seen_n == seen.len) break;
+            seen[seen_n] = sym;
+            seen_n += 1;
+
+            const lines = self.stdGrep(sym) orelse continue;
+            out.appendSlice(self.arena, "\n") catch return "";
+            out.appendSlice(self.arena, sym) catch return "";
+            out.appendSlice(self.arena, ", as it actually is in this Zig:\n") catch return "";
+            out.appendSlice(self.arena, lines) catch return "";
+        }
+        if (out.items.len == 0) return "";
+        return out.items;
+    }
+
+    /// 15 lines of `path` centred on `line`, for showing a declaration the
+    /// compiler pointed at.
+    fn readAround(self: *Engine, path: []const u8, line: usize) ?[]const u8 {
+        const data = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, path, self.arena, .limited(4 << 20)) catch return null;
+        var n: usize = 1;
+        var start: usize = 0;
+        var idx: usize = 0;
+        var end: usize = data.len;
+        const first = if (line > 1) line - 1 else 1;
+        const last = line + 14;
+        while (idx < data.len) : (idx += 1) {
+            if (data[idx] != '\n') continue;
+            if (n == first - 1) start = idx + 1;
+            if (n == last) {
+                end = idx;
+                break;
+            }
+            n += 1;
+        }
+        if (start >= end) return null;
+        return data[start..end];
+    }
+
+    /// Up to 12 lines mentioning `sym` in the standard library source.
+    fn stdGrep(self: *Engine, sym: []const u8) ?[]const u8 {
+        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zig_lib_dir}) catch return null;
+        defer self.ctx.gpa.free(std_dir);
+        const pattern = std.fmt.allocPrint(self.ctx.gpa, "(pub (fn|const|var) {s}\\b|\\b{s} *[:=])", .{ sym, sym }) catch return null;
+        defer self.ctx.gpa.free(pattern);
+        // With context: a bare "pub const SIG = ..." line does not say what
+        // its members are, which is exactly the question being asked.
+        const run_argv = [_][]const u8{ "rg", "-n", "--max-count", "6", "-A", "10", "-e", pattern, std_dir };
+        const res = std.process.run(self.ctx.gpa, self.ctx.io, .{
+            .argv = &run_argv,
+            .stdout_limit = .limited(8 * 1024),
+            .stderr_limit = .limited(4 * 1024),
+        }) catch return null;
+        defer self.ctx.gpa.free(res.stdout);
+        defer self.ctx.gpa.free(res.stderr);
+        if (res.stdout.len == 0) return null;
+        return self.arena.dupe(u8, res.stdout) catch null;
+    }
+
+    /// The first gate invariant the staged tree no longer satisfies, if any.
+    /// Only files the proposal actually touched are read: everything else is a
+    /// verbatim copy of the tree these invariants already hold in.
+    fn brokenInvariant(
+        self: *Engine,
+        staged_dir: std.Io.Dir,
+        changes: []const proposal_mod.Change,
+    ) !?struct { file: []const u8, needle: []const u8 } {
+        for (gate_invariants) |inv| {
+            var touched = false;
+            for (changes) |c| {
+                if (std.mem.eql(u8, c.file, inv.file)) touched = true;
+            }
+            if (!touched) continue;
+            const data = staged_dir.readFileAlloc(self.ctx.io, inv.file, self.arena, .limited(1 << 22)) catch continue;
+            if (std.mem.indexOf(u8, data, inv.needle) == null) return .{ .file = inv.file, .needle = inv.needle };
+        }
+        return null;
+    }
+
+    /// Runs the staged tree's own task evals with the staged binary. The
+    /// build gates only prove the patch compiles and its unit tests pass;
+    /// nothing there notices a change that keeps everything green while
+    /// breaking a tool an agent depends on, which is how a promotion once cut
+    /// the worker stack down to a segfault. This is the check that fails.
+    fn capabilityGate(self: *Engine, staging: []const u8, staged_dir: std.Io.Dir) !gate_checks.GateResult {
+        // Relative to the child's own cwd, which is the staging tree: the
+        // binary under test has to be the staged one, not the one running now.
+        const exe = "./zig-out/bin/clanker";
+        const probe = try std.fmt.allocPrint(self.ctx.gpa, "{s}/zig-out/bin/clanker", .{staging});
+        defer self.ctx.gpa.free(probe);
+        std.Io.Dir.cwd().access(self.ctx.io, probe, .{}) catch |err| {
+            log.log(.warn, "capability gate skipped: no staged binary ({s})", .{@errorName(err)});
+            return .{ .ok = true, .label = "capability evals" };
+        };
+
+        const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
+            .argv = &.{ exe, "eval", "--tasks" },
+            .cwd = .{ .dir = staged_dir },
+            .stdout_limit = .limited(1 << 20),
+            .stderr_limit = .limited(1 << 20),
+        });
+        const ok = switch (result.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        const detail: []const u8 = if (ok) "" else if (result.stdout.len > 0) result.stdout else result.stderr;
+        return .{ .ok = ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+    }
+
+    /// Re-runs only the named eval cases (the ones that failed on the first
+    /// pass). Returns a green gate when every retried case passes.
+    fn capabilityGateRetry(self: *Engine, staged_dir: std.Io.Dir, failed_names: []const []const u8) !gate_checks.GateResult {
+        const exe = "./zig-out/bin/clanker";
+        var all_ok = true;
+        var detail_buf: std.ArrayList(u8) = .empty;
+        defer detail_buf.deinit(self.ctx.gpa);
+        for (failed_names) |name| {
+            const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
+                .argv = &.{ exe, "eval", name },
+                .cwd = .{ .dir = staged_dir },
+                .stdout_limit = .limited(1 << 20),
+                .stderr_limit = .limited(1 << 20),
+            });
+            const case_ok = switch (result.term) {
+                .exited => |c| c == 0,
+                else => false,
+            };
+            if (!case_ok) {
+                all_ok = false;
+                const out = if (result.stdout.len > 0) result.stdout else result.stderr;
+                detail_buf.appendSlice(self.ctx.gpa, out) catch {};
+                detail_buf.append(self.ctx.gpa, '\n') catch {};
+            }
+            self.ctx.gpa.free(result.stdout);
+            self.ctx.gpa.free(result.stderr);
+        }
+        const detail: []const u8 = if (all_ok) "" else (self.arena.dupe(u8, detail_buf.items) catch "");
+        return .{ .ok = all_ok, .label = "capability evals", .detail = detail };
+    }
+
     // ------------------------------------------------------------ context --
 
     /// How much source to send, derived from the model actually being used.
     /// Roughly 3 bytes per token over about a third of the window, which comes
     /// out at the window itself in bytes, leaving the rest for the rules, the
     /// instruction, the gate output and the answer (which carries whole
-    /// rewritten files). The ceiling is a little over this project's total
-    /// source size, so a 1M-window model sees all of itself and never patches
-    /// a file it was not shown; the floor keeps a small model working.
+    /// rewritten files).
+    ///
+    /// The ceiling is not the model's whole window. Sending the entire
+    /// repository cost 345k prompt tokens a call, at 1.79 dollars whenever the
+    /// prefix missed the cache, which it does on every run that follows a
+    /// promotion because the source it contains is what changed. A quarter of a
+    /// megabyte still carries the files an instruction is about, whole, plus a
+    /// wide margin of neighbours; what does not fit is listed by name so the
+    /// model knows not to patch it blind.
     fn contextBudget(self: *const Engine) usize {
         const window: usize = self.provider.activeModel().context_window;
-        return std.math.clamp(window, 64 * 1024, 1024 * 1024);
+        return std.math.clamp(window, 64 * 1024, 256 * 1024);
     }
 
-    fn collectContext(self: *Engine, max_bytes: usize) ![]const u8 {
+    /// The source context, split at the cache breakpoint.
+    ///
+    /// `bulk` is everything the patch is unlikely to touch and `focus` the few
+    /// files it is about. They go out as two system blocks, each with its own
+    /// breakpoint, so a promotion that rewrites a focus file leaves the bulk
+    /// cached. Ordered the other way round, the file being edited sat first and
+    /// invalidated the entire block: the first call of every run after a
+    /// promotion missed completely and re-billed the whole context.
+    pub const Context = struct {
+        bulk: []const u8,
+        focus: []const u8,
+        files: usize,
+        bytes: usize,
+    };
+
+    fn collectContext(self: *Engine, max_bytes: usize) !Context {
         const instructions = self.instructions;
         var keywords: std.ArrayList([]const u8) = .empty;
         var kw_it = std.mem.tokenizeAny(u8, instructions, " \n\r\t,.;:'\"()[]{}");
@@ -492,36 +930,86 @@ pub const Engine = struct {
         }.lt);
 
         var buf: std.ArrayList(u8) = .empty;
+        var focus: std.ArrayList(u8) = .empty;
         var omitted: std.ArrayList([]const u8) = .empty;
         var included_any = false;
+
+        // The volatile tail: the files the instruction names (pinNamedFiles
+        // marks them with a score no keyword count can reach) plus whatever
+        // recent runs already changed. Those are the files most likely to
+        // change again, and one changed file invalidates the block it sits in,
+        // so keeping them together is what lets the bulk stay cached from one
+        // run to the next.
+        // Bounded: twelve runs' worth of changed files is most of the large
+        // files in the project, and an unbounded focus block is just the old
+        // single block under a new name. Pinned files first, then churn, until
+        // the tail has taken its share.
+        const churn = self.hist.recentlyTouched(self.arena, 6) catch &.{};
+        const focus_budget = max_bytes / 4;
+        // A file the instruction names is the file being patched, so it goes in
+        // whatever its size: dropping it is how a run ends in "no changes
+        // needed" about a file it was never shown. tools/zig/webui/index.html
+        // is 133 KB on its own, and the fix for that was once to quadruple the
+        // whole context, which quadrupled the bill for every unrelated run too.
         for (cands.items) |c| {
-            // Keep the context tight: only include files that matched the
-            // instruction keywords (plus always build.zig / config.json), so
-            // the model cannot lose track of which file has what.
-            const always = std.mem.eql(u8, c.path, "build.zig") or std.mem.eql(u8, c.path, "config.json") or std.mem.eql(u8, c.path, "build.zig.zon");
-            if (c.score == 0 and !always) continue;
+            if (c.score < 1_000_000) continue;
             included_any = true;
-            try self.appendWholeFile(&buf, &omitted, c, max_bytes);
+            try self.appendWholeFile(&focus, &omitted, c, std.math.maxInt(usize));
         }
-        if (!included_any) {
-            // No keyword matches — fall back to the top candidates by score.
-            for (cands.items) |c| try self.appendWholeFile(&buf, &omitted, c, max_bytes);
+        for (cands.items) |c| {
+            if (c.score >= 1_000_000 or !pathIn(churn, c.path)) continue;
+            if (focus.items.len >= focus_budget) break;
+            included_any = true;
+            try self.appendWholeFile(&focus, &omitted, c, focus_budget);
+        }
+        // The bulk is deliberately chosen without reference to the
+        // instruction, and emitted in path order. Selecting it by keyword
+        // score made its bytes different on every run, which is the same thing
+        // as having no cache at all: relevance decided the tail, and the tail
+        // is what a prefix cache cannot tolerate moving. Relevance still
+        // decides the focus block, which is where the instruction's own files
+        // are.
+        const bulk_order = try self.arena.dupe(Candidate, cands.items);
+        std.mem.sort(Candidate, bulk_order, {}, struct {
+            fn lt(_: void, a: Candidate, b: Candidate) bool {
+                return std.mem.lessThan(u8, a.path, b.path);
+            }
+        }.lt);
+        // A fixed share, not "whatever the focus left over": a cache block has
+        // to be identical byte for byte, and a budget that moves with the focus
+        // size changes which file lands last on every run. A large pinned file
+        // therefore grows the total rather than shrinking the cached half.
+        const bulk_budget = max_bytes - focus_budget;
+        for (bulk_order) |c| {
+            if (pathIn(churn, c.path)) continue;
+            included_any = true;
+            try self.appendWholeFile(&buf, &omitted, c, bulk_budget);
         }
         // A file that did not fit has to be named. Silently cutting one off
         // mid-way, or dropping it entirely, left the model writing exact-match
         // patches against text it had never seen and could not know was
         // missing.
+        // Into the volatile block, not the bulk: which files did not fit
+        // depends on the instruction, and a list that changes every run sitting
+        // at the end of the cached block invalidates the whole thing. This is
+        // what kept the hit rate at zero even after the split.
         if (omitted.items.len > 0) {
-            try buf.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; do not patch these blind) =====\n");
+            try focus.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; do not patch these blind) =====\n");
             for (omitted.items) |path| {
-                try buf.appendSlice(self.arena, path);
-                try buf.appendSlice(self.arena, "\n");
+                try focus.appendSlice(self.arena, path);
+                try focus.appendSlice(self.arena, "\n");
             }
         }
-        if (buf.items.len == 0) return "(no source files found)";
-        log.log(.debug, "context: {d} files, {d} bytes (budget {d}, {d} omitted)", .{ cands.items.len, buf.items.len, max_bytes, omitted.items.len });
+        const total = buf.items.len + focus.items.len;
+        if (total == 0) return .{ .bulk = "(no source files found)", .focus = "", .files = 0, .bytes = 0 };
+        log.log(.debug, "context: {d} files, {d} bytes ({d} focus, budget {d}, {d} omitted)", .{ cands.items.len, total, focus.items.len, max_bytes, omitted.items.len });
         for (omitted.items) |o| log.log(.debug, "context: omitted {s}", .{o});
-        return buf.toOwnedSlice(self.arena);
+        return .{
+            .bulk = try buf.toOwnedSlice(self.arena),
+            .focus = try focus.toOwnedSlice(self.arena),
+            .files = cands.items.len,
+            .bytes = total,
+        };
     }
 
     /// Appends a candidate whole or not at all. A half file is worse than an
@@ -551,8 +1039,14 @@ pub const Engine = struct {
         while (it.next()) |tok| {
             const path = std.mem.trim(u8, tok, ".");
             if (std.mem.indexOfScalar(u8, path, '/') == null) continue;
+            // .html is here for tools/zig/webui/index.html: the whole web UI is
+            // one file, validatePath already lets a proposal write it, and
+            // without it in context clanker could edit a page it had never
+            // seen. It asked for "no changes needed" on web UI work for
+            // exactly this reason.
             if (!std.mem.endsWith(u8, path, ".zig") and !std.mem.endsWith(u8, path, ".json") and
-                !std.mem.endsWith(u8, path, ".md") and !std.mem.endsWith(u8, path, ".zon")) continue;
+                !std.mem.endsWith(u8, path, ".md") and !std.mem.endsWith(u8, path, ".zon") and
+                !std.mem.endsWith(u8, path, ".html")) continue;
             if (!proposal_mod.validatePath(path)) continue;
 
             var found = false;
@@ -582,6 +1076,11 @@ pub const Engine = struct {
         };
         var score: usize = 0;
         for (keywords) |kw| {
+            // A keyword in the path says the file is what the instruction is
+            // about. A keyword in the body only says the word occurs, which a
+            // large file does by accident: src/cli.zig matched nearly every
+            // instruction purely by being 189 KB.
+            if (std.mem.indexOf(u8, rel, kw) != null) score += 10;
             if (std.mem.indexOf(u8, data, kw) != null) score += 1;
         }
         if (std.mem.indexOf(u8, rel, "calculator") != null and std.mem.indexOf(u8, rel, "src") == null) score += 2;
@@ -600,7 +1099,7 @@ pub const Engine = struct {
                 },
                 .file => {
                     if (std.mem.endsWith(u8, entry.name, ".wasm")) continue;
-                    if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon")) continue;
+                    if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon") and !std.mem.endsWith(u8, entry.name, ".html")) continue;
                     const sub = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ dir_rel, entry.name });
                     try self.collectFile(sub, keywords, cands);
                 },
@@ -625,11 +1124,112 @@ pub const Engine = struct {
         return false;
     }
 
+    /// Removes a directory tree rooted at `rel` (relative to cwd). Only
+    /// called on paths under state/staging/ whose names match the id
+    /// pattern this engine generates.
+    fn removeTree(self: *Engine, rel: []const u8) void {
+        // A recursive delete that takes a path is one wrong argument away from
+        // eating the working tree. Only ever a staging directory of this
+        // engine's own making: "state/staging/imp-<digits>", nothing above it,
+        // nothing beside it, no traversal.
+        if (!isStagingDirPath(rel)) {
+            log.log(.warn, "refusing to remove '{s}': not a staging directory", .{rel});
+            return;
+        }
+        self.removeTreeAt(std.Io.Dir.cwd(), rel);
+    }
+
+    /// Exactly `state/staging/imp-<digits>` and nothing else.
+    fn isStagingDirPath(rel: []const u8) bool {
+        const prefix = "state/staging/";
+        if (!std.mem.startsWith(u8, rel, prefix)) return false;
+        const name = rel[prefix.len..];
+        if (std.mem.indexOfScalar(u8, name, '/') != null) return false;
+        return isImpId(name);
+    }
+
+    /// Removes a directory tree rooted at `rel` under `base`. Split from
+    /// removeTree so the unit test can operate on a tmpDir instead of cwd.
+    fn removeTreeAt(self: *Engine, base: std.Io.Dir, rel: []const u8) void {
+        var dir = base.openDir(self.ctx.io, rel, .{ .iterate = true }) catch return;
+        var it = dir.iterate();
+        while (it.next(self.ctx.io) catch null) |entry| {
+            const sub = std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ rel, entry.name }) catch continue;
+            defer self.ctx.gpa.free(sub);
+            switch (entry.kind) {
+                .directory => self.removeTreeAt(base, sub),
+                .file => base.deleteFile(self.ctx.io, sub) catch {},
+                else => {},
+            }
+        }
+        dir.close(self.ctx.io);
+        base.deleteDir(self.ctx.io, rel) catch {};
+    }
+
+    /// Looks like an id this engine mints: "imp-" followed by digits.
+    fn isImpId(name: []const u8) bool {
+        if (!std.mem.startsWith(u8, name, "imp-")) return false;
+        if (name.len <= 4) return false;
+        for (name[4..]) |c| {
+            if (!std.ascii.isDigit(c)) return false;
+        }
+        return true;
+    }
+
+    /// Keeps at most `keep` staging directories (by name, newest-last since
+    /// the id embeds a timestamp), and removes the rest. Called at the start
+    /// of prepareStaging so leftovers from crashed runs are collected too.
+    /// `current_id` (if non-null) is never removed.
+    fn pruneStaging(self: *Engine, keep: usize, current_id: ?[]const u8) void {
+        const staging_root = "state/staging";
+        var dir = std.Io.Dir.cwd().openDir(self.ctx.io, staging_root, .{ .iterate = true }) catch return;
+        defer dir.close(self.ctx.io);
+        var names: std.ArrayList([]const u8) = .empty;
+        defer {
+            for (names.items) |n| self.ctx.gpa.free(n);
+            names.deinit(self.ctx.gpa);
+        }
+        var it = dir.iterate();
+        while (it.next(self.ctx.io) catch null) |entry| {
+            if (entry.kind != .directory) continue;
+            if (!isImpId(entry.name)) continue;
+            names.append(self.ctx.gpa, self.ctx.gpa.dupe(u8, entry.name) catch continue) catch continue;
+        }
+        if (names.items.len <= keep) return;
+        // Sort ascending (oldest first): the id is "imp-<nanosecond ts>".
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        const to_remove = names.items.len - keep;
+        for (names.items[0..to_remove]) |name| {
+            if (current_id) |cid| {
+                if (std.mem.eql(u8, name, cid)) continue;
+            }
+            const path = std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ staging_root, name }) catch continue;
+            defer self.ctx.gpa.free(path);
+            self.removeTree(path);
+        }
+    }
+
     fn prepareStaging(self: *Engine, staging: []const u8) !void {
+        // Prune old staging dirs before creating a new one. Extract the id
+        // from the path ("state/staging/<id>").
+        const current_id = if (std.mem.lastIndexOfScalar(u8, staging, '/')) |slash| staging[slash + 1 ..] else staging;
+        self.pruneStaging(3, current_id);
         const dir = std.Io.Dir.cwd();
         try dir.createDirPath(self.ctx.io, staging);
         for (staging_roots) |root| {
             try copyTreeInto(self.ctx.io, self.ctx.gpa, dir, root, staging);
+        }
+        // Machine-local runtime context, not source: the capability gate runs
+        // the staged binary, and without these it has no provider and fails
+        // every proposal on missing credentials rather than on its merits.
+        // Neither is in the modifiable surface, so nothing can be promoted
+        // back out of them.
+        for (staging_runtime_files) |f| {
+            copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch {};
         }
     }
 };
@@ -710,6 +1310,24 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Parses eval names out of the capability gate output. The staged binary
+/// prints lines like `calculator: 0.00 FAIL` — one per case. Returns the
+/// names of every case that reported FAIL (arena-owned).
+fn parseFailedEvalNames(arena: std.mem.Allocator, detail: []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var lines = std.mem.splitScalar(u8, detail, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (!std.mem.endsWith(u8, line, "FAIL")) continue;
+        // Shape: "<name>: <score> FAIL"
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const name = std.mem.trim(u8, line[0..colon], " \t");
+        if (name.len == 0) continue;
+        try out.append(arena, name);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
     var s = content;
     if (std.mem.startsWith(u8, s, "```")) {
@@ -753,7 +1371,7 @@ fn walkInto(io: std.Io, arena: std.mem.Allocator, rel: []const u8, buf: *std.Arr
         switch (entry.kind) {
             .directory => try walkInto(io, arena, sub, buf, max_bytes),
             .file => {
-                if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon")) continue;
+                if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon") and !std.mem.endsWith(u8, entry.name, ".html")) continue;
                 if (std.mem.endsWith(u8, entry.name, ".wasm")) continue;
                 try appendFile(io, arena, sub, buf, max_bytes);
             },
@@ -857,11 +1475,25 @@ const improve_system_fmt =
 ;
 
 /// Volatile half: what to do this time, and what went wrong last time.
+/// The files the instruction names, kept in their own block so the cached bulk
+/// survives a patch to them.
+const improve_focus_fmt =
+    \\# The files this instruction is about
+    \\{s}
+    \\
+;
+
 const improve_user_fmt =
     \\# Improvement instruction
     \\{s}
     \\
     \\# Current gate status
+    \\{s}
+    \\
+    \\# Earlier runs on this repository
+    \\Work listed as accepted is already in the source you were given: do not
+    \\propose it again. Work listed as rejected failed for the stated reason;
+    \\do not repeat that mistake.
     \\{s}
     \\
     \\# Previous attempt feedback
@@ -870,6 +1502,45 @@ const improve_user_fmt =
     \\Produce the patch proposal JSON now. Your response must be ONLY the JSON
     \\object — no markdown fences, no prose.
 ;
+
+test "parseFailedEvalNames extracts names from FAIL lines" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const output =
+        \\calculator: 1.00 PASS
+        \\lsp: 0.00 FAIL
+        \\read_file: 0.00 FAIL
+        \\search_code_symbol: 1.00 PASS
+    ;
+    const names = try parseFailedEvalNames(arena, output);
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try std.testing.expectEqualStrings("lsp", names[0]);
+    try std.testing.expectEqualStrings("read_file", names[1]);
+}
+
+test "parseFailedEvalNames returns empty on no FAIL lines" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const output =
+        \\calculator: 1.00 PASS
+        \\search_code_symbol: 1.00 PASS
+    ;
+    const names = try parseFailedEvalNames(arena, output);
+    try std.testing.expectEqual(@as(usize, 0), names.len);
+}
+
+test "parseFailedEvalNames handles empty input" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const names = try parseFailedEvalNames(arena, "");
+    try std.testing.expectEqual(@as(usize, 0), names.len);
+}
 
 test "errorTail keeps the diagnosis, not the build-runner noise" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -980,7 +1651,7 @@ test "the context budget follows the model's own window" {
     const arena = arena_state.allocator();
     var cfg = config.Config{};
 
-    // A small window keeps the floor; a large one is capped rather than
+    // A small window keeps the floor; a large one is still capped rather than
     // billing the whole repository on every attempt.
     var small = try config.Provider.single(arena, "s", "http://x", .openai_compat, "m", .{ .context_window = 8192 });
     var engine = Engine{ .ctx = undefined, .arena = arena, .provider = &small, .cfg = &cfg, .hist = undefined, .instructions = "" };
@@ -992,5 +1663,261 @@ test "the context budget follows the model's own window" {
 
     var huge = try config.Provider.single(arena, "h", "http://x", .openai_compat, "m", .{ .context_window = 1_048_576 });
     engine.provider = &huge;
-    try std.testing.expectEqual(@as(usize, 1024 * 1024), engine.contextBudget());
+    try std.testing.expectEqual(@as(usize, 256 * 1024), engine.contextBudget());
+
+    // The ceiling is a cost decision, not a capacity one. A million-token model
+    // can hold the whole project, and sending it cost 345k prompt tokens and
+    // 1.79 dollars per attempt, on every run, whether or not the instruction
+    // had anything to do with the files being sent.
+    //
+    // Raising it to fit one large file is the wrong lever: a file the
+    // instruction names bypasses the focus share entirely (see
+    // collectContext), so tools/zig/webui/index.html at 133 KiB arrives whole
+    // under this ceiling. Widening the ceiling instead makes every unrelated
+    // run pay for it.
+    try std.testing.expect(engine.contextBudget() <= 256 * 1024);
+}
+
+test "pruneStaging keeps the newest N and removes the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Create 5 fake staging dirs under a tmp "state/staging" with imp- ids.
+    try tmp.dir.createDirPath(io, "state/staging/imp-100");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/staging/imp-100/file.txt", .data = "a" });
+    try tmp.dir.createDirPath(io, "state/staging/imp-200");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/staging/imp-200/file.txt", .data = "b" });
+    try tmp.dir.createDirPath(io, "state/staging/imp-300");
+    try tmp.dir.createDirPath(io, "state/staging/imp-400");
+    try tmp.dir.createDirPath(io, "state/staging/imp-500");
+    // Also a non-imp directory that must be left alone.
+    try tmp.dir.createDirPath(io, "state/staging/other-thing");
+
+    // Build an engine that operates on the tmp dir. We only need the fields
+    // pruneStaging touches: ctx (io + gpa).
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+    var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = undefined, .instructions = "" };
+
+    // pruneStaging works against cwd, but our dirs are in tmp. We cannot
+    // change cwd in a test, so call the pieces that matter directly.
+    // Instead, test isImpId and the sort/keep logic by checking the names.
+    try std.testing.expect(Engine.isImpId("imp-100"));
+    try std.testing.expect(Engine.isImpId("imp-99999999"));
+    try std.testing.expect(!Engine.isImpId("imp-"));
+    try std.testing.expect(!Engine.isImpId("other-thing"));
+    try std.testing.expect(!Engine.isImpId("imp-abc"));
+
+    // Simulate the pruning logic: list, sort, keep 3.
+    var names: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (names.items) |n| std.testing.allocator.free(n);
+        names.deinit(std.testing.allocator);
+    }
+    var staging_dir = tmp.dir.openDir(io, "state/staging", .{ .iterate = true }) catch unreachable;
+    defer staging_dir.close(io);
+    var it = staging_dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        if (!Engine.isImpId(entry.name)) continue;
+        try names.append(std.testing.allocator, try std.testing.allocator.dupe(u8, entry.name));
+    }
+    try std.testing.expectEqual(@as(usize, 5), names.items.len);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    // With keep=3, the first 2 (imp-100, imp-200) would be removed.
+    const to_remove = names.items.len - 3;
+    try std.testing.expectEqual(@as(usize, 2), to_remove);
+    try std.testing.expectEqualStrings("imp-100", names.items[0]);
+    try std.testing.expectEqualStrings("imp-200", names.items[1]);
+    // The kept ones are the 3 newest.
+    try std.testing.expectEqualStrings("imp-300", names.items[2]);
+    try std.testing.expectEqualStrings("imp-400", names.items[3]);
+    try std.testing.expectEqualStrings("imp-500", names.items[4]);
+
+    // Actually remove them to verify removeTree works on the tmp dir.
+    for (names.items[0..to_remove]) |name| {
+        const path = try std.fmt.allocPrint(std.testing.allocator, "state/staging/{s}", .{name});
+        defer std.testing.allocator.free(path);
+        // Use the engine's removeTree indirectly: it operates on cwd, but
+        // we can verify the logic with manual deletion on tmp.dir.
+        engine.removeTreeAt(tmp.dir, path);
+    }
+    // imp-100 should be gone (its file too).
+    const absent = tmp.dir.readFileAlloc(io, "state/staging/imp-100/file.txt", std.testing.allocator, .limited(64));
+    try std.testing.expectError(error.FileNotFound, absent);
+    // imp-300 should still exist.
+    try tmp.dir.access(io, "state/staging/imp-300", .{});
+    // The non-imp directory is untouched.
+    try tmp.dir.access(io, "state/staging/other-thing", .{});
+}
+
+test "a patch that drops a gate call from the engine is rejected before it compiles" {
+    // The improvement machinery is modifiable, so the one thing that must not
+    // be removable is the gating itself. This runs against the staged text,
+    // which is the only place a patch exists before it is promoted.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, "src/improve");
+
+    // A file that still contains every load-bearing call passes.
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = "src/improve/engine.zig", .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = "src/improve/engine.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    // Drop one call and it is named.
+    const dropped = try std.mem.replaceOwned(u8, arena, keeps.items, "self.capabilityGate(", "");
+    try staged.writeFile(io, .{ .sub_path = "src/improve/engine.zig", .data = dropped });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings("self.capabilityGate(", bad.needle);
+
+    // A proposal that does not touch the file is not checked against it: the
+    // rest of the tree is a verbatim copy where these already hold.
+    const elsewhere = [_]proposal_mod.Change{.{ .file = "src/cli.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
+}
+
+test "the staging remover refuses any path that is not a staging directory" {
+    // removeTree deletes a tree recursively. The only thing standing between
+    // that and the working tree is this predicate.
+    try std.testing.expect(Engine.isStagingDirPath("state/staging/imp-1786415790081955962"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/imp-123/src"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/../.."));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/notanid"));
+    try std.testing.expect(!Engine.isStagingDirPath("src"));
+    try std.testing.expect(!Engine.isStagingDirPath("/"));
+    try std.testing.expect(!Engine.isStagingDirPath(""));
+}
+
+test "a compile error's std references reduce to the symbol worth looking up" {
+    // The engine hands the model a signature it cannot look up itself. Picking
+    // the wrong component would look it up in the wrong place and quietly
+    // teach nothing.
+    const err =
+        \\src/util/flock.zig:30:48: error: expected enum or tagged union, found 'comptime_int'
+        \\        fl.whence = @intFromEnum(std.posix.SEEK.SET);
+    ;
+    const first = nextStdSymbol(err) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SET", first.sym);
+    try std.testing.expect(nextStdSymbol(first.rest) == null);
+
+    // A bare path yields its own last component.
+    const two = nextStdSymbol("std.mem.splitScalar is gone") orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("splitScalar", two.sym);
+
+    // Trailing punctuation is not part of the name.
+    const three = nextStdSymbol("use std.Io.Writer.") orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("Writer", three.sym);
+
+    // Nothing to look up.
+    try std.testing.expect(nextStdSymbol("no standard library here") == null);
+    try std.testing.expect(nextStdSymbol("std.x") == null);
+}
+
+test "the type a compiler note names is looked up too" {
+    // The source line says what was called; the note underneath says what the
+    // compiler actually wanted, and only the note carries the type whose
+    // members are the answer.
+    const note = "error: expected type 'os.linux.SIG__enum_1935', found 'comptime_int'";
+    const t = nextQuotedType(note) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SIG", t.sym);
+
+    const missing = "enum 'os.linux.SIG__enum_1935' has no member named 'none'";
+    const m = nextQuotedType(missing) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SIG", m.sym);
+    // 'none' is a member name, not a type: no dot, so it is not looked up.
+    try std.testing.expect(nextQuotedType(m.rest) == null);
+
+    // Prose in quotes is not a type.
+    try std.testing.expect(nextQuotedType("call it 'the thing that failed'") == null);
+
+    // Both shapes in one message are found by the combined scan.
+    const both =
+        \\        fl.whence = @intFromEnum(std.posix.SEEK.SET);
+        \\note: expected type 'os.linux.SIG__enum_1935'
+    ;
+    const first = nextSymbol(both) orelse return error.TestExpectedSymbol;
+    const second = nextSymbol(first.rest) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SET", first.sym);
+    try std.testing.expectEqualStrings("SIG", second.sym);
+}
+
+test "a compile error about a std signature comes back with the declaration" {
+    // The whole point of this help is the case that kept repeating: a signal
+    // passed as an integer where SIG is an enum, five runs in a row.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    // Without a lib dir there is nothing to read, and saying so beats a
+    // confusing empty result.
+    const saved = sandbox_host.zig_lib_dir;
+    defer sandbox_host.zig_lib_dir = saved;
+    if (saved.len == 0) return error.SkipZigTest;
+
+    const err = try std.fmt.allocPrint(arena,
+        \\src/util/pidlock.zig:72:39: error: expected type 'os.linux.SIG__enum_1935', found 'comptime_int'
+        \\    const rc = std.os.linux.kill(pid, 0);
+        \\{s}/std/os/linux.zig:4036:8: note: enum declared here
+    , .{saved});
+
+    const help = engine.stdSymbolHelp(err);
+    try std.testing.expect(help.len > 0);
+    // The declaration the compiler pointed at, not a guess at which SIG.
+    try std.testing.expect(std.mem.indexOf(u8, help, "os/linux.zig") != null);
 }

@@ -52,6 +52,45 @@ pub const History = struct {
         return self.base;
     }
 
+    /// A stable fingerprint of one edit: the file it targets, the text it
+    /// matches, and the text it writes. Two proposals with the same
+    /// fingerprint are literally the same edit, whatever their summaries say.
+    pub fn changeFingerprint(file: []const u8, old: []const u8, new: []const u8) u64 {
+        var h = std.hash.Wyhash.init(0x1F0DE57);
+        h.update(file);
+        h.update("\x00");
+        h.update(old);
+        h.update("\x00");
+        h.update(new);
+        return h.final();
+    }
+
+    /// True when an accepted improvement already made exactly this edit.
+    ///
+    /// The gates answer "is this change correct", never "is this change new",
+    /// so a redundant edit passes them all: it builds, tests, formats and
+    /// lints. Without this the loop re-promoted the same one-line insertion
+    /// three times.
+    pub fn alreadyAccepted(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !bool {
+        if (fingerprints.len == 0) return false;
+        const entries = try self.loadAll(arena);
+        for (entries) |e| {
+            if (!std.mem.eql(u8, e.status, "accepted")) continue;
+            if (e.changes.len == 0) continue;
+            if (e.changes.len != fingerprints.len) continue;
+            var all = true;
+            for (fingerprints) |fp| {
+                var found = false;
+                for (e.changes) |seen| {
+                    if (seen == fp) found = true;
+                }
+                if (!found) all = false;
+            }
+            if (all) return true;
+        }
+        return false;
+    }
+
     /// Appends one JSON line describing an attempt.
     pub fn append(
         self: *History,
@@ -63,12 +102,25 @@ pub const History = struct {
         score_before: f64,
         score_after: f64,
         detail: []const u8,
+        changes: []const u64,
     ) !void {
         self.base.createDirPath(self.io, self.state_dir) catch {};
         self.base.createDirPath(self.io, self.history_dir) catch {};
 
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.gpa);
+
+        // Carry the existing log forward. `writeFile` replaces, so building
+        // only the new record here meant every improvement erased the record
+        // of the one before it: a .jsonl that never held more than one line.
+        // With no memory of what it had already done, the loop re-proposed the
+        // same change until something else happened to stop it — the reason
+        // `repl_md = .{};` was promoted into src/cli.zig three separate times.
+        if (self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch null) |prior| {
+            defer self.gpa.free(prior);
+            try buf.appendSlice(self.gpa, prior);
+            if (prior.len > 0 and prior[prior.len - 1] != '\n') try buf.append(self.gpa, '\n');
+        }
 
         var w: std.Io.Writer = .fixed(try self.gpa.alloc(u8, 1 << 20));
         defer self.gpa.free(w.buffer);
@@ -95,6 +147,16 @@ pub const History = struct {
         try s.print("{d}", .{score_after});
         try s.objectField("detail");
         try s.write(detail);
+        try s.objectField("changes");
+        try s.beginArray();
+        // Hex strings, not numbers: a Wyhash fingerprint is a full u64 and
+        // JSON's integer range is signed, so anything above i64 max would not
+        // survive the round trip and the edit would look new again.
+        for (changes) |c| {
+            var fp_buf: [16]u8 = undefined;
+            try s.write(std.fmt.bufPrint(&fp_buf, "{x:0>16}", .{c}) catch continue);
+        }
+        try s.endArray();
         try s.endObject();
 
         try buf.appendSlice(self.gpa, w.buffer[0..w.end]);
@@ -109,7 +171,11 @@ pub const History = struct {
             defer self.gpa.free(dst);
             self.base.createDirPath(self.io, dirName(dst)) catch {};
             copyFile(self.io, self.gpa, self.base, f, dst) catch |err| {
-                log.log(.warn, "snapshot of '{s}' failed: {s}", .{ f, @errorName(err) });
+                // A new file has no previous version to snapshot; that is not
+                // a failure and should not hide real snapshot problems.
+                if (err != error.FileNotFound) {
+                    log.log(.warn, "snapshot of '{s}' failed: {s}", .{ f, @errorName(err) });
+                }
             };
         }
     }
@@ -141,6 +207,11 @@ pub const History = struct {
         id: []const u8,
         status: []const u8,
         files: []const []const u8,
+        summary: []const u8 = "",
+        detail: []const u8 = "",
+        /// Empty for entries written before fingerprints existed; those simply
+        /// cannot be matched against, rather than matching everything.
+        changes: []const u64 = &.{},
     };
 
     fn loadAll(self: *History, arena: std.mem.Allocator) ![]Entry {
@@ -173,11 +244,100 @@ pub const History = struct {
                 .string => |s| s,
                 else => continue,
             } else continue;
-            try out.append(arena, .{ .id = id, .status = status, .files = try files.toOwnedSlice(arena) });
+            var fps: std.ArrayList(u64) = .empty;
+            if (obj.get("changes")) |cv| {
+                switch (cv) {
+                    .array => |arr| for (arr.items) |item| switch (item) {
+                        .string => |sv| try fps.append(arena, std.fmt.parseInt(u64, sv, 16) catch continue),
+                        // Entries written before fingerprints were hex.
+                        .integer => |n| try fps.append(arena, @bitCast(n)),
+                        else => {},
+                    },
+                    else => {},
+                }
+            }
+            const text = struct {
+                fn get(o: json.ObjectMap, key: []const u8) []const u8 {
+                    const x = o.get(key) orelse return "";
+                    return switch (x) {
+                        .string => |str| str,
+                        else => "",
+                    };
+                }
+            }.get;
+            try out.append(arena, .{
+                .id = id,
+                .status = status,
+                .files = try files.toOwnedSlice(arena),
+                .summary = text(obj, "summary"),
+                .detail = text(obj, "detail"),
+                .changes = try fps.toOwnedSlice(arena),
+            });
         }
         return out.toOwnedSlice(arena);
     }
+
+    /// Every file touched by the last `max_entries` attempts.
+    ///
+    /// These are the files most likely to change again, and a file that
+    /// changes invalidates the cache block it sits in. Keeping them out of the
+    /// stable bulk is what lets the bulk survive from one run to the next.
+    pub fn recentlyTouched(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var out: std.ArrayList([]const u8) = .empty;
+        for (entries[start..]) |e| {
+            for (e.files) |f| {
+                var seen = false;
+                for (out.items) |have| {
+                    if (std.mem.eql(u8, have, f)) seen = true;
+                }
+                if (!seen) try out.append(arena, f);
+            }
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    /// The last `max_entries` attempts, as a block for the improve prompt:
+    /// what was already done, and what was tried and rejected.
+    ///
+    /// Nothing carried across runs before this, so the same mistake came back
+    /// indefinitely — one wrong import proposed in three separate runs — and
+    /// work already promoted got proposed again as a no-op that passed every
+    /// gate because it changed nothing that mattered.
+    pub fn recentSummary(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return "";
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var buf: std.ArrayList(u8) = .empty;
+        for (entries[start..]) |e| {
+            if (e.summary.len == 0) continue;
+            try buf.appendSlice(arena, "- ");
+            try buf.appendSlice(arena, e.status);
+            try buf.appendSlice(arena, ": ");
+            try buf.appendSlice(arena, firstLine(e.summary, 160));
+            // Why it failed is the part worth carrying: the summary alone says
+            // what was attempted, not what went wrong with it.
+            if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
+                try buf.appendSlice(arena, "\n    rejected because: ");
+                try buf.appendSlice(arena, firstLine(e.detail, 200));
+            }
+            try buf.appendSlice(arena, "\n");
+        }
+        return buf.toOwnedSlice(arena);
+    }
 };
+
+/// First non-empty line, clipped. A gate detail can be a whole build log, and
+/// the first error line is the part that says what to do differently.
+fn firstLine(s: []const u8, max: usize) []const u8 {
+    const trimmed = std.mem.trim(u8, s, " \t\r\n");
+    const end = std.mem.indexOfScalar(u8, trimmed, '\n') orelse trimmed.len;
+    return trimmed[0..@min(end, max)];
+}
 
 fn dirName(path: []const u8) []const u8 {
     if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
@@ -206,11 +366,117 @@ test "history append + revert round trip" {
 
     var hist = History.init(gpa, io, tmp.dir, "state");
     defer hist.deinit();
-    try hist.append("test-id-1", .accepted, "instruction", "summary", &.{"src/main.zig"}, 0.0, 1.0, "");
+    try hist.append("test-id-1", .accepted, "instruction", "summary", &.{"src/main.zig"}, 0.0, 1.0, "", &.{});
     // revert of an unknown id errors cleanly
     try std.testing.expectError(error.ImprovementNotFound, hist.revert("nope"));
     // the log file exists with one line
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(raw);
     try std.testing.expect(std.mem.indexOf(u8, raw, "test-id-1") != null);
+}
+
+test "an edit already accepted is recognised, a different one is not" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // The edit that actually got promoted three times.
+    const fp = History.changeFingerprint("src/cli.zig", "    const resp = a.run(", "    repl_md = .{};\n    const resp = a.run(");
+    try std.testing.expect(!try hist.alreadyAccepted(arena, &.{fp}));
+
+    try hist.append("imp-1", .accepted, "i", "reset repl_md", &.{"src/cli.zig"}, 0.0, 1.0, "", &.{fp});
+    try std.testing.expect(try hist.alreadyAccepted(arena, &.{fp}));
+
+    // A different edit to the same file is still new.
+    const other = History.changeFingerprint("src/cli.zig", "something else", "replacement");
+    try std.testing.expect(!try hist.alreadyAccepted(arena, &.{other}));
+
+    // A rejected attempt is not a reason to refuse the work.
+    const refused = History.changeFingerprint("src/a.zig", "x", "y");
+    try hist.append("imp-2", .rejected, "i", "s", &.{"src/a.zig"}, 0.0, 0.0, "", &.{refused});
+    try std.testing.expect(!try hist.alreadyAccepted(arena, &.{refused}));
+}
+
+test "snapshot silently skips a file that does not exist yet" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Write one file that exists; leave the other absent (a new file the
+    // proposal would create).
+    tmp.dir.createDirPath(io, "src") catch {};
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/existing.zig", .data = "existing content" });
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // snapshot must succeed without error even though src/new_file.zig does
+    // not exist; existing.zig must be copied.
+    try hist.snapshot("snap-1", &.{ "src/existing.zig", "src/new_file.zig" });
+
+    // The existing file was snapshotted.
+    const snapped = try tmp.dir.readFileAlloc(io, "state/history/snap-1/src/existing.zig", gpa, .limited(1 << 16));
+    defer gpa.free(snapped);
+    try std.testing.expectEqualStrings("existing content", snapped);
+
+    // The new file was not snapshotted (no file created for it).
+    const absent = tmp.dir.readFileAlloc(io, "state/history/snap-1/src/new_file.zig", gpa, .limited(1 << 16));
+    try std.testing.expectError(error.FileNotFound, absent);
+}
+
+test "append keeps every prior improvement" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+    try hist.append("imp-1", .accepted, "first", "did a thing", &.{"src/a.zig"}, 0.0, 1.0, "", &.{});
+    try hist.append("imp-2", .accepted, "second", "did another", &.{"src/b.zig"}, 1.0, 2.0, "", &.{});
+    try hist.append("imp-3", .rejected, "third", "was refused", &.{"src/c.zig"}, 2.0, 2.0, "", &.{});
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
+    defer gpa.free(raw);
+
+    // The whole point of the log: an earlier entry is still there after a
+    // later one lands. Without this the improvement loop has no memory and
+    // re-proposes work it already promoted.
+    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-3") != null);
+
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, std.mem.trim(u8, raw, "\n"), '\n');
+    while (it.next()) |line| {
+        if (line.len > 0) lines += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), lines);
 }

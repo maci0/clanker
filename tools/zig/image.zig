@@ -19,7 +19,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else => return lib.fail(out, "path must be a string"),
     };
 
-    const data = lib.fsRead(path) catch |err| return lib.fail(out, @errorName(err));
+    const data = lib.fsRead(path) catch |err| return lib.failErr(out, err, "reading the image");
     // Keep the base64 + JSON under the guest output cap.
     if (data.len > 40000) return lib.fail(out, "image too large (max 40000 bytes)");
 

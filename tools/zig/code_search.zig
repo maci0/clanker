@@ -45,7 +45,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try std.fmt.allocPrint(lib.alloc, "https://sourcegraph.com/.api/search/stream?q=context:global+{s}+count:{d}&display={d}", .{ q, max, max });
     defer lib.alloc.free(url);
 
-    const body = lib.httpGet(url) catch |err| return lib.fail(out, @errorName(err));
+    const body = lib.httpGet(url) catch |err| return lib.failErr(out, err, "querying the code search service");
 
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(lib.alloc);

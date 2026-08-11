@@ -44,7 +44,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     try args.append(alloc, opts);
 
-    const raw = lib.exec("uv", args.items) catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.exec("uv", args.items) catch |err| return lib.failErr(out, err, "running the opencv helper");
 
     // ck_exec answers {"code":N,"stdout":"...","stderr":"..."}; the script's
     // own JSON is on stdout and is what the agent should see.

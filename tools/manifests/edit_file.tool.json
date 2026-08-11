@@ -1,0 +1,34 @@
+{
+  "name": "edit_file",
+  "description": "Changes a file by replacing an exact piece of its text: pass path, old (the exact text to replace, copied from the file) and new. The match must be unique, so include enough surrounding lines to identify one place; the tool tells you how many times it matched rather than guessing. Pass create: true with content to write a whole new file. Read the file first with read_file: text reconstructed from memory usually differs in whitespace and will not match.",
+  "wasm": "zig-out/tools/edit_file.wasm",
+  "enabled": true,
+  "category": "code",
+  "fs_prefixes": ["src", "tools", "tests", "docs", "skills", "evals", "state"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File to change, relative to the sandbox root."
+      },
+      "old": {
+        "type": "string",
+        "description": "Exact text to replace, copied from the file including indentation. Must occur exactly once."
+      },
+      "new": {
+        "type": "string",
+        "description": "Text to put in its place. Empty string deletes the matched text."
+      },
+      "create": {
+        "type": "boolean",
+        "description": "Write a whole new file from content instead of replacing text."
+      },
+      "content": {
+        "type": "string",
+        "description": "Whole file text, used with create."
+      }
+    },
+    "required": ["path"]
+  }
+}

@@ -24,6 +24,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             arg_len = 3;
         }
     }
-    const raw = lib.exec("zig", args[0..arg_len]) catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.exec("zig", args[0..arg_len]) catch |err| return lib.failErr(out, err, "running zig");
     try out.writeAll(raw);
 }

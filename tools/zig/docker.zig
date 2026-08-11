@@ -26,7 +26,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const body = lib.dockerRequest(method, path) catch |err| {
-        return lib.fail(out, @errorName(err));
+        return lib.failErr(out, err, "calling the docker socket");
     };
 
     var buf: [256 * 1024]u8 = undefined;

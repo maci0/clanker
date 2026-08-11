@@ -1,0 +1,55 @@
+{
+  "name": "file_ops",
+  "description": "File operations that are not reading or editing text: move, copy, delete, mkdir, stat, append and hash (sha256 of the contents). Pass op plus path, and to for move and copy, or content for append. Use edit_file to change what is inside a file and read_file to look at it; use this when the file itself has to move, go away, or be measured.",
+  "wasm": "zig-out/tools/file_ops.wasm",
+  "enabled": true,
+  "category": "code",
+  "fs_prefixes": [
+    "src",
+    "tools",
+    "tests",
+    "docs",
+    "skills",
+    "evals",
+    "state",
+    "build.zig",
+    "build.zig.zon",
+    "config.json",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "op": {
+        "type": "string",
+        "enum": [
+          "move",
+          "copy",
+          "delete",
+          "mkdir",
+          "stat",
+          "append",
+          "hash"
+        ],
+        "description": "What to do with the path."
+      },
+      "path": {
+        "type": "string",
+        "description": "The file or directory to act on, relative to the sandbox root."
+      },
+      "to": {
+        "type": "string",
+        "description": "Destination path, for move and copy."
+      },
+      "content": {
+        "type": "string",
+        "description": "Text to append, for append."
+      }
+    },
+    "required": [
+      "op",
+      "path"
+    ]
+  }
+}

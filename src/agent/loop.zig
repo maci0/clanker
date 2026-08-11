@@ -70,6 +70,12 @@ pub const Agent = struct {
     max_iterations: u32,
     /// The system prompt (arena-owned), rebuilt when skills change.
     system_prompt_text: []const u8,
+    /// Instance identity and peer names, kept so refreshSystemPrompt rebuilds
+    /// the same prompt init built — without them a mid-session refresh
+    /// silently drops the Identity section from the system prompt.
+    instance_name: []const u8 = "",
+    instance_id: []const u8 = "",
+    peer_names: []const []const u8 = &.{},
     /// Loaded tool modules, keyed by tool name (wasm modules are stateful in
     /// zwasm for AssemblyScript guests — cache and reuse instead of
     /// re-instantiating per call).
@@ -93,6 +99,10 @@ pub const Agent = struct {
     /// Human prompt for the ask_user tool, wired by the REPL. Null elsewhere:
     /// a scripted run has nobody to ask.
     ask_fn: ?host.AskFn = null,
+    /// Images a caller (the /api/run composer) wants attached to the next
+    /// task message. run() consumes them once and clears the slot, so a
+    /// later turn never re-sends an old attachment.
+    pending_images: ?[]types.ImagePart = null,
     /// A decision the user already made outside a tool call (picking a
     /// numbered option the previous answer offered), recorded at the start of
     /// the run it caused so the graph shows why this turn happened.
@@ -144,7 +154,7 @@ pub const Agent = struct {
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
         }, tool_defs);
-        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt});
+        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt});
         return .{
             .ctx = ctx,
             .arena = arena,
@@ -154,6 +164,9 @@ pub const Agent = struct {
             .tool_defs = tool_defs,
             .max_iterations = cfg.agent.max_iterations,
             .system_prompt_text = prompt_text,
+            .instance_name = cfg.instance.name,
+            .instance_id = cfg.instance.id,
+            .peer_names = peer_names.items,
             .stats = .{},
         };
     }
@@ -170,11 +183,14 @@ pub const Agent = struct {
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
             .learnings_file = self.cfg.agent.learnings_file,
+            .instance_name = self.instance_name,
+            .instance_id = self.instance_id,
+            .peers = self.peer_names,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim.", .{base_prompt}) catch |err| {
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt}) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
@@ -289,14 +305,17 @@ pub const Agent = struct {
         // A resumed session may have been persisted mid-tool-call (crash or
         // atomic-rename rebuild between the assistant's tool_calls message
         // and the tool results). Providers reject tool_calls with no matching
-        // tool results, so drop the dangling tail before continuing.
-        while (messages.items.len > 0) {
-            const last = messages.items[messages.items.len - 1];
-            if (last.role == .assistant and last.tool_calls != null and last.tool_calls.?.len > 0) {
-                _ = messages.pop();
-            } else break;
+        // tool results, and strict providers (kimi-k3 et al.) also reject a
+        // partial exchange, so drop any dangling tail before continuing.
+        dropDanglingToolExchange(messages);
+        // Attachments queued by the caller ride on the task message itself,
+        // the same ImagePart shape the tool-result image path uses.
+        var task_images: ?[]types.ImagePart = null;
+        if (self.pending_images) |imgs| {
+            self.pending_images = null;
+            if (imgs.len > 0) task_images = imgs;
         }
-        try messages.append(self.arena, .{ .role = .user, .content = task });
+        try messages.append(self.arena, .{ .role = .user, .content = task, .images = task_images });
         // Chatrooms inbox: surface messages that arrived since the last run
         // so a subscribed clanker actually notices what its peers said.
         if (self.cfg.modules.chatrooms and self.cfg.chatrooms.on) {
@@ -325,6 +344,14 @@ pub const Agent = struct {
 
         var iteration: u32 = 0;
         var budget_hit = false;
+        // Cross-turn duplicate tool-call detection: the intra-batch dedup in
+        // executeCalls only serializes repeats within one batch, so a model
+        // retrying the exact same call (same name + same arguments) on
+        // consecutive iterations would spin until max_iterations with no
+        // answer. Fingerprint counts are per-run; the third identical call
+        // gets a synthetic error result instead of another execution.
+        var call_counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
+        defer call_counts.deinit(self.ctx.gpa);
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
 
@@ -446,16 +473,52 @@ pub const Agent = struct {
             if (self.on_tool_call) |cb| cb(calls);
             const tool_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
+            // Cross-turn dedup: a call already executed twice with identical
+            // arguments gets a synthetic error result instead of a third
+            // execution, deterministically breaking a verbatim retry spin and
+            // telling the model to answer with what it already has.
+            const skipped = try self.arena.alloc(bool, calls.len);
+            @memset(skipped, false);
+            var to_run: std.ArrayList(types.ToolCall) = .empty;
+            defer to_run.deinit(self.ctx.gpa);
+            for (calls, 0..) |tc, i| {
+                const fp = try std.fmt.allocPrint(self.arena, "{s}\x00{s}", .{ tc.name, tc.arguments });
+                const gop = try call_counts.getOrPut(self.ctx.gpa, fp);
+                if (!gop.found_existing) gop.value_ptr.* = 0;
+                gop.value_ptr.* += 1;
+                if (gop.value_ptr.* >= 3) {
+                    skipped[i] = true;
+                    log.log(.warn, "tool '{s}' repeated identically {d} times; refusing to re-execute", .{ tc.name, gop.value_ptr.* });
+                    continue;
+                }
+                try to_run.append(self.ctx.gpa, tc);
+            }
             // Execute tool calls in parallel for distinct tool names (each on
             // a worker thread with a large stack); a tool name repeated in the
             // same batch falls back to sequential execution because the zwasm
             // module is stateful and the cached instance is reused.
-            const results = try self.executeCalls(calls);
+            const run_results = try self.executeCalls(to_run.items);
+            // Re-align results with the original batch: skipped calls keep
+            // their synthetic error, executed calls take the next result, so
+            // the results loop below is unchanged.
+            const results = try self.arena.alloc(?[]const u8, calls.len);
+            {
+                var ri: usize = 0;
+                for (skipped, 0..) |skip, i| {
+                    if (skip) {
+                        results[i] = "{\"ok\":false,\"error\":\"identical tool call already executed twice with the same arguments; do not repeat it — answer with the information you already have\"}";
+                    } else {
+                        results[i] = run_results[ri];
+                        ri += 1;
+                    }
+                }
+            }
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
             }
-            for (calls, results) |tc, content| {
+            for (calls, results) |tc, maybe_content| {
+                const content = maybe_content orelse "{\"ok\":true,\"result\":\"\"}";
                 // Tool results must follow the assistant tool_calls message
                 // immediately (OpenAI ordering rule; strict providers like
                 // kimi-k3 reject anything interleaved), so the image
@@ -537,6 +600,71 @@ pub const Agent = struct {
         if (budget_hit) return error.SessionTokenBudgetExceeded;
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
+    }
+
+    /// Drops a dangling tool-call exchange from the tail of a resumed
+    /// transcript: either a trailing assistant message with tool_calls no
+    /// results ever answered, or trailing .tool results that do not exactly
+    /// match the tool_calls ids of their nearest preceding assistant message
+    /// (a crash mid-batch persists the assistant message and only some of the
+    /// results). Providers reject both shapes, so without this a resumed
+    /// session can never make progress. Repeats until the tail is clean.
+    fn dropDanglingToolExchange(messages: *std.ArrayList(types.Message)) void {
+        while (messages.items.len > 0) {
+            const last = messages.items[messages.items.len - 1];
+            if (last.role == .assistant and last.tool_calls != null and last.tool_calls.?.len > 0) {
+                _ = messages.pop();
+                continue;
+            }
+            if (last.role != .tool) break;
+            // One or more tool results at the tail: the exchange is complete
+            // only when those results answer exactly the tool_calls of the
+            // nearest preceding assistant message.
+            var tail = messages.items.len;
+            while (tail > 0 and messages.items[tail - 1].role == .tool) tail -= 1;
+            const trailing = messages.items[tail..];
+            var complete = false;
+            if (tail > 0) {
+                const parent = messages.items[tail - 1];
+                if (parent.role == .assistant and parent.tool_calls != null and parent.tool_calls.?.len == trailing.len) {
+                    const calls = parent.tool_calls.?;
+                    complete = true;
+                    for (trailing) |tm| {
+                        const tid = tm.tool_call_id orelse {
+                            complete = false;
+                            break;
+                        };
+                        var found = false;
+                        for (calls) |tc| {
+                            if (std.mem.eql(u8, tc.id, tid)) found = true;
+                        }
+                        if (!found) {
+                            complete = false;
+                            break;
+                        }
+                    }
+                    if (complete) {
+                        for (calls) |tc| {
+                            var found = false;
+                            for (trailing) |tm| {
+                                if (tm.tool_call_id) |tid| {
+                                    if (std.mem.eql(u8, tc.id, tid)) found = true;
+                                }
+                            }
+                            if (!found) {
+                                complete = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (complete) break;
+            // Partial or orphaned: drop the trailing tool results; the next
+            // pass pops the parent assistant tool_calls message via the first
+            // branch above (or stops if there is no such parent).
+            messages.items.len = tail;
+        }
     }
 
     /// Reads a check tool's verdict out of its result: `ok` decides, and
@@ -997,7 +1125,13 @@ pub const Agent = struct {
         {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
-            while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
+            while (line_it.next()) |line| {
+                const trimmed = std.mem.trim(u8, line, " \t\r\n");
+                if (trimmed.len > 0) {
+                    last_line = trimmed;
+                    break;
+                }
+            }
             if (last_line.len > 0) {
                 // Strip common preamble prefixes repeatedly (e.g. "Here is your
                 // answer: The result is 42") so the exact-match answer survives.
@@ -1374,9 +1508,14 @@ pub const Agent = struct {
     /// with `calls`. Distinct tool names run in parallel on worker threads;
     /// duplicate names fall back to sequential execution (zwasm modules are
     /// stateful).
-    fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]const []const u8 {
-        const results = try self.arena.alloc([]const u8, calls.len);
-        @memset(results, "");
+    fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]?[]const u8 {
+        // Optional slots: null means "not yet executed", which has to be
+        // distinguishable from "executed and returned empty output" — a tool
+        // that legitimately returns zero bytes was re-run by the sequential
+        // fallback (doubling its side effects) because "" was both the
+        // initial value and a possible result.
+        const results = try self.arena.alloc(?[]const u8, calls.len);
+        @memset(results, null);
 
         // Warm the shared caches on the main thread before any worker
         // spawns: every tool's wasm bytes and every registered transform
@@ -1467,7 +1606,11 @@ pub const Agent = struct {
                 self.ctx.gpa.free(out);
                 // After-transforms run here, on the main thread after the
                 // join, so no worker ever touches the shared transform cache.
-                results[h.slot] = self.runChain(h.worker.tool.name, .after, owned) catch owned;
+                const transformed = self.runChain(h.worker.tool.name, .after, owned) catch owned;
+                // A tool (or its after-transform chain) may legitimately
+                // produce zero bytes; the conversation must never see a
+                // zero-length tool result.
+                results[h.slot] = if (transformed.len == 0) "{\"ok\":true,\"result\":\"\"}" else transformed;
             } else {
                 results[h.slot] = "{\"ok\":false,\"error\":\"tool produced no output\"}";
             }
@@ -1477,7 +1620,9 @@ pub const Agent = struct {
 
         // ---- sequential fallback: duplicate tool names (stateful modules) --
         for (calls, 0..) |tc, i| {
-            if (results[i].len != 0) continue;
+            // Null means "not executed yet"; a completed call with an empty
+            // result must not be run a second time.
+            if (results[i] != null) continue;
             // Run it on a worker even though nothing here is parallel: the
             // wasm interpreter recurses on the native stack, and the main
             // thread's stack is whatever the OS handed the process (8 MiB),
@@ -1490,6 +1635,11 @@ pub const Agent = struct {
                 try self.executeTool(tc)
             else
                 try self.executeToolOnWorker(tc);
+        }
+        // Defensive: every slot is filled above, but a result handed to the
+        // conversation must never be null or zero-length.
+        for (results) |*r| {
+            if (r.* == null or r.*.?.len == 0) r.* = "{\"ok\":true,\"result\":\"\"}";
         }
         return results;
     }
@@ -1944,4 +2094,105 @@ test "compactionKeepStart returns null when the history is too short to compact"
     // Over the token threshold but fewer than 8 messages: compaction would
     // have to delete context it is supposed to preserve, so it must decline.
     try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
+}
+
+test "resumed-session cleanup drops dangling and partial tool-call exchanges" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // (1) A full exchange at the tail is kept untouched.
+    {
+        var messages: std.ArrayList(types.Message) = .empty;
+        try messages.append(arena, .{ .role = .system, .content = "sys" });
+        try messages.append(arena, .{ .role = .user, .content = "u" });
+        try messages.append(arena, .{ .role = .assistant, .tool_calls = &.{
+            .{ .id = "a", .name = "t1", .arguments = "{}" },
+            .{ .id = "b", .name = "t2", .arguments = "{}" },
+        } });
+        try messages.append(arena, .{ .role = .tool, .tool_call_id = "a", .content = "r1" });
+        try messages.append(arena, .{ .role = .tool, .tool_call_id = "b", .content = "r2" });
+        Agent.dropDanglingToolExchange(&messages);
+        try std.testing.expectEqual(@as(usize, 5), messages.items.len);
+    }
+
+    // (2) A partial exchange (only 1 of 2 results persisted) is dropped
+    // entirely, parent assistant message included.
+    {
+        var messages: std.ArrayList(types.Message) = .empty;
+        try messages.append(arena, .{ .role = .system, .content = "sys" });
+        try messages.append(arena, .{ .role = .user, .content = "u" });
+        try messages.append(arena, .{ .role = .assistant, .tool_calls = &.{
+            .{ .id = "a", .name = "t1", .arguments = "{}" },
+            .{ .id = "b", .name = "t2", .arguments = "{}" },
+        } });
+        try messages.append(arena, .{ .role = .tool, .tool_call_id = "a", .content = "r1" });
+        Agent.dropDanglingToolExchange(&messages);
+        try std.testing.expectEqual(@as(usize, 2), messages.items.len);
+        try std.testing.expectEqual(types.Role.user, messages.items[1].role);
+    }
+
+    // (3) An orphan tool result whose tool_call_id matches no call is dropped
+    // along with its parent assistant message.
+    {
+        var messages: std.ArrayList(types.Message) = .empty;
+        try messages.append(arena, .{ .role = .system, .content = "sys" });
+        try messages.append(arena, .{ .role = .assistant, .tool_calls = &.{
+            .{ .id = "a", .name = "t1", .arguments = "{}" },
+        } });
+        try messages.append(arena, .{ .role = .tool, .tool_call_id = "zzz", .content = "orphan" });
+        Agent.dropDanglingToolExchange(&messages);
+        try std.testing.expectEqual(@as(usize, 1), messages.items.len);
+    }
+
+    // (4) A trailing assistant tool_calls message with no results at all is
+    // popped (the pre-existing behavior).
+    {
+        var messages: std.ArrayList(types.Message) = .empty;
+        try messages.append(arena, .{ .role = .system, .content = "sys" });
+        try messages.append(arena, .{ .role = .assistant, .tool_calls = &.{
+            .{ .id = "a", .name = "t1", .arguments = "{}" },
+        } });
+        Agent.dropDanglingToolExchange(&messages);
+        try std.testing.expectEqual(@as(usize, 1), messages.items.len);
+    }
+}
+
+test "finalAnswer preserves an exact string answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "finalAnswer strips a prose prefix to the exact answer" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "The answer is clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "finalAnswer prefers the first non-empty line over trailing prose" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online\n\nSome trailing explanation that must not replace the answer." } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
 }

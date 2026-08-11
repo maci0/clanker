@@ -23,6 +23,8 @@ const chatrooms = @import("peers/chatrooms.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
+const diskcap = @import("util/diskcap.zig");
+const runlock = @import("util/runlock.zig");
 const gate_checks = @import("gate/checks.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
@@ -76,6 +78,10 @@ pub const Options = struct {
     chat_sub: []const u8 = "rooms",
     room: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
+    /// `eval --tasks`: only the agent-driven evals, skipping the selfhost
+    /// build gates. What a capability check wants; the build gates are already
+    /// covered on their own.
+    eval_tasks_only: bool = false,
     iters: u32 = 3,
     dry_run: bool = false,
     verbose: bool = false,
@@ -115,6 +121,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.verbose = true;
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
+            } else if (std.mem.eql(u8, a, "--tasks")) {
+                opts.eval_tasks_only = true;
             } else if (std.mem.eql(u8, a, "--provider")) {
                 idx += 1;
                 if (idx >= args.len) return error.MissingArg;
@@ -261,7 +269,7 @@ const usage_text =
     \\  clanker repl                    interactive multi-turn chat (streams tokens)
     \\  clanker sessions                list saved sessions
     \\  clanker tools list              list registered WASM tools
-    \\  clanker eval [name]             run eval tasks (all, or one by name)
+    \\  clanker eval [name] [--tasks]   run evals (all, one by name, --tasks = capability only)
     \\  clanker improve-self [--iters N] [--dry-run] "<instructions>"  self-improvement loop
     \\  clanker revert <id>             revert a previously applied improvement
     \\  clanker goal "<intent>"         design and persist a structured goal
@@ -321,6 +329,10 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
+    // The other place that compiles repeatedly, and so the other place the
+    // build cache grows without bound.
+    const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch config.Config{};
+    _ = diskcap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
     try verifyGates(gpa, io, arena);
 }
 
@@ -642,6 +654,57 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
 
 // ---------------------------------------------------------------------- run --
 
+/// Reports a run that stopped at a limit instead of finishing.
+///
+/// The point is that the work is not lost. The conversation is the caller's,
+/// so the last thing the model actually said is still here even though `run`
+/// returned an error, and the execution graph for the attempt is already on
+/// disk. Printing those beats a stack trace: it tells the operator what was
+/// reached, what it cost, and which knob to turn.
+fn reportUnfinishedRun(
+    out_w: *std.Io.File.Writer,
+    messages: *const std.ArrayList(types.Message),
+    a: *const agent.Agent,
+    err: anyerror,
+) !void {
+    // Walk back to the last thing the assistant said with words in it. The
+    // final turns of a capped run are usually tool calls with no prose.
+    var partial: ?[]const u8 = null;
+    var i = messages.items.len;
+    while (i > 0) {
+        i -= 1;
+        const m = messages.items[i];
+        if (m.role != .assistant) continue;
+        if (m.content) |c| {
+            if (std.mem.trim(u8, c, " \t\r\n").len > 0) {
+                partial = c;
+                break;
+            }
+        }
+    }
+
+    if (partial) |c| {
+        try out_w.interface.writeAll(c);
+        if (!std.mem.endsWith(u8, c, "\n")) try out_w.interface.writeAll("\n");
+        try out_w.interface.flush();
+    }
+
+    const why = switch (err) {
+        error.MaxIterationsExceeded => "hit the iteration limit",
+        error.SessionTokenBudgetExceeded => "hit the session token budget",
+        else => "stopped early",
+    };
+    log.log(.error_, "run {s} after {d} iterations and did not produce a final answer", .{ why, a.max_iterations });
+    if (partial != null) {
+        log.log(.info, "the assistant's last message is printed above; it is partial work, not an answer", .{});
+    } else {
+        log.log(.info, "the assistant produced no prose before stopping; `clanker graph` replays what it did", .{});
+    }
+    if (err == error.MaxIterationsExceeded) {
+        log.log(.info, "raise agent.max_iterations in config.json (currently {d}) if the task needs more steps", .{a.max_iterations});
+    }
+}
+
 fn cmdRun(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -719,7 +782,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // clean, tool-free content.
     const stdout_file = std.Io.File.stdout();
     var out_buf: [4096]u8 = undefined;
-    var out_w = stdout_file.writer(io, &out_buf);
+    var out_w = stdout_file.writerStreaming(io, &out_buf);
     run_out = &out_w;
     run_stdout_color = stdout_file.isTty(io) catch false;
     a.on_token = &runDelta;
@@ -730,9 +793,19 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // animation to clean up out of a captured log.
     repl_answer_started = false;
     repl_md = .{};
-    repl_md = .{};
-    repl_md = .{};
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
+        // Running out of iterations or budget is an outcome, not a crash. The
+        // run did real work — often minutes of it and a measurable amount of
+        // money — and returning the error threw all of it away behind a Zig
+        // stack trace that points at loop.zig internals and reads like a bug
+        // in the harness.
+        switch (err) {
+            error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded => {
+                try reportUnfinishedRun(&out_w, &messages, &a, err);
+                std.process.exit(1);
+            },
+            else => {},
+        }
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return err;
     };
@@ -818,7 +891,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const stdin_file = std.Io.File.stdin();
     var stdout_file = std.Io.File.stdout();
     var out_buf: [4096]u8 = undefined;
-    var out_w = stdout_file.writer(io, &out_buf);
+    var out_w = stdout_file.writerStreaming(io, &out_buf);
 
     // Stream the model's tokens to stdout as they arrive.
     repl_out = &out_w;
@@ -1113,6 +1186,15 @@ fn readLineRaw(
     raw.lflag.ISIG = false;
     std.posix.tcsetattr(stdin_file.handle, .FLUSH, raw) catch return error.NotATerminal;
     defer std.posix.tcsetattr(stdin_file.handle, .FLUSH, original) catch {};
+    // Bracketed paste: the terminal wraps a pasted block in ESC[200~/201~,
+    // which the line editor reads as literal newlines instead of submits, so
+    // a multi-line paste lands as one input rather than one turn per line.
+    try out_w.interface.writeAll("\x1b[?2004h");
+    try out_w.interface.flush();
+    defer {
+        out_w.interface.writeAll("\x1b[?2004l") catch {};
+        out_w.interface.flush() catch {};
+    }
     _ = io;
 
     editor.reset();
@@ -1145,6 +1227,13 @@ fn readLineRaw(
                 continue;
             },
             .eof => if (editor.len == 0) return null,
+            .clear_screen => {
+                // Ctrl-L: wipe the screen and repaint the prompt with the
+                // line being edited, as every cooked shell does.
+                try out_w.interface.writeAll("\x1b[2J\x1b[H");
+                try redraw(out_w, editor);
+                continue;
+            },
             else => {},
         }
         const done = editor.apply(decoded.key);
@@ -1568,6 +1657,12 @@ var spinner_stop = std.atomic.Value(bool).init(false);
 /// Set once in cmdRepl; the spinner thread needs an Io handle to sleep with
 /// (std.Thread has no sleep of its own in std.Io-based Zig).
 var repl_io: std.Io = undefined;
+/// Live spinner state: when the current turn started and what it is doing.
+var repl_turn_start_ns: i128 = 0;
+var repl_activity: []const u8 = "thinking";
+/// Scratch for a batch label like "read_file +2" (see replToolCall): the
+/// status line names the first tool and counts the rest of the batch.
+var repl_activity_buf: [256]u8 = undefined;
 /// True while the spinner is on screen; only touched from the REPL's single
 /// main thread (show/clear calls never overlap with the spinner thread,
 /// which is always joined before the writer is touched again).
@@ -1577,7 +1672,11 @@ fn spinnerLoop() callconv(.c) void {
     var i: usize = 0;
     while (!spinner_stop.load(.acquire)) {
         const w = repl_out orelse return;
-        w.interface.print("\r\x1b[35m{s}\x1b[0m \x1b[2mworking\xe2\x80\xa6\x1b[0m", .{spinner_frames[i % spinner_frames.len]}) catch return;
+        const elapsed_ns = std.Io.Timestamp.now(repl_io, .awake).nanoseconds - repl_turn_start_ns;
+        const secs: u64 = if (elapsed_ns <= 0) 0 else @intCast(@divTrunc(elapsed_ns, 1_000_000_000));
+        const activity = repl_activity;
+        const verb: []const u8 = if (std.mem.eql(u8, activity, "thinking")) "" else "running ";
+        w.interface.print("\r\x1b[35m{s}\x1b[0m \x1b[2m{d}s · {s}{s}\xe2\x80\xa6\x1b[0m", .{ spinner_frames[i % spinner_frames.len], secs, verb, activity }) catch return;
         w.interface.flush() catch {};
         i += 1;
         std.Io.sleep(repl_io, .{ .nanoseconds = spinner_interval_ns }, .awake) catch return;
@@ -1879,6 +1978,11 @@ fn replToolCall(calls: []const types.ToolCall) void {
     replClearThinking();
     const w = repl_out orelse return;
     const arg_preview_cap = 80;
+    if (calls.len == 1) {
+        repl_activity = calls[0].name;
+    } else if (calls.len > 1) {
+        repl_activity = std.fmt.bufPrint(&repl_activity_buf, "{s} +{d}", .{ calls[0].name, calls.len - 1 }) catch calls[0].name;
+    }
     for (calls) |tc| {
         w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
         w.interface.writeAll(tc.name) catch {};
@@ -1904,6 +2008,7 @@ fn replToolCall(calls: []const types.ToolCall) void {
 /// next LLM call is in flight.
 fn replToolResult(ms: u64) void {
     replClearThinking();
+    repl_activity = "thinking";
     const w = repl_out orelse return;
     var buf: [48]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "\x1b[2m    \xe2\x86\xb3 {d}ms\x1b[0m\n", .{ms}) catch return;
@@ -1985,6 +2090,8 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const prev_cache_hit = a.stats.total_cache_hit_tokens;
     const prev_cache_miss = a.stats.total_cache_miss_tokens;
     repl_answer_started = false;
+    repl_turn_start_ns = t0.nanoseconds;
+    repl_activity = "thinking";
     replShowThinking();
     const resp = a.run(messages, task, &err_detail) catch |err| {
         replClearThinking();
@@ -2166,9 +2273,16 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
         if (opts.eval_name) |want| {
             if (!std.mem.eql(u8, want, e.name)) continue;
         }
+        if (opts.eval_tasks_only and e.kind != .task) continue;
         try list.append(arena, e);
     }
-    if (list.items.len == 0) return error.UnknownEval;
+    // No task evals at all is a valid, if sad, answer for --tasks: it means
+    // nothing capability-level is being checked, not that the caller asked for
+    // an eval that does not exist.
+    if (list.items.len == 0) {
+        if (opts.eval_tasks_only) return;
+        return error.UnknownEval;
+    }
 
     const results = try r.runAll(list.items);
     var all_ok = true;
@@ -2195,6 +2309,22 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
     std.Io.Dir.cwd().createDirPath(io, "state/staging") catch {};
+
+    // Before any staging or gate work: two runs against one tree gate each
+    // other's half-applied patches and promote over each other.
+    var holder: ?u32 = null;
+    var lock = runlock.acquire(io, gpa, std.Io.Dir.cwd(), "state/improve.lock", &holder) catch |err| switch (err) {
+        runlock.Error.Busy => {
+            if (holder) |pid| {
+                log.log(.warn, "another improve-self is already running (process {d}); nothing was changed", .{pid});
+            } else {
+                log.log(.warn, "another improve-self is already running; nothing was changed", .{});
+            }
+            return;
+        },
+        else => return err,
+    };
+    defer lock.release();
 
     if (cfg.improve.max_context_bytes) |n| log.log(.debug, "improve.max_context_bytes = {d} (config override)", .{n});
     var eng = improve.Engine{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg, .hist = undefined, .instructions = undefined };
@@ -2578,7 +2708,11 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/subscribe");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_goals = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/goals");
+        const is_goals = std.mem.eql(u8, target, "/api/goals") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
+        const is_board = std.mem.eql(u8, target, "/api/board") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
@@ -2602,8 +2736,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleStatus(cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/sessions")) {
-            handleSessions(io, gpa, cfg, target, stream);
+        } else if (std.mem.startsWith(u8, target, "/api/sessions") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
+        {
+            handleSessions(io, gpa, cfg, method, target, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
@@ -2627,7 +2763,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_goals) {
-            handleGoals(io, gpa, cfg, stream);
+            handleGoals(io, gpa, cfg, method, body, stream);
+        } else if (is_providers) {
+            handleProviders(cfg, stream);
+        } else if (is_board) {
+            handleBoard(io, gpa, cfg, method, body, stream);
+        } else if (is_logs) {
+            handleLogs(io, gpa, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
@@ -3085,6 +3227,12 @@ fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []c
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
+/// One image pasted or dropped into the web composer, sent with a run.
+const RunImage = struct {
+    mime: []const u8 = "",
+    b64: []const u8 = "",
+};
+
 const RunRequestBody = struct {
     task: []const u8 = "",
     /// When true, the answer is streamed back as plain text chunks as the
@@ -3095,7 +3243,31 @@ const RunRequestBody = struct {
     /// saved after, so the web UI can hold a real multi-turn conversation
     /// instead of one-shot, context-free requests.
     session: []const u8 = "",
+    /// Images the composer attached to this task (multimodal runs).
+    images: []const RunImage = &.{},
+    /// Optional per-run overrides, the request-shaped equivalent of
+    /// `--provider` and the model's sampling settings in config.json. Empty or
+    /// null means "use what the config says".
+    provider: []const u8 = "",
+    model: []const u8 = "",
+    temperature: ?f64 = null,
+    top_p: ?f64 = null,
 };
+
+/// The composer refuses images over 4 MB; the server enforces the same cap on
+/// each attachment's decoded size, since a hand-written request is not the page.
+const max_image_bytes = 4 * 1024 * 1024;
+
+/// The decoded length of a base64 payload without decoding it, so the 4 MB
+/// image cap is enforced on bytes, not on the encoding.
+fn b64DecodedLen(b64: []const u8) usize {
+    if (b64.len == 0) return 0;
+    var n = (b64.len / 4) * 3;
+    if (b64.len % 4 != 0) n += 3;
+    if (b64[b64.len - 1] == '=') n -= 1;
+    if (b64.len >= 2 and b64[b64.len - 2] == '=') n -= 1;
+    return n;
+}
 
 /// Socket for streaming /api/run output. The agent's `on_token`/`on_tool_call`
 /// hooks are bare function pointers with no context argument, so the
@@ -3260,11 +3432,734 @@ fn handleRuns(
 /// plugin (the way `/api/runs` reaches cmd_graph) because session.zig already
 /// owns this store on the native side, and a long transcript exceeds the
 /// 64 KiB host arena a WASM tool reads through.
+/// Byte weight of a transcript, the same measure
+/// `agent.compact_threshold_bytes` is compared against.
+fn transcriptBytes(msgs: []const types.Message) usize {
+    var n: usize = 0;
+    for (msgs) |m| n += if (m.content) |c| c.len else 0;
+    return n;
+}
+
+/// Drop the oldest messages until the transcript fits under half the configured
+/// threshold. Whole messages only, and the most recent exchange always stays:
+/// a compaction that left a tool result without its call would corrupt the
+/// conversation rather than shorten it.
+fn compactSession(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    id: []const u8,
+    threshold: usize,
+) !usize {
+    var s = try session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id);
+    const target = threshold / 2;
+    var first: usize = 0;
+    // Never touch the last two messages: that is the most recent exchange.
+    const floor = if (s.messages.len > 2) s.messages.len - 2 else 0;
+    while (first < floor and transcriptBytes(s.messages[first..]) > target) : (first += 1) {}
+    // A tool result whose call was just dropped is orphaned; drop it too.
+    while (first < floor and s.messages[first].tool_call_id != null) : (first += 1) {}
+    if (first > 0) {
+        s.messages = s.messages[first..];
+        s.updated = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        try session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), s);
+    }
+    return transcriptBytes(s.messages);
+}
+
+test "compactSession keeps whole messages and the last exchange" {
+    // Exercised through the pure part: the trimming rule, not the file I/O.
+    const msgs = [_]types.Message{
+        .{ .role = .user, .content = "a" ** 100 },
+        .{ .role = .assistant, .content = "b" ** 100 },
+        .{ .role = .user, .content = "c" ** 100 },
+        .{ .role = .assistant, .content = "d" ** 100 },
+    };
+    try std.testing.expectEqual(@as(usize, 400), transcriptBytes(&msgs));
+    try std.testing.expectEqual(@as(usize, 200), transcriptBytes(msgs[2..]));
+}
+
+/// Every configured provider and its models, so the composer can offer the
+/// same choice `--provider` does instead of always running the default.
+fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var buf: [1 << 16]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("default") catch return;
+    s.write(cfg.default_provider) catch return;
+    s.objectField("providers") catch return;
+    s.beginArray() catch return;
+    var it = cfg.providers.iterator();
+    while (it.next()) |entry| {
+        const prov = entry.value_ptr;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(entry.key_ptr.*) catch return;
+        s.objectField("default_model") catch return;
+        s.write(prov.default_model) catch return;
+        s.objectField("models") catch return;
+        s.beginArray() catch return;
+        var mit = prov.models.iterator();
+        while (mit.next()) |m| {
+            s.beginObject() catch return;
+            s.objectField("name") catch return;
+            s.write(m.key_ptr.*) catch return;
+            s.objectField("context_window") catch return;
+            s.write(m.value_ptr.context_window) catch return;
+            s.objectField("max_tokens") catch return;
+            s.write(m.value_ptr.max_tokens) catch return;
+            if (m.value_ptr.temperature) |t| {
+                s.objectField("temperature") catch return;
+                s.write(t) catch return;
+            }
+            if (m.value_ptr.top_p) |t| {
+                s.objectField("top_p") catch return;
+                s.write(t) catch return;
+            }
+            s.endObject() catch return;
+        }
+        s.endArray() catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// A card on the shared board. Everything an agent or a person needs to know
+/// about one piece of work, in the file both of them read.
+const Card = struct {
+    id: []const u8,
+    title: []const u8,
+    body: []const u8 = "",
+    /// Column id. Free-form so the board's columns can be renamed without a
+    /// migration, validated against the board's own column list on write.
+    column: []const u8 = "backlog",
+    /// Position within the column, low first. Reassigned densely on every
+    /// move so two cards cannot claim one slot.
+    order: i64 = 0,
+    /// Instance name of the clanker that picked this up, or "" for nobody.
+    assignee: []const u8 = "",
+    labels: []const []const u8 = &.{},
+    priority: []const u8 = "normal",
+    /// Unix seconds, or 0 for no deadline.
+    deadline: i64 = 0,
+    created: i64 = 0,
+    updated: i64 = 0,
+    subtasks: []const Subtask = &.{},
+    /// Ids of cards that must finish first. A card whose dependencies are
+    /// unmet is still movable: the board reports the conflict rather than
+    /// forbidding the move, because the person moving it may know better.
+    depends_on: []const []const u8 = &.{},
+    log: []const LogEntry = &.{},
+    usage: Usage = .{},
+};
+
+const Subtask = struct {
+    id: []const u8,
+    text: []const u8,
+    done: bool = false,
+};
+
+const LogEntry = struct {
+    ts: i64 = 0,
+    who: []const u8 = "",
+    what: []const u8 = "",
+};
+
+/// What this card has cost so far. Accrued by whoever did the work, which is
+/// usually a run reporting its own totals.
+const Usage = struct {
+    prompt_tokens: u64 = 0,
+    completion_tokens: u64 = 0,
+    cost: f64 = 0,
+    runs: []const []const u8 = &.{},
+};
+
+const Column = struct {
+    id: []const u8,
+    title: []const u8,
+    /// Work-in-progress limit, 0 for none. Exceeding it is reported, not
+    /// refused, for the same reason an unmet dependency is.
+    wip: u32 = 0,
+};
+
+const Board = struct {
+    columns: []const Column = &.{},
+    cards: []const Card = &.{},
+};
+
+const board_path = "state/board.json";
+const todos_path = "state/todos.json";
+
+const default_columns = [_]Column{
+    .{ .id = "backlog", .title = "Backlog" },
+    .{ .id = "ready", .title = "Ready" },
+    .{ .id = "doing", .title = "Doing", .wip = 3 },
+    .{ .id = "review", .title = "Review" },
+    .{ .id = "done", .title = "Done" },
+};
+
+const BoardPost = struct {
+    /// Which mutation this is. Named rather than inferred from which fields
+    /// are present: a board has too many shapes for that to stay readable.
+    op: []const u8 = "",
+    id: []const u8 = "",
+    title: ?[]const u8 = null,
+    body: ?[]const u8 = null,
+    column: ?[]const u8 = null,
+    /// Target index within the column for a move; -1 appends.
+    position: ?i64 = null,
+    assignee: ?[]const u8 = null,
+    priority: ?[]const u8 = null,
+    deadline: ?i64 = null,
+    labels: ?[]const []const u8 = null,
+    text: ?[]const u8 = null,
+    subtask_id: ?[]const u8 = null,
+    done: ?bool = null,
+    depends_on: ?[]const u8 = null,
+    who: ?[]const u8 = null,
+    what: ?[]const u8 = null,
+    prompt_tokens: ?u64 = null,
+    completion_tokens: ?u64 = null,
+    cost: ?f64 = null,
+    run_id: ?[]const u8 = null,
+};
+
+fn validPriority(s: []const u8) bool {
+    return std.mem.eql(u8, s, "low") or std.mem.eql(u8, s, "normal") or std.mem.eql(u8, s, "high");
+}
+
+test validPriority {
+    try std.testing.expect(validPriority("low"));
+    try std.testing.expect(validPriority("normal"));
+    try std.testing.expect(validPriority("high"));
+    try std.testing.expect(!validPriority("urgent"));
+    try std.testing.expect(!validPriority(""));
+}
+
+fn columnExists(cols: []const Column, id: []const u8) bool {
+    for (cols) |c| {
+        if (std.mem.eql(u8, c.id, id)) return true;
+    }
+    return false;
+}
+
+test columnExists {
+    const cols = [_]Column{ .{ .id = "a", .title = "A" }, .{ .id = "b", .title = "B" } };
+    try std.testing.expect(columnExists(&cols, "a"));
+    try std.testing.expect(!columnExists(&cols, "c"));
+}
+
+/// Reads the board, seeding it from the columns above on first use and
+/// carrying any `state/todos.json` list into the backlog, so the checklist the
+/// board replaces is not silently dropped.
+fn loadBoard(io: std.Io, arena: std.mem.Allocator) Board {
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, board_path, arena, .limited(1 << 22)) catch {
+        return seedBoard(io, arena);
+    };
+    const parsed = std.json.parseFromSliceLeaky(Board, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        return seedBoard(io, arena);
+    };
+    if (parsed.columns.len == 0) return .{ .columns = &default_columns, .cards = parsed.cards };
+    return parsed;
+}
+
+fn seedBoard(io: std.Io, arena: std.mem.Allocator) Board {
+    var cards: std.ArrayList(Card) = .empty;
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, todos_path, arena, .limited(1 << 20)) catch "";
+    if (raw.len > 0) {
+        const OldTodo = struct { id: []const u8, text: []const u8, done: bool = false, created: i64 = 0 };
+        if (std.json.parseFromSliceLeaky([]OldTodo, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |old| {
+            for (old, 0..) |t, i| {
+                cards.append(arena, .{
+                    .id = t.id,
+                    .title = t.text,
+                    .column = if (t.done) "done" else "backlog",
+                    .order = @intCast(i),
+                    .created = t.created,
+                    .updated = t.created,
+                }) catch {};
+            }
+        }
+    }
+    return .{ .columns = &default_columns, .cards = cards.items };
+}
+
+fn writeBoard(io: std.Io, arena: std.mem.Allocator, b: Board) !void {
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    try std.json.Stringify.value(b, .{}, &enc.writer);
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), board_path, enc.written());
+}
+
+/// Renumbers a column's cards 0,1,2… in their current order. Called after
+/// every move so `order` stays a total order rather than a pile of ties.
+fn resequence(cards: []Card, column: []const u8) void {
+    var n: i64 = 0;
+    // Cards are kept sorted by order within a column by the caller; this only
+    // closes the gaps left by inserts and removals.
+    for (cards) |*c| {
+        if (!std.mem.eql(u8, c.column, column)) continue;
+        c.order = n;
+        n += 1;
+    }
+}
+
+fn boardError(stream: std.Io.net.Stream, status: u16, reason: []const u8, message: []const u8) void {
+    var buf: [256]u8 = undefined;
+    const body = std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{message}) catch "{\"ok\":false}";
+    respond(stream, status, reason, body);
+}
+
+/// The shared Kanban board: `GET` returns the whole thing, `POST` applies one
+/// named operation. Both agents and the page use this, which is the point —
+/// a card moved by a clanker is the same card a person sees move.
+fn handleBoard(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    method: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const loaded = loadBoard(io, arena);
+    var cards: std.ArrayList(Card) = .empty;
+    cards.appendSlice(arena, loaded.cards) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    var b = Board{ .columns = loaded.columns, .cards = cards.items };
+
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(BoardPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            boardError(stream, 400, "Bad Request", "bad request");
+            return;
+        };
+        const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        const actor = if (req.who) |w| w else cfg.instance.name;
+
+        if (std.mem.eql(u8, req.op, "create")) {
+            const title = std.mem.trim(u8, req.title orelse "", " \t\r\n");
+            if (title.len == 0 or title.len > 500) {
+                boardError(stream, 400, "Bad Request", "title must be 1-500 characters");
+                return;
+            }
+            const col = req.column orelse "backlog";
+            if (!columnExists(b.columns, col)) {
+                boardError(stream, 400, "Bad Request", "no such column");
+                return;
+            }
+            if (req.priority) |pr| {
+                if (!validPriority(pr)) {
+                    boardError(stream, 400, "Bad Request", "priority must be low, normal or high");
+                    return;
+                }
+            }
+            var order: i64 = 0;
+            for (cards.items) |c| {
+                if (std.mem.eql(u8, c.column, col)) order += 1;
+            }
+            const id = std.fmt.allocPrint(arena, "c-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+            var log0: std.ArrayList(LogEntry) = .empty;
+            log0.append(arena, .{ .ts = now, .who = actor, .what = "created" }) catch {};
+            cards.append(arena, .{
+                .id = id,
+                .title = title,
+                .body = req.body orelse "",
+                .column = col,
+                .order = order,
+                .assignee = req.assignee orelse "",
+                .priority = req.priority orelse "normal",
+                .deadline = req.deadline orelse 0,
+                .labels = req.labels orelse &.{},
+                .created = now,
+                .updated = now,
+                .log = log0.items,
+            }) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+        } else if (req.op.len == 0) {
+            boardError(stream, 400, "Bad Request", "missing op");
+            return;
+        } else {
+            // Every remaining operation names one card.
+            var at: ?usize = null;
+            for (cards.items, 0..) |c, i| {
+                if (std.mem.eql(u8, c.id, req.id)) at = i;
+            }
+            const idx = at orelse {
+                boardError(stream, 404, "Not Found", "no such card");
+                return;
+            };
+            const card = &cards.items[idx];
+
+            if (std.mem.eql(u8, req.op, "update")) {
+                if (req.title) |t| {
+                    const trimmed = std.mem.trim(u8, t, " \t\r\n");
+                    if (trimmed.len == 0 or trimmed.len > 500) {
+                        boardError(stream, 400, "Bad Request", "title must be 1-500 characters");
+                        return;
+                    }
+                    card.title = trimmed;
+                }
+                if (req.body) |v| card.body = v;
+                if (req.assignee) |v| card.assignee = v;
+                if (req.deadline) |v| card.deadline = v;
+                if (req.labels) |v| card.labels = v;
+                if (req.priority) |pr| {
+                    if (!validPriority(pr)) {
+                        boardError(stream, 400, "Bad Request", "priority must be low, normal or high");
+                        return;
+                    }
+                    card.priority = pr;
+                }
+            } else if (std.mem.eql(u8, req.op, "move")) {
+                const col = req.column orelse card.column;
+                if (!columnExists(b.columns, col)) {
+                    boardError(stream, 400, "Bad Request", "no such column");
+                    return;
+                }
+                const from = card.column;
+                card.column = col;
+                // Sort the destination by order, then place this card at the
+                // requested index and close the gaps in both columns.
+                const want = req.position orelse -1;
+                card.order = if (want < 0) std.math.maxInt(i64) else want * 2 - 1;
+                std.mem.sort(Card, cards.items, {}, cardLessThan);
+                resequence(cards.items, col);
+                if (!std.mem.eql(u8, from, col)) resequence(cards.items, from);
+                var entry: std.ArrayList(LogEntry) = .empty;
+                entry.appendSlice(arena, card.log) catch {};
+                entry.append(arena, .{ .ts = now, .who = actor, .what = std.fmt.allocPrint(arena, "moved to {s}", .{col}) catch "moved" }) catch {};
+                card.log = entry.items;
+            } else if (std.mem.eql(u8, req.op, "delete")) {
+                _ = cards.orderedRemove(idx);
+                b.cards = cards.items;
+                writeBoard(io, arena, b) catch {
+                    boardError(stream, 500, "Internal Server Error", "write failed");
+                    return;
+                };
+                respondBoard(arena, b, stream);
+                return;
+            } else if (std.mem.eql(u8, req.op, "subtask_add")) {
+                const text = std.mem.trim(u8, req.text orelse "", " \t\r\n");
+                if (text.len == 0 or text.len > 500) {
+                    boardError(stream, 400, "Bad Request", "subtask text must be 1-500 characters");
+                    return;
+                }
+                var subs: std.ArrayList(Subtask) = .empty;
+                subs.appendSlice(arena, card.subtasks) catch {};
+                const sid = std.fmt.allocPrint(arena, "s-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch "s-0";
+                subs.append(arena, .{ .id = sid, .text = text }) catch {};
+                card.subtasks = subs.items;
+            } else if (std.mem.eql(u8, req.op, "subtask_toggle") or std.mem.eql(u8, req.op, "subtask_remove")) {
+                const sid = req.subtask_id orelse {
+                    boardError(stream, 400, "Bad Request", "missing subtask_id");
+                    return;
+                };
+                var subs: std.ArrayList(Subtask) = .empty;
+                var hit = false;
+                for (card.subtasks) |s| {
+                    if (!std.mem.eql(u8, s.id, sid)) {
+                        subs.append(arena, s) catch {};
+                        continue;
+                    }
+                    hit = true;
+                    if (std.mem.eql(u8, req.op, "subtask_remove")) continue;
+                    var updated = s;
+                    updated.done = req.done orelse !s.done;
+                    subs.append(arena, updated) catch {};
+                }
+                if (!hit) {
+                    boardError(stream, 404, "Not Found", "no such subtask");
+                    return;
+                }
+                card.subtasks = subs.items;
+            } else if (std.mem.eql(u8, req.op, "depend_add") or std.mem.eql(u8, req.op, "depend_remove")) {
+                const dep = req.depends_on orelse {
+                    boardError(stream, 400, "Bad Request", "missing depends_on");
+                    return;
+                };
+                if (std.mem.eql(u8, dep, card.id)) {
+                    boardError(stream, 400, "Bad Request", "a card cannot depend on itself");
+                    return;
+                }
+                var deps: std.ArrayList([]const u8) = .empty;
+                var present = false;
+                for (card.depends_on) |d| {
+                    if (std.mem.eql(u8, d, dep)) {
+                        present = true;
+                        if (std.mem.eql(u8, req.op, "depend_remove")) continue;
+                    }
+                    deps.append(arena, d) catch {};
+                }
+                if (std.mem.eql(u8, req.op, "depend_add")) {
+                    if (!present) {
+                        var exists = false;
+                        for (cards.items) |c| {
+                            if (std.mem.eql(u8, c.id, dep)) exists = true;
+                        }
+                        if (!exists) {
+                            boardError(stream, 404, "Not Found", "no such card to depend on");
+                            return;
+                        }
+                        deps.append(arena, dep) catch {};
+                    }
+                }
+                card.depends_on = deps.items;
+            } else if (std.mem.eql(u8, req.op, "log")) {
+                const what = std.mem.trim(u8, req.what orelse "", " \t\r\n");
+                if (what.len == 0 or what.len > 2000) {
+                    boardError(stream, 400, "Bad Request", "log text must be 1-2000 characters");
+                    return;
+                }
+                var entry: std.ArrayList(LogEntry) = .empty;
+                entry.appendSlice(arena, card.log) catch {};
+                entry.append(arena, .{ .ts = now, .who = actor, .what = what }) catch {};
+                card.log = entry.items;
+            } else if (std.mem.eql(u8, req.op, "usage")) {
+                // Accrued, not replaced: a card is worked on by more than one
+                // run, and the total is what the card cost.
+                card.usage.prompt_tokens += req.prompt_tokens orelse 0;
+                card.usage.completion_tokens += req.completion_tokens orelse 0;
+                card.usage.cost += req.cost orelse 0;
+                if (req.run_id) |rid| {
+                    var runs: std.ArrayList([]const u8) = .empty;
+                    var seen = false;
+                    for (card.usage.runs) |r| {
+                        runs.append(arena, r) catch {};
+                        if (std.mem.eql(u8, r, rid)) seen = true;
+                    }
+                    if (!seen) runs.append(arena, rid) catch {};
+                    card.usage.runs = runs.items;
+                }
+            } else {
+                boardError(stream, 400, "Bad Request", "unknown op");
+                return;
+            }
+            card.updated = now;
+        }
+
+        b.cards = cards.items;
+        writeBoard(io, arena, b) catch {
+            boardError(stream, 500, "Internal Server Error", "write failed");
+            return;
+        };
+    }
+
+    respondBoard(arena, b, stream);
+}
+
+fn cardLessThan(_: void, a: Card, c: Card) bool {
+    const col = std.mem.order(u8, a.column, c.column);
+    if (col != .eq) return col == .lt;
+    return a.order < c.order;
+}
+
+fn respondBoard(arena: std.mem.Allocator, b: Board, stream: std.Io.net.Stream) void {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"board\":") catch return;
+    std.json.Stringify.value(b, .{}, &out.writer) catch return;
+    out.writer.writeAll("}") catch return;
+    respond(stream, 200, "OK", out.written());
+}
+const goals_path = "state/goals.json";
+
+/// Adding a goal and changing one's status, the two things the `goal` tool and
+/// `clanker run --goal` already assume someone can do. One POST shape covers
+/// both: an objective creates, an id updates.
+fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch "[]";
+    var list: std.ArrayList(StoredGoal) = .empty;
+    if (std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
+        list.appendSlice(arena, existing) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    }
+
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    if (req.objective) |objective| {
+        const obj = std.mem.trim(u8, objective, " \t\r\n");
+        const crit = std.mem.trim(u8, req.completion_criterion orelse "", " \t\r\n");
+        if (obj.len == 0 or obj.len > 2000) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"objective must be 1-2000 characters\"}");
+            return;
+        }
+        if (crit.len == 0) {
+            // A goal with no way to tell it is met is a wish; the tool that
+            // writes this file requires one too.
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"a completion criterion is required\"}");
+            return;
+        }
+        const id = std.fmt.allocPrint(arena, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+        list.append(arena, .{
+            .id = id,
+            .objective = obj,
+            .completion_criterion = crit,
+            .created = now,
+            .updated = now,
+        }) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    } else if (req.id) |id| {
+        var kept: std.ArrayList(StoredGoal) = .empty;
+        var hit = false;
+        for (list.items) |g| {
+            if (!std.mem.eql(u8, g.id, id)) {
+                kept.append(arena, g) catch continue;
+                continue;
+            }
+            hit = true;
+            if (req.remove orelse false) continue;
+            var updated = g;
+            if (req.status) |s| {
+                if (!validGoalStatus(s)) {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, done or abandoned\"}");
+                    return;
+                }
+                updated.status = s;
+            }
+            updated.updated = now;
+            kept.append(arena, updated) catch continue;
+        }
+        if (!hit) {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such goal\"}");
+            return;
+        }
+        list = kept;
+    } else {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"need an objective or an id\"}");
+        return;
+    }
+
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(list.items, .{}, &enc.writer) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    atomic_write.writeFile(io, std.Io.Dir.cwd(), goals_path, enc.written()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
+    std.json.Stringify.value(list.items, .{}, &out.writer) catch return;
+    out.writer.writeAll("}") catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `GET /api/logs` lists the log files; `GET /api/logs/<name>` returns the tail
+/// of one. Names are matched against the listing rather than sanitised, so a
+/// crafted name cannot describe a path at all.
+fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rest = target["/api/logs".len..];
+    var dir = std.Io.Dir.cwd().openDir(io, "state/logs", .{ .iterate = true }) catch {
+        respond(stream, 200, "OK", "{\"ok\":true,\"logs\":[]}");
+        return;
+    };
+    defer dir.close(io);
+
+    if (rest.len > 1 and rest[0] == '/') {
+        const want = percentDecode(arena, rest[1..]) catch {
+            respond(stream, 400, "Bad Request", "{\"error\":\"bad log name\"}");
+            return;
+        };
+        var it = dir.iterate();
+        var found = false;
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (std.mem.eql(u8, entry.name, want)) found = true;
+        }
+        if (!found) {
+            respond(stream, 404, "Not Found", "{\"error\":\"no such log\"}");
+            return;
+        }
+        const raw = dir.readFileAlloc(io, want, arena, .limited(log_tail_bytes * 8)) catch {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"log read failed\"}");
+            return;
+        };
+        // Tail only, cut at a line boundary so the view never opens mid-line.
+        var tail = if (raw.len > log_tail_bytes) raw[raw.len - log_tail_bytes ..] else raw;
+        if (raw.len > log_tail_bytes) {
+            if (std.mem.indexOfScalar(u8, tail, '\n')) |nl| tail = tail[nl + 1 ..];
+        }
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("name") catch return;
+        s.write(want) catch return;
+        s.objectField("bytes") catch return;
+        s.write(raw.len) catch return;
+        s.objectField("text") catch return;
+        s.write(tail) catch return;
+        s.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+    if (rest.len != 0) {
+        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        return;
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("logs") catch return;
+    s.beginArray() catch return;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const stat = dir.statFile(io, entry.name, .{}) catch continue;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(entry.name) catch return;
+        s.objectField("bytes") catch return;
+        s.write(stat.size) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+const log_tail_bytes = 64 * 1024;
+
 fn handleSessions(
     io: std.Io,
     gpa: std.mem.Allocator,
     cfg: *const config.Config,
+    method: []const u8,
     target: []const u8,
+    body: []const u8,
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.sessions) {
@@ -3278,19 +4173,79 @@ fn handleSessions(
     const rest = target["/api/sessions".len..];
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
+        // `POST /api/sessions/<id>/fork` branches a conversation. The fork
+        // suffix is handled before the id validation below because
+        // "<id>/fork" itself contains a separator and would never pass it.
+        if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/fork")) {
+            const src_id = id[0 .. id.len - "/fork".len];
+            if (!validSessionId(src_id)) {
+                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                return;
+            }
+            const new_id = session.forkSession(io, gpa, arena, std.Io.Dir.cwd(), src_id) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            var fork_buf: [256]u8 = undefined;
+            const fork_body = std.fmt.bufPrint(&fork_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{new_id}) catch return;
+            respond(stream, 200, "OK", fork_body);
+            return;
+        }
+        // `POST /api/sessions/<id>/compact` drops the oldest exchanges by hand,
+        // the same thing agent.compact_threshold_bytes does on its own once a
+        // transcript grows past it. Suffix first, for the reason fork gives.
+        if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/compact")) {
+            const src_id = id[0 .. id.len - "/compact".len];
+            if (!validSessionId(src_id)) {
+                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                return;
+            }
+            const bytes = compactSession(io, gpa, arena, src_id, cfg.agent.compact_threshold_bytes) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            var cbuf: [128]u8 = undefined;
+            const cbody = std.fmt.bufPrint(&cbuf, "{{\"ok\":true,\"bytes\":{d}}}", .{bytes}) catch return;
+            respond(stream, 200, "OK", cbody);
+            return;
+        }
         if (!validSessionId(id)) {
             respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+            return;
+        }
+        if (std.mem.eql(u8, method, "DELETE")) {
+            session.deleteSession(io, arena, std.Io.Dir.cwd(), id) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            respond(stream, 200, "OK", "{\"ok\":true}");
+            return;
+        }
+        if (std.mem.eql(u8, method, "POST")) {
+            const req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+                return;
+            };
+            const title = req.title orelse {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title\"}");
+                return;
+            };
+            session.renameSession(io, gpa, arena, std.Io.Dir.cwd(), id, title) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            respond(stream, 200, "OK", "{\"ok\":true}");
             return;
         }
         const s = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id) catch {
             respond(stream, 404, "Not Found", "{\"error\":\"no such session\"}");
             return;
         };
-        const body = sessionJSON(arena, s) catch {
+        const one = sessionJSON(arena, s) catch {
             respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
             return;
         };
-        respond(stream, 200, "OK", body);
+        respond(stream, 200, "OK", one);
         return;
     }
     if (rest.len != 0) {
@@ -3302,11 +4257,11 @@ fn handleSessions(
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session list failed\"}");
         return;
     };
-    const body = sessionListJSON(arena, list) catch {
+    const listing = sessionListJSON(arena, list) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
         return;
     };
-    respond(stream, 200, "OK", body);
+    respond(stream, 200, "OK", listing);
 }
 
 /// Session ids reach the filesystem as a path fragment, so they are restricted
@@ -3331,6 +4286,44 @@ test "validSessionId refuses path traversal" {
     try std.testing.expect(!validSessionId("x" ** 65));
 }
 
+test "fork route suffix parsing yields a valid source id and refuses traversal" {
+    // POST /api/sessions/<id>/fork strips the suffix before validating.
+    const id = "sess-abc/fork";
+    try std.testing.expect(std.mem.endsWith(u8, id, "/fork"));
+    try std.testing.expect(validSessionId(id[0 .. id.len - "/fork".len]));
+    // A traversal attempt in the source id is refused, not sanitised.
+    const bad = "../../etc/fork";
+    try std.testing.expect(!validSessionId(bad[0 .. bad.len - "/fork".len]));
+    // A real session id never ends in the fork marker, so the rename POST
+    // for a plain id cannot be shadowed by the fork branch.
+    try std.testing.expect(!std.mem.endsWith(u8, "sess-abc", "/fork"));
+}
+
+test "forkSession mints an id that still passes validSessionId" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try session.saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "sess-1",
+        .title = "t",
+        .messages = &.{.{ .role = .user, .content = "hi" }},
+        .created = 1,
+        .updated = 2,
+    });
+    const forked = try session.forkSession(io, std.testing.allocator, arena, tmp.dir, "sess-1");
+    // The fork id is returned to the client and must itself stay addressable
+    // through the id-validated session endpoints.
+    try std.testing.expect(validSessionId(forked));
+}
+
 fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
@@ -3351,6 +4344,8 @@ fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) 
         try s.write(m.updated);
         try s.objectField("messages");
         try s.write(m.messages);
+        try s.objectField("bytes");
+        try s.write(m.bytes);
         try s.endObject();
     }
     try s.endArray();
@@ -3438,6 +4433,10 @@ fn handlePlugins(
     };
     respond(stream, 200, "OK", out);
 }
+
+const SessionPatchBody = struct {
+    title: ?[]const u8 = null,
+};
 
 const PluginToggleBody = struct {
     name: ?[]const u8 = null,
@@ -3539,7 +4538,42 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
 /// `GET /api/goals` — the structured goals that steer runs, straight from
 /// `state/goals.json`. Read natively rather than through the goal tool, which
 /// only writes: it appends a new goal and has no read mode.
-fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+const GoalPost = struct {
+    objective: ?[]const u8 = null,
+    completion_criterion: ?[]const u8 = null,
+    id: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    remove: ?bool = null,
+};
+
+const StoredGoal = struct {
+    id: []const u8,
+    objective: []const u8,
+    completion_criterion: []const u8 = "",
+    proof: []const u8 = "",
+    boundaries: []const u8 = "",
+    stop_rule: []const u8 = "",
+    status: []const u8 = "active",
+    created: i64 = 0,
+    updated: i64 = 0,
+};
+
+/// A goal's status is one of three words. Anything else is refused rather
+/// than written, so the file cannot grow states nothing knows how to read.
+fn validGoalStatus(s: []const u8) bool {
+    return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or std.mem.eql(u8, s, "abandoned");
+}
+
+test validGoalStatus {
+    try std.testing.expect(validGoalStatus("active"));
+    try std.testing.expect(validGoalStatus("done"));
+    try std.testing.expect(validGoalStatus("abandoned"));
+    try std.testing.expect(!validGoalStatus("Active"));
+    try std.testing.expect(!validGoalStatus(""));
+    try std.testing.expect(!validGoalStatus("deleted; drop table"));
+}
+
+fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!cfg.modules.goal) {
         respond(stream, 404, "Not Found", "{\"error\":\"goal module disabled\"}");
         return;
@@ -3547,6 +4581,11 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, st
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+
+    if (std.mem.eql(u8, method, "POST")) {
+        handleGoalWrite(io, arena, body, stream);
+        return;
+    }
 
     const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch {
         // No file yet is the ordinary state on a fresh checkout, not an error.
@@ -3616,12 +4655,27 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
 
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    var provider = cfg.provider(null) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"no default provider\"}");
+    var provider = cfg.provider(if (req.provider.len > 0) req.provider else null) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"no such provider\"}");
         return;
     };
     var provider_copy = provider.*;
     provider = &provider_copy;
+    // A model the provider does not define is refused rather than silently
+    // falling back: running the wrong model quietly is worse than a 400.
+    if (req.model.len > 0) {
+        if (provider_copy.models.get(req.model) == null) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"no such model for that provider\"}");
+            return;
+        }
+        provider_copy.default_model = req.model;
+    }
+    if (req.temperature != null or req.top_p != null) {
+        var m = provider_copy.activeModel();
+        if (req.temperature) |t| m.temperature = std.math.clamp(t, 0.0, 2.0);
+        if (req.top_p) |t| m.top_p = std.math.clamp(t, 0.0, 1.0);
+        provider_copy.models.put(arena, provider_copy.default_model, m) catch {};
+    }
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
@@ -3638,6 +4692,22 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
+    // Multimodal attachments from the composer: hand them to the agent, which
+    // attaches them to the task message exactly as the tool-result image path
+    // does. Same module flag as the agent's own image handling, and the 4 MB
+    // per-image cap the page promises is enforced here on decoded bytes.
+    if (cfg.modules.multimodal and req.images.len > 0) {
+        var imgs: std.ArrayList(types.ImagePart) = .empty;
+        for (req.images) |im| {
+            if (im.mime.len == 0 or im.b64.len == 0) continue;
+            if (b64DecodedLen(im.b64) > max_image_bytes) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"an image exceeds the 4 MB limit\"}");
+                return;
+            }
+            imgs.append(arena, .{ .mime = im.mime, .b64 = im.b64 }) catch {};
+        }
+        if (imgs.items.len > 0) a.pending_images = imgs.items;
+    }
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
 
@@ -3766,7 +4836,10 @@ const webui_csp = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-
 
 fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, webui_csp }) catch return;
+    // The page is compiled into the binary and changes on every rebuild, so
+    // a cached copy is always a stale one: no-store, unlike the vendored
+    // assets below, which are immutable and cached hard.
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, webui_csp }) catch return;
     writeAllFd(stream.socket.handle, hdr);
     writeAllFd(stream.socket.handle, body);
 }
@@ -3881,9 +4954,9 @@ test "acceptsGzip only matches the header's own line" {
 fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const n = std.os.linux.write(fd, bytes[off..].ptr, bytes.len - off);
-        if (n > std.math.maxInt(usize) - 4096) return; // errno
-        off += n;
+        const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
+        if (n < 0) return; // errno
+        off += @intCast(n);
     }
 }
 
@@ -4143,4 +5216,39 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" })).command);
     // A typo is still a typo, not a silent REPL start.
     try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }));
+}
+
+test "the run request body carries optional images, and the cap counts decoded bytes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A request without images parses to an empty list, not an error.
+    const bare = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 0), bare.images.len);
+
+    const with_img = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"look\",\"images\":[{\"mime\":\"image/png\",\"b64\":\"aGk=\"}]}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 1), with_img.images.len);
+    try std.testing.expectEqualStrings("image/png", with_img.images[0].mime);
+    try std.testing.expectEqualStrings("aGk=", with_img.images[0].b64);
+
+    // Decoded-length math: "aGk=" is "hi" (2 bytes), "aGVsbG8=" is "hello" (5).
+    try std.testing.expectEqual(@as(usize, 2), b64DecodedLen("aGk="));
+    try std.testing.expectEqual(@as(usize, 5), b64DecodedLen("aGVsbG8="));
+    try std.testing.expectEqual(@as(usize, 0), b64DecodedLen(""));
+}
+
+test "sessionListJSON carries each conversation's byte weight" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const list = [_]session.SessionMeta{
+        .{ .id = "s1", .title = "one", .created = 1, .updated = 2, .messages = 2, .bytes = 13 },
+    };
+    const out = try sessionListJSON(arena, &list);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{});
+    const first = parsed.object.get("sessions").?.array.items[0];
+    try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
+    try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
 }

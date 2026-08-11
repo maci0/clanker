@@ -36,7 +36,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try std.fmt.allocPrint(lib.alloc, "https://context7.com/api/v1/{s}/{s}", .{ org, repo });
     defer lib.alloc.free(url);
 
-    const body = lib.httpGet(url) catch |err| return lib.fail(out, @errorName(err));
+    const body = lib.httpGet(url) catch |err| return lib.failErr(out, err, "querying context7");
     const text = if (body.len > max_chars) body[0..max_chars] else body;
 
     return lib.okText(out, text);

@@ -26,6 +26,19 @@
     --step-0: 0.75rem;
     --step-1: 1rem;
     --step-2: 1.25rem;
+    /* One spacing scale, replacing sixteen hand-picked values. Steps are
+       roughly 1.5x so adjacent ones are visibly different: a rhythm you can
+       see is worth more than a ratio you can prove. */
+    --space-1: 0.25rem;
+    --space-2: 0.4rem;
+    --space-3: 0.6rem;
+    --space-4: 0.9rem;
+    --space-5: 1.4rem;
+    --space-6: 2.2rem;
+    /* Prose and streamed answers stop at a comfortable measure even though the
+       column is wider: the graph, tables and code want the full width, running
+       text does not. Measured at 87ch before this existed. */
+    --measure: 72ch;
     --radius-sm: 4px;
     --radius: 6px;
     --radius-lg: 10px;
@@ -130,10 +143,36 @@
   }
   button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
 
-  main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: 1.25rem 1.5rem 2rem; }
+  main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-6); }
+
+  /* ---- tabs: one view at a time ----
+     Everything used to be stacked in one column, so reaching Tools meant
+     scrolling past the whole transcript, the run graph and every room. */
+  .tabs {
+    display: flex; flex-wrap: wrap; gap: var(--space-1);
+    border-bottom: 1px solid var(--rule); margin-bottom: var(--space-6);
+  }
+  .tab {
+    min-height: 44px; padding: 0.4rem 0.9rem;
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    background: transparent; color: var(--fg-muted);
+    border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  /* A count of what is behind the tab, so the numbers are not hidden by the
+     thing that hides everything else. */
+  .tab-count { color: var(--fg-muted); font-weight: 400; margin-left: 0.4rem; }
+  .tab[aria-selected="true"] .tab-count { color: var(--accent); }
+  .view[hidden] { display: none; }
+  .view:focus { outline: none; }
+  /* The first section inside a view has nothing above it to be separated from. */
+  .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
   /* ---- transcript: a running list of turns, chat-style ---- */
-  .transcript { display: flex; flex-direction: column; gap: 1.5rem; }
+  .transcript { display: flex; flex-direction: column; gap: var(--space-6); margin-top: var(--space-6); }
   .transcript:empty { display: none; }
   .turn { border: 1px solid var(--rule); border-radius: var(--radius-lg); overflow: hidden; }
   .turn-you {
@@ -142,8 +181,11 @@
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .turn-you::before { content: "you  ·  "; color: var(--accent); font-weight: 700; }
-  .turn-body { padding: 0.9rem; }
-  .turn-events { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.6rem; }
+  /* A restored answer whose question is no longer in the transcript is not
+     yours: attributing it to "you" said the wrong thing about who wrote it. */
+  .turn-you[data-orphan="true"]::before { content: "clanker  ·  "; color: var(--fg-muted); }
+  .turn-body { padding: var(--space-4); }
+  .turn-events { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
   .turn-events:empty { display: none; margin: 0; }
   .event-tool {
     font-family: var(--mono); font-size: var(--step-0); color: var(--accent);
@@ -165,6 +207,7 @@
   .turn-answer {
     font-family: var(--mono); font-size: var(--step-1);
     white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
+    max-width: var(--measure);
   }
   .turn-answer:empty::before {
     content: "…"; color: var(--fg-muted); display: inline-block;
@@ -220,8 +263,9 @@
   .hljs-emphasis { font-style: italic; }
   .hljs-strong { font-weight: 700; }
   .turn-foot {
+    font-variant-numeric: tabular-nums;
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
-    margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed var(--rule);
+    margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px dashed var(--rule);
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
   }
   .turn-foot:empty { display: none; margin: 0; padding: 0; border: 0; }
@@ -239,7 +283,24 @@
   @media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
 
   /* ---- composer ---- */
-  .composer { margin-top: 1.5rem; }
+  .composer { margin-top: var(--space-6); }
+  /* Images travelling with the next task. Small enough to stay out of the way,
+     large enough to tell two screenshots apart. */
+  .attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .attachment { position: relative; }
+  .attachment img {
+    display: block; width: 72px; height: 72px; object-fit: cover;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  }
+  .attachment button {
+    position: absolute; top: -6px; right: -6px;
+    min-height: 22px; width: 22px; padding: 0; line-height: 1;
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+    background: var(--surface); color: var(--fg-muted);
+    border: 1px solid var(--border); border-radius: var(--radius-pill); cursor: pointer;
+  }
+  .attachment button:hover { color: var(--danger); border-color: var(--danger); }
+  .composer.dragging textarea { border-color: var(--accent); }
   label {
     display: block; font-size: var(--step-0); font-weight: 600;
     letter-spacing: 0.06em; text-transform: uppercase;
@@ -254,9 +315,9 @@
   ::placeholder { color: var(--fg-muted); opacity: 1; }
   .toolbar {
     display: flex; flex-wrap: wrap; justify-content: space-between;
-    align-items: center; gap: 0.75rem; margin-top: 0.75rem;
+    align-items: center; gap: var(--space-4); margin-top: var(--space-4);
   }
-  .toolbar-actions { display: flex; gap: 0.5rem; }
+  .toolbar-actions { display: flex; gap: var(--space-3); }
   button {
     min-height: 44px; padding: 0.5rem 1.25rem;
     font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
@@ -269,24 +330,33 @@
     border: 1px solid var(--border);
   }
   button.danger { background: var(--danger); color: var(--on-danger); }
+  /* Delete used to be the loudest element on the page: a solid red fill beside
+     two quiet buttons, pulling the eye to the one action you rarely want. It
+     reads as the others do until you are on it. Declared after button.danger,
+     which it overrides for exactly this pairing. */
+  button.secondary.danger { background: var(--surface); color: var(--danger); border-color: var(--border); }
+  button.secondary.danger:hover, button.secondary.danger:focus-visible {
+    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
+  }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  .meta { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); }
+  .meta { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 
-  section { margin-top: 2.5rem; border-top: 1px solid var(--rule); padding-top: 1.25rem; }
-  .section-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+  section { margin-top: var(--space-6); border-top: 1px solid var(--rule); padding-top: var(--space-5); }
+  .section-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); margin-bottom: var(--space-3); }
   h2 {
     font-size: var(--step-0); font-weight: 700; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--fg-muted); margin: 0;
   }
   /* ---- runs: the execution graph of a recorded run ---- */
-  .runs { margin-top: 1.25rem; }
-  .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+  .runs { margin-top: var(--space-5); }
+  .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }
   /* Each label takes a full row so both sit above their own control, the way
      the composer's Task label does — otherwise one wraps above and the other
      lands beside its field. */
   .run-picker label { margin: 0; flex-basis: 100%; }
+  .session-actions { display: flex; gap: 0.5rem; }
   select, #run-filter {
     flex: 1; min-width: 12rem; min-height: 44px; padding: 0.4rem 0.6rem;
     font-family: var(--mono); font-size: var(--step-0);
@@ -298,6 +368,7 @@
   #run-filter::-webkit-search-cancel-button { cursor: pointer; }
   .run-graph { margin-top: 1rem; }
   .run-head {
+    max-width: var(--measure);
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
     padding-bottom: 0.6rem; border-bottom: 1px dashed var(--rule); margin-bottom: 0.75rem;
     overflow-wrap: anywhere; white-space: pre-line;
@@ -332,7 +403,7 @@
   .run-node[data-kind="tool"] .run-node-kind { color: var(--ok); }
   .run-node[data-ok="false"] .run-node-kind { color: var(--danger); }
   .run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .run-node-metrics { display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
+  .run-node-metrics { font-variant-numeric: tabular-nums; display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
   /* The bar is the picture: width is the node's share of the run's slowest node. */
   .run-node-bar { display: block; height: 3px; margin-top: 0.3rem; border-radius: var(--radius-sm); background: var(--rule); overflow: hidden; }
   .run-node-bar > span { display: block; height: 100%; background: var(--accent); }
@@ -349,7 +420,7 @@
 
   /* ---- detail panel: what a clicked node actually produced ---- */
   .run-detail {
-    margin-top: 1rem; padding: 0.9rem; border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    margin-top: var(--space-5); padding: var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius-lg);
     background: var(--surface-2);
   }
   .run-detail[hidden] { display: none; }
@@ -408,12 +479,13 @@
   }
   .chat-msg { font-family: var(--mono); font-size: var(--step-0); overflow-wrap: anywhere; }
   .chat-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; margin-bottom: 0.15rem; }
+  .chat-mark { font-size: var(--step-1); line-height: 1; }
   .chat-from { color: var(--accent); font-weight: 700; }
   /* This instance's own messages, so a room reads as a conversation rather
      than a log of indistinguishable lines. */
   .chat-msg.mine .chat-from { color: var(--ok); }
-  .chat-time { color: var(--fg-muted); }
-  .chat-text { white-space: pre-wrap; color: var(--fg); }
+  .chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .chat-text { white-space: pre-wrap; color: var(--fg); max-width: var(--measure); }
   .chat-composer { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
   .chat-composer input {
     flex: 1; min-width: 12rem; min-height: 44px; padding: 0.5rem 0.75rem;
@@ -460,6 +532,32 @@
     background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted);
   }
   .tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
+  /* The name opens the detail panel, so it is a button that reads as a name. */
+  button.tool-name {
+    min-height: auto; padding: 0; background: none; border: 0; text-align: left;
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+    color: var(--fg); cursor: pointer;
+  }
+  button.tool-name:hover { color: var(--accent); }
+  .tool-detail-desc {
+    max-width: var(--measure);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
+    margin: 0.25rem 0 0.75rem; overflow-wrap: anywhere;
+  }
+  .tool-detail-h {
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
+    margin: 0.75rem 0 0.35rem;
+  }
+  .tool-params {
+    display: grid; grid-template-columns: 10rem 1fr; gap: 0.2rem 1rem; margin: 0;
+    font-family: var(--mono); font-size: var(--step-0);
+  }
+  .tool-params dt { color: var(--fg); font-weight: 700; text-transform: none; letter-spacing: normal; overflow-wrap: anywhere; }
+  .tool-params dd { margin: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .tool-req { color: var(--danger); font-weight: 400; }
+  .tool-none { font-style: italic; }
+  @media (max-width: 40rem) { .tool-params { grid-template-columns: 1fr; } .tool-params dt { margin-top: 0.4rem; } }
   .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
 
   /* A plugin's own settings, shown only when its descriptor opted some in. */
@@ -500,7 +598,7 @@
     border: 1px solid var(--rule); border-radius: var(--radius-lg);
     padding: 0.75rem 0.9rem; margin-top: 0.75rem;
   }
-  .goal-objective { font-family: var(--mono); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
+  .goal-objective { max-width: var(--measure); font-family: var(--mono); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
   .goal-meta {
     display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; margin-top: 0.4rem;
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
@@ -535,6 +633,279 @@
     .run-edges path { stroke: CanvasText; }
     :focus-visible { outline: 2px solid Highlight; }
   }
+
+  /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
+     positioned high rather than centred so the list grows downward into space
+     the eye is already looking at. */
+  .overlay {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; justify-content: center; align-items: flex-start;
+    padding: 10vh var(--space-5) var(--space-5);
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  .overlay[hidden] { display: none; }
+  .overlay-box {
+    width: 100%; max-width: 40rem; max-height: 70vh; overflow-y: auto;
+    padding: var(--space-4); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); background: var(--surface);
+    box-shadow: 0 1rem 3rem color-mix(in srgb, var(--bg) 60%, transparent);
+  }
+  .palette-box { padding: var(--space-3); }
+  #palette-input {
+    width: 100%; box-sizing: border-box;
+    font-family: var(--mono); font-size: var(--step-1);
+    padding: var(--space-3); border: 1px solid var(--rule);
+    border-radius: var(--radius-sm); background: var(--surface-2); color: var(--fg);
+  }
+  #palette-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .palette-list { list-style: none; margin: var(--space-3) 0 0; padding: 0; max-height: 46vh; overflow-y: auto; }
+  .palette-item {
+    display: flex; align-items: center; gap: var(--space-3);
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    font-family: var(--mono); font-size: var(--step-0);
+    border-radius: var(--radius-sm); cursor: pointer; color: var(--fg);
+  }
+  .palette-item[aria-selected="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .palette-kind {
+    flex: none; min-width: 4.5rem; color: var(--fg-muted);
+    text-transform: uppercase; letter-spacing: 0.08em; font-size: var(--step-0);
+  }
+  .palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .palette-hint { margin: var(--space-3) 0 0; }
+  .shortcuts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4); margin: 0; }
+  .shortcuts dt { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
+  .shortcuts dd { margin: 0; color: var(--fg); }
+
+  .more { position: relative; }
+  .more > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; min-height: 32px;
+    padding: 0 var(--space-4); border: 1px solid var(--border);
+    border-radius: var(--radius-pill); background: var(--surface-2);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  }
+  .more > summary::-webkit-details-marker { display: none; }
+  .more > summary:hover { color: var(--fg); }
+  .more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .more[open] > summary { color: var(--fg); border-color: var(--accent); }
+  .more-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+
+  .run-options {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-3);
+  }
+  .run-options > label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .params-grid { align-items: center; }
+  .params-grid label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .params-grid input[type="number"] { width: 6rem; }
+  .checkbox-row { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+
+  .transcript-tools {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-5);
+  }
+  .transcript-tools > label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .turn[hidden] { display: none; }
+  /* The match itself, not the whole turn: scanning a long answer for the word
+     you searched is the part a filter alone does not help with. */
+  mark {
+    background: var(--accent-dim); color: var(--fg);
+    border-radius: 2px; padding: 0 0.1em;
+  }
+
+  /* Fixed, not sticky: a long answer streaming in pushes the page down, and a
+     sticky control inside the column would ride away with it. */
+  .scroll-bottom {
+    position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: 10;
+    min-height: 32px; padding: 0 var(--space-4);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    background: var(--surface); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
+    box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 55%, transparent);
+  }
+  .scroll-bottom[hidden] { display: none; }
+  .scroll-bottom:hover { border-color: var(--accent); color: var(--accent); }
+
+  .suggestions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+  .suggestion {
+    min-height: 32px; padding: 0 var(--space-4); text-align: left;
+    border: 1px solid var(--rule); border-radius: var(--radius-pill);
+    background: var(--surface-2); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
+  }
+  .suggestion:hover { border-color: var(--accent); color: var(--accent); }
+
+  .toasts {
+    position: fixed; left: 50%; bottom: var(--space-5); z-index: 30;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column-reverse; gap: var(--space-2);
+    align-items: center; pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto; max-width: min(40rem, 90vw);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    background: var(--surface); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0);
+    box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 55%, transparent);
+    animation: toast-in 140ms ease-out;
+  }
+  .toast[data-kind="bad"] { border-color: var(--danger); color: var(--danger); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+  .goal-form {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-4);
+  }
+  .goal-form label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .goal-form input { flex: 1 1 16rem; min-width: 0; }
+  .goal-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+
+  .prompt-list {
+    margin-top: var(--space-2); max-height: 14rem;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: var(--space-2);
+  }
+  .prompt-list[hidden] { display: none; }
+  .rail-pin {
+    flex: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0);
+    padding: 0 var(--space-2); min-height: 32px;
+  }
+  .rail-pin[aria-pressed="true"] { color: var(--accent); }
+  .rail-row { display: flex; align-items: center; gap: var(--space-1); }
+  .rail-row .rail-item { flex: 1; min-width: 0; }
+  /* A scrim only exists on narrow screens, where the rail floats over the page
+     and there is otherwise nothing to click to dismiss it. */
+  .rail-scrim { display: none; }
+  @media (max-width: 60rem) {
+    .rail-scrim[data-open="true"] {
+      display: block; position: fixed; inset: 0; z-index: 14;
+      background: color-mix(in srgb, var(--bg) 60%, transparent);
+    }
+  }
+
+  .shell { display: flex; align-items: flex-start; }
+  .rail {
+    flex: none; width: 17rem; align-self: stretch;
+    position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--rule); background: var(--surface);
+    padding: var(--space-4);
+  }
+  .rail-head { display: flex; flex-direction: column; gap: var(--space-3); }
+  .rail-new {
+    min-height: 32px; padding: 0 var(--space-4);
+    border: 1px solid var(--accent); border-radius: var(--radius);
+    background: transparent; color: var(--accent);
+    font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
+  }
+  .rail-new:hover { background: var(--accent); color: var(--on-accent); }
+  .rail input[type="search"] { width: 100%; box-sizing: border-box; }
+  .rail-list {
+    margin-top: var(--space-4); padding: 0; list-style: none;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .rail-group {
+    margin: var(--space-4) 0 var(--space-2);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .rail-group:first-child { margin-top: 0; }
+  .rail-item {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0);
+  }
+  .rail-item:hover { background: var(--surface-2); }
+  .rail-item[aria-current="true"] {
+    background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); color: var(--fg);
+  }
+  .rail-item-title {
+    display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .rail-item-meta { display: block; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .rail-empty { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .session-title {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch;
+  }
+  #rail-toggle { display: none; }
+
+  /* Under 60rem the rail would take a third of the screen, so it becomes a
+     panel you open, and the header button that opens it appears. */
+  @media (max-width: 60rem) {
+    .rail {
+      position: fixed; inset: 0 auto 0 0; z-index: 15; width: min(20rem, 85vw);
+      transform: translateX(-100%); transition: transform 160ms ease;
+      box-shadow: 0 0 3rem color-mix(in srgb, var(--bg) 70%, transparent);
+      max-height: none;
+    }
+    .rail[data-open="true"] { transform: none; }
+    #rail-toggle { display: inline-flex; }
+  }
+  @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
+
+  /* Rendered markdown. Sized against the mono body it sits in: headings step
+     up rather than shout, and every block keeps the reading measure. */
+  .turn-answer.md { white-space: normal; }
+  .md .md-p { margin: 0 0 var(--space-4); max-width: var(--measure); }
+  .md .md-p:last-child { margin-bottom: 0; }
+  .md .md-h {
+    font-family: var(--mono); font-size: var(--step-1); font-weight: 700;
+    color: var(--fg); margin: var(--space-5) 0 var(--space-3); line-height: 1.3;
+  }
+  .md h3.md-h { font-size: var(--step-2); }
+  .md .md-h:first-child { margin-top: 0; }
+  .md ul, .md ol { margin: 0 0 var(--space-4); padding-left: 1.4em; max-width: var(--measure); }
+  .md li { margin: var(--space-1) 0; }
+  .md li::marker { color: var(--fg-muted); }
+  .md blockquote {
+    margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-4);
+    border-left: 2px solid var(--accent); color: var(--fg-muted); max-width: var(--measure);
+  }
+  .md hr { border: 0; border-top: 1px solid var(--rule); margin: var(--space-5) 0; }
+  .md code {
+    font-family: var(--mono); font-size: 0.95em;
+    padding: 0.1em 0.35em; border-radius: var(--radius-sm);
+    background: var(--surface-2); color: var(--fg);
+  }
+  .md a { color: var(--accent); }
+  .md a:hover { text-decoration: underline; }
+  .md strong { color: var(--fg); font-weight: 700; }
+  /* Wide tables scroll in their own box; the page itself never scrolls sideways. */
+  .md-table-wrap { overflow-x: auto; margin: 0 0 var(--space-4); }
+  .md-table { border-collapse: collapse; font-family: var(--mono); font-size: var(--step-0); }
+  .md-table th, .md-table td {
+    padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--rule);
+    text-align: left; vertical-align: top; font-variant-numeric: tabular-nums;
+  }
+  .md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* Todos */
+  .todos { list-style: none; margin: var(--space-5) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .todo {
+    display: flex; align-items: center; gap: var(--space-3);
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-2);
+  }
+  .todo-text { flex: 1; font-family: var(--mono); font-size: var(--step-0); overflow-wrap: anywhere; }
+  .todo[data-done="true"] .todo-text { color: var(--fg-muted); text-decoration: line-through; }
+  .todo-when { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); font-variant-numeric: tabular-nums; }
+
+  /* Log tail */
+  .log-view {
+    margin: var(--space-4) 0 0; padding: var(--space-4);
+    max-height: 28rem; overflow: auto;
+    font-family: var(--mono); font-size: var(--step-0); line-height: 1.5;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    background: var(--surface-2); color: var(--fg);
+  }
+  .log-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -550,126 +921,282 @@
   <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
   <span class="spacer"></span>
   <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
+  <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Conversations</button>
+  <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
+  <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
   <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
   <button type="button" class="chip-btn" id="new-chat">New chat</button>
 </header>
 
-<main id="main" tabindex="-1">
-  <!-- No aria-live here: each turn's answer is its own live region (see
-       createTurn). Nesting one inside the other made a screen reader announce
-       every streamed chunk twice, once per region. -->
-  <!-- Conversations are persisted server-side per session id; this picks which
-       one the composer below continues. Sits above the transcript because it
-       names what the transcript is showing. -->
-  <div class="run-picker" id="session-picker">
-    <label for="session-select">Conversation</label>
-    <select id="session-select"></select>
-    <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
+<div class="shell">
+<!-- The conversation list is a place, not a dropdown: every conversation is
+     visible at once, grouped by when it was last touched, the way an editor
+     shows a file tree. The picker it replaces could only show one row. -->
+<!-- Status messages are written to the sr-only live regions inside each view.
+     Those regions stay the single source of truth; this is the visible view of
+     them, so a sighted user gets the same message a screen reader is read. -->
+<div class="toasts" id="toasts"></div>
+<div class="rail-scrim" id="rail-scrim" data-open="false"></div>
+<aside class="rail" id="rail" aria-label="Conversations">
+  <div class="rail-head">
+    <button type="button" class="rail-new" id="rail-new">New chat</button>
+    <label class="sr-only" for="session-filter">Filter conversations</label>
+    <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
   </div>
+  <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
+</aside>
 
-  <div class="transcript" id="transcript"></div>
-
-  <form id="task-form" class="composer">
-    <label for="task">Task</label>
-    <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
-    <div class="toolbar">
-      <span class="meta" id="hint"></span>
-      <div class="toolbar-actions">
-        <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
-        <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
+<main id="main" tabindex="-1">
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button type="button" class="tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
+  <button type="button" class="tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+  <button type="button" class="tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
+  <button type="button" class="tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
+  <button type="button" class="tab" role="tab" id="tab-todos" aria-controls="view-todos" aria-selected="false" tabindex="-1" data-view="todos">Todos</button>
+  <button type="button" class="tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
+  <button type="button" class="tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
+</nav>
+  <div class="view" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
+    <!-- No aria-live here: each turn's answer is its own live region (see
+         createTurn). Nesting one inside the other made a screen reader announce
+         every streamed chunk twice, once per region. -->
+    <!-- Conversations are persisted server-side per session id; this picks which
+         one the composer below continues. Sits above the transcript because it
+         names what the transcript is showing. -->
+    <div class="run-picker" id="session-picker">
+      <span class="session-title" id="session-title">…</span>
+      <div class="session-actions">
+        <button type="button" class="secondary" id="session-fork">Fork</button>
+        <button type="button" class="secondary" id="session-rename">Rename</button>
+        <button type="button" class="secondary danger" id="session-delete">Delete</button>
+        <!-- Folded away rather than dropped: six equal buttons in a row read as
+             one wall and hide which three you reach for daily. All of them are
+             also in the command palette. -->
+        <details class="more">
+          <summary>More</summary>
+          <div class="more-actions">
+            <button type="button" class="secondary" id="session-compact" title="Drop the oldest exchanges from this conversation">Compact</button>
+            <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export .md</button>
+            <button type="button" class="secondary" id="session-export-json" title="Download this conversation as JSON">Export .json</button>
+            <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
+            <button type="button" class="secondary" id="prompt-save" title="Save what is in the composer as a reusable prompt">Save prompt</button>
+          </div>
+        </details>
       </div>
+      <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
     </div>
-    <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
-  </form>
 
-  <section>
-    <div class="section-head">
-      <h2>Runs</h2>
-      <button type="button" class="secondary" id="runs-refresh">Refresh</button>
+    <div class="transcript-tools">
+      <label for="turn-filter">Search this conversation</label>
+      <input type="search" id="turn-filter" placeholder="Find in transcript…" autocomplete="off">
+      <span class="meta" id="turn-filter-count"></span>
     </div>
-    <div class="runs">
-      <div class="run-picker">
-        <label for="run-filter">Filter recorded runs</label>
-        <input type="search" id="run-filter" placeholder="Filter by task or run id…" autocomplete="off">
-        <label for="run-select">Recorded run</label>
-        <select id="run-select"></select>
-        <!-- Everything this section does silently gets announced here: the
-             filter rewrites the option list and swaps the graph with no visible
-             message when it succeeds, and a failed load writes its error into
-             #run-graph, which is a plain group rather than a live region. -->
-        <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
-      </div>
-      <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
-      <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
-    </div>
-  </section>
 
-  <section>
-    <div class="section-head">
-      <h2>Chat</h2>
-      <button type="button" class="secondary" id="chat-refresh">Refresh</button>
+    <div class="transcript" id="transcript"></div>
+    <div class="run-empty" id="transcript-empty" hidden>
+      <p>No turns in this conversation yet.</p>
+      <!-- Suggestions are the shortest path from an empty page to seeing what
+           this thing does; each one is a real task against this repo. -->
+      <div class="suggestions" id="suggestions"></div>
     </div>
-    <div class="runs">
-      <div class="run-picker">
-        <label for="chat-room">Room</label>
-        <!-- Rooms and direct messages are the same underlying channel, so one
-             native select with two groups beats two parallel controls. -->
-        <select id="chat-room"></select>
+    <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest ↓</button>
+
+    <form id="task-form" class="composer">
+      <label for="task">Task</label>
+      <div class="attachments" id="attachments" hidden></div>
+      <textarea id="task" name="task" placeholder="Summarize the provider config…  (type / for saved prompts)" required rows="3"></textarea>
+      <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
+      <div class="run-options">
+        <label for="model-select">Model</label>
+        <select id="model-select" title="Which provider and model runs this task"></select>
+        <details class="more" id="params">
+          <summary>Options</summary>
+          <div class="more-actions params-grid">
+            <label for="param-temp">Temperature</label>
+            <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="config">
+            <label for="param-topp">Top-p</label>
+            <input type="number" id="param-topp" min="0" max="1" step="0.05" placeholder="config">
+            <label for="enter-sends" class="checkbox-row">
+              <input type="checkbox" id="enter-sends">
+              <span>Enter sends, Shift+Enter makes a new line</span>
+            </label>
+          </div>
+        </details>
       </div>
-      <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite"></div>
-      <form class="chat-composer" id="chat-form">
-        <label class="sr-only" for="chat-text">Message</label>
-        <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
-        <button type="submit" id="chat-send" disabled>Send</button>
+      <div class="toolbar">
+        <span class="meta" id="hint"></span>
+        <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
+          <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
+        </div>
+      </div>
+      <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
+    </form>
+
+  </div>
+  <div class="view" id="view-runs" role="tabpanel" aria-labelledby="tab-runs" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Runs</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="run-copy">Copy summary</button>
+          <button type="button" class="secondary" id="runs-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="runs">
+        <div class="run-picker">
+          <label for="run-filter">Filter recorded runs</label>
+          <input type="search" id="run-filter" placeholder="Filter by task or run id…" autocomplete="off">
+          <label for="run-select">Recorded run</label>
+          <select id="run-select"></select>
+          <!-- Everything this section does silently gets announced here: the
+               filter rewrites the option list and swaps the graph with no visible
+               message when it succeeds, and a failed load writes its error into
+               #run-graph, which is a plain group rather than a live region. -->
+          <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
+        </div>
+        <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
+        <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Chat</h2>
+        <button type="button" class="secondary" id="chat-refresh">Refresh</button>
+      </div>
+      <div class="runs">
+        <div class="run-picker">
+          <label for="chat-room">Room</label>
+          <!-- Rooms and direct messages are the same underlying channel, so one
+               native select with two groups beats two parallel controls. -->
+          <select id="chat-room"></select>
+        </div>
+        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite"></div>
+        <form class="chat-composer" id="chat-form">
+          <label class="sr-only" for="chat-text">Message</label>
+          <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
+          <button type="submit" id="chat-send" disabled>Send</button>
+        </form>
+        <p class="sr-only" id="chat-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-goals" role="tabpanel" aria-labelledby="tab-goals" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Goals</h2>
+        <button type="button" class="secondary" id="goals-refresh">Refresh</button>
+      </div>
+      <!-- Both fields are required by the goal tool that writes this file, so
+           both are required here: a goal with no way to tell it is met is a
+           wish, and the runs that carry it would never end. -->
+      <form id="goal-form" class="goal-form">
+        <label for="goal-objective">New goal</label>
+        <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
+        <label for="goal-criterion">Done when</label>
+        <input type="text" id="goal-criterion" placeholder="How you will know it is met" maxlength="2000" autocomplete="off" required>
+        <button type="submit" class="secondary" id="goal-add">Add goal</button>
       </form>
-      <p class="sr-only" id="chat-status" role="status" aria-live="polite"></p>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Usage</h2>
-      <button type="button" class="secondary" id="usage-refresh">Refresh</button>
-    </div>
-    <div id="usage"></div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Goals</h2>
-      <button type="button" class="secondary" id="goals-refresh">Refresh</button>
-    </div>
-    <div id="goals"></div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Tools</h2>
-      <button type="button" class="secondary" id="tools-refresh">Refresh</button>
-    </div>
-    <div class="runs">
-      <div class="run-picker">
-        <label for="tool-filter">Filter tools</label>
-        <input type="search" id="tool-filter" placeholder="Filter by name or description…" autocomplete="off">
+      <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>
+      <div id="goals"></div>
+    </section>
+  </div>
+  <div class="view" id="view-todos" role="tabpanel" aria-labelledby="tab-todos" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Todos</h2>
+        <button type="button" class="secondary" id="todos-refresh">Refresh</button>
       </div>
-      <div id="tools"></div>
-      <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Status</h2>
-      <button type="button" class="secondary" id="refresh">Refresh</button>
-    </div>
-    <dl role="status" aria-live="polite">
-      <dt>Instance</dt>
-      <dd id="instance">…</dd>
-      <dt>Peers</dt>
-      <dd id="peers">…</dd>
-    </dl>
-  </section>
+      <!-- state/todos.json is a plain file, so anything else that opens it,
+           including the agent, shares this list. -->
+      <form id="todo-form" class="run-picker">
+        <label for="todo-text">New todo</label>
+        <input type="text" id="todo-text" placeholder="What needs doing?" maxlength="500" autocomplete="off" required>
+        <button type="submit" class="secondary" id="todo-add">Add</button>
+      </form>
+      <ul class="todos" id="todos"></ul>
+      <p class="sr-only" id="todos-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
+  <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Tools</h2>
+        <button type="button" class="secondary" id="tools-refresh">Refresh</button>
+      </div>
+      <div class="runs">
+        <div class="run-picker">
+          <label for="tool-filter">Filter tools</label>
+          <input type="search" id="tool-filter" placeholder="Filter by name or description…" autocomplete="off">
+        </div>
+        <div id="tools"></div>
+        <div id="tool-detail" class="run-detail" role="region" aria-label="Selected tool detail" hidden></div>
+        <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Usage</h2>
+        <button type="button" class="secondary" id="usage-refresh">Refresh</button>
+      </div>
+      <div id="usage"></div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Status</h2>
+        <button type="button" class="secondary" id="refresh">Refresh</button>
+      </div>
+      <dl role="status" aria-live="polite">
+        <dt>Instance</dt>
+        <dd id="instance">…</dd>
+        <dt>Peers</dt>
+        <dd id="peers">…</dd>
+      </dl>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Logs</h2>
+        <button type="button" class="secondary" id="logs-refresh">Refresh</button>
+      </div>
+      <div class="run-picker">
+        <label for="log-select">Log file</label>
+        <select id="log-select"></select>
+      </div>
+      <!-- The tail only: the server sends the last 64 KB, cut at a line
+           boundary, so a long-running improve log stays openable. -->
+      <pre class="log-view" id="log-view" tabindex="0" aria-label="Log tail"></pre>
+      <p class="sr-only" id="logs-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
 </main>
+</div>
+
+<!-- Overlays live outside main so the tab order reaches them last and a screen
+     reader is not told they are part of the current view. -->
+<div class="overlay" id="palette" role="dialog" aria-modal="true" aria-labelledby="palette-label" hidden>
+  <div class="overlay-box palette-box">
+    <label class="sr-only" id="palette-label" for="palette-input">Jump to a view, conversation, run or tool</label>
+    <input type="text" id="palette-input" placeholder="Jump to a view, conversation, run, tool or action…" autocomplete="off"
+           role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Results"></ul>
+    <p class="meta palette-hint">Enter opens · arrows move · Esc closes</p>
+  </div>
+</div>
+
+<div class="overlay" id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+  <div class="overlay-box">
+    <div class="run-detail-head">
+      <span class="run-detail-title" id="help-title">Keyboard shortcuts</span>
+      <button type="button" class="secondary" id="help-close">Close</button>
+    </div>
+    <dl class="shortcuts" id="shortcuts"></dl>
+  </div>
+</div>
 
 <!-- Vendored (not CDN-loaded): d3-dag for the run graph layout below, highlight.js
      for code-block syntax coloring. Served from /webui/vendor/ by the native HTTP
@@ -685,6 +1212,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var el = {
     form: document.getElementById("task-form"),
     task: document.getElementById("task"),
+    attachments: document.getElementById("attachments"),
     submit: document.getElementById("submit"),
     cancel: document.getElementById("cancel"),
     refresh: document.getElementById("refresh"),
@@ -700,8 +1228,19 @@ document.addEventListener("DOMContentLoaded", function () {
     runsRefresh: document.getElementById("runs-refresh"),
     runFilter: document.getElementById("run-filter"),
     runStatus: document.getElementById("run-status"),
-    sessionSelect: document.getElementById("session-select"),
+    rail: document.getElementById("rail"),
+    railList: document.getElementById("rail-list"),
+    railNew: document.getElementById("rail-new"),
+    railToggle: document.getElementById("rail-toggle"),
+    sessionTitle: document.getElementById("session-title"),
+    railScrim: document.getElementById("rail-scrim"),
+    promptList: document.getElementById("prompt-list"),
+    promptSave: document.getElementById("prompt-save"),
+    contextMeter: document.getElementById("context-meter"),
     sessionStatus: document.getElementById("session-status"),
+    sessionFork: document.getElementById("session-fork"),
+    sessionRename: document.getElementById("session-rename"),
+    sessionDelete: document.getElementById("session-delete"),
     chatRoom: document.getElementById("chat-room"),
     chatLog: document.getElementById("chat-log"),
     chatForm: document.getElementById("chat-form"),
@@ -711,15 +1250,52 @@ document.addEventListener("DOMContentLoaded", function () {
     chatStatus: document.getElementById("chat-status"),
     goals: document.getElementById("goals"),
     goalsRefresh: document.getElementById("goals-refresh"),
+    goalForm: document.getElementById("goal-form"),
+    goalObjective: document.getElementById("goal-objective"),
+    goalCriterion: document.getElementById("goal-criterion"),
+    goalsStatus: document.getElementById("goals-status"),
     usage: document.getElementById("usage"),
     usageRefresh: document.getElementById("usage-refresh"),
     tools: document.getElementById("tools"),
     toolFilter: document.getElementById("tool-filter"),
     toolsRefresh: document.getElementById("tools-refresh"),
     toolsStatus: document.getElementById("tools-status"),
+    toolDetail: document.getElementById("tool-detail"),
     runSelect: document.getElementById("run-select"),
     runGraph: document.getElementById("run-graph"),
-    runDetail: document.getElementById("run-detail")
+    runDetail: document.getElementById("run-detail"),
+    sessionFilter: document.getElementById("session-filter"),
+    sessionCompact: document.getElementById("session-compact"),
+    sessionExport: document.getElementById("session-export"),
+    sessionCopy: document.getElementById("session-copy"),
+    runCopy: document.getElementById("run-copy"),
+    todos: document.getElementById("todos"),
+    todoForm: document.getElementById("todo-form"),
+    todoText: document.getElementById("todo-text"),
+    todosRefresh: document.getElementById("todos-refresh"),
+    todosStatus: document.getElementById("todos-status"),
+    logSelect: document.getElementById("log-select"),
+    logView: document.getElementById("log-view"),
+    logsRefresh: document.getElementById("logs-refresh"),
+    logsStatus: document.getElementById("logs-status"),
+    palette: document.getElementById("palette"),
+    paletteOpen: document.getElementById("palette-open"),
+    paletteInput: document.getElementById("palette-input"),
+    paletteList: document.getElementById("palette-list"),
+    help: document.getElementById("help"),
+    helpOpen: document.getElementById("help-open"),
+    helpClose: document.getElementById("help-close"),
+    shortcuts: document.getElementById("shortcuts"),
+    transcriptEmpty: document.getElementById("transcript-empty"),
+    suggestions: document.getElementById("suggestions"),
+    modelSelect: document.getElementById("model-select"),
+    paramTemp: document.getElementById("param-temp"),
+    paramTopP: document.getElementById("param-topp"),
+    enterSends: document.getElementById("enter-sends"),
+    turnFilter: document.getElementById("turn-filter"),
+    turnFilterCount: document.getElementById("turn-filter-count"),
+    scrollBottom: document.getElementById("scroll-bottom"),
+    sessionExportJson: document.getElementById("session-export-json")
   };
 
   /* Fetches a vendored library on first use and caches the promise, so the
@@ -876,34 +1452,205 @@ document.addEventListener("DOMContentLoaded", function () {
 
   var knownSessions = [];
 
+  function fmtBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
   function sessionLabel(s) {
     var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
     if (title.length > 56) title = title.slice(0, 55) + "…";
-    return title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
+    var label = title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
+    // Transcript weight, because agent.compact_threshold_bytes is measured in
+    // exactly these bytes and compaction is otherwise invisible until it fires.
+    if (typeof s.bytes === "number" && s.bytes > 0) label += "  ·  " + fmtBytes(s.bytes);
+    return label;
   }
 
   /* The live session is always selectable even when the server has never seen
      it — a brand new chat has no saved file until its first turn completes,
      and dropping it from the list would make the picker disagree with what the
      composer is actually continuing. */
+  /* Conversations group by when they were last touched, because that is how
+     you look for one: "the thing I was doing this morning", not an id. */
+  function recencyGroup(updated) {
+    if (!updated) return "Undated";
+    var day = 24 * 60 * 60;
+    var now = Math.floor(Date.now() / 1000);
+    var age = now - updated;
+    if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return "Today";
+    if (age < 2 * day) return "Yesterday";
+    if (age < 7 * day) return "Previous 7 days";
+    if (age < 30 * day) return "Previous 30 days";
+    return "Older";
+  }
+
+  function railRow(s, title, meta, selected) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "rail-item";
+    // aria-current, not aria-selected: this is the conversation you are in,
+    // not one of several selected in a listbox.
+    if (selected) b.setAttribute("aria-current", "true");
+    var t = document.createElement("span");
+    t.className = "rail-item-title";
+    t.textContent = title;
+    var m = document.createElement("span");
+    m.className = "rail-item-meta";
+    m.textContent = meta;
+    b.appendChild(t);
+    b.appendChild(m);
+    if (s) b.addEventListener("click", function () { switchSession(s.id); closeRailOnNarrow(); });
+    return b;
+  }
+
+  /* Pinning lives in this browser rather than on the server: which few
+     conversations you keep to hand is a property of how you are working right
+     now, not of the conversation. */
+  function loadPins() {
+    try { return JSON.parse(window.localStorage.getItem("clanker.pins") || "[]"); } catch (e) { return []; }
+  }
+  var pins = loadPins();
+
+  function isPinned(id) { return pins.indexOf(id) !== -1; }
+
+  function togglePin(id) {
+    var at = pins.indexOf(id);
+    if (at === -1) pins.push(id); else pins.splice(at, 1);
+    try { window.localStorage.setItem("clanker.pins", JSON.stringify(pins)); } catch (e) {}
+    renderSessionOptions(null);
+  }
+
   function renderSessionOptions(sessions) {
-    knownSessions = sessions || [];
-    el.sessionSelect.textContent = "";
+    if (sessions) knownSessions = sessions;
+    var q = el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "";
+    el.railList.textContent = "";
     var seen = false;
-    knownSessions.forEach(function (s) {
-      var opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = sessionLabel(s);
-      el.sessionSelect.appendChild(opt);
-      if (s.id === sessionId) seen = true;
+    var lastGroup = "";
+    var shown = 0;
+    var ordered = knownSessions.slice().sort(function (a, b) {
+      var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return 0;
     });
-    if (!seen) {
-      var pending = document.createElement("option");
-      pending.value = sessionId;
-      pending.textContent = "New conversation  ·  unsaved";
-      el.sessionSelect.insertBefore(pending, el.sessionSelect.firstChild);
+    ordered.forEach(function (s) {
+      if (s.id === sessionId) seen = true;
+      if (q && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
+      var group = isPinned(s.id) ? "Pinned" : recencyGroup(s.updated);
+      if (group !== lastGroup) {
+        var head = document.createElement("li");
+        head.className = "rail-group";
+        head.setAttribute("role", "presentation");
+        head.textContent = group;
+        el.railList.appendChild(head);
+        lastGroup = group;
+      }
+      var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+      var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
+        (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
+      var row = document.createElement("li");
+      row.className = "rail-row";
+      row.appendChild(railRow(s, title, meta, s.id === sessionId));
+      var pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = "rail-pin";
+      pin.textContent = isPinned(s.id) ? "★" : "☆";
+      pin.setAttribute("aria-pressed", String(isPinned(s.id)));
+      pin.setAttribute("aria-label", (isPinned(s.id) ? "Unpin " : "Pin ") + title);
+      pin.addEventListener("click", function () { togglePin(s.id); });
+      row.appendChild(pin);
+      el.railList.appendChild(row);
+      shown += 1;
+    });
+    /* A brand new chat has no file on disk until its first turn completes;
+       without this row the rail would show nothing selected while the
+       composer was plainly pointed at something. */
+    if (!seen && !q) {
+      var pendingRow = document.createElement("li");
+      pendingRow.className = "rail-row";
+      pendingRow.appendChild(railRow(null, "New conversation", "unsaved", true));
+      el.railList.insertBefore(pendingRow, el.railList.firstChild);
     }
-    el.sessionSelect.value = sessionId;
+    if (!shown && q) {
+      var none = document.createElement("li");
+      none.className = "rail-empty";
+      none.textContent = "No conversation matches.";
+      el.railList.appendChild(none);
+    }
+    renderSessionTitle();
+  }
+
+  function renderSessionTitle() {
+    var meta = currentSessionMeta();
+    el.sessionTitle.textContent = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
+    renderContextMeter();
+  }
+
+  function setRailOpen(open) {
+    el.rail.setAttribute("data-open", String(open));
+    el.railScrim.setAttribute("data-open", String(open));
+    el.railToggle.setAttribute("aria-expanded", String(open));
+    if (open) el.sessionFilter.focus();
+  }
+
+  function closeRailOnNarrow() {
+    if (window.matchMedia && window.matchMedia("(max-width: 60rem)").matches) setRailOpen(false);
+  }
+
+  el.railToggle.addEventListener("click", function () {
+    setRailOpen(el.rail.getAttribute("data-open") !== "true");
+  });
+  el.railScrim.addEventListener("click", function () { setRailOpen(false); });
+
+  function railItems() {
+    return Array.prototype.slice.call(el.railList.querySelectorAll(".rail-item"));
+  }
+
+  function moveRailFocus(from, step) {
+    var items = railItems();
+    if (!items.length) return;
+    var at = items.indexOf(from);
+    var next = at === -1 ? (step > 0 ? 0 : items.length - 1) : at + step;
+    if (next < 0) {
+      el.sessionFilter.focus();
+      return;
+    }
+    if (next >= items.length) next = items.length - 1;
+    items[next].focus();
+  }
+
+  el.railList.addEventListener("keydown", function (e) {
+    var item = e.target.closest ? e.target.closest(".rail-item") : null;
+    if (!item) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveRailFocus(item, e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      var items = railItems();
+      if (items.length) items[e.key === "Home" ? 0 : items.length - 1].focus();
+    }
+  });
+
+  el.sessionFilter.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowDown") return;
+    e.preventDefault();
+    var items = railItems();
+    if (items.length) items[0].focus();
+  });
+
+  el.railNew.addEventListener("click", function () {
+    el.newChat.click();
+    closeRailOnNarrow();
+  });
+
+  /* The transcript is either turns or a line saying there are none; it used to
+     be turns or nothing at all, which looked identical to a failed load. */
+  function syncTranscriptEmpty() {
+    el.transcriptEmpty.hidden = el.transcript.querySelector(".turn") !== null;
   }
 
   function loadSessions() {
@@ -936,7 +1683,10 @@ document.addEventListener("DOMContentLoaded", function () {
         pendingTurn = createTurn(m.content);
         return;
       }
-      if (!pendingTurn) pendingTurn = createTurn("(earlier turn)");
+      if (!pendingTurn) {
+        pendingTurn = createTurn("(question not in this transcript)");
+        pendingTurn.querySelector(".turn-you").setAttribute("data-orphan", "true");
+      }
       appendText(pendingTurn, m.content, false);
       finalizeAnswer(pendingTurn);
       renderStats(pendingTurn, {}, null);
@@ -968,13 +1718,14 @@ document.addEventListener("DOMContentLoaded", function () {
       // Refused mid-run, so put the control back on the conversation that is
       // actually still running rather than leaving it pointing at one the
       // composer is not using.
-      el.sessionSelect.value = sessionId;
+      renderSessionOptions(null);
       el.sessionStatus.textContent = "Finish or stop the current run before switching conversation.";
       return;
     }
     sessionId = id;
     try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
     renderSessionChip();
+    renderSessionOptions(null);
     el.transcript.textContent = "";
     el.sessionStatus.textContent = "Loading conversation…";
     fetch("/api/sessions/" + encodeURIComponent(id))
@@ -984,6 +1735,7 @@ document.addEventListener("DOMContentLoaded", function () {
       })
       .then(function (data) {
         renderSessionHistory(data.messages || []);
+        syncTranscriptEmpty();
         var n = (data.messages || []).length;
         el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
       })
@@ -996,8 +1748,99 @@ document.addEventListener("DOMContentLoaded", function () {
       });
   }
 
-  el.sessionSelect.addEventListener("change", function () {
-    switchSession(el.sessionSelect.value);
+
+
+  /* A conversation's title is otherwise the first 60 characters of whatever
+     task opened it, which makes a picker full of them read like a list of
+     prefixes. Both actions refuse to touch a conversation that has never been
+     saved, since there is nothing on disk to act on yet. */
+  function currentSessionMeta() {
+    for (var i = 0; i < knownSessions.length; i++) {
+      if (knownSessions[i].id === sessionId) return knownSessions[i];
+    }
+    return null;
+  }
+
+  /* A fork is a branch you can abandon: the same messages under a new id, so
+     trying a different direction never costs the conversation it came from.
+     The server answers with the new id and this switches to it, because the
+     point of forking is to continue in the copy. */
+  el.sessionFork.addEventListener("click", function () {
+    if (!currentSessionMeta()) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    el.sessionFork.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/fork", { method: "POST" })
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok || !data.ok || !data.id) throw new Error(data.error || ("HTTP " + r.status));
+          return data.id;
+        });
+      })
+      .then(function (newId) {
+        sessionId = newId;
+        try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+        renderSessionChip();
+        el.sessionStatus.textContent = "Forked. You are now in the copy.";
+        return loadSessions();
+      })
+      .catch(function (err) {
+        el.sessionStatus.textContent = "Could not fork: " + err.message;
+      })
+      .finally(function () { el.sessionFork.disabled = false; });
+  });
+
+  el.sessionRename.addEventListener("click", function () {
+    var meta = currentSessionMeta();
+    if (!meta) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    var next = window.prompt("Rename this conversation", meta.title || "");
+    if (next === null) return;
+    next = next.trim();
+    if (!next) {
+      el.sessionStatus.textContent = "A conversation needs a title.";
+      return;
+    }
+    el.sessionRename.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: next })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      el.sessionStatus.textContent = "Renamed to " + next + ".";
+      return loadSessions();
+    }).catch(function (err) {
+      el.sessionStatus.textContent = "Could not rename: " + err.message;
+    }).finally(function () { el.sessionRename.disabled = false; });
+  });
+
+  el.sessionDelete.addEventListener("click", function () {
+    var meta = currentSessionMeta();
+    if (!meta) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    // Deleting a transcript cannot be undone from here, so it is confirmed.
+    // The run graphs survive it: they record runs that really happened and are
+    // addressed by run id, not by session.
+    if (!window.confirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.")) return;
+    el.sessionDelete.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        el.sessionStatus.textContent = "Deleted. Started a new conversation.";
+        sessionId = newSessionId();
+        try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+        el.transcript.textContent = "";
+        renderSessionChip();
+        return loadSessions();
+      }).catch(function (err) {
+        el.sessionStatus.textContent = "Could not delete: " + err.message;
+      }).finally(function () { el.sessionDelete.disabled = false; });
   });
 
   function syncControls() {
@@ -1006,7 +1849,8 @@ document.addEventListener("DOMContentLoaded", function () {
     el.newChat.disabled = busy;
     el.task.readOnly = busy;
     el.cancel.hidden = !busy;
-    el.submit.textContent = busy ? "Running…" : "Run (Ctrl+Enter)";
+    if (busy) el.submit.textContent = "Running…";
+    else syncSubmitLabel();
     document.title = busy ? "Running… · clanker" : "clanker";
   }
 
@@ -1030,6 +1874,7 @@ document.addEventListener("DOMContentLoaded", function () {
      a real conversation history instead of one box that forgets the past
      answer as soon as you ask another question. */
   function createTurn(task) {
+    if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
     var turn = document.createElement("div");
     turn.className = "turn";
 
@@ -1107,20 +1952,185 @@ document.addEventListener("DOMContentLoaded", function () {
      case for a coding agent's replies. Skipped for failed/stopped turns so
      the red [error] styling already in the DOM is never flattened back to
      plain text. */
+
+  /* ---------- markdown ----------
+     Answers arrive as Markdown and used to render as one flat wall of
+     monospace: headings, lists and tables were literal "##" and "|" characters.
+     Everything below is built with createElement and textContent, never
+     innerHTML, so markup a model writes lands as visible characters and is
+     never parsed as markup. */
+
+  var INLINE_RE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+
+  function inlineInto(parent, text) {
+    while (text.length) {
+      var m = INLINE_RE.exec(text);
+      if (!m) { parent.appendChild(document.createTextNode(text)); return; }
+      if (m.index > 0) parent.appendChild(document.createTextNode(text.slice(0, m.index)));
+      var tok = m[0], node;
+      if (tok.charAt(0) === "`") {
+        node = document.createElement("code");
+        node.textContent = tok.slice(1, -1);
+      } else if (tok.slice(0, 2) === "**") {
+        node = document.createElement("strong");
+        inlineInto(node, tok.slice(2, -2));
+      } else if (tok.charAt(0) === "*" || tok.charAt(0) === "_") {
+        var before = m.index > 0 ? text.charAt(m.index - 1) : " ";
+        var after = text.charAt(m.index + tok.length) || " ";
+        // Intra-word underscores are identifiers, not emphasis: snake_case
+        // names in an answer used to render as italics with the underscores
+        // eaten.
+        if (tok.charAt(0) === "_" && (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(after))) {
+          parent.appendChild(document.createTextNode(tok));
+          text = text.slice(m.index + tok.length);
+          continue;
+        }
+        node = document.createElement("em");
+        inlineInto(node, tok.slice(1, -1));
+      } else if (tok.charAt(0) === "[") {
+        var split = tok.indexOf("](");
+        node = document.createElement("a");
+        node.href = tok.slice(split + 2, -1);
+        node.rel = "noreferrer noopener";
+        inlineInto(node, tok.slice(1, split));
+      } else {
+        node = document.createElement("a");
+        node.href = tok;
+        node.rel = "noreferrer noopener";
+        node.textContent = tok;
+      }
+      parent.appendChild(node);
+      text = text.slice(m.index + tok.length);
+    }
+  }
+
+  /* A single newline inside a paragraph is kept as a line break rather than
+     collapsed to a space: agent output leans on hard-wrapped lines, and
+     joining them reflows tables of numbers into prose. */
+  function paragraphInto(parent, lines) {
+    lines.forEach(function (line, i) {
+      if (i) parent.appendChild(document.createElement("br"));
+      inlineInto(parent, line);
+    });
+  }
+
+  function tableRow(tr, cells, cellTag) {
+    cells.forEach(function (c) {
+      var cell = document.createElement(cellTag);
+      inlineInto(cell, c.trim());
+      tr.appendChild(cell);
+    });
+  }
+
+  function splitRow(line) {
+    var t = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return t.split("|");
+  }
+
+  function renderMarkdown(text) {
+    var frag = document.createDocumentFragment();
+    var lines = text.split("\n");
+    var i = 0;
+    function flushList(ordered) {
+      var list = document.createElement(ordered ? "ol" : "ul");
+      while (i < lines.length) {
+        var m = ordered ? /^\s*\d+[.)]\s+(.*)$/.exec(lines[i]) : /^\s*[-*+]\s+(.*)$/.exec(lines[i]);
+        if (!m) break;
+        var li = document.createElement("li");
+        inlineInto(li, m[1]);
+        list.appendChild(li);
+        i += 1;
+      }
+      frag.appendChild(list);
+    }
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line.trim()) { i += 1; continue; }
+      var head = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (head) {
+        // Answers live under the page's own h2, so the smallest heading a
+        // model writes still nests below it rather than competing with it.
+        var h = document.createElement("h" + Math.min(6, head[1].length + 2));
+        h.className = "md-h";
+        inlineInto(h, head[2]);
+        frag.appendChild(h);
+        i += 1;
+        continue;
+      }
+      if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) {
+        frag.appendChild(document.createElement("hr"));
+        i += 1;
+        continue;
+      }
+      if (/^\s*>\s?/.test(line)) {
+        var quote = document.createElement("blockquote");
+        var qlines = [];
+        while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+          qlines.push(lines[i].replace(/^\s*>\s?/, ""));
+          i += 1;
+        }
+        paragraphInto(quote, qlines);
+        frag.appendChild(quote);
+        continue;
+      }
+      if (/^\s*[-*+]\s+/.test(line)) { flushList(false); continue; }
+      if (/^\s*\d+[.)]\s+/.test(line)) { flushList(true); continue; }
+      // A table needs its separator row to be a table at all, which keeps a
+      // line that merely contains a pipe from becoming one.
+      if (line.indexOf("|") !== -1 && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+        var table = document.createElement("table");
+        table.className = "md-table";
+        var thead = document.createElement("thead");
+        var htr = document.createElement("tr");
+        tableRow(htr, splitRow(line), "th");
+        thead.appendChild(htr);
+        table.appendChild(thead);
+        var tbody = document.createElement("tbody");
+        i += 2;
+        while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
+          var btr = document.createElement("tr");
+          tableRow(btr, splitRow(lines[i]), "td");
+          tbody.appendChild(btr);
+          i += 1;
+        }
+        table.appendChild(tbody);
+        var wrap = document.createElement("div");
+        wrap.className = "md-table-wrap";
+        wrap.appendChild(table);
+        frag.appendChild(wrap);
+        continue;
+      }
+      var para = [];
+      while (i < lines.length && lines[i].trim() &&
+             !/^(#{1,6})\s|^\s*[-*+]\s|^\s*\d+[.)]\s|^\s*>/.test(lines[i])) {
+        para.push(lines[i]);
+        i += 1;
+      }
+      var p2 = document.createElement("p");
+      p2.className = "md-p";
+      paragraphInto(p2, para);
+      frag.appendChild(p2);
+    }
+    return frag;
+  }
+
   function finalizeAnswer(turn) {
     if (turn.answer.querySelector(".failed")) return;
     var raw = turn.answer.textContent;
-    if (raw.indexOf("```") === -1) return;
+    if (!raw) return;
     var frag = document.createDocumentFragment();
     var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
     var last = 0, m;
     while ((m = re.exec(raw))) {
-      if (m.index > last) frag.appendChild(document.createTextNode(raw.slice(last, m.index)));
+      if (m.index > last) frag.appendChild(renderMarkdown(raw.slice(last, m.index)));
       frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
       last = re.lastIndex;
     }
-    if (last < raw.length) frag.appendChild(document.createTextNode(raw.slice(last)));
+    if (last < raw.length) frag.appendChild(renderMarkdown(raw.slice(last)));
     turn.answer.textContent = "";
+    // Block elements do their own wrapping; leaving the container on pre-wrap
+    // would add the source's newlines on top of the markup's.
+    turn.answer.className = "turn-answer md";
     turn.answer.appendChild(frag);
   }
 
@@ -1253,6 +2263,20 @@ document.addEventListener("DOMContentLoaded", function () {
         el.form.requestSubmit();
       });
       turn.foot.appendChild(regenBtn);
+
+      var editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "secondary";
+      editBtn.textContent = "Edit & resend";
+      editBtn.title = "Put this task back in the composer to change it";
+      editBtn.addEventListener("click", function () {
+        el.task.value = task;
+        el.task.focus();
+        el.task.setSelectionRange(task.length, task.length);
+        syncControls();
+        scrollTo(el.task, "center");
+      });
+      turn.foot.appendChild(editBtn);
     }
   }
 
@@ -1266,6 +2290,13 @@ document.addEventListener("DOMContentLoaded", function () {
     return {
       push: function (chunk) {
         buffer += chunk;
+        // A control event is introduced by \x01 and terminated by a newline,
+        // but the answer text before it need not end in one. Without this the
+        // two share a line, the \x01 test fails because it is not at index 0,
+        // and the raw {"type":"done"} JSON lands in the answer while the
+        // turn's stats never render. JSON escapes control characters, so a
+        // literal \x01 only ever appears as this marker.
+        buffer = buffer.replace(/([^\n])\u0001/g, "$1\n\u0001");
         var lines = buffer.split("\n");
         buffer = lines.pop();
         for (var i = 0; i < lines.length; i++) onLine(lines[i], true);
@@ -1334,6 +2365,85 @@ document.addEventListener("DOMContentLoaded", function () {
       .catch(function () { renderStatus(null); });
   }
 
+  // ---- image attachments -------------------------------------------------
+
+  /* The harness has been multimodal for a while — the agent loop attaches
+     ImageParts — but the composer was a text box, so the one thing you most
+     want to show an agent (a screenshot of the thing you are asking about)
+     could not be sent. Encoded here and posted with the run. */
+  var pendingImages = [];
+  var max_image_bytes = 4 * 1024 * 1024;
+
+  function renderAttachments() {
+    el.attachments.textContent = "";
+    el.attachments.hidden = pendingImages.length === 0;
+    pendingImages.forEach(function (img, i) {
+      var wrap = document.createElement("div");
+      wrap.className = "attachment";
+      var thumb = document.createElement("img");
+      thumb.src = "data:" + img.mime + ";base64," + img.b64;
+      thumb.alt = "Attached image " + (i + 1) + ", " + fmtBytes(img.bytes);
+      wrap.appendChild(thumb);
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
+      rm.addEventListener("click", function () {
+        pendingImages.splice(i, 1);
+        renderAttachments();
+        el.hint.textContent = "";
+      });
+      wrap.appendChild(rm);
+      el.attachments.appendChild(wrap);
+    });
+  }
+
+  function addImageFile(file) {
+    if (!file || file.type.indexOf("image/") !== 0) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      // Split on the comma: a data: URL is "data:<mime>;base64,<payload>" and
+      // only the payload travels.
+      var comma = String(reader.result).indexOf(",");
+      if (comma === -1) return;
+      var b64 = String(reader.result).slice(comma + 1);
+      // The server enforces the same cap on the decoded size, so measure the
+      // decoded size here rather than the base64 length, which is a third larger.
+      var bytes = Math.floor(b64.length * 3 / 4);
+      if (bytes > max_image_bytes) {
+        el.hint.textContent = "That image is " + fmtBytes(bytes) + "; the limit is " + fmtBytes(max_image_bytes) + ".";
+        return;
+      }
+      pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
+      renderAttachments();
+      el.hint.textContent = pendingImages.length + (pendingImages.length === 1 ? " image attached." : " images attached.");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  el.task.addEventListener("paste", function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file") addImageFile(items[i].getAsFile());
+    }
+  });
+
+  ["dragenter", "dragover"].forEach(function (evt) {
+    el.form.addEventListener(evt, function (e) {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      el.form.classList.add("dragging");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (evt) {
+    el.form.addEventListener(evt, function () { el.form.classList.remove("dragging"); });
+  });
+  el.form.addEventListener("drop", function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files) return;
+    e.preventDefault();
+    for (var i = 0; i < e.dataTransfer.files.length; i++) addImageFile(e.dataTransfer.files[i]);
+  });
+
   el.task.addEventListener("input", syncControls);
 
   el.task.addEventListener("keydown", function (e) {
@@ -1372,6 +2482,7 @@ document.addEventListener("DOMContentLoaded", function () {
     startElapsed(startedAt);
     controller = new AbortController();
 
+    var opts = runOptions();
     var statsRendered = false;
     var splitter = makeLineSplitter(function (line) {
       if (line.charCodeAt(0) === 1) {
@@ -1386,13 +2497,25 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         return;
       }
+      var stick = nearBottom();
       appendText(turn, line + "\n", false);
+      if (stick) window.scrollTo(0, document.body.scrollHeight);
+      else syncScrollButton();
     });
 
     fetch("/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: task, stream: true, session: sessionId }),
+      body: JSON.stringify({
+        task: task,
+        stream: true,
+        session: sessionId,
+        images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
+        provider: opts.provider || "",
+        model: opts.model || "",
+        temperature: typeof opts.temperature === "number" ? opts.temperature : null,
+        top_p: typeof opts.top_p === "number" ? opts.top_p : null
+      }),
       signal: controller.signal
     }).then(function (resp) {
       if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
@@ -1409,6 +2532,9 @@ document.addEventListener("DOMContentLoaded", function () {
       splitter.flush();
       finalizeAnswer(turn);
       el.task.value = "";
+      // Attachments belong to the turn that just went out, not the next one.
+      pendingImages = [];
+      renderAttachments();
       // The turn just gave this session its title and a newer timestamp, and a
       // first turn created it server-side at all — so the picker is refreshed
       // rather than left describing the conversation as it was before.
@@ -1576,6 +2702,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   var lastGraph = null;
+  var lastBuilt = null;
   var resizeTimer = null;
   window.addEventListener("resize", function () {
     if (resizeTimer) window.clearTimeout(resizeTimer);
@@ -1611,6 +2738,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     var built = buildStages(nodes);
+    lastBuilt = built;
     // Duration bars are scaled against the slowest node, not the run total:
     // one long LLM call would otherwise flatten every tool call to an
     // invisible sliver.
@@ -2121,7 +3249,9 @@ document.addEventListener("DOMContentLoaded", function () {
   var chatFailing = false;
 
   function chatRoomLabel(r) {
-    return isDm(r.room) ? dmPartner(r.room) : r.room;
+    if (!isDm(r.room)) return "# " + r.room;
+    var who = dmPartner(r.room);
+    return clankerMark(who) + " " + who;
   }
 
   /* Rooms the server knows about, plus a DM entry per configured peer even
@@ -2287,12 +3417,38 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  /* A stable emoji per instance, so a busy room is scannable by shape before
+     you read a single name. Derived from the name rather than assigned, so
+     every clanker independently agrees on who is who with no shared state and
+     no registry — the same reasoning as the DM room name. Collisions are
+     possible with enough peers; the name is still right there next to it. */
+  var CLANKER_MARKS = [
+    "🐙", "🦊", "🦉", "🐢", "🦋", "🐝", "🦔", "🦦",
+    "🦭", "🐬", "🦅", "🦩", "🐸", "🦎", "🐿️", "🦡",
+    "🪼", "🦑", "🐳", "🦌", "🐺", "🦂", "🕷️", "🦜"
+  ];
+
+  function clankerMark(name) {
+    var h = 5381;
+    for (var i = 0; i < name.length; i++) {
+      // djb2, kept in 32-bit range so the result does not drift with length.
+      h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
+    }
+    return CLANKER_MARKS[h % CLANKER_MARKS.length];
+  }
+
   function buildChatMessage(m) {
     var wrap = document.createElement("div");
     wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
 
     var meta = document.createElement("div");
     meta.className = "chat-meta";
+    var mark = document.createElement("span");
+    mark.className = "chat-mark";
+    mark.textContent = clankerMark(m.from || "");
+    // Decorative: the name follows it and says the same thing.
+    mark.setAttribute("aria-hidden", "true");
+    meta.appendChild(mark);
     var from = document.createElement("span");
     from.className = "chat-from";
     from.textContent = m.from;
@@ -2499,7 +3655,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!goals.length) {
       var none = document.createElement("p");
       none.className = "usage-empty";
-      none.textContent = "No goals set. `clanker goal \"<intent>\"` records one.";
+      none.textContent = "No goals set. Add one above, or run `clanker goal \"<intent>\"`.";
       el.goals.appendChild(none);
       return;
     }
@@ -2526,6 +3682,31 @@ document.addEventListener("DOMContentLoaded", function () {
         meta.appendChild(id);
       }
       card.appendChild(meta);
+
+      if (g.id) {
+        var actions = document.createElement("div");
+        actions.className = "goal-actions";
+        [["Mark done", "done"], ["Abandon", "abandoned"], ["Reactivate", "active"]].forEach(function (pair) {
+          if ((g.status || "active") === pair[1]) return;
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "secondary";
+          b.textContent = pair[0];
+          b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[0] + ": done."); });
+          actions.appendChild(b);
+        });
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "secondary danger";
+        del.textContent = "Delete";
+        del.setAttribute("aria-label", "Delete goal: " + (g.objective || g.id));
+        del.addEventListener("click", function () {
+          if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
+          postGoal({ id: g.id, remove: true }, "Goal deleted.");
+        });
+        actions.appendChild(del);
+        card.appendChild(actions);
+      }
 
       // Only the fields that were actually filled in: an empty criterion is a
       // real state of a goal, and printing an empty label would imply
@@ -2604,9 +3785,12 @@ document.addEventListener("DOMContentLoaded", function () {
     var row = document.createElement("div");
     row.className = "tool-row";
 
-    var name = document.createElement("span");
+    var name = document.createElement("button");
+    name.type = "button";
     name.className = "tool-name";
     name.textContent = t.name;
+    name.setAttribute("aria-label", "Show details for " + t.name);
+    name.addEventListener("click", function () { showToolDetail(t); });
     row.appendChild(name);
 
     // Core tools back the REPL and the HTTP routes, so the harness refuses to
@@ -2748,6 +3932,107 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  /* What a tool accepts and what it is allowed to reach. The sandbox policy is
+     the headline: a descriptor's network, filesystem and exec allowances are
+     the real answer to "what can this thing do", and they were previously only
+     readable by opening the manifest. */
+  function showToolDetail(t) {
+    el.toolDetail.textContent = "";
+    el.toolDetail.hidden = false;
+
+    var head = document.createElement("div");
+    head.className = "run-detail-head";
+    var titleWrap = document.createElement("span");
+    var title = document.createElement("span");
+    title.className = "run-detail-title";
+    title.textContent = t.name;
+    titleWrap.appendChild(title);
+    var meta = document.createElement("span");
+    meta.className = "run-detail-meta";
+    var tags = [];
+    if (t.core) tags.push("core");
+    if (t.category) tags.push(t.category);
+    if (t.llm) tags.push("calls the model");
+    if (t.sequential) tags.push("sequential");
+    if (t.check) tags.push("check");
+    if (t.transform) tags.push("transform " + t.transform.phase + " (order " + t.transform.order + ")");
+    tags.push(t.enabled ? "enabled" : "disabled");
+    meta.textContent = "  " + tags.join("  ·  ");
+    titleWrap.appendChild(meta);
+    head.appendChild(titleWrap);
+
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "secondary run-detail-close";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", function () {
+      el.toolDetail.hidden = true;
+      el.toolDetail.textContent = "";
+    });
+    head.appendChild(closeBtn);
+    el.toolDetail.appendChild(head);
+
+    // Full text, not the first sentence the row shows.
+    var desc = document.createElement("p");
+    desc.className = "tool-detail-desc";
+    desc.textContent = t.description || "(no description)";
+    el.toolDetail.appendChild(desc);
+
+    // Actions: every parameter the tool accepts, with the required ones named.
+    var schema = t.input_schema;
+    var props = schema && schema.properties ? Object.keys(schema.properties) : [];
+    if (props.length) {
+      var required = (schema.required || []);
+      var list = document.createElement("dl");
+      list.className = "tool-params";
+      props.forEach(function (key) {
+        var spec = schema.properties[key] || {};
+        var dt = document.createElement("dt");
+        dt.textContent = key;
+        if (required.indexOf(key) !== -1) {
+          var req = document.createElement("span");
+          req.className = "tool-req";
+          req.textContent = " required";
+          dt.appendChild(req);
+        }
+        list.appendChild(dt);
+        var dd = document.createElement("dd");
+        dd.textContent = (spec.type || "any") + (spec.description ? " — " + spec.description : "");
+        list.appendChild(dd);
+      });
+      el.toolDetail.appendChild(sectionTitle("Accepts"));
+      el.toolDetail.appendChild(list);
+    }
+
+    // Sandbox policy. An empty allowance is a real answer, so it is stated
+    // rather than omitted: "no network" is the thing worth knowing.
+    el.toolDetail.appendChild(sectionTitle("Sandbox"));
+    var policy = document.createElement("dl");
+    policy.className = "tool-params";
+    [["Network", t.network_allow, "no network"],
+     ["Filesystem", t.fs_prefixes, "no filesystem access"],
+     ["Commands", t.exec_allow, "the harness default set"]].forEach(function (row) {
+      var dt = document.createElement("dt");
+      dt.textContent = row[0];
+      policy.appendChild(dt);
+      var dd = document.createElement("dd");
+      dd.textContent = row[1] && row[1].length ? row[1].join(", ") : row[2];
+      if (!(row[1] && row[1].length)) dd.className = "tool-none";
+      policy.appendChild(dd);
+    });
+    el.toolDetail.appendChild(policy);
+
+    scrollTo(el.toolDetail, "nearest");
+    closeBtn.focus();
+  }
+
+  function sectionTitle(text) {
+    var h = document.createElement("h3");
+    h.className = "tool-detail-h";
+    h.textContent = text;
+    return h;
+  }
+
   function toggleTool(t, btn) {
     var want = !t.enabled;
     btn.disabled = true;
@@ -2820,19 +4105,934 @@ document.addEventListener("DOMContentLoaded", function () {
     loadTools().finally(function () { el.toolsRefresh.disabled = false; });
   });
 
+  // ---- views: one section visible at a time -----------------------------
+
+  var VIEWS = ["chat", "runs", "rooms", "goals", "todos", "tools", "system"];
+  /* Each view's data is fetched the first time it is opened rather than all of
+     it at load. The page used to fire seven requests before showing anything,
+     several of which execute a WASM tool. */
+  var viewLoaded = {};
+  var viewLoaders = {
+    runs: loadRuns,
+    rooms: function () { return loadStatus().then(loadChatRooms); },
+    goals: loadGoals,
+    todos: loadTodos,
+    tools: loadTools,
+    system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList()]); }
+  };
+
+  function showView(name, focusPanel) {
+    if (VIEWS.indexOf(name) === -1) name = "chat";
+    VIEWS.forEach(function (v) {
+      var tab = document.getElementById("tab-" + v);
+      var panel = document.getElementById("view-" + v);
+      var on = v === name;
+      panel.hidden = !on;
+      tab.setAttribute("aria-selected", String(on));
+      // Roving tabindex: the tablist is one stop, arrows move within it.
+      tab.tabIndex = on ? 0 : -1;
+    });
+    if (window.location.hash !== "#" + name) {
+      try { window.history.replaceState(null, "", "#" + name); } catch (e) {}
+    }
+    if (focusPanel) document.getElementById("view-" + name).focus();
+    if (!viewLoaded[name] && viewLoaders[name]) {
+      viewLoaded[name] = true;
+      viewLoaders[name]();
+    }
+  }
+
+  VIEWS.forEach(function (v, i) {
+    var tab = document.getElementById("tab-" + v);
+    tab.addEventListener("click", function () { showView(v, false); });
+    tab.addEventListener("keydown", function (e) {
+      var step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (step) {
+        e.preventDefault();
+        var next = VIEWS[(i + step + VIEWS.length) % VIEWS.length];
+        showView(next, false);
+        document.getElementById("tab-" + next).focus();
+        return;
+      }
+      if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        var edge = e.key === "Home" ? VIEWS[0] : VIEWS[VIEWS.length - 1];
+        showView(edge, false);
+        document.getElementById("tab-" + edge).focus();
+      }
+    });
+  });
+
+  window.addEventListener("hashchange", function () {
+    showView(window.location.hash.replace("#", ""), false);
+  });
+
+  /* A digit jumps straight to a view, but never while someone is typing into
+     the composer or a filter. */
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    var n = parseInt(e.key, 10);
+    if (n >= 1 && n <= VIEWS.length) {
+      showView(VIEWS[n - 1], false);
+      document.getElementById("tab-" + VIEWS[n - 1]).focus();
+    }
+  });
+
+  function setTabCount(view, n) {
+    var tab = document.getElementById("tab-" + view);
+    var el0 = tab.querySelector(".tab-count");
+    if (!el0) {
+      el0 = document.createElement("span");
+      el0.className = "tab-count";
+      tab.appendChild(el0);
+    }
+    el0.textContent = n ? String(n) : "";
+  }
+
+
+
+  /* ---------- model picker and sampling ---------- */
+
+  /* The CLI has --provider and config.json has temperature and top_p; the
+     composer had neither, so every run through the page used the default. */
+  var providerCache = [];
+
+  function loadProviders() {
+    return fetch("/api/providers")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        providerCache = d.providers || [];
+        el.modelSelect.textContent = "";
+        (d.providers || []).forEach(function (prov) {
+          var group = document.createElement("optgroup");
+          group.label = prov.name;
+          (prov.models || []).forEach(function (m) {
+            var opt = document.createElement("option");
+            opt.value = prov.name + " " + m.name;
+            opt.textContent = m.name + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+            if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
+            group.appendChild(opt);
+          });
+          el.modelSelect.appendChild(group);
+        });
+        var saved = null;
+        try { saved = window.localStorage.getItem("clanker.model"); } catch (e) {}
+        if (saved && el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
+          el.modelSelect.value = saved;
+        }
+      })
+      .catch(function () {
+        // Providers are informational: a failure here must not stop a run,
+        // which then simply uses whatever the config says.
+        var opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "config default";
+        el.modelSelect.appendChild(opt);
+      });
+  }
+
+  el.modelSelect.addEventListener("change", function () {
+    try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
+    renderContextMeter();
+  });
+
+  /* Everything the composer adds to a run, in one place, so the submit handler
+     and any future caller cannot disagree about it. */
+  function runOptions() {
+    var out = {};
+    var pair = (el.modelSelect.value || "").split(" ");
+    if (pair[0]) out.provider = pair[0];
+    if (pair[1]) out.model = pair[1];
+    var t = parseFloat(el.paramTemp.value);
+    if (!isNaN(t)) out.temperature = t;
+    var tp = parseFloat(el.paramTopP.value);
+    if (!isNaN(tp)) out.top_p = tp;
+    return out;
+  }
+
+  /* Enter-to-send is the habit every other chat UI trains, but it also throws
+     away a half-written multi-line task, so it is opt-in and remembered. */
+  try { el.enterSends.checked = window.localStorage.getItem("clanker.entersends") === "1"; } catch (e) {}
+  el.enterSends.addEventListener("change", function () {
+    try { window.localStorage.setItem("clanker.entersends", el.enterSends.checked ? "1" : "0"); } catch (e) {}
+    syncSubmitLabel();
+  });
+
+  function syncSubmitLabel() {
+    el.submit.textContent = el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+  }
+
+  el.task.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!el.enterSends.checked) return;
+    e.preventDefault();
+    if (!busy && el.task.value.trim()) el.form.requestSubmit();
+  });
+
+  /* ---------- search inside the conversation ---------- */
+
+  function clearMarks(root) {
+    var marks = root.querySelectorAll("mark");
+    Array.prototype.forEach.call(marks, function (m) {
+      var text = document.createTextNode(m.textContent);
+      m.parentNode.replaceChild(text, m);
+    });
+    // Splitting a text node to highlight leaves neighbours behind; rejoining
+    // them keeps repeated searches from fragmenting the answer into hundreds
+    // of nodes.
+    if (root.normalize) root.normalize();
+  }
+
+  function markMatches(root, needle) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var targets = [];
+    var node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue.toLowerCase().indexOf(needle) !== -1) targets.push(node);
+    }
+    var hits = 0;
+    targets.forEach(function (text) {
+      var value = text.nodeValue;
+      var frag = document.createDocumentFragment();
+      var at = 0;
+      var idx = value.toLowerCase().indexOf(needle, at);
+      while (idx !== -1) {
+        if (idx > at) frag.appendChild(document.createTextNode(value.slice(at, idx)));
+        var mark = document.createElement("mark");
+        mark.textContent = value.substr(idx, needle.length);
+        frag.appendChild(mark);
+        hits += 1;
+        at = idx + needle.length;
+        idx = value.toLowerCase().indexOf(needle, at);
+      }
+      if (at < value.length) frag.appendChild(document.createTextNode(value.slice(at)));
+      text.parentNode.replaceChild(frag, text);
+    });
+    return hits;
+  }
+
+  function applyTurnFilter() {
+    var q = el.turnFilter.value.trim().toLowerCase();
+    var turns = el.transcript.querySelectorAll(".turn");
+    clearMarks(el.transcript);
+    if (!q) {
+      Array.prototype.forEach.call(turns, function (t) { t.hidden = false; });
+      el.turnFilterCount.textContent = "";
+      return;
+    }
+    var shown = 0, hits = 0;
+    Array.prototype.forEach.call(turns, function (t) {
+      var match = t.textContent.toLowerCase().indexOf(q) !== -1;
+      t.hidden = !match;
+      if (match) {
+        shown += 1;
+        hits += markMatches(t, q);
+      }
+    });
+    el.turnFilterCount.textContent = shown
+      ? hits + (hits === 1 ? " match in " : " matches in ") + shown + (shown === 1 ? " turn" : " turns")
+      : "No turns match.";
+  }
+
+  el.turnFilter.addEventListener("input", applyTurnFilter);
+
+  /* ---------- keeping up with a streaming answer ---------- */
+
+  function nearBottom() {
+    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function syncScrollButton() {
+    el.scrollBottom.hidden = nearBottom() || !el.transcript.querySelector(".turn");
+  }
+
+  el.scrollBottom.addEventListener("click", function () {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    el.task.focus();
+  });
+
+  window.addEventListener("scroll", syncScrollButton, { passive: true });
+  window.addEventListener("resize", syncScrollButton);
+
+  /* ---------- export ---------- */
+
+  el.sessionExportJson.addEventListener("click", function () {
+    fetch("/api/sessions/" + encodeURIComponent(sessionId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        downloadText("clanker-" + sessionId.slice(0, 8) + ".json", JSON.stringify(data, null, 2), "application/json");
+        el.sessionStatus.textContent = "Exported as JSON.";
+      })
+      .catch(function (err) { el.sessionStatus.textContent = "Export failed: " + err.message; });
+  });
+
+  /* ---------- first-run suggestions ---------- */
+
+  var SUGGESTIONS = [
+    "Summarise what this repository does, in five sentences.",
+    "List the tools you have and what each one is for.",
+    "Read src/agent/loop.zig and explain the agent loop.",
+    "What did the last recorded run do?"
+  ];
+
+  SUGGESTIONS.forEach(function (text) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "suggestion";
+    b.textContent = text;
+    b.addEventListener("click", function () {
+      el.task.value = text;
+      el.task.focus();
+      syncControls();
+    });
+    el.suggestions.appendChild(b);
+  });
+
+
+  /* ---------- status, said out loud and shown ---------- */
+
+  /* Every view writes progress and failures into its own sr-only live region.
+     Fifty call sites did that and none of them were visible: clicking Compact
+     or Export or Save prompt produced no sign anything had happened unless you
+     were using a screen reader. Rather than change fifty call sites and leave
+     the two able to drift, the regions are observed and mirrored here. */
+  var toasts = document.getElementById("toasts");
+
+  function showToast(text) {
+    if (!text) return;
+    var node = document.createElement("p");
+    node.className = "toast";
+    // The word "failed" is the one distinction worth colour: everything else
+    // is progress, and progress does not need to shout.
+    if (/fail|error|could not|refus|denied|no such/i.test(text)) node.setAttribute("data-kind", "bad");
+    node.textContent = text;
+    node.addEventListener("click", function () { node.remove(); });
+    toasts.appendChild(node);
+    while (toasts.children.length > 3) toasts.removeChild(toasts.firstChild);
+    window.setTimeout(function () { node.remove(); }, 5000);
+  }
+
+  if (window.MutationObserver) {
+    var statusObserver = new MutationObserver(function (records) {
+      var seen = {};
+      records.forEach(function (r) {
+        var el0 = r.target.nodeType === 3 ? r.target.parentNode : r.target;
+        if (!el0 || !el0.textContent) return;
+        var text = el0.textContent.trim();
+        // The same message written twice in one tick is one event.
+        if (!text || seen[text]) return;
+        seen[text] = true;
+        showToast(text);
+      });
+    });
+    ["session-status", "run-status", "chat-status", "todos-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+      var node = document.getElementById(id);
+      if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
+    });
+  }
+
+  /* ---------- goals ---------- */
+
+  /* The view could only read. Every goal in the file was put there by the
+     `goal` tool or the CLI, so setting one from the page meant leaving it. */
+  function postGoal(payload, status) {
+    return fetch("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+      .then(function (d) {
+        renderGoals(d.goals || []);
+        el.goalsStatus.textContent = status;
+      })
+      .catch(function (err) { el.goalsStatus.textContent = "Goal failed: " + err.message; });
+  }
+
+  el.goalForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var objective = el.goalObjective.value.trim();
+    var criterion = el.goalCriterion.value.trim();
+    if (!objective || !criterion) return;
+    postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function () {
+      el.goalObjective.value = "";
+      el.goalCriterion.value = "";
+    });
+  });
+
+  /* ---------- saved prompts ---------- */
+
+  /* Every one of these UIs has a prompt library, and the reason is the same:
+     the tasks worth repeating are long, and retyping them is where the habit
+     of using the tool dies. */
+  function loadPrompts() {
+    try { return JSON.parse(window.localStorage.getItem("clanker.prompts") || "[]"); } catch (e) { return []; }
+  }
+  var prompts = loadPrompts();
+
+  function savePrompts() {
+    try { window.localStorage.setItem("clanker.prompts", JSON.stringify(prompts)); } catch (e) {}
+  }
+
+  el.promptSave.addEventListener("click", function () {
+    var text = el.task.value.trim();
+    if (!text) {
+      el.sessionStatus.textContent = "Write the prompt in the composer first.";
+      return;
+    }
+    if (prompts.indexOf(text) === -1) prompts.push(text);
+    savePrompts();
+    el.sessionStatus.textContent = "Saved " + prompts.length + (prompts.length === 1 ? " prompt." : " prompts.");
+  });
+
+  var promptIndex = 0;
+
+  function promptQuery() {
+    var v = el.task.value;
+    return v.charAt(0) === "/" ? v.slice(1).toLowerCase() : null;
+  }
+
+  function renderPromptList() {
+    var q = promptQuery();
+    if (q === null || !prompts.length) {
+      el.promptList.hidden = true;
+      el.promptList.textContent = "";
+      return;
+    }
+    var matches = prompts.filter(function (t) { return fuzzyMatch(q, t); });
+    el.promptList.textContent = "";
+    if (!matches.length) {
+      el.promptList.hidden = true;
+      return;
+    }
+    if (promptIndex >= matches.length) promptIndex = 0;
+    matches.forEach(function (text, i) {
+      var li = document.createElement("li");
+      li.className = "palette-item";
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === promptIndex));
+      var label = document.createElement("span");
+      label.className = "palette-label";
+      label.textContent = text;
+      li.appendChild(label);
+      li.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        usePrompt(text);
+      });
+      var drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "rail-pin";
+      drop.textContent = "×";
+      drop.setAttribute("aria-label", "Forget this prompt");
+      drop.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        prompts.splice(prompts.indexOf(text), 1);
+        savePrompts();
+        renderPromptList();
+      });
+      li.appendChild(drop);
+      el.promptList.appendChild(li);
+    });
+    el.promptList.hidden = false;
+    el.promptList.setAttribute("data-count", String(matches.length));
+  }
+
+  function usePrompt(text) {
+    el.task.value = text;
+    el.promptList.hidden = true;
+    el.task.focus();
+    syncControls();
+  }
+
+  el.task.addEventListener("input", renderPromptList);
+  el.task.addEventListener("blur", function () { window.setTimeout(function () { el.promptList.hidden = true; }, 120); });
+  el.task.addEventListener("keydown", function (e) {
+    if (el.promptList.hidden) return;
+    var items = el.promptList.querySelectorAll(".palette-item");
+    if (!items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      renderPromptList();
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+    }
+  });
+
+  /* ---------- composer height and context weight ---------- */
+
+  /* Grows with what is being written, up to a third of the viewport, then
+     scrolls: a five-line task in a two-line box is a scroll bar you have to
+     fight while composing. */
+  function autoGrow() {
+    el.task.style.height = "auto";
+    var cap = Math.round(window.innerHeight / 3);
+    el.task.style.height = Math.min(el.task.scrollHeight, cap) + "px";
+  }
+  el.task.addEventListener("input", autoGrow);
+  window.addEventListener("resize", autoGrow);
+
+  /* Compaction is driven by transcript bytes against the model's context, and
+     both numbers already exist; nothing was showing the ratio. */
+  function renderContextMeter() {
+    var meta = currentSessionMeta();
+    if (!meta || typeof meta.bytes !== "number" || !meta.bytes) {
+      el.contextMeter.textContent = "";
+      return;
+    }
+    var pair = (el.modelSelect.value || "").split(" ");
+    var window_ = 0;
+    (providerCache || []).forEach(function (prov) {
+      if (prov.name !== pair[0]) return;
+      (prov.models || []).forEach(function (m) { if (m.name === pair[1]) window_ = m.context_window || 0; });
+    });
+    if (!window_) {
+      el.contextMeter.textContent = fmtBytes(meta.bytes) + " of history";
+      return;
+    }
+    // Four bytes to the token is the same rough conversion the improve loop
+    // budgets with; it is a gauge, not an accountant.
+    var pct = Math.round((meta.bytes / 4) / window_ * 100);
+    el.contextMeter.textContent = fmtBytes(meta.bytes) + " · about " + pct + "% of context";
+  }
+
+  /* ---------- conversation utilities ---------- */
+
+  el.sessionFilter.addEventListener("input", function () { renderSessionOptions(null); });
+
+  /* Compaction is otherwise a thing that happens to you: it fires on its own
+     once a transcript passes agent.compact_threshold_bytes. This runs the same
+     trim on demand, and reports the size it left behind. */
+  el.sessionCompact.addEventListener("click", function () {
+    if (!currentSessionMeta()) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    if (busy) {
+      el.sessionStatus.textContent = "Finish or stop the current run before compacting.";
+      return;
+    }
+    el.sessionCompact.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+      .then(function (d) {
+        el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
+        return loadSessions().then(function () {
+          el.transcript.textContent = "";
+          return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+            .then(function (r) { return r.json(); })
+            .then(function (data) { renderSessionHistory(data.messages || []); });
+        });
+      })
+      .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })
+      .then(function () { el.sessionCompact.disabled = false; });
+  });
+
+  /* One conversation as Markdown. Built from the transcript on screen rather
+     than refetched, so what downloads is what you are looking at. */
+  function transcriptMarkdown() {
+    var meta = currentSessionMeta();
+    var lines = ["# " + ((meta && meta.title) || "clanker conversation"), "", "`" + sessionId + "`", ""];
+    var turns = el.transcript.querySelectorAll(".turn");
+    Array.prototype.forEach.call(turns, function (turn) {
+      var task = turn.querySelector(".turn-you");
+      var answer = turn.querySelector(".turn-answer");
+      if (task) lines.push("## " + task.textContent.trim(), "");
+      if (answer) lines.push(answer.textContent.replace(/\s+$/, ""), "");
+    });
+    return lines.join("\n");
+  }
+
+  function downloadText(name, text, mime) {
+    var blob = new Blob([text], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoked on the next tick: revoking synchronously races the download in
+    // some browsers and produces an empty file.
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  el.sessionExport.addEventListener("click", function () {
+    var md = transcriptMarkdown();
+    if (!md.trim()) {
+      el.sessionStatus.textContent = "Nothing to export yet.";
+      return;
+    }
+    downloadText("clanker-" + sessionId.slice(0, 8) + ".md", md, "text/markdown");
+    el.sessionStatus.textContent = "Exported as Markdown.";
+  });
+
+  el.sessionCopy.addEventListener("click", function () {
+    copyText(transcriptMarkdown(), el.sessionCopy, "Copy all", el.transcript);
+  });
+
+  el.runCopy.addEventListener("click", function () {
+    if (!lastBuilt) {
+      el.runStatus.textContent = "No run is open.";
+      return;
+    }
+    copyText(graphSummaryText(lastBuilt), el.runCopy, "Copy summary", el.runGraph);
+  });
+
+  /* ---------- todos ---------- */
+
+  var todos = [];
+
+  function loadTodos() {
+    return fetch("/api/todos")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) { renderTodos(d.todos || []); })
+      .catch(function (err) { el.todosStatus.textContent = "Could not load todos: " + err.message; });
+  }
+
+  function postTodo(payload, status) {
+    return fetch("/api/todos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+      .then(function (d) {
+        renderTodos(d.todos || []);
+        el.todosStatus.textContent = status;
+      })
+      .catch(function (err) { el.todosStatus.textContent = "Todo failed: " + err.message; });
+  }
+
+  function renderTodos(list) {
+    todos = list;
+    el.todos.textContent = "";
+    var open = 0;
+    list.forEach(function (t) {
+      if (!t.done) open += 1;
+      var li = document.createElement("li");
+      li.className = "todo";
+      li.setAttribute("data-done", String(!!t.done));
+
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !!t.done;
+      box.id = "todo-box-" + t.id;
+      box.addEventListener("change", function () {
+        postTodo({ id: t.id, done: box.checked }, box.checked ? "Marked done." : "Marked open.");
+      });
+
+      var label = document.createElement("label");
+      label.className = "todo-text";
+      label.htmlFor = box.id;
+      label.textContent = t.text;
+
+      var when = document.createElement("span");
+      when.className = "todo-when";
+      when.textContent = t.created ? formatChatTime(t.created) : "";
+
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "secondary danger";
+      del.textContent = "Delete";
+      del.setAttribute("aria-label", "Delete todo: " + t.text);
+      del.addEventListener("click", function () { postTodo({ id: t.id, remove: true }, "Deleted."); });
+
+      li.appendChild(box);
+      li.appendChild(label);
+      li.appendChild(when);
+      li.appendChild(del);
+      el.todos.appendChild(li);
+    });
+    if (!list.length) {
+      var p = document.createElement("p");
+      p.className = "run-empty";
+      p.textContent = "No todos yet. Anything written here is also in state/todos.json.";
+      el.todos.appendChild(p);
+    }
+    setTabCount("todos", open);
+  }
+
+  el.todoForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var text = el.todoText.value.trim();
+    if (!text) return;
+    el.todoText.value = "";
+    postTodo({ text: text }, "Added.");
+  });
+  el.todosRefresh.addEventListener("click", function () { loadTodos(); });
+
+  /* ---------- logs ---------- */
+
+  function loadLogList() {
+    return fetch("/api/logs")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        var logs = (d.logs || []).slice().sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+        var keep = el.logSelect.value;
+        el.logSelect.textContent = "";
+        logs.forEach(function (l) {
+          var opt = document.createElement("option");
+          opt.value = l.name;
+          opt.textContent = l.name + "  ·  " + fmtBytes(l.bytes);
+          el.logSelect.appendChild(opt);
+        });
+        if (!logs.length) {
+          el.logView.textContent = "No logs yet. clanker writes them under state/logs/.";
+          return;
+        }
+        el.logSelect.value = keep && el.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
+        return loadLog(el.logSelect.value);
+      })
+      .catch(function (err) { el.logsStatus.textContent = "Could not list logs: " + err.message; });
+  }
+
+  function loadLog(name) {
+    if (!name) return Promise.resolve();
+    return fetch("/api/logs/" + encodeURIComponent(name))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        el.logView.textContent = d.text || "(empty)";
+        // Newest lines are at the bottom, which is where a tail is read from.
+        el.logView.scrollTop = el.logView.scrollHeight;
+        el.logsStatus.textContent = "Showing the tail of " + d.name + " (" + fmtBytes(d.bytes) + " total).";
+      })
+      .catch(function (err) { el.logsStatus.textContent = "Could not read log: " + err.message; });
+  }
+
+  el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
+  el.logsRefresh.addEventListener("click", function () { loadLogList(); });
+
+  /* ---------- overlays: command palette and shortcut sheet ---------- */
+
+  var lastFocus = null;
+
+  function openOverlay(node, toFocus) {
+    lastFocus = document.activeElement;
+    node.hidden = false;
+    if (toFocus) toFocus.focus();
+  }
+
+  function closeOverlay(node) {
+    node.hidden = true;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
+
+  var SHORTCUTS = [
+    ["Ctrl/⌘ + K", "Jump to a view, conversation, run, tool or action"],
+    ["?", "This list"],
+    ["1 – 7", "Go to a view by number"],
+    ["← →", "Move between tabs when one is focused"],
+    ["Ctrl/⌘ + Enter", "Run the task in the composer"],
+    ["Esc", "Close an overlay, or stop a running task"]
+  ];
+
+  SHORTCUTS.forEach(function (pair) {
+    var dt = document.createElement("dt");
+    dt.textContent = pair[0];
+    var dd = document.createElement("dd");
+    dd.textContent = pair[1];
+    el.shortcuts.appendChild(dt);
+    el.shortcuts.appendChild(dd);
+  });
+
+  el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
+  el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
+
+  /* Everything reachable, in one list. Built fresh on open so it reflects the
+     conversations, runs and tools actually loaded rather than a stale copy. */
+  function paletteEntries() {
+    var out = [];
+    VIEWS.forEach(function (v, i) {
+      out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + "  (" + (i + 1) + ")", run: function () { showView(v, true); } });
+    });
+    out.push({ kind: "action", label: "New chat", run: function () { el.newChat.click(); } });
+    out.push({ kind: "action", label: "Fork this conversation", run: function () { el.sessionFork.click(); } });
+    out.push({ kind: "action", label: "Compact this conversation", run: function () { el.sessionCompact.click(); } });
+    out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { el.sessionExport.click(); } });
+    out.push({ kind: "action", label: "Cycle theme", run: function () { el.themeToggle.click(); } });
+    out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { openOverlay(el.help, el.helpClose); } });
+    knownSessions.forEach(function (s) {
+      out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); switchSession(s.id); } });
+    });
+    allRuns.forEach(function (r) {
+      out.push({ kind: "run", label: runLabel(r), run: function () { showView("runs", false); el.runSelect.value = r.run_id; loadRun(r.run_id); } });
+    });
+    todos.forEach(function (t) {
+      out.push({ kind: "todo", label: t.text, run: function () { showView("todos", true); } });
+    });
+    return out;
+  }
+
+  var paletteItems = [];
+  var paletteIndex = 0;
+
+  /* Subsequence matching, the same thing an editor's file finder does: "grp"
+     finds "run graph". Cheap, and it forgives the order you remember. */
+  function fuzzyMatch(query, text) {
+    if (!query) return true;
+    var t = text.toLowerCase();
+    var qi = 0;
+    for (var i = 0; i < t.length && qi < query.length; i++) {
+      if (t.charAt(i) === query.charAt(qi)) qi += 1;
+    }
+    return qi === query.length;
+  }
+
+  function renderPalette() {
+    var q = el.paletteInput.value.trim().toLowerCase();
+    var all = paletteEntries();
+    paletteItems = [];
+    el.paletteList.textContent = "";
+    for (var i = 0; i < all.length && paletteItems.length < 40; i++) {
+      if (!fuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
+      paletteItems.push(all[i]);
+    }
+    if (paletteIndex >= paletteItems.length) paletteIndex = 0;
+    paletteItems.forEach(function (entry, i) {
+      var li = document.createElement("li");
+      li.className = "palette-item";
+      li.id = "palette-item-" + i;
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === paletteIndex));
+      var kind = document.createElement("span");
+      kind.className = "palette-kind";
+      kind.textContent = entry.kind;
+      var label = document.createElement("span");
+      label.className = "palette-label";
+      label.textContent = entry.label;
+      li.appendChild(kind);
+      li.appendChild(label);
+      li.addEventListener("click", function () { runPalette(i); });
+      el.paletteList.appendChild(li);
+    });
+    if (!paletteItems.length) {
+      var empty = document.createElement("li");
+      empty.className = "palette-item";
+      empty.textContent = "Nothing matches.";
+      el.paletteList.appendChild(empty);
+    }
+    el.paletteInput.setAttribute("aria-activedescendant", paletteItems.length ? "palette-item-" + paletteIndex : "");
+  }
+
+  function runPalette(i) {
+    var entry = paletteItems[i];
+    closeOverlay(el.palette);
+    if (entry) entry.run();
+  }
+
+  function openPalette() {
+    el.paletteInput.value = "";
+    paletteIndex = 0;
+    openOverlay(el.palette, el.paletteInput);
+    renderPalette();
+  }
+
+  el.paletteOpen.addEventListener("click", openPalette);
+  el.paletteInput.addEventListener("input", function () { paletteIndex = 0; renderPalette(); });
+  el.paletteInput.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!paletteItems.length) return;
+      var step = e.key === "ArrowDown" ? 1 : -1;
+      paletteIndex = (paletteIndex + step + paletteItems.length) % paletteItems.length;
+      renderPalette();
+      var sel = document.getElementById("palette-item-" + paletteIndex);
+      if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runPalette(paletteIndex);
+    }
+  });
+
+  /* Clicking the scrim closes; clicking the box does not. */
+  [el.palette, el.help].forEach(function (node) {
+    node.addEventListener("mousedown", function (e) {
+      if (e.target === node) closeOverlay(node);
+    });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }
+      if (el.rail.getAttribute("data-open") === "true") { setRailOpen(false); el.railToggle.focus(); e.preventDefault(); return; }
+      if (!el.help.hidden) { closeOverlay(el.help); e.preventDefault(); return; }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      if (el.palette.hidden) openPalette(); else closeOverlay(el.palette);
+      return;
+    }
+    // "?" is a plain key, so it must never fire while something is being typed.
+    if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      openOverlay(el.help, el.helpClose);
+    }
+  });
+
   renderSessionChip();
   renderSessionOptions([]);
   setBusy(false);
-  loadStatus().then(function () {
-    // Rooms need the instance name to tell this clanker's messages from a
-    // peer's and to derive DM room names, so they wait for status.
-    loadChatRooms();
+  // Status is cheap and gives the header its identity chips, so it loads
+  // regardless of which view opened. Rooms wait for it because they need the
+  // instance name to tell this clanker's messages from a peer's.
+  loadStatus();
+  loadProviders();
+  syncSubmitLabel();
+  // Only the opening view's data is fetched now; the rest load when opened.
+  showView(window.location.hash.replace("#", ""), false);
+  /* Reopening the page used to show an empty transcript even when the picker
+     said the conversation had nine messages: nothing ever fetched them. The
+     conversation you were last in is replayed, so a reload resumes rather
+     than restarts. */
+  loadSessions().then(function () {
+    if (!currentSessionMeta()) {
+      syncTranscriptEmpty();
+      return;
+    }
+    return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        renderSessionHistory(data.messages || []);
+        syncTranscriptEmpty();
+        applyTurnFilter();
+        syncScrollButton();
+      })
+      .catch(function () { syncTranscriptEmpty(); });
   });
-  loadSessions();
-  loadRuns();
-  loadGoals();
-  loadUsage();
-  loadTools();
 });
 </script>
 </body>

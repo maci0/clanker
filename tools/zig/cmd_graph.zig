@@ -50,7 +50,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
-    const raw = lib.fsList("state/runs") catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.fsList("state/runs") catch |err| return lib.failErr(out, err, "reading the run graph");
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     if (std.mem.eql(u8, args, "list")) return listRuns(out, alloc, names);
@@ -82,8 +82,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     };
     const path = try std.fmt.allocPrint(lib.alloc, "state/runs/{s}", .{fname});
     defer lib.alloc.free(path);
-    const content = lib.fsRead(path) catch |err| return lib.fail(out, @errorName(err));
-    const g = std.json.parseFromSliceLeaky(GraphFile, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.fail(out, @errorName(err));
+    const content = lib.fsRead(path) catch |err| return lib.failErr(out, err, "reading the run graph");
+    const g = std.json.parseFromSliceLeaky(GraphFile, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.failErr(out, err, "reading the run graph");
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(lib.alloc);
@@ -171,6 +171,30 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
     try writeText(out, buf.items);
 }
 
+/// The first line of a task, clipped to a picker-sized label on a UTF-8
+/// boundary so the JSON stays valid no matter where the cut lands.
+fn labelOf(task: []const u8) []const u8 {
+    const line = task[0 .. std.mem.indexOfScalar(u8, task, '\n') orelse task.len];
+    if (line.len <= label_max) return line;
+    var end: usize = label_max;
+    while (end > 0 and line[end] & 0xC0 == 0x80) end -= 1;
+    return line[0..end];
+}
+
+const label_max = 200;
+
+test labelOf {
+    try std.testing.expectEqualStrings("one", labelOf("one\ntwo"));
+    try std.testing.expectEqualStrings("short", labelOf("short"));
+    const long = "x" ** 500;
+    try std.testing.expectEqual(@as(usize, label_max), labelOf(long).len);
+    // A multi-byte character straddling the cut is dropped whole, never split.
+    const wide = "\u{00e9}" ** 300;
+    const cut = labelOf(wide);
+    try std.testing.expect(cut.len <= label_max);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(cut));
+}
+
 fn lessThanStr(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
@@ -191,6 +215,9 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginArray();
+    // A task can be the whole pasted prompt: one 23 KB task used to overflow
+    // this buffer and fail the entire list, taking the run picker with it.
+    // The picker shows a label, so a label is all that is sent.
     // Newest first, and capped: the picker shows recent runs, not the archive.
     var shown: usize = 0;
     var i: usize = files.items.len;
@@ -204,7 +231,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.objectField("run_id");
         try s.write(g.run_id);
         try s.objectField("task");
-        try s.write(g.task);
+        try s.write(labelOf(g.task));
         try s.objectField("provider");
         try s.write(g.provider);
         try s.objectField("duration_ms");
@@ -235,10 +262,10 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
     }
     const fname = found orelse return lib.fail(out, "no such run");
     const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
-    const content = lib.fsRead(path) catch |err| return lib.fail(out, @errorName(err));
+    const content = lib.fsRead(path) catch |err| return lib.failErr(out, err, "reading the run graph");
     // Parsed and re-emitted rather than passed through, so a hand-edited file
     // in state/runs/ cannot become the response body verbatim.
-    const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.fail(out, @errorName(err));
+    const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.failErr(out, err, "reading the run graph");
 
     var buf: [48 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);

@@ -18,7 +18,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     };
 
     const body = lib.httpGet(url) catch |err| {
-        return lib.fail(out, @errorName(err));
+        return lib.failErr(out, err, "fetching the page");
     };
 
     const cap = @min(body.len, 8000);

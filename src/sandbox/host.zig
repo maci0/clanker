@@ -110,6 +110,8 @@ pub const Sandbox = struct {
     /// Commands allowed through ck_exec for this tool. Empty falls back to the
     /// harness default set below.
     exec_allow: []const []const u8 = &.{},
+    /// Environment variables a guest may read, from the tool's manifest.
+    env_allow: []const []const u8 = &.{},
     /// Directory (relative to `state_base_dir`) holding the harness state:
     /// chatroom logs, subscriptions, cursor. Defaults to "state".
     state_dir: []const u8 = "state",
@@ -192,6 +194,7 @@ pub fn sandboxFor(
         .network_allow = net,
         .llm = llm_access,
         .exec_allow = tool.exec_allow,
+        .env_allow = tool.env_allow,
         .fs_prefixes = tool.fs_prefixes,
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
@@ -437,8 +440,31 @@ pub fn ckEnv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const name = sliceOf(bytes, name_ptr, name_len) orelse return Err.invalid;
     if (name.len == 0) return Err.invalid;
+    if (!envAllowed(h.sandbox, name)) {
+        log.log(.warn, "[sandbox] refused to read environment variable '{s}'", .{name});
+        return Err.denied;
+    }
     const value = h.sandbox.environ_map.get(name) orelse return Err.not_found;
     return h.writeResult(bytes, value);
+}
+
+/// Variables any tool may read: where it is running, and how to format output.
+/// Everything else has to be named by the tool's manifest.
+const env_default_allow = [_][]const u8{ "PWD", "HOME", "PATH", "LANG", "LC_ALL", "TERM", "TZ", "USER" };
+
+/// The process environment holds this project's API keys, loaded from .env at
+/// startup. Handing a guest any variable it asks for made the env_allow field
+/// in a manifest decorative and put every key one getenv call away from a tool
+/// the improvement engine wrote by itself.
+fn envAllowed(sb: *const Sandbox, name: []const u8) bool {
+    for (sb.env_allow) |allowed| {
+        if (std.mem.eql(u8, allowed, name)) return true;
+    }
+    if (sb.env_allow.len > 0) return false;
+    for (env_default_allow) |allowed| {
+        if (std.mem.eql(u8, allowed, name)) return true;
+    }
+    return false;
 }
 
 pub fn ckResult(caller: *zwasm.Caller) u64 {
@@ -1006,6 +1032,18 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
 
 const fs_find_max_depth: u32 = 12;
 
+/// Directories a name search should never descend into. Without this, a search
+/// of the project answers mostly with copies of it: build caches, vendored
+/// dependencies, and the staging trees the improvement engine leaves behind.
+const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", "zig-out", "zig-pkg", "node_modules", "staging", "history" };
+
+fn skipDir(name: []const u8) bool {
+    for (fs_skip_dirs) |d| {
+        if (std.mem.eql(u8, name, d)) return true;
+    }
+    return false;
+}
+
 fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []const u8, pattern: []const u8, depth: u32) !void {
     if (depth > fs_find_max_depth) return;
     var it = dir.iterate();
@@ -1019,6 +1057,7 @@ fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []co
         defer h.sandbox.gpa.free(rel);
 
         if (entry.kind == .directory) {
+            if (skipDir(entry.name)) continue;
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
             defer sub.close(h.sandbox.io);
             try fsFindRecurse(h, s, sub, rel, pattern, depth + 1);
@@ -1196,24 +1235,18 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const full = safeJoin(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
-    // Try to stat as a file first, then as a directory.
+    // statFile answers for a directory too, so its own kind field decides
+    // what this is. Trying a file stat first and calling any success "file"
+    // reported every directory as a 190-byte file.
     const cwd = std.Io.Dir.cwd();
-    var kind_str: []const u8 = "other";
-    var size: u64 = 0;
-
-    if (cwd.statFile(h.sandbox.io, full)) |stat| {
-        kind_str = "file";
-        size = stat.size;
-    } else |_| {
-        // Not a file — try opening as a directory to distinguish dir vs not-found.
-        var dir = cwd.openDir(h.sandbox.io, full, .{}) catch |err| switch (err) {
-            error.FileNotFound => return Err.not_found,
-            else => return Err.not_found,
-        };
-        dir.close(h.sandbox.io);
-        kind_str = "directory";
-        size = 0;
-    }
+    const stat = cwd.statFile(h.sandbox.io, full, .{}) catch return Err.not_found;
+    const kind_str: []const u8 = switch (stat.kind) {
+        .file => "file",
+        .directory => "directory",
+        .sym_link => "symlink",
+        else => "other",
+    };
+    const size: u64 = if (stat.kind == .directory) 0 else stat.size;
 
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -1286,7 +1319,7 @@ pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u3
     defer h.sandbox.gpa.free(full_old);
     const full_new = safeJoin(h.sandbox, new_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full_new);
-    std.Io.Dir.cwd().rename(h.sandbox.io, full_old, full_new) catch |err| switch (err) {
+    std.Io.Dir.cwd().rename(full_old, std.Io.Dir.cwd(), full_new, h.sandbox.io) catch |err| switch (err) {
         error.FileNotFound => return Err.not_found,
         else => return Err.invalid,
     };
@@ -1384,8 +1417,9 @@ fn fsWriteRangeImpl(h: *Host, sub_path: []const u8, data: []const u8, offset: u3
     };
     defer file.close(h.sandbox.io);
 
-    file.seekTo(h.sandbox.io, @as(u64, offset)) catch return Err.invalid;
-    file.writeAll(h.sandbox.io, data) catch |err| switch (err) {
+    // Positional, because there is no seek on this File: the offset is part
+    // of the write rather than a mode the handle carries.
+    file.writePositionalAll(h.sandbox.io, data, @as(u64, offset)) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
@@ -1443,14 +1477,15 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     // syscall instead of open-fail-then-writeFile (truncate=false never
     // clobbers existing content).
     var file = std.Io.Dir.cwd().createFile(h.sandbox.io, full, .{ .truncate = false }) catch |err| switch (err) {
-        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
     defer file.close(h.sandbox.io);
-    // Seek to end and write.
-    file.seekToEnd(h.sandbox.io) catch return Err.invalid;
-    file.writeAll(h.sandbox.io, data) catch |err| switch (err) {
-        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+    // Append means writing at the current end, and this File has no seek: ask
+    // for the size and write there.
+    const end = (file.stat(h.sandbox.io) catch return Err.invalid).size;
+    file.writePositionalAll(h.sandbox.io, data, end) catch |err| switch (err) {
+        error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
     return Err.ok;
@@ -1518,22 +1553,33 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
     return false;
 }
 
-/// Arguments that are never allowed for sandboxed commands.
-///
-/// The shell-operator tokens here are defense in depth, not the primary
-/// guard: ckExec below runs argv directly via std.process.run, never through
-/// a shell, so none of these can actually be interpreted as operators no
-/// matter what they contain. "|" is deliberately absent even so — it's
-/// ordinary regex alternation syntax, the single most common character in a
-/// search pattern for the exact tools (rg, ast-grep, semcode) this allowlist
-/// exists to let through, and blocking it only breaks the tool it's meant to
-/// protect without closing any real hole.
+/// Arguments that are never allowed for sandboxed commands: destructive git
+/// verbs and flags that make a command run something else.
 const exec_deny_tokens = [_][]const u8{
     "push",   "reset",  "rebase",    "checkout", "clean",   "rm",            "fetch",
     "merge",  "revert", "stash",     "remote",   "tag",     "filter-branch", "gc",
-    "repack", "prune",  "submodule", "-f",       "--force", "--exec",        "&&",
-    "||",     ";",      ">",         "<",        "`",
+    "repack", "prune",  "submodule", "-f",       "--force", "--exec",
 };
+
+/// Shell operators, refused only when the command being run is a shell.
+///
+/// ckExec passes argv straight to std.process.run, never through a shell, so
+/// these cannot be interpreted as operators by anything else: in an argument to
+/// rg or ast-grep they are ordinary pattern syntax. Refusing them everywhere
+/// broke the search tools this allowlist exists to serve — a review run was
+/// denied the pattern "jsonInt|float => |@intFromFloat" because it contains a
+/// greater-than sign. "|" was already exempt for the same reason; the rest
+/// follow it.
+const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
+
+/// Whether `cmd` would interpret its arguments as shell syntax.
+fn runsAShell(cmd: []const u8) bool {
+    const base = if (std.mem.lastIndexOfScalar(u8, cmd, '/')) |i| cmd[i + 1 ..] else cmd;
+    for ([_][]const u8{ "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "xargs" }) |shell| {
+        if (std.mem.eql(u8, base, shell)) return true;
+    }
+    return false;
+}
 
 /// ck_std_api: look up a symbol name in the Zig 0.16 standard library source
 /// tree and return up to 40 matching lines (signatures, doc comments, usage).
@@ -1746,6 +1792,14 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
                             return Err.denied;
                         }
                     }
+                    if (runsAShell(cmd)) {
+                        for (shell_op_deny_tokens) |t| {
+                            if (argDenied(arg, t)) {
+                                log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ t, arg });
+                                return Err.denied;
+                            }
+                        }
+                    }
                     argv.append(h.sandbox.gpa, arg) catch return Err.invalid;
                 }
             },
@@ -1768,8 +1822,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
         .cwd = .{ .dir = exec_dir },
-        .stdout_limit = .limited(64 * 1024),
-        .stderr_limit = .limited(8 * 1024),
+        // Generous, because the result is truncated with a marker below
+        // rather than refused: a search that matches a lot should return what
+        // it found and say it was cut, not fail with StreamTooLong and leave
+        // the caller guessing whether the tool or the pattern was at fault.
+        .stdout_limit = .limited(1 << 20),
+        .stderr_limit = .limited(64 * 1024),
     }) catch |err| {
         // Not a network condition: a process that could not be spawned or
         // whose output overran the cap was reported to the guest as
@@ -1806,6 +1864,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     return h.writeResult(bytes, wbuf[0..w.end]);
 }
 
+/// How much of a command's output survives into the result. The guest sees it
+/// through the host arena, so the whole of a large search cannot fit whatever
+/// the process produced.
+const exec_stdout_keep = 56 * 1024;
+const exec_stderr_keep = 8 * 1024;
+
 fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
@@ -1814,10 +1878,28 @@ fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []c
     try s.objectField("code");
     try s.print("{d}", .{code});
     try s.objectField("stdout");
-    try s.write(stdout);
+    try s.write(clipOutput(stdout, exec_stdout_keep));
     try s.objectField("stderr");
-    try s.write(stderr);
+    try s.write(clipOutput(stderr, exec_stderr_keep));
+    // Silent truncation reads as "that is all there is", which is how a search
+    // that matched thousands of lines looks identical to one that matched
+    // forty. Say it, and say what to do about it.
+    if (stdout.len > exec_stdout_keep or stderr.len > exec_stderr_keep) {
+        try s.objectField("truncated");
+        try s.write(true);
+        try s.objectField("note");
+        try s.print("output was {d} bytes and was cut to {d}; narrow the pattern or the path to see the rest", .{ stdout.len, exec_stdout_keep });
+    }
     try s.endObject();
+}
+
+/// Keeps the head of `text`, ending on a line boundary so the last line is
+/// whole rather than a fragment that reads as corrupted output.
+fn clipOutput(text: []const u8, keep: usize) []const u8 {
+    if (text.len <= keep) return text;
+    const head = text[0..keep];
+    if (std.mem.lastIndexOfScalar(u8, head, '\n')) |nl| return head[0 .. nl + 1];
+    return head;
 }
 
 // ------------------------------------------------------------- sandbox core --
@@ -1904,8 +1986,22 @@ fn stringArray(arena: std.mem.Allocator, value: ?std.json.Value) ![]const []cons
 }
 
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
-    if (sub_path.len == 0) return error.PathOutsideSandbox;
-    if (sub_path[0] == '/') return error.PathOutsideSandbox;
+    if (sub_path[0..@min(sub_path.len, 1)].len > 0 and sub_path[0] == '/') return error.PathOutsideSandbox;
+    // The root itself, written "" or ".". Without this no host call could
+    // address the sandbox root: listing or searching the project as a whole
+    // was refused, and a tool given fs_prefixes ["."] still could not ask what
+    // was in it. Only a tool allowed everywhere gets the root; one confined to
+    // src/ has no business enumerating the tree above it.
+    if (sub_path.len == 0 or std.mem.eql(u8, sub_path, ".") or std.mem.eql(u8, sub_path, "./")) {
+        if (sb.fs_prefixes.len > 0) {
+            var root_ok = false;
+            for (sb.fs_prefixes) |p| {
+                if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) root_ok = true;
+            }
+            if (!root_ok) return error.PathOutsideSandbox;
+        }
+        return sb.gpa.dupe(u8, std.mem.trimEnd(u8, sb.root_dir, "/"));
+    }
     var it = std.mem.splitScalar(u8, sub_path, '/');
     while (it.next()) |comp| {
         if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
@@ -1947,6 +2043,30 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "a shell operator in a search pattern is allowed, but not when running a shell" {
+    // A real review run was refused the pattern "jsonInt|float => |@intFromFloat"
+    // because it contains a greater-than sign. Nothing interprets it: argv goes
+    // to execve, and rg reads it as a pattern.
+    const pattern = "jsonInt|float => |@intFromFloat";
+    for (exec_deny_tokens) |t| {
+        try std.testing.expect(!argDenied(pattern, t));
+    }
+    // Redirection into a shell is still refused, because a shell would act on it.
+    try std.testing.expect(runsAShell("sh"));
+    try std.testing.expect(runsAShell("/bin/bash"));
+    try std.testing.expect(!runsAShell("rg"));
+    try std.testing.expect(!runsAShell("git"));
+    var denied = false;
+    for (shell_op_deny_tokens) |t| {
+        if (argDenied("cat /etc/passwd > /tmp/out", t)) denied = true;
+    }
+    try std.testing.expect(denied);
+
+    // Destructive git verbs stay refused for every command.
+    try std.testing.expect(argDenied("push", "push"));
+    try std.testing.expect(argDenied("--force", "--force"));
+}
 
 test "exec_deny_tokens does not block regex alternation but still blocks real danger" {
     for (exec_deny_tokens) |t| {
@@ -2428,4 +2548,31 @@ test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-type
     const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
     try std.testing.expect(pluginStr(bad, "provider") == null);
     try std.testing.expect(pluginU32(bad, "max_tokens") == null);
+}
+
+test "a tool cannot read an environment variable it was not allowed" {
+    // The process environment holds this project's API keys. Before this the
+    // env_allow field in a manifest was decorative and any guest could ask for
+    // any variable by name.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = undefined,
+    };
+
+    // No declaration: only the harmless defaults.
+    try std.testing.expect(envAllowed(&sb, "PWD"));
+    try std.testing.expect(envAllowed(&sb, "HOME"));
+    try std.testing.expect(!envAllowed(&sb, "ANTHROPIC_API_KEY"));
+    try std.testing.expect(!envAllowed(&sb, "KIMI_API_KEY"));
+
+    // A declaration is exact and replaces the defaults rather than adding to
+    // them, so a tool that asks for one variable cannot reach the others.
+    const allow = [_][]const u8{"MY_TOKEN"};
+    sb.env_allow = &allow;
+    try std.testing.expect(envAllowed(&sb, "MY_TOKEN"));
+    try std.testing.expect(!envAllowed(&sb, "PWD"));
+    try std.testing.expect(!envAllowed(&sb, "DEEPSEEK_API_KEY"));
 }

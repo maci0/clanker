@@ -1,0 +1,29 @@
+{
+  "name": "list_files",
+  "description": "Lists what is in a directory, so you can find out what exists instead of guessing at paths. Set recursive to walk subdirectories, suffix to keep only matching names (e.g. \".zig\"), and max to bound the result. Directories come back with a trailing slash. Use this before read_file when you do not already know the path; use search_code when you know what the content looks like but not where it is.",
+  "wasm": "zig-out/tools/list_files.wasm",
+  "enabled": true,
+  "category": "code",
+  "fs_prefixes": ["."],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Directory to list, relative to the sandbox root. Defaults to \".\"."
+      },
+      "recursive": {
+        "type": "boolean",
+        "description": "Descend into subdirectories (default false)."
+      },
+      "suffix": {
+        "type": "string",
+        "description": "Keep only files whose name ends with this, e.g. \".zig\" or \".tool.json\"."
+      },
+      "max": {
+        "type": "integer",
+        "description": "Maximum entries to return (default 500). The result says whether it was cut short."
+      }
+    }
+  }
+}

@@ -99,7 +99,10 @@ pub fn chat(
     // response carries `raw`), while `outcome.body` is gpa-owned and freed on
     // the way out of this function.
     const body_owned = try arena.dupe(u8, outcome.body);
-    const resp = try providers.parseResponse(arena, provider.kind, body_owned);
+    // err_detail goes in here: a 200 carrying an error body never passes the
+    // HTTP error path in doFetch, so without this the caller only sees a bare
+    // error.ApiError with no idea what the provider said.
+    const resp = try providers.parseResponse(arena, provider.kind, body_owned, err_detail);
     const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
     recordUsage(ctx, arena, provider, resp.usage, ms);
     return resp;

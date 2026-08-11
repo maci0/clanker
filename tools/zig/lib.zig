@@ -17,6 +17,15 @@ extern fn ck_random() u64;
 extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_read_range(path_ptr: u32, path_len: u32, offset: u32, length: u32) u32;
+extern fn ck_fs_append(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
+extern fn ck_fs_copy(src_ptr: u32, src_len: u32, dst_ptr: u32, dst_len: u32) u32;
+extern fn ck_fs_rename(old_ptr: u32, old_len: u32, new_ptr: u32, new_len: u32) u32;
+extern fn ck_fs_delete(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_mkdir(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_stat(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_find(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
+extern fn ck_fs_grep(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
+extern fn ck_hash(ptr: u32, len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
@@ -43,7 +52,7 @@ const host_arena_cap = 1024 * 1024;
 /// .bss pages in linear memory (capped at 16 MiB, see runtime.zig) and add
 /// nothing to the .wasm on disk. The host reads the result straight out of
 /// linear memory and imposes no size limit of its own.
-pub const out_cap = 256 * 1024;
+pub const out_cap = 2 * 1024 * 1024;
 
 var scratch_buf: [scratch_cap]u8 align(16) = undefined;
 var host_arena_buf: [host_arena_cap]u8 align(16) = undefined;
@@ -80,6 +89,24 @@ pub const Out = struct {
 
     pub fn reset(self: *Out) void {
         self.len = 0;
+    }
+
+    /// A writer straight onto the output buffer. Building a response in a
+    /// local array first costs a second copy of it on the wasm stack, which
+    /// is a megabyte at most: a tool that returns a whole file traps on the
+    /// stack long before it fills its output.
+    pub fn writer(self: *Out) std.Io.Writer {
+        return .{
+            .buffer = self.buf,
+            .end = self.len,
+            .vtable = &.{ .drain = drainFull },
+        };
+    }
+
+    /// The buffer is the destination, so there is nowhere to drain to:
+    /// reaching here means the response outgrew out_cap.
+    fn drainFull(_: *std.Io.Writer, _: []const []const u8, _: usize) std.Io.Writer.Error!usize {
+        return error.WriteFailed;
     }
 };
 
@@ -131,6 +158,26 @@ pub fn json(w: *std.Io.Writer) std.json.Stringify {
 /// message raw, so any message containing a quote, backslash, or newline
 /// produced output the host could not parse — turning a useful error into a
 /// parse failure. Escaping it once here makes that unrepresentable.
+/// Reports a host-call failure in terms of what the caller can do about it.
+///
+/// `@errorName` was going straight to the model at 28 call sites: "NotFound",
+/// "SandboxDenied", "InvalidArg". None of those say which path, which command,
+/// or which policy, and a model handed one has nothing to act on. `what`
+/// names the thing that failed, e.g. "reading state/sessions" or "running rg".
+pub fn failErr(out: *Out, err: anyerror, what: []const u8) !void {
+    var buf: [512]u8 = undefined;
+    const msg = switch (err) {
+        error.SandboxDenied => std.fmt.bufPrint(&buf, "{s}: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow)", .{what}),
+        error.NotFound => std.fmt.bufPrint(&buf, "{s}: not found", .{what}),
+        error.TooLarge => std.fmt.bufPrint(&buf, "{s}: too large for one call — ask for a smaller range or narrow the query", .{what}),
+        error.NetworkError => std.fmt.bufPrint(&buf, "{s}: the request did not complete", .{what}),
+        error.InvalidArg => std.fmt.bufPrint(&buf, "{s}: the arguments were rejected", .{what}),
+        error.OutOfMemory => std.fmt.bufPrint(&buf, "{s}: out of memory in the sandbox", .{what}),
+        else => std.fmt.bufPrint(&buf, "{s}: {s}", .{ what, @errorName(err) }),
+    } catch what;
+    return fail(out, msg);
+}
+
 pub fn fail(out: *Out, msg: []const u8) !void {
     out.reset();
     var w = writer(out);
@@ -464,7 +511,6 @@ pub fn fsList(path: []const u8) FsError![]const u8 {
     };
 }
 
-/// Writes a file relative to the sandbox root.
 /// Reads [offset, offset+len) of a file. The host writes results into a 64 KiB
 /// arena, so this is the only way to see a file bigger than that: ask for it a
 /// window at a time.
@@ -478,6 +524,85 @@ pub fn fsReadRange(path: []const u8, offset: usize, len: usize) FsError![]const 
         3 => error.TooLarge,
         else => error.IoError,
     };
+}
+
+/// Writes a file relative to the sandbox root.
+/// The host writes results into its arena, so anything returned here is only
+/// valid until the next host call: copy before calling again.
+fn fsPathOp(rc: u32) FsError!void {
+    return switch (rc) {
+        0 => {},
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
+fn fsPathQuery(rc: u32) FsError![]const u8 {
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
+/// Appends to a file, creating it when absent.
+pub fn fsAppend(path: []const u8, data: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    const d = sliceToMem(data);
+    return fsPathOp(ck_fs_append(p.ptr, p.len, d.ptr, d.len));
+}
+
+pub fn fsCopy(src: []const u8, dst: []const u8) FsError!void {
+    const a = sliceToMem(src);
+    const b = sliceToMem(dst);
+    return fsPathOp(ck_fs_copy(a.ptr, a.len, b.ptr, b.len));
+}
+
+pub fn fsRename(old_path: []const u8, new_path: []const u8) FsError!void {
+    const a = sliceToMem(old_path);
+    const b = sliceToMem(new_path);
+    return fsPathOp(ck_fs_rename(a.ptr, a.len, b.ptr, b.len));
+}
+
+pub fn fsDelete(path: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    return fsPathOp(ck_fs_delete(p.ptr, p.len));
+}
+
+pub fn fsMkdir(path: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    return fsPathOp(ck_fs_mkdir(p.ptr, p.len));
+}
+
+/// JSON: {"kind":"file"|"dir","size":N}
+pub fn fsStat(path: []const u8) FsError![]const u8 {
+    const p = sliceToMem(path);
+    return fsPathQuery(ck_fs_stat(p.ptr, p.len));
+}
+
+/// Paths under `dir` whose name contains `pattern`, as a JSON array.
+pub fn fsFind(dir: []const u8, pattern: []const u8) FsError![]const u8 {
+    const d = sliceToMem(dir);
+    const p = sliceToMem(pattern);
+    return fsPathQuery(ck_fs_find(d.ptr, d.len, p.ptr, p.len));
+}
+
+/// Lines under `dir` containing `pattern`, as a JSON array of "path:line:text".
+pub fn fsGrep(dir: []const u8, pattern: []const u8) FsError![]const u8 {
+    const d = sliceToMem(dir);
+    const p = sliceToMem(pattern);
+    return fsPathQuery(ck_fs_grep(d.ptr, d.len, p.ptr, p.len));
+}
+
+/// SHA-256 of `data`, hex. Useful for telling whether a file changed between
+/// two reads without holding both copies.
+pub fn hash(data: []const u8) FsError![]const u8 {
+    const d = sliceToMem(data);
+    return fsPathQuery(ck_hash(d.ptr, d.len));
 }
 
 pub fn fsWrite(path: []const u8, data: []const u8) FsError!void {

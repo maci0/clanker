@@ -55,6 +55,10 @@ pub const Tool = struct {
     /// default set; a non-empty list replaces it, so a tool that needs one
     /// binary does not also get git and zig.
     exec_allow: []const []const u8 = &.{},
+    /// Environment variables this tool may read. Empty means the safe defaults
+    /// in host.zig, never the whole process environment: that is where the API
+    /// keys are.
+    env_allow: []const []const u8 = &.{},
 
     /// Core tools (the `cmd_*` slash commands, the web UI, the formatter) back
     /// the harness itself and stay on. A transform is hidden from the model
@@ -316,6 +320,12 @@ pub const Registry = struct {
         if (obj.get("exec_allow")) |ev| {
             switch (ev) {
                 .array => |arr| t.exec_allow = try strArray(arena, arr),
+                else => {},
+            }
+        }
+        if (obj.get("env_allow")) |ev| {
+            switch (ev) {
+                .array => |arr| t.env_allow = try strArray(arena, arr),
                 else => {},
             }
         }

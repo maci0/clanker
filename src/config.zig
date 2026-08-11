@@ -28,6 +28,10 @@ pub const Model = struct {
     /// Per-request max output tokens (completion cap).
     max_tokens: u32 = 1024,
     temperature: ?f64 = null,
+    /// Nucleus sampling cutoff. Left null by default and generally best set
+    /// *instead of* temperature rather than alongside it: both narrow the same
+    /// distribution, and Anthropic's API documents adjusting only one.
+    top_p: ?f64 = null,
     /// Keeps reasoning models' chain-of-thought short so `content` stays
     /// populated (e.g. DeepSeek v4: "low" | "medium").
     reasoning_effort: ?[]const u8 = null,
@@ -87,7 +91,11 @@ pub const Provider = struct {
 };
 
 pub const Agent = struct {
-    max_iterations: u32 = 12,
+    /// A review or audit task spends most of its turns reading before it can
+    /// answer anything. At 12 those runs ended at the ceiling with no answer
+    /// and the whole run wasted, which costs more than the extra turns would
+    /// have.
+    max_iterations: u32 = 24,
     compact_threshold_bytes: usize = 24000,
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn
@@ -116,6 +124,16 @@ pub const Improve = struct {
     /// model's own window. A fixed number here overrides that, and a stale one
     /// silently keeps a 1M-window model on a 64 KiB diet.
     max_context_bytes: ?usize = null,
+    /// Run the staged tree's task evals before promoting. They cost one agent
+    /// run each, which is the price of noticing a patch that compiles, passes
+    /// every unit test, and breaks a tool an agent depends on.
+    capability_gate: bool = true,
+    /// Ceiling on the local zig build cache, checked before each attempt.
+    /// The cache only ever grows (zig never prunes it) and each gate run adds
+    /// to it; unbounded, it reached 72 GB here and filled the disk, which
+    /// stops self-improvement completely. Dropping it costs about a second,
+    /// because the artifacts themselves live in zig's global cache. 0 disables.
+    max_cache_bytes: u64 = 4 << 30,
     max_staged_bytes: usize = 256 * 1024,
     max_tool_source_bytes: usize = 64 * 1024,
     max_skill_bytes: usize = 32 * 1024,
@@ -306,7 +324,7 @@ pub const Config = struct {
             log.log(.error_, "provider '{s}': \"model\" was replaced by \"models\". Use \"models\": {{\"<name>\": {{...}}}} and, with more than one, \"default_model\": \"<name>\"", .{name});
             return error.ProviderLegacyModelFields;
         }
-        for ([_][]const u8{ "max_tokens", "context_window", "temperature", "reasoning_effort" }) |legacy| {
+        for ([_][]const u8{ "max_tokens", "context_window", "temperature", "top_p", "reasoning_effort" }) |legacy| {
             if (obj.get(legacy) != null) {
                 log.log(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into \"models\": {{\"<name>\": {{\"{s}\": ...}}}}", .{ name, legacy, legacy });
                 return error.ProviderLegacyModelFields;
@@ -373,6 +391,7 @@ pub const Config = struct {
         if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
         if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
+        if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
         if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
@@ -456,7 +475,7 @@ pub const Config = struct {
     }
 
     fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
-        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.os.linux.getpid()});
+        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.c.getpid()});
     }
 
     fn parseAgent(arena: std.mem.Allocator, v: json.Value) !Agent {
@@ -498,6 +517,11 @@ pub const Config = struct {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
         }
+        if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
+            .bool => |b| b,
+            else => im.capability_gate,
+        };
+        if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
         if (obj.get("max_staged_bytes")) |k| im.max_staged_bytes = @intCast(try jsonInt(k, "max_staged_bytes"));
         if (obj.get("max_tool_source_bytes")) |k| im.max_tool_source_bytes = @intCast(try jsonInt(k, "max_tool_source_bytes"));
         if (obj.get("max_skill_bytes")) |k| im.max_skill_bytes = @intCast(try jsonInt(k, "max_skill_bytes"));

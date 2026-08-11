@@ -147,7 +147,7 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
     try bs.endObject();
 
     const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
-    _ = lib.httpPost(url, body_buf[0..bw.end]) catch |err| return lib.fail(out, @errorName(err));
+    _ = lib.httpPost(url, body_buf[0..bw.end]) catch |err| return lib.failErr(out, err, "notifying the peer");
 
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);

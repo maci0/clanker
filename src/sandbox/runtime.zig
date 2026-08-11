@@ -34,6 +34,21 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_http", h, fn (*zwasm.Caller, u32, u32, u32, u32, u32, u32, u32) u32, &host.ckHttp);
     try lk.defineFuncCtx("env", "ck_fs_read", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsRead);
     try lk.defineFuncCtx("env", "ck_fs_read_range", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsReadRange);
+    // Implemented in host.zig and never reachable: no registration meant no
+    // guest could call them, so the file operations an agent needs to do more
+    // than read — create a directory, rename, copy, delete, append, stat, find
+    // by name, grep — did not exist as far as any tool was concerned.
+    try lk.defineFuncCtx("env", "ck_fs_write_range", h, fn (*zwasm.Caller, u32, u32, u32, u32, u32) u32, &host.ckFsWriteRange);
+    try lk.defineFuncCtx("env", "ck_fs_append", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsAppend);
+    try lk.defineFuncCtx("env", "ck_fs_copy", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsCopy);
+    try lk.defineFuncCtx("env", "ck_fs_rename", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsRename);
+    try lk.defineFuncCtx("env", "ck_fs_delete", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsDelete);
+    try lk.defineFuncCtx("env", "ck_fs_mkdir", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsMkdir);
+    try lk.defineFuncCtx("env", "ck_fs_stat", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsStat);
+    try lk.defineFuncCtx("env", "ck_fs_find", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsFind);
+    try lk.defineFuncCtx("env", "ck_fs_grep", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsGrep);
+    try lk.defineFuncCtx("env", "ck_env", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckEnv);
+    try lk.defineFuncCtx("env", "ck_hash", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckHash);
     try lk.defineFuncCtx("env", "ck_fs_write", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsWrite);
     try lk.defineFuncCtx("env", "ck_fs_list", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsList);
     try lk.defineFuncCtx("env", "ck_getenv", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckGetenv);
@@ -59,6 +74,10 @@ pub const ToolModule = struct {
     inst_initialized: bool = false,
     sb: *host.Sandbox,
     h: *host.Host,
+    /// Tool name for diagnostics: the caller (the registry) knows it, the
+    /// module bytes do not carry it, and a bare trap log cannot say which
+    /// tool died. Set by the caller after load(); empty means unknown.
+    name: []const u8 = "",
 
     pub fn load(gpa: std.mem.Allocator, io: std.Io, sb: *host.Sandbox, wasm_bytes: []const u8) !*ToolModule {
         const self = try gpa.create(ToolModule);
@@ -139,7 +158,7 @@ pub const ToolModule = struct {
         // ---- execute ----
         var run_fn = self.inst.typedFunc(fn (u32, u32) u64, "run");
         const p = run_fn.call(.{ scratch_ptr, @intCast(input.len) }) catch |err| {
-            log.log(.error_, "[sandbox] tool trap: {s}", .{@errorName(err)});
+            log.log(.error_, "[sandbox] tool trap: {s} (tool={s})", .{ @errorName(err), self.name });
             return error.ToolTrap;
         };
         const r = protocol.unpackPtrLen(p);
@@ -195,25 +214,27 @@ test "zwasm executes on a worker thread" {
     const W = struct {
         wasm: []const u8,
         io: std.Io,
+        name: []const u8,
         result: ?i32 = null,
         fn run(self: *@This()) void {
             var env = std.process.Environ.Map.init(std.testing.allocator);
             defer env.deinit();
             var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = self.io, .root_dir = ".", .network_allow = &.{}, .environ_map = &env };
             const mod = ToolModule.load(std.testing.allocator, self.io, &sb, self.wasm) catch |e| {
-                std.debug.print("worker load err {s}\n", .{@errorName(e)});
+                std.debug.print("worker load err {s} (tool={s})\n", .{ @errorName(e), self.name });
                 return;
             };
             defer mod.deinit();
+            mod.name = self.name;
             var fn_ = mod.inst.typedFunc(fn (i32, i32) i32, "add");
             const r = fn_.call(.{ 17, 25 }) catch |e| {
-                std.debug.print("worker call err {s}\n", .{@errorName(e)});
+                std.debug.print("worker call err {s} (tool={s})\n", .{ @errorName(e), self.name });
                 return;
             };
             self.result = r;
         }
     };
-    var w = W{ .wasm = wasm, .io = io };
+    var w = W{ .wasm = wasm, .io = io, .name = "tiny" };
     const th = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, W.run, .{&w});
     th.join();
     try std.testing.expectEqual(@as(?i32, 42), w.result);

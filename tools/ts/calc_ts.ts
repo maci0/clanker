@@ -17,13 +17,23 @@ declare function ck_now(): u64;
 // ---- buffers ----------------------------------------------------------------
 const BUF: u32 = 65536;
 
+// The views are held, not just their addresses. Taking .dataStart from a
+// temporary leaves nothing referencing the array, so the collector frees it and
+// the next allocation reuses that memory — the host writes the input into a
+// buffer that is handed out again mid-call. The symptom is an input that reads
+// correctly for a few bytes and then turns to garbage.
+let scratch_view: Uint8Array | null = null;
+let arena_view: Uint8Array | null = null;
 let scratch_ptr: usize = 0;
 let arena_ptr: usize = 0;
 let out_view: Uint8Array | null = null;
 let out_ptr: usize = 0;
 
 function ensureScratch(): usize {
-  if (scratch_ptr == 0) scratch_ptr = new Uint8Array(BUF).dataStart;
+  if (scratch_ptr == 0) {
+    scratch_view = new Uint8Array(BUF);
+    scratch_ptr = scratch_view!.dataStart;
+  }
   return scratch_ptr;
 }
 
@@ -33,7 +43,10 @@ export function scratch(need: u32): u32 {
 }
 
 export function host_arena(): u32 {
-  if (arena_ptr == 0) arena_ptr = new Uint8Array(BUF).dataStart;
+  if (arena_ptr == 0) {
+    arena_view = new Uint8Array(BUF);
+    arena_ptr = arena_view!.dataStart;
+  }
   return <u32>arena_ptr;
 }
 
