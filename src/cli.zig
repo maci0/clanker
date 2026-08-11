@@ -19,6 +19,12 @@ const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const lineedit = @import("util/lineedit.zig");
+const term = @import("tui/term.zig");
+const tui_input = @import("tui/input.zig");
+const tui_region = @import("tui/region.zig");
+const tui_statusbar = @import("tui/statusbar.zig");
+const tui_transcript = @import("tui/transcript.zig");
+const tui_palette = @import("tui/palette.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const room_todos = @import("peers/todos.zig");
 const token_stats = @import("stats/tokens.zig");
@@ -908,6 +914,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     if (ask_interactive) a.ask_fn = &replAsk;
     a.on_token = &replDelta;
     a.on_tool_call = &replToolCall;
+    a.on_tool_results = &replToolResults;
     a.on_tool_result = &replToolResult;
 
     try out_w.interface.print(
@@ -923,11 +930,22 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     // unaffected by any of this.
     var editor = lineedit.Editor{ .gpa = gpa };
     defer editor.deinit();
+    var region = tui_region.BottomRegion{ .gpa = gpa };
+    defer region.deinit();
     const interactive = (stdin_file.isTty(io) catch false) and (stdout_file.isTty(io) catch false);
     if (interactive) {
         loadReplHistory(io, gpa, &editor);
+        refreshStatusline(io, gpa, arena, &cfg, init.environ_map, &reg);
+        repl_palette = tui_palette.index(arena, &reg) catch &.{};
         while (true) {
-            const entered = readLineRaw(io, stdin_file, &out_w, &editor) catch |err| {
+            const status = ReplStatus{
+                .model_name = provider.activeModelName(),
+                .session_id = sid,
+                .stats = &a.stats,
+                .session_stats = &a.session_stats,
+                .budget = cfg.agent.max_total_tokens,
+            };
+            const entered = readLineRaw(io, gpa, stdin_file, &out_w, &editor, &region, status) catch |err| {
                 if (err == error.EndOfStream) break;
                 log.log(.error_, "repl read error: {s}", .{@errorName(err)});
                 break;
@@ -1105,7 +1123,9 @@ fn replHandleLine(
 ) !bool {
     if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) return true;
     if (std.mem.eql(u8, line, ":help")) {
-        try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete.\n");
+        try out_w.interface.writeAll(":quit  :help  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete; Tab completes a slash command.\n");
+        const text = try tui_palette.helpText(arena, repl_palette);
+        try out_w.interface.writeAll(text);
         try out_w.interface.flush();
         return false;
     }
@@ -1119,13 +1139,18 @@ fn replHandleLine(
                 return false;
             }
             const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
-            return replRunTurn(io, out_w, a, messages, task, created, sid);
+            const quit = try replRunTurn(io, out_w, a, messages, task, created, sid);
+            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
+            runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
+            return quit;
         }
         const toggled = std.mem.startsWith(u8, line, "/plugins ");
         try replSlashTool(io, gpa, arena, cfg, environ_map, reg, line, out_w);
         if (toggled) {
             reg.* = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
             a.tool_defs = try reg.toToolDefs(arena);
+            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
+            repl_palette = tui_palette.index(arena, reg) catch repl_palette;
         }
         return false;
     }
@@ -1145,7 +1170,10 @@ fn replHandleLine(
             }
         }
     }
-    return replRunTurn(io, out_w, a, messages, task, created, sid);
+    const quit = try replRunTurn(io, out_w, a, messages, task, created, sid);
+    refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
+    runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
+    return quit;
 }
 
 /// REPL history file: recall survives restarts, which is most of the point.
@@ -1173,22 +1201,33 @@ fn saveReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *const lineedit.E
     atomic_write.writeFile(io, std.Io.Dir.cwd(), repl_history_path, buf.items) catch {};
 }
 
+/// What the status bar shows while `readLineRaw` waits for a line — read
+/// fresh on every redraw rather than snapshotted once, so token counts from
+/// a prior turn are already visible while typing the next one.
+pub const ReplStatus = struct {
+    model_name: []const u8,
+    session_id: []const u8,
+    stats: *const agent.RunStats,
+    session_stats: *const agent.RunStats,
+    budget: ?u32,
+};
+
 /// Reads one line in raw mode, redrawing as it is edited. Returns null on EOF
-/// or Ctrl-C, so the caller can leave.
+/// or Ctrl-C, so the caller can leave. The line can span multiple rows (a
+/// bracketed paste, or a line longer than the terminal is wide); `region`
+/// repaints exactly the rows the status bar + input box occupy, diffing
+/// against its own previous frame rather than redrawing everything.
 fn readLineRaw(
     io: std.Io,
+    gpa: std.mem.Allocator,
     stdin_file: std.Io.File,
     out_w: *std.Io.File.Writer,
     editor: *lineedit.Editor,
+    region: *tui_region.BottomRegion,
+    status: ReplStatus,
 ) !?[]const u8 {
-    const original = std.posix.tcgetattr(stdin_file.handle) catch return error.NotATerminal;
-    var raw = original;
-    // Character-at-a-time, no echo: the editor draws the line itself.
-    raw.lflag.ICANON = false;
-    raw.lflag.ECHO = false;
-    raw.lflag.ISIG = false;
-    std.posix.tcsetattr(stdin_file.handle, .FLUSH, raw) catch return error.NotATerminal;
-    defer std.posix.tcsetattr(stdin_file.handle, .FLUSH, original) catch {};
+    const raw_guard = try term.enterRaw(stdin_file.handle);
+    defer raw_guard.exit();
     // Bracketed paste: the terminal wraps a pasted block in ESC[200~/201~,
     // which the line editor reads as literal newlines instead of submits, so
     // a multi-line paste lands as one input rather than one turn per line.
@@ -1201,46 +1240,42 @@ fn readLineRaw(
     _ = io;
 
     editor.reset();
-    try redraw(out_w, editor);
+    region.reset();
+    try redrawRegion(gpa, out_w, editor, region, status);
 
-    var pending: [64]u8 = undefined;
-    var pending_len: usize = 0;
     while (true) {
-        var byte: [1]u8 = undefined;
-        const n = std.posix.read(stdin_file.handle, &byte) catch |err| switch (err) {
-            error.WouldBlock => continue,
-            else => return err,
-        };
-        if (n == 0) return null;
-        if (pending_len == pending.len) pending_len = 0; // never seen; stay safe
-        pending[pending_len] = byte[0];
-        pending_len += 1;
+        const key = try tui_input.readKey(stdin_file) orelse return null;
 
-        // An escape sequence arrives in pieces; decode() reports null until
-        // it has enough bytes to be sure what the key was.
-        const decoded = lineedit.decode(pending[0..pending_len]) orelse continue;
-        pending_len = 0;
-
-        switch (decoded.key) {
+        switch (key) {
             .interrupt => {
                 try out_w.interface.writeAll("^C\n");
                 try out_w.interface.flush();
                 editor.reset();
-                try redraw(out_w, editor);
+                region.reset(); // the ^C line above is outside the region's own tracking
+                try redrawRegion(gpa, out_w, editor, region, status);
                 continue;
             },
             .eof => if (editor.len == 0) return null,
+            .tab => {
+                // Mid-paste, a tab byte is pasted content, not a completion
+                // request — leave it alone (matches lineedit.Editor.apply's
+                // existing no-op for .tab; nothing new to insert either way).
+                if (!editor.in_paste) tryComplete(gpa, editor, repl_palette);
+                try redrawRegion(gpa, out_w, editor, region, status);
+                continue;
+            },
             .clear_screen => {
                 // Ctrl-L: wipe the screen and repaint the prompt with the
                 // line being edited, as every cooked shell does.
                 try out_w.interface.writeAll("\x1b[2J\x1b[H");
-                try redraw(out_w, editor);
+                region.reset(); // the screen is blank; nothing to move up past
+                try redrawRegion(gpa, out_w, editor, region, status);
                 continue;
             },
             else => {},
         }
-        const done = editor.apply(decoded.key);
-        try redraw(out_w, editor);
+        const done = editor.apply(key);
+        try redrawRegion(gpa, out_w, editor, region, status);
         if (done) {
             try out_w.interface.writeAll("\n");
             try out_w.interface.flush();
@@ -1249,15 +1284,54 @@ fn readLineRaw(
     }
 }
 
-/// Repaints the prompt and the line, then parks the cursor where the editor
-/// thinks it is.
-fn redraw(out_w: *std.Io.File.Writer, editor: *const lineedit.Editor) !void {
-    try out_w.interface.writeAll("\r\x1b[K\x1b[32mclanker> \x1b[0m");
-    try out_w.interface.writeAll(editor.line());
-    if (editor.cursor < editor.len) {
-        const back = editor.len - editor.cursor;
-        try out_w.interface.print("\x1b[{d}D", .{back});
-    }
+const repl_prompt = "\x1b[32mclanker> \x1b[0m";
+const repl_prompt_width = 9; // "clanker> " display width, ANSI codes excluded
+
+/// Tab-completes a slash command in place: `/he` + Tab -> `/help `. A no-op
+/// once args have started (a space is already in the line) or when nothing
+/// in `entries` starts with what's typed.
+fn tryComplete(gpa: std.mem.Allocator, editor: *lineedit.Editor, entries: []const tui_palette.Entry) void {
+    const line = editor.line();
+    if (line.len == 0 or line[0] != '/') return;
+    if (std.mem.indexOfScalar(u8, line, ' ') != null) return;
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const completed = tui_palette.complete(arena_state.allocator(), entries, line[1..]) catch return orelse return;
+
+    editor.reset();
+    _ = editor.apply(.{ .char = '/' });
+    for (completed) |c| _ = editor.apply(.{ .char = c });
+}
+
+/// One redraw call gets its own small arena: row slices are cheap and
+/// short-lived, and a fresh arena per keystroke beats growing one arena for
+/// the lifetime of the whole line.
+fn redrawRegion(
+    gpa: std.mem.Allocator,
+    out_w: *std.Io.File.Writer,
+    editor: *const lineedit.Editor,
+    region: *tui_region.BottomRegion,
+    status: ReplStatus,
+) !void {
+    var frame_arena = std.heap.ArenaAllocator.init(gpa);
+    defer frame_arena.deinit();
+    const arena = frame_arena.allocator();
+    const cols: usize = if (term.getSize(out_w.file.handle)) |sz| sz.cols else tui_input.default_cols;
+
+    const status_line = try tui_statusbar.render(arena, cols, .{
+        .model = status.model_name,
+        .session_id = status.session_id,
+        .total_tokens = status.session_stats.total_tokens + status.stats.total_tokens,
+        .budget = if (status.budget) |b| @intCast(b) else null,
+        .extra = repl_statusline_extra,
+    });
+    const f = try tui_input.frame(arena, editor, cols, repl_prompt, repl_prompt_width);
+
+    var lines = try arena.alloc([]const u8, 1 + f.rows.len);
+    lines[0] = status_line;
+    for (f.rows, 0..) |r, i| lines[1 + i] = r;
+    try region.render(&out_w.interface, lines, 1 + f.cursor_row, f.cursor_col);
     try out_w.interface.flush();
 }
 
@@ -1309,6 +1383,72 @@ fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u
 
 /// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
 /// prints its `{"ok":true,"text":"..."}` output.
+const ToolExecError = error{ WasmMissing, LoadFailed, ExecFailed };
+
+/// Runs one internal WASM tool (a slash command's `cmd_*` handler, or a
+/// `statusline: true` contributor) with `{"args": args}` as input. Returns
+/// the raw JSON response (gpa-owned; caller frees). Shared by `replSlashTool`
+/// and `statuslineSegments` so the sandbox/module-load/JSON-envelope dance
+/// exists in exactly one place.
+fn runInternalTool(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    tool: *const registry.Tool,
+    args: []const u8,
+) (ToolExecError || error{ OutOfMemory, WriteFailed })![]u8 {
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch return error.WasmMissing;
+    defer gpa.free(wasm_bytes);
+
+    var sb = host.Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = cfg.agent.sandbox_root,
+        .network_allow = tool.network_allow,
+        .fs_prefixes = tool.fs_prefixes,
+        .environ_map = environ_map,
+        .seed = cfg.agent.seed,
+    };
+    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch return error.LoadFailed;
+    defer mod.deinit();
+
+    var ibuf: [8192]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    try is.objectField("args");
+    try is.write(args);
+    try is.endObject();
+
+    return mod.executeTool(ibuf[0..iw.end]) catch return error.ExecFailed;
+}
+
+const ToolResult = struct { ok: bool = false, text: []const u8 = "", err: []const u8 = "" };
+
+/// Parses the `{"ok":bool,"text":string}` / `{"ok":false,"error":string}`
+/// envelope every internal tool's response follows. On unparseable JSON,
+/// `text` becomes the raw bytes so a caller that just echoes `text` still
+/// shows the caller something instead of silently swallowing it.
+fn parseToolResult(arena: std.mem.Allocator, raw: []const u8) ToolResult {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        return .{ .text = raw };
+    };
+    var r = ToolResult{};
+    if (parsed == .object) {
+        if (parsed.object.get("ok")) |k| if (k == .bool) {
+            r.ok = k.bool;
+        };
+        if (parsed.object.get("text")) |t| if (t == .string) {
+            r.text = t.string;
+        };
+        if (parsed.object.get("error")) |e| if (e == .string) {
+            r.err = e.string;
+        };
+    }
+    return r;
+}
+
 fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, line: []const u8, out_w: *std.Io.File.Writer) !void {
     const rest_start = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
     const name = line[1..rest_start];
@@ -1323,76 +1463,76 @@ fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, c
         return;
     };
 
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
-        try out_w.interface.writeAll("slash tool wasm missing (run zig build tools)\n");
-        try out_w.interface.flush();
-        return;
-    };
-    defer gpa.free(wasm_bytes);
-
-    var sb = host.Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = cfg.agent.sandbox_root,
-        .network_allow = tool.network_allow,
-        .fs_prefixes = tool.fs_prefixes,
-        .environ_map = environ_map,
-        .seed = cfg.agent.seed,
-    };
-    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
-        try out_w.interface.writeAll("slash tool load failed\n");
-        try out_w.interface.flush();
-        return;
-    };
-    defer mod.deinit();
-
-    var ibuf: [8192]u8 = undefined;
-    var iw: std.Io.Writer = .fixed(&ibuf);
-    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
-    try is.beginObject();
-    try is.objectField("args");
-    try is.write(args);
-    try is.endObject();
-
-    const out = mod.executeTool(ibuf[0..iw.end]) catch {
-        try out_w.interface.writeAll("slash tool execution failed\n");
+    const out = runInternalTool(io, gpa, cfg, environ_map, tool, args) catch |err| {
+        const msg = switch (err) {
+            error.WasmMissing => "slash tool wasm missing (run zig build tools)\n",
+            error.LoadFailed => "slash tool load failed\n",
+            error.ExecFailed => "slash tool execution failed\n",
+            error.OutOfMemory => return error.OutOfMemory,
+            error.WriteFailed => return error.WriteFailed,
+        };
+        try out_w.interface.writeAll(msg);
         try out_w.interface.flush();
         return;
     };
     defer gpa.free(out);
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{ .ignore_unknown_fields = true }) catch {
-        try out_w.interface.writeAll(out);
+    const result = parseToolResult(arena, out);
+    if (!result.ok and result.err.len > 0) {
+        try out_w.interface.writeAll("error: ");
+        try out_w.interface.writeAll(result.err);
         try out_w.interface.writeAll("\n");
         try out_w.interface.flush();
         return;
-    };
-    var text: []const u8 = "";
-    var ok = false;
-    if (parsed == .object) {
-        if (parsed.object.get("ok")) |k| {
-            if (k == .bool) ok = k.bool;
-        }
-        if (parsed.object.get("text")) |t| {
-            if (t == .string) text = t.string;
-        }
     }
-    if (!ok) {
-        if (parsed == .object) {
-            if (parsed.object.get("error")) |e| {
-                if (e == .string) {
-                    try out_w.interface.writeAll("error: ");
-                    try out_w.interface.writeAll(e.string);
-                    try out_w.interface.writeAll("\n");
-                    try out_w.interface.flush();
-                    return;
-                }
-            }
-        }
-    }
-    try out_w.interface.writeAll(text);
+    try out_w.interface.writeAll(result.text);
     try out_w.interface.writeAll("\n");
     try out_w.interface.flush();
+}
+
+/// Recomputes `repl_statusline_extra` from every `statusline: true` tool.
+/// Called once per turn (not per keystroke): these are ordinary sandboxed
+/// WASM calls, the same cost as a slash command, and the status line's
+/// dynamic parts (tokens, activity) already update every redraw without
+/// this, so a plugin segment only needs to be as fresh as the last turn.
+/// A tool that fails to load or run just contributes nothing — one broken
+/// plugin should not blank the whole status line.
+fn refreshStatusline(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) void {
+    repl_statusline_extra = statuslineSegments(io, gpa, arena, cfg, environ_map, reg) catch "";
+}
+
+fn statuslineSegments(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) ![]const u8 {
+    const tools = try reg.statuslineTools(arena);
+    if (tools.len == 0) return "";
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (tools) |tool| {
+        const out = runInternalTool(io, gpa, cfg, environ_map, tool, "") catch continue;
+        defer gpa.free(out);
+        const result = parseToolResult(arena, out);
+        if (result.ok and result.text.len > 0) try parts.append(arena, try arena.dupe(u8, result.text));
+    }
+    if (parts.items.len == 0) return "";
+    return std.mem.join(arena, " \xc2\xb7 ", parts.items);
+}
+
+/// Runs every `turn_hook: true` tool once after a turn completes and prints
+/// any non-empty result into the transcript — a general REPL-behavior
+/// plugin surface (as opposed to `statuslineSegments`'s fixed one-line
+/// contribution), for a plugin that reacts to what just happened rather
+/// than only decorating the status line. Same cadence and same "one broken
+/// plugin contributes nothing" tolerance as the statusline path.
+fn runTurnHooks(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, out_w: *std.Io.File.Writer, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) void {
+    const hooks = reg.turnHookTools(arena) catch return;
+    for (hooks) |tool| {
+        const out = runInternalTool(io, gpa, cfg, environ_map, tool, "") catch continue;
+        defer gpa.free(out);
+        const result = parseToolResult(arena, out);
+        if (!result.ok or result.text.len == 0) continue;
+        out_w.interface.writeAll("\x1b[2m") catch continue;
+        out_w.interface.writeAll(result.text) catch {};
+        out_w.interface.writeAll("\x1b[0m\n") catch {};
+    }
+    out_w.interface.flush() catch {};
 }
 
 /// Writes the effective modules set (from the merged cfg) into
@@ -1706,196 +1846,29 @@ fn replClearThinking() void {
     w.interface.writeAll("\r\x1b[K") catch {};
 }
 
-/// Renders the same markdown subset as the `format` WASM tool (bold,
-/// italic, inline code, fenced blocks, "- " bullets) straight into ANSI as
-/// content streams in, one delta at a time. A marker can split across two
-/// deltas (e.g. "**" arriving as two separate one-byte chunks), so up to 2
-/// bytes are held back whenever the tail of a chunk could still be the start
-/// of a longer marker, and resolved once the next chunk arrives.
-const MdStream = struct {
-    in_fence: bool = false,
-    in_bold: bool = false,
-    in_italic: bool = false,
-    in_code: bool = false,
-    /// Styling opened by a line construct (heading, quote) and closed at the
-    /// newline that ends it.
-    line_style: bool = false,
-    at_line_start: bool = true,
-    /// Longest marker needing lookahead: "###### " (7 bytes).
-    hold: [7]u8 = undefined,
-    hold_len: usize = 0,
-
-    fn at(self: *const MdStream, chunk: []const u8, idx: usize) u8 {
-        return if (idx < self.hold_len) self.hold[idx] else chunk[idx - self.hold_len];
-    }
-
-    /// Bytes from `i` that are the same character `c`, capped at `max`.
-    fn runOf(self: *const MdStream, chunk: []const u8, i: usize, total: usize, c: u8, max: usize) usize {
-        var n: usize = 0;
-        while (i + n < total and n < max and self.at(chunk, i + n) == c) n += 1;
-        return n;
-    }
-
-    fn feed(self: *MdStream, w: *std.Io.Writer, chunk: []const u8) void {
-        const total = self.hold_len + chunk.len;
-        var i: usize = 0;
-        while (i < total) {
-            const remaining = total - i;
-            const c = self.at(chunk, i);
-
-            // Inside a fence everything is literal: a code block full of *,
-            // _ and ` must not toggle emphasis on its way to the terminal.
-            if (self.in_fence) {
-                if (c == '`') {
-                    if (remaining < 3) break;
-                    if (self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
-                        self.in_fence = false;
-                        w.writeAll("\x1b[0m") catch {};
-                        i += 3;
-                        self.at_line_start = false;
-                        continue;
-                    }
-                }
-                w.writeAll(&[_]u8{c}) catch {};
-                self.at_line_start = (c == '\n');
-                i += 1;
-                continue;
-            }
-
-            // ---- line-start constructs ----
-            if (self.at_line_start) {
-                // Heading: "# " .. "###### ". Rendered by weight, not by
-                // repeating the hashes back at the reader.
-                if (c == '#') {
-                    const hashes = self.runOf(chunk, i, total, '#', 6);
-                    if (i + hashes >= total) break; // need the char after them
-                    if (hashes <= 6 and self.at(chunk, i + hashes) == ' ') {
-                        w.writeAll(if (hashes == 1) "\x1b[1;4m" else "\x1b[1m") catch {};
-                        self.line_style = true;
-                        i += hashes + 1;
-                        self.at_line_start = false;
-                        continue;
-                    }
-                }
-                // Horizontal rule: a line of --- or ***.
-                if (c == '-' or c == '*') {
-                    const rule_run = self.runOf(chunk, i, total, c, 4);
-                    if (rule_run >= 3) {
-                        if (i + rule_run >= total) break; // the line may continue
-                        if (self.at(chunk, i + rule_run) == '\n') {
-                            w.writeAll("\x1b[2m\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\x1b[0m") catch {};
-                            i += rule_run;
-                            continue;
-                        }
-                    }
-                }
-                // Block quote.
-                if (c == '>') {
-                    if (remaining < 2) break;
-                    if (self.at(chunk, i + 1) == ' ') {
-                        w.writeAll("\x1b[2m\xe2\x94\x82 ") catch {};
-                        self.line_style = true;
-                        i += 2;
-                        self.at_line_start = false;
-                        continue;
-                    }
-                }
-                // Ordered list: "1. " / "1) ", marker in cyan.
-                if (c >= '0' and c <= '9') {
-                    var d: usize = 0;
-                    while (i + d < total and d < 3 and self.at(chunk, i + d) >= '0' and self.at(chunk, i + d) <= '9') d += 1;
-                    if (i + d + 1 >= total) break;
-                    const sep = self.at(chunk, i + d);
-                    if ((sep == '.' or sep == ')') and self.at(chunk, i + d + 1) == ' ') {
-                        w.writeAll("\x1b[36m") catch {};
-                        var k: usize = 0;
-                        while (k < d) : (k += 1) w.writeAll(&[_]u8{self.at(chunk, i + k)}) catch {};
-                        w.writeAll(&[_]u8{sep}) catch {};
-                        w.writeAll("\x1b[0m ") catch {};
-                        i += d + 2;
-                        self.at_line_start = false;
-                        continue;
-                    }
-                }
-                // Bullet: "- " or "* ".
-                if (c == '-' or c == '*') {
-                    if (remaining < 2) break;
-                    if (self.at(chunk, i + 1) == ' ') {
-                        w.writeAll("\xe2\x80\xa2 ") catch {};
-                        i += 2;
-                        self.at_line_start = false;
-                        continue;
-                    }
-                }
-            }
-
-            // ---- inline constructs ----
-            if (c == '`' and remaining < 3) break; // could still become ```
-            if (c == '`' and self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
-                self.in_fence = true;
-                w.writeAll("\x1b[2m") catch {};
-                i += 3;
-                self.at_line_start = false;
-                continue;
-            }
-            if (c == '*' and remaining < 2) break; // could still become **
-            if (c == '*' and self.at(chunk, i + 1) == '*') {
-                self.in_bold = !self.in_bold;
-                w.writeAll(if (self.in_bold) "\x1b[1m" else "\x1b[0m") catch {};
-                i += 2;
-                self.at_line_start = false;
-                continue;
-            }
-            if (c == '`') {
-                self.in_code = !self.in_code;
-                w.writeAll(if (self.in_code) "\x1b[36m" else "\x1b[0m") catch {};
-                i += 1;
-                self.at_line_start = false;
-                continue;
-            }
-            if (c == '*') {
-                self.in_italic = !self.in_italic;
-                w.writeAll(if (self.in_italic) "\x1b[3m" else "\x1b[0m") catch {};
-                i += 1;
-                self.at_line_start = false;
-                continue;
-            }
-
-            // A heading or quote's styling ends with its line.
-            if (c == '\n' and self.line_style) {
-                w.writeAll("\x1b[0m") catch {};
-                self.line_style = false;
-            }
-            w.writeAll(&[_]u8{c}) catch {};
-            self.at_line_start = (c == '\n');
-            i += 1;
-        }
-        const left = total - i;
-        var j: usize = 0;
-        while (j < left) : (j += 1) self.hold[j] = self.at(chunk, i + j);
-        self.hold_len = left;
-    }
-
-    /// Flushes any still-held bytes as literal text (no more input is
-    /// coming, so a trailing lone "*" or "`" was never a real marker) and
-    /// closes any formatting left open, then resets for the next turn.
-    fn flush(self: *MdStream, w: *std.Io.Writer) void {
-        if (self.hold_len > 0) {
-            w.writeAll(self.hold[0..self.hold_len]) catch {};
-        }
-        if (self.in_code) w.writeAll("\x1b[0m") catch {};
-        if (self.in_italic) w.writeAll("\x1b[0m") catch {};
-        if (self.in_bold) w.writeAll("\x1b[0m") catch {};
-        if (self.in_fence) w.writeAll("\x1b[0m") catch {};
-        if (self.line_style) w.writeAll("\x1b[0m") catch {};
-        self.* = .{};
-    }
-};
+/// The streaming markdown renderer now lives in tui/transcript.zig, next to
+/// the tool-call card renderer it shares a "print-once transcript element"
+/// role with.
+const MdStream = tui_transcript.MdStream;
 
 /// True once the current turn's assistant text has started streaming, so the
 /// colored "›" gutter is only printed once, right before the first token.
 var repl_answer_started = false;
 var repl_md: MdStream = .{};
+
+/// Segments from `statusline: true` WASM tools, joined and appended to the
+/// built-in status line. Refreshed once per turn (see `refreshStatusline`),
+/// not per keystroke — matches `Registry.statuslineTools`'s documented
+/// cadence and avoids a WASM invocation on every redraw. arena-owned: lives
+/// as long as the REPL process, same as everything else `replHandleLine`
+/// hands to `arena.dupe`.
+var repl_statusline_extra: []const u8 = "";
+
+/// Zig-side index of `cmd_*` slash commands, for Tab-completion and a live
+/// `:help` listing. Built once at REPL startup and refreshed whenever
+/// `/plugins` changes what's registered, same lifecycle as
+/// `repl_statusline_extra`.
+var repl_palette: []const tui_palette.Entry = &.{};
 
 /// Options offered by the last answer, so the next line can be a bare number.
 /// gpa-owned: replaced (and freed) on every turn that ends in a question.
@@ -1974,48 +1947,47 @@ fn replDelta(delta: []const u8) void {
     w.interface.flush() catch {};
 }
 
-/// Prints a compact status line per tool call about to run, showing the
-/// tool name and a truncated preview of its arguments so the user can see
-/// what is being searched / read / written.
+fn replCols(w: *std.Io.File.Writer) usize {
+    return if (term.getSize(w.file.handle)) |sz| sz.cols else tui_input.default_cols;
+}
+
+/// Opens one bordered card per tool call about to run, showing the tool name
+/// and a truncated preview of its arguments so the user can see what is
+/// being searched / read / written before it happens.
 fn replToolCall(calls: []const types.ToolCall) void {
     replClearThinking();
     const w = repl_out orelse return;
-    const arg_preview_cap = 80;
     if (calls.len == 1) {
         repl_activity = calls[0].name;
     } else if (calls.len > 1) {
         repl_activity = std.fmt.bufPrint(&repl_activity_buf, "{s} +{d}", .{ calls[0].name, calls.len - 1 }) catch calls[0].name;
     }
-    for (calls) |tc| {
-        w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
-        w.interface.writeAll(tc.name) catch {};
-        // Show a dim, truncated preview of arguments so the user knows
-        // *what* is being searched / read / written, not just which tool.
-        if (tc.arguments.len > 0 and !std.mem.eql(u8, tc.arguments, "{}")) {
-            w.interface.writeAll("\x1b[0m\x1b[2m  ") catch {};
-            if (tc.arguments.len <= arg_preview_cap) {
-                w.interface.writeAll(tc.arguments) catch {};
-            } else {
-                w.interface.writeAll(tc.arguments[0..arg_preview_cap]) catch {};
-                w.interface.writeAll("\xe2\x80\xa6") catch {};
-            }
-        }
-        w.interface.writeAll("\x1b[0m\n") catch {};
-    }
+    const cols = replCols(w);
+    for (calls) |tc| tui_transcript.printCallCard(&w.interface, tc.name, tc.arguments, cols);
     w.interface.flush() catch {};
     replShowThinking();
 }
 
-/// Prints the elapsed time for the tool batch that just finished, dim and
-/// indented under the tool status line, then resumes the spinner while the
-/// next LLM call is in flight.
+/// Fills each open card with a truncated preview of what the tool actually
+/// returned, so the card shows what happened rather than only how long it
+/// took.
+fn replToolResults(calls: []const types.ToolCall, results: []const ?[]const u8) void {
+    const w = repl_out orelse return;
+    const cols = replCols(w);
+    for (calls, results) |tc, result| {
+        _ = tc;
+        tui_transcript.printResultBody(&w.interface, result, cols);
+    }
+    w.interface.flush() catch {};
+}
+
+/// Closes the tool batch's card(s) with the elapsed time, then resumes the
+/// spinner while the next LLM call is in flight.
 fn replToolResult(ms: u64) void {
     replClearThinking();
     repl_activity = "thinking";
     const w = repl_out orelse return;
-    var buf: [48]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, "\x1b[2m    \xe2\x86\xb3 {d}ms\x1b[0m\n", .{ms}) catch return;
-    w.interface.writeAll(line) catch return;
+    tui_transcript.printCardFooter(&w.interface, ms);
     w.interface.flush() catch {};
     replShowThinking();
 }
@@ -2738,7 +2710,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
-            handleWebui(io, gpa, cfg, environ_map, stream);
+            handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van.js")) {
             respondJs(gpa, stream, webui_vendor_van, &gzip_van, acceptsGzip(headers_raw));
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van-ui.js")) {
@@ -2748,7 +2720,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
                 std.mem.eql(u8, target, "/webui/van-boot.js")))
         {
             // Same tool, same comptime size guard, one file per language.
-            handleWebuiAsset(io, gpa, cfg, environ_map, target, stream);
+            handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js")) {
             respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw));
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/hljs.min.js")) {
@@ -3430,6 +3402,37 @@ fn renderWebui(
     return arena.dupe(u8, body) catch null;
 }
 
+/// Renders through the tool once and keeps the bytes. Returns null only when
+/// the render itself failed, in which case the caller has already responded.
+fn renderWebuiCached(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    path: []const u8,
+    cache: *RenderCache,
+    stream: std.Io.net.Stream,
+) ?[]const u8 {
+    switch (cache.state.load(.acquire)) {
+        .ready => return cache.body,
+        .failed => {},
+        .idle, .rendering => {},
+    }
+    const body = renderWebui(io, gpa, arena, cfg, environ_map, path, stream) orelse return null;
+    // Only one thread publishes; the rest just used their own copy, which is
+    // identical because the source is compiled in.
+    if (cache.state.cmpxchgStrong(.idle, .rendering, .acq_rel, .acquire) == null) {
+        if (gpa.dupe(u8, body)) |owned| {
+            cache.body = owned;
+            cache.state.store(.ready, .release);
+        } else |_| {
+            cache.state.store(.failed, .release);
+        }
+    }
+    return body;
+}
+
 /// The page's stylesheet and script. Same tool, same sandbox, same size guard
 /// as the markup; only the content type and the caching differ.
 fn handleWebuiAsset(
@@ -3438,32 +3441,40 @@ fn handleWebuiAsset(
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     target: []const u8,
+    accepts_gzip: bool,
     stream: std.Io.net.Stream,
 ) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const body = renderWebui(io, gpa, arena, cfg, environ_map, target, stream) orelse return;
-    const content_type = if (std.mem.endsWith(u8, target, ".css"))
-        "text/css; charset=utf-8"
-    else
-        "text/javascript; charset=utf-8";
+    const is_css = std.mem.endsWith(u8, target, ".css");
+    const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else &gzip_js;
+    const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
+    const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
+
+    // 187 KB of script over a connection that closes afterwards is the single
+    // largest cost of a first draw; compressed it is a fifth of that.
+    const gzipped = if (accepts_gzip) gzipCached(gpa, gz, body) else null;
+    const out = gzipped orelse body;
+    const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
     // no-store for the same reason the page has it: these are compiled into
     // the binary and change with every rebuild.
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, body.len }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding }) catch return;
     writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, body);
+    writeAllFd(stream.socket.handle, out);
 }
 
-fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
+fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const body = renderWebui(io, gpa, arena, cfg, environ_map, "/", stream) orelse return;
-    respondHtml(stream, 200, "OK", body);
+    const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, "/", &render_page, stream) orelse return;
+    respondHtmlGz(gpa, stream, body, accepts_gzip);
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -5377,6 +5388,19 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // <style> blocks.
 const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+/// The page, compressed when the client will take it. This is the response
+/// that blocks the first draw, so the 21 KB it used to send uncompressed was
+/// paid before anything could be painted.
+fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, accepts_gzip: bool) void {
+    const gzipped = if (accepts_gzip) gzipCached(gpa, &gzip_page, body) else null;
+    const out = gzipped orelse body;
+    const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
+    var hbuf: [4096]u8 = undefined;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{ out.len, encoding, webui_csp }) catch return;
+    writeAllFd(stream.socket.handle, hdr);
+    writeAllFd(stream.socket.handle, out);
+}
+
 fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;
     // The page is compiled into the binary and changes on every rebuild, so
@@ -5407,6 +5431,36 @@ const GzipCache = struct {
     const State = enum(u8) { idle, compressing, ready, failed };
 };
 
+/// A rendered web UI asset, kept for the life of the process.
+///
+/// The markup, stylesheet and script are compiled into this binary, so they
+/// cannot change while it runs — and when a rebuild changes them, hot reload
+/// replaces the process, so a stale entry is not reachable. Without this every
+/// request paid for reading the tool's wasm off disk, instantiating a zwasm
+/// module, and JSON-decoding the result: 348ms and 187 KB for app.js on this
+/// machine, on a connection the server closes immediately afterwards.
+///
+/// Races are resolved the way GzipCache resolves them: whoever moves the state
+/// out of `idle` publishes, and a thread arriving meanwhile renders it the slow
+/// way for that one request rather than blocking. Rendering twice is wasteful,
+/// never wrong.
+const RenderCache = struct {
+    state: std.atomic.Value(State) = .init(.idle),
+    /// Only read after `state` reads `.ready`.
+    body: []const u8 = &.{},
+
+    const State = enum(u8) { idle, rendering, ready, failed };
+};
+
+var render_page: RenderCache = .{};
+var render_css: RenderCache = .{};
+var render_js: RenderCache = .{};
+var render_van_boot: RenderCache = .{};
+
+var gzip_page: GzipCache = .{};
+var gzip_css: GzipCache = .{};
+var gzip_js: GzipCache = .{};
+var gzip_van_boot: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
@@ -5607,50 +5661,6 @@ test "compactMessages drops oldest non-system messages over token budget" {
     try std.testing.expect(messages.items.len == 2);
 }
 
-fn mdStreamRender(allocator: std.mem.Allocator, chunks: []const []const u8) ![]u8 {
-    var w = std.Io.Writer.Allocating.init(allocator);
-    defer w.deinit();
-    var md: MdStream = .{};
-    for (chunks) |c| md.feed(&w.writer, c);
-    md.flush(&w.writer);
-    return allocator.dupe(u8, w.written());
-}
-
-test "MdStream renders bold, italic, inline code, and bullets" {
-    const allocator = std.testing.allocator;
-    const out = try mdStreamRender(allocator, &.{"**bold** *italic* `code` and:\n- one\n- two"});
-    defer allocator.free(out);
-    try std.testing.expectEqualStrings(
-        "\x1b[1mbold\x1b[0m \x1b[3mitalic\x1b[0m \x1b[36mcode\x1b[0m and:\n\xe2\x80\xa2 one\n\xe2\x80\xa2 two",
-        out,
-    );
-}
-
-test "MdStream resolves a marker split across two feeds" {
-    const allocator = std.testing.allocator;
-    // "**bold**" fed one byte at a time must match the whole-chunk render.
-    var chunks: [8][]const u8 = undefined;
-    const text = "**bold**";
-    for (text, 0..) |_, i| chunks[i] = text[i .. i + 1];
-    const out = try mdStreamRender(allocator, &chunks);
-    defer allocator.free(out);
-    try std.testing.expectEqualStrings("\x1b[1mbold\x1b[0m", out);
-}
-
-test "MdStream flushes a trailing unterminated marker as literal text" {
-    const allocator = std.testing.allocator;
-    const out = try mdStreamRender(allocator, &.{"looks like a footnote*"});
-    defer allocator.free(out);
-    try std.testing.expectEqualStrings("looks like a footnote*", out);
-}
-
-test "MdStream only treats a leading dash-space as a bullet at line start" {
-    const allocator = std.testing.allocator;
-    const out = try mdStreamRender(allocator, &.{"a - b\n- c"});
-    defer allocator.free(out);
-    try std.testing.expectEqualStrings("a - b\n\xe2\x80\xa2 c", out);
-}
-
 test "parseChoices reads an inline 'A, or B?' question" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -5703,49 +5713,6 @@ test "parseChoices stays quiet when the answer is not a choice question" {
         \\2. ran the gate
     ;
     try std.testing.expect((try parseChoices(arena, report)) == null);
-}
-
-test "MdStream renders headings, rules, quotes and ordered lists" {
-    var buf: [1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
-    md.feed(&w, "# Title\nbody\n## Sub\n> quoted\n---\n1. first\n2) second\n");
-    md.flush(&w);
-    const out = buf[0..w.end];
-
-    // Headings are styled, and the hashes themselves are not echoed.
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[1;4mTitle") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[1mSub") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "# ") == null);
-    // Quote gets a gutter, the rule becomes a line, list markers keep numbers.
-    try std.testing.expect(std.mem.indexOf(u8, out, "\u{2502} quoted") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\u{2500}\u{2500}\u{2500}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m1.\x1b[0m first") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m2)\x1b[0m second") != null);
-}
-
-test "MdStream leaves fenced code untouched" {
-    // Emphasis markers inside a code block are code, not formatting: toggling
-    // on them corrupted every snippet containing * or `.
-    var buf: [512]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
-    md.feed(&w, "```zig\nconst p: *u8 = x; // **not bold**\n```\nafter\n");
-    md.flush(&w);
-    const out = buf[0..w.end];
-
-    try std.testing.expect(std.mem.indexOf(u8, out, "const p: *u8 = x; // **not bold**") != null);
-    // And the fence closes, so following text is not left dim.
-    try std.testing.expect(std.mem.endsWith(u8, out, "after\n"));
-}
-
-test "MdStream does not mistake a hyphen mid-sentence for a rule" {
-    var buf: [256]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
-    md.feed(&w, "well-known --- inline\n");
-    md.flush(&w);
-    try std.testing.expectEqualStrings("well-known --- inline\n", buf[0..w.end]);
 }
 
 test "a bare invocation starts the REPL, and --help still asks for help" {

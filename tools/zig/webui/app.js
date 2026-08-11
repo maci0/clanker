@@ -4939,13 +4939,34 @@ setBusy(false);
 // Status is cheap and gives the header its identity chips, so it loads
 // regardless of which view opened. Rooms wait for it because they need the
 // instance name to tell this clanker's messages from a peer's.
-loadStatus();
-loadProviders();
-// Enabled plugins register their views before the opening view is settled, so
-// a deep link to a plugin's view survives a cold load.
-loadWebuiPlugins().then(function () {
-  var wanted = window.location.hash.replace("#", "");
-  if (wanted && VIEWS.indexOf(wanted) !== -1) showView(wanted, false);
+/* Boot order is chosen for the first draw.
+
+   The opening view and the conversation list are what the page has to show;
+   everything else can arrive afterwards without the user waiting for it. The
+   model picker in particular reads every provider's model list, which nothing
+   on screen needs until the composer is used.
+
+   Plugins are the exception, and only sometimes: a plugin registers a view, so
+   a deep link to one cannot resolve until they have loaded. When the hash names
+   a view that already exists, plugins wait with everything else. */
+var openingHash = window.location.hash.replace("#", "");
+var needsPluginsNow = !!openingHash && VIEWS.indexOf(openingHash) === -1;
+
+function afterFirstDraw(work) {
+  if (window.requestIdleCallback) window.requestIdleCallback(work, { timeout: 2000 });
+  else window.setTimeout(work, 0);
+}
+
+if (needsPluginsNow) {
+  loadWebuiPlugins().then(function () {
+    if (VIEWS.indexOf(openingHash) !== -1) showView(openingHash, false);
+  });
+}
+
+afterFirstDraw(function () {
+  loadStatus();
+  loadProviders();
+  if (!needsPluginsNow) loadWebuiPlugins();
 });
 syncSubmitLabel();
 // Only the opening view's data is fetched now; the rest load when opened.
