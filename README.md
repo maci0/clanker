@@ -89,7 +89,6 @@ task; `clanker --help` prints usage.
 | `providers models [name]` | List a provider's models |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
-| `repl-legacy` | The original hand-rolled REPL, no longer the default |
 | `sessions` | List saved sessions |
 | `tools list` | List registered WASM tools |
 | `eval [name] [--tasks]` | Run evals |

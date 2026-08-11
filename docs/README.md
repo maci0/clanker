@@ -338,7 +338,7 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the two handled in-process, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`.
+A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the in-process quit commands, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`. A bare `exit` or `quit` also leaves the REPL.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -349,7 +349,7 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
 | `/status` | `cmd_status` | Show instance and peers |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
-| `/quit`, `/exit`, `/q` | in-process | Leave the REPL |
+| `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
 
 ### `/graph`
 
@@ -378,7 +378,6 @@ iter 2
 | `providers check [name]` | Verify provider connectivity |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
-| `repl-legacy` | The original hand-rolled REPL, kept reachable but no longer the default |
 | `sessions` | List saved sessions |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
