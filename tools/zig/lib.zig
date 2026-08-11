@@ -482,7 +482,6 @@ pub fn fsList(path: []const u8) FsError![]const u8 {
     };
 }
 
-/// Writes a file relative to the sandbox root.
 /// Reads [offset, offset+len) of a file. The host writes results into a 64 KiB
 /// arena, so this is the only way to see a file bigger than that: ask for it a
 /// window at a time.
@@ -498,6 +497,7 @@ pub fn fsReadRange(path: []const u8, offset: usize, len: usize) FsError![]const 
     };
 }
 
+/// Writes a file relative to the sandbox root.
 pub fn fsWrite(path: []const u8, data: []const u8) FsError!void {
     const p = sliceToMem(path);
     const d = sliceToMem(data);
