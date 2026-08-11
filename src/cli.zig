@@ -1221,6 +1221,13 @@ fn readLineRaw(
                 continue;
             },
             .eof => if (editor.len == 0) return null,
+            .clear_screen => {
+                // Ctrl-L: wipe the screen and repaint the prompt with the
+                // line being edited, as every cooked shell does.
+                try out_w.interface.writeAll("\x1b[2J\x1b[H");
+                try redraw(out_w, editor);
+                continue;
+            },
             else => {},
         }
         const done = editor.apply(decoded.key);
