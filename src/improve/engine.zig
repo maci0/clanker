@@ -101,13 +101,6 @@ fn nextStdSourceRef(text: []const u8) ?SourceRef {
     return null;
 }
 
-/// Whether a file already went into the focus block, by its header line.
-fn pathInFocus(focus: []const u8, path: []const u8) bool {
-    var buf: [512]u8 = undefined;
-    const header = std.fmt.bufPrint(&buf, "===== FILE: {s} =====", .{path}) catch return false;
-    return std.mem.indexOf(u8, focus, header) != null;
-}
-
 fn pathIn(list: []const []const u8, path: []const u8) bool {
     for (list) |p| {
         if (std.mem.eql(u8, p, path)) return true;
@@ -1453,11 +1446,6 @@ fn isDir(base: std.Io.Dir, io: std.Io, rel: []const u8) bool {
     var dir = base.openDir(io, rel, .{}) catch return false;
     dir.close(io);
     return true;
-}
-
-fn dirName2(path: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
-    return "";
 }
 
 fn dirOf(path: []const u8) []const u8 {
