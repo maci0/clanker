@@ -1822,15 +1822,20 @@ h2#session-title {
   box-shadow: 0 0 10px 1px color-mix(in srgb, var(--accent) 60%, transparent);
   animation: lamp-breathe 2.2s ease-in-out infinite;
 }
+.turn[data-phase="llm"]::before {
+  animation: lamp-steady 3.2s ease-in-out infinite;
+}
 
 /* alive polish: control-cabinet lamps and fleet accents fade rather than snap */
 .rail-tab[aria-selected="true"]::before { transition: box-shadow 180ms ease-out, opacity 180ms ease-out, background 180ms ease-out; }
 @keyframes lamp-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
+@keyframes lamp-steady { 0%, 100% { opacity: 0.7; } 50% { opacity: 0.92; } }
 
 @media (prefers-reduced-motion: reduce) {
   .json-node > summary::before, .tool-config > summary::before { transition: none; }
   .fleet-card, .card, .rail-tab[aria-selected="true"]::before { transition: none; }
-  .turn[data-phase="ask"]::before { animation: none; }
+  .turn[data-phase="ask"]::before,
+  .turn[data-phase="llm"]::before { animation: none; }
   .card:hover { transform: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
   .card[data-dragging="true"] { transform: none; }
 }
