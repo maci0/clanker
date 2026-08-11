@@ -44,8 +44,34 @@ through a gated loop. Follow these conventions when changing this codebase.
   sources; `tools/manifests/` — descriptors; `tools/bin/` — committed AS build output
   (built via `npm run build` in `tools/ts/`; guest ABI: exports
   scratch/host_arena/run, imports env.ck_*); `zig-out/tools/` — Zig tool build
-  output (`zig build tools`), gitignored. Prefer implementing functionality as
-  WASM tools.
+  output (`zig build tools`), gitignored.
+
+## WASM by default
+
+Anything that can be a WASM tool must be one. The harness is what cannot: the
+sandbox, the provider adapters, the agent loop, the improve engine, config, and
+the CLI's own argument handling. Everything else is a guest module.
+
+This is not a preference. A guest runs under a descriptor that states exactly
+which paths, commands, environment variables, and hosts it may touch, and the
+host enforces it; native code in `src/` has the whole process. A guest is also
+replaceable without rebuilding clanker, which is what lets the improve loop
+change a tool's behaviour without changing the thing running the gate.
+
+So, when adding a capability:
+
+- Write it as `tools/zig/<name>.zig` with a descriptor in `tools/manifests/`.
+  Native code in `src/` needs a reason that survives the questions above.
+- Migrate what is already native when you touch it. `patch_apply`, `peers`, and
+  `board` each began as `src/` code and moved out, deleting more from the
+  harness than they added as guests.
+- The CLI and the web UI call the tool rather than reimplementing it, so the
+  tool stays the single implementation. `toolText` and `toolJson` in `cli.zig`
+  are that call.
+- A capability the web UI drives may want a second descriptor over the same
+  wasm: one op per tool reads well in a model's catalog, one multiplexed entry
+  point suits an HTTP endpoint. Mark that one `internal` so it stays out of the
+  catalog.
 
 ## Tool ABI
 
