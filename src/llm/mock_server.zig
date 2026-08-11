@@ -218,9 +218,9 @@ pub const MockServer = struct {
 fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const n = std.os.linux.write(fd, bytes[off..].ptr, bytes.len - off);
-        if (n > std.math.maxInt(usize) - 4096) return; // errno
-        off += n;
+        const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
+        if (n < 0) return; // errno
+        off += @intCast(n);
     }
 }
 
