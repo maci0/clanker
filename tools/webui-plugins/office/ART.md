@@ -26,6 +26,29 @@ without having to re-derive it.
 - **Modifications:** none. Copied verbatim from the pack.
 - **Layout:** 432x288, a 27x18 grid of 16x16 tiles.
 
+## sprites.png, lower half: the furniture
+
+The offices were furnished out of an exterior pack, so a "desk" was a market
+crate and a "sofa" was a hedge. The lower half of the sheet is a second
+Kenney pack that is actually indoors.
+
+- **Source:** Roguelike Indoors (`Tilesheets/roguelikeIndoor_transparent.png`)
+- **Author:** Kenney Vleugels (kenney.nl)
+- **Licence:** Creative Commons Zero (CC0 1.0)
+- **Licence text, quoted from the pack's own `License.txt`:**
+
+  > License (Creative Commons Zero, CC0)
+  > http://creativecommons.org/publicdomain/zero/1.0/
+  >
+  > You may use these assets in personal and commercial projects.
+  > Credit (Kenney or www.kenney.nl) would be nice but is not mandatory.
+
+- **Modifications:** the source sheet carries a 1px margin between tiles; it
+  is repacked flush to a 16px grid and appended below the RPG Urban sheet, so
+  one image still serves the whole view. `IN(c, r)` in app.js addresses the
+  lower half by the source pack's own coordinates.
+- **Attribution:** not required. Credited here because it is nice.
+
 ## characters.png
 
 Nine characters, one 16x16 row each: eight agent avatars and the janitor on
