@@ -19,6 +19,7 @@ const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const lineedit = @import("util/lineedit.zig");
+const rawhttp = @import("util/rawhttp.zig");
 const term = @import("tui/term.zig");
 const tui_input = @import("tui/input.zig");
 const tui_region = @import("tui/region.zig");
@@ -2669,7 +2670,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         if (n == 0) return;
         total.appendSlice(gpa, tmp[0..n]) catch return;
         if (total.items.len > (1 << 20)) return;
-        if (requestComplete(total.items)) break;
+        if (rawhttp.requestComplete(total.items)) break;
     }
     if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| {
         const headers_raw = total.items[0..hdr_end];
@@ -3289,7 +3290,7 @@ threadlocal var run_stream_socket: ?std.posix.fd_t = null;
 
 fn runStreamDelta(delta: []const u8) void {
     if (run_stream_socket) |fd| {
-        writeAllFd(fd, delta);
+        rawhttp.writeAllFd(fd, delta);
     }
 }
 
@@ -3313,7 +3314,7 @@ fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) 
     }
     s.endObject() catch return;
     w.writeAll("\n") catch return;
-    writeAllFd(fd, buf[0..w.end]);
+    rawhttp.writeAllFd(fd, buf[0..w.end]);
 }
 
 fn runStreamToolCall(calls: []const types.ToolCall) void {
@@ -3473,8 +3474,8 @@ fn handleWebuiAsset(
     // no-store for the same reason the page has it: these are compiled into
     // the binary and change with every rebuild.
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding }) catch return;
-    writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, out);
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, out);
 }
 
 fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, accepts_gzip: bool, stream: std.Io.net.Stream) void {
@@ -3867,8 +3868,8 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
     };
     var hbuf: [512]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, bytes.len }) catch return;
-    writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, bytes);
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, bytes);
 }
 
 const RoomTodoPost = struct {
@@ -5353,7 +5354,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // Streaming mode: send headers up front, then the agent's tokens as
         // they are produced; the final newline + Connection: close ends the
         // stream on the client side.
-        writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
+        rawhttp.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
         a.on_token = &runStreamDelta;
@@ -5369,7 +5370,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // so nothing was streamed — write the answer directly or the client
         // would receive an empty body (just the trailer) for a successful run.
         if (!cfg.modules.streaming) {
-            if (resp.message.content) |c| writeAllFd(stream.socket.handle, c);
+            if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
         }
         if (has_session) {
             const title = req.task[0..@min(req.task.len, 60)];
@@ -5447,8 +5448,8 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
     // names, provider error text, and model output, and none of it should ever
     // be content-sniffed into markup.
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
-    writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, body);
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, body);
 }
 
 /// The web UI ships its CSS and JS inline in one embedded file, so the policy
@@ -5470,8 +5471,8 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{ out.len, encoding, webui_csp }) catch return;
-    writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, out);
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, out);
 }
 
 fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
@@ -5480,8 +5481,8 @@ fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body:
     // a cached copy is always a stale one: no-store, unlike the vendored
     // assets below, which are immutable and cached hard.
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, webui_csp }) catch return;
-    writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, body);
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, body);
 }
 
 /// A gzipped vendor asset, compressed on first request and kept for the rest of
@@ -5597,8 +5598,8 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     const out = gzipped orelse body;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: public, max-age=31536000, immutable\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
-    writeAllFd(stream.socket.handle, hdr);
-    writeAllFd(stream.socket.handle, out);
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, out);
 }
 
 /// True when the request's Accept-Encoding lists gzip. Scoped to that header's
@@ -5621,36 +5622,6 @@ test "acceptsGzip only matches the header's own line" {
     try std.testing.expect(!acceptsGzip("GET /gzip.js HTTP/1.1\r\nHost: x\r\n"));
     try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, zstd\r\n"));
     try std.testing.expect(!acceptsGzip(""));
-}
-
-fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
-        if (n < 0) return; // errno
-        off += @intCast(n);
-    }
-}
-
-fn requestComplete(data: []const u8) bool {
-    if (std.mem.indexOf(u8, data, "\r\n\r\n")) |hdr_end| {
-        const content_length = parseContentLength(data[0..hdr_end]) orelse 0;
-        return data.len >= hdr_end + 4 + content_length;
-    }
-    return false;
-}
-
-fn parseContentLength(headers: []const u8) ?usize {
-    var lines = std.mem.splitSequence(u8, headers, "\r\n");
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t");
-        const prefix = "content-length:";
-        if (trimmed.len >= prefix.len and std.ascii.eqlIgnoreCase(trimmed[0..prefix.len], prefix)) {
-            const value = std.mem.trim(u8, trimmed[prefix.len..], " \t");
-            return std.fmt.parseInt(usize, value, 10) catch null;
-        }
-    }
-    return null;
 }
 
 // -------------------------------------------------------------- phonebook --

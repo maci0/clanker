@@ -637,22 +637,8 @@ pub const Engine = struct {
             log.log(.warn, "notifyPeers: registry load failed: {s}", .{@errorName(err)});
             return;
         };
-        const tool = reg.get("peers") orelse {
-            log.log(.warn, "notifyPeers: internal tool 'peers' not found", .{});
-            return;
-        };
-        const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20)) catch |err| {
-            log.log(.warn, "notifyPeers: wasm missing: {s} ({s})", .{ tool.wasm, @errorName(err) });
-            return;
-        };
-        defer self.ctx.gpa.free(wasm_bytes);
-
-        var sb = sandbox_host.sandboxFor(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, tool, null) catch |err| {
-            log.log(.warn, "notifyPeers: sandbox setup failed: {s}", .{@errorName(err)});
-            return;
-        };
-        const mod = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, &sb, wasm_bytes) catch |err| {
-            log.log(.warn, "notifyPeers: module load failed: {s}", .{@errorName(err)});
+        const mod = runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, &reg, "peers", null) catch |err| {
+            log.log(.warn, "notifyPeers: tool load failed: {s}", .{@errorName(err)});
             return;
         };
         defer mod.deinit();

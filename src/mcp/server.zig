@@ -7,7 +7,6 @@ const json = std.json;
 const config = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
-const host = @import("../sandbox/host.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
@@ -213,29 +212,17 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cfg: *
         }
     }
 
-    const tool = reg.get(name);
-    if (tool == null) {
-        try respondText(s, "unknown tool", true);
-        return;
-    }
-
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.?.wasm, gpa, .limited(1 << 20)) catch {
-        try respondText(s, "wasm missing (run zig build tools)", true);
-        return;
-    };
-    defer gpa.free(wasm_bytes);
-
     // The real process environment, including anything dotenv loaded: an empty
     // map here means every API key lookup inside a tool silently comes back
     // missing, and the tool reports a misleading "not configured".
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    var sb = host.sandboxFor(gpa, io, arena, environ_map, cfg, tool.?, &ctx) catch {
-        try respondText(s, "sandbox policy failed", true);
-        return;
-    };
-
-    var mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
-        try respondText(s, "tool load failed", true);
+    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, reg, name, &ctx) catch |err| {
+        const msg: []const u8 = switch (err) {
+            error.UnknownTool => "unknown tool",
+            error.FileNotFound => "wasm missing (run zig build tools)",
+            else => "tool load failed",
+        };
+        try respondText(s, msg, true);
         return;
     };
     defer mod.deinit();

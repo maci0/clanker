@@ -9,6 +9,8 @@ const host = @import("host.zig");
 const config_mod = @import("../config.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const token_stats_mod = @import("../stats/tokens.zig");
+const registry = @import("../tools/registry.zig");
+const client = @import("../llm/client.zig");
 const zwasm = @import("zwasm");
 
 /// Deterministic instruction budget per tool call (OutOfFuel trap).
@@ -167,6 +169,30 @@ pub const ToolModule = struct {
         return self.gpa.dupe(u8, mem_bytes[r.ptr .. r.ptr + r.len]);
     }
 };
+
+/// Looks up `tool_name` in `reg`, reads its wasm, builds its sandbox from the
+/// descriptor through `host.sandboxFor`, and loads it as a runnable module.
+/// The one place cli.zig, mcp/server.zig, and the improve engine go through
+/// to run a named internal tool, instead of each re-deriving the sandbox by
+/// hand and risking drift from `sandboxFor`'s policy. The sandbox is
+/// arena-allocated so it outlives the returned module.
+pub fn loadNamedTool(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config_mod.Config,
+    reg: *const registry.Registry,
+    tool_name: []const u8,
+    llm_ctx: ?*client.Ctx,
+) !*ToolModule {
+    const tool = reg.get(tool_name) orelse return error.UnknownTool;
+    const wasm_bytes = try std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20));
+    defer gpa.free(wasm_bytes);
+    const sb = try arena.create(host.Sandbox);
+    sb.* = try host.sandboxFor(gpa, io, arena, environ_map, cfg, tool, llm_ctx);
+    return ToolModule.load(gpa, io, sb, wasm_bytes);
+}
 
 fn seedRng(seed: u64, salt: []const u8) u64 {
     var h = std.hash.Wyhash.init(0x6A09E667F3BCC909);
