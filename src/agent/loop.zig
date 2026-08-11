@@ -125,6 +125,18 @@ pub const Agent = struct {
     /// Nested sub-agent runner, wired by the app when modules.subagents is
     /// enabled (powers the subagent tool via ck_subagent).
     subagent_runner: ?host.SubagentRunner = null,
+    /// Caller-supplied run id for the execution graph, replacing the
+    /// second-resolution "run-<ts>" default. Set by subagent.runNested so a
+    /// nested run's graph cannot collide with its parent's (or a sibling's,
+    /// spawned in the same second) and is recognizable in state/runs/.
+    run_id_override: ?[]const u8 = null,
+    /// The run id of the agent that spawned this one — empty for top-level
+    /// runs. Recorded into the execution graph so a nested run's timeline
+    /// links back to its caller's (webui-plan 3.1).
+    parent_run_id: []const u8 = "",
+    /// The graph run id of the run in flight, handed to tool sandboxes so
+    /// ck_subagent can tell the nested run who spawned it.
+    current_run_id: []const u8 = "",
     /// This run's private todo list, wired by subagent.runNested and null for
     /// top-level agents. Handed to every tool sandbox so todo_* calls that
     /// name no "room" reach it (see src/agent/private_todos.zig).
@@ -325,7 +337,8 @@ pub const Agent = struct {
         // persist it to state/runs/<run-id>.json on every exit path.
         const started_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.ctx.io, .real).nanoseconds, 1_000_000_000));
         var g = graph_mod.Graph{
-            .run_id = try std.fmt.allocPrint(self.arena, "run-{d}", .{started_at}),
+            .run_id = self.run_id_override orelse try std.fmt.allocPrint(self.arena, "run-{d}", .{started_at}),
+            .parent_run_id = self.parent_run_id,
             .task = task,
             .provider = self.provider.name,
             .started_at = started_at,
@@ -336,6 +349,7 @@ pub const Agent = struct {
             g.deinit(self.ctx.gpa);
         }
         self.current_task = task;
+        self.current_run_id = g.run_id;
         self.current_messages = messages;
         // A decision the user made before this turn started (they picked one
         // of the options the last answer offered): first node, so the graph
@@ -1404,6 +1418,7 @@ pub const Agent = struct {
         // parent_ask.
         if (self.subagent_runner != null) sb.own_ask = .{ .ctx = self, .call = &parentAskTrampoline };
         sb.parent_task = self.current_task;
+        sb.parent_run_id = self.current_run_id;
         sb.state_dir = self.cfg.agent.state_dir;
         // A tool that named no provider of its own follows the agent, which may
         // itself be running under a --provider override rather than the default.
@@ -1662,6 +1677,8 @@ pub const Agent = struct {
         try s.beginObject();
         try s.objectField("run_id");
         try s.write(g.run_id);
+        try s.objectField("parent_run_id");
+        try s.write(g.parent_run_id);
         try s.objectField("task");
         try s.write(g.task);
         try s.objectField("provider");

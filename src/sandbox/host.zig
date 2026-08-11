@@ -130,6 +130,7 @@ pub const SubagentRunner = *const fn (
     provider_name: ?[]const u8,
     brief: Brief,
     parent_ask: ?ParentAsk,
+    parent_run_id: []const u8,
 ) anyerror![]const u8;
 
 /// Per-tool sandbox policy, owned by the harness.
@@ -161,6 +162,10 @@ pub const Sandbox = struct {
     /// The task the parent agent is working on, handed to sub-agents so their
     /// piece is read in service of something rather than in a vacuum.
     parent_task: []const u8 = "",
+    /// The graph run id of the agent driving this sandbox, handed to
+    /// sub-agents so their own graphs record which run spawned them
+    /// (webui-plan 3.1).
+    parent_run_id: []const u8 = "",
     /// Effective config, for host functions that need it (subagent runner).
     cfg: ?*const config_mod.Config = null,
     /// Per-session token budget for ck_llm calls (0 = unlimited).
@@ -1828,11 +1833,12 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         provider_name: ?[]const u8,
         brief: Brief,
         parent_ask: ?ParentAsk,
+        parent_run_id: []const u8,
         runner: SubagentRunner,
         result: ?[]const u8 = null,
         err: ?anyerror = null,
         fn run(self: *@This()) void {
-            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask) catch |e| {
+            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask, self.parent_run_id) catch |e| {
                 self.err = e;
                 return;
             };
@@ -1849,6 +1855,8 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         // The spawning agent as answerer: it becomes the nested run's
         // parent_ask, reachable via ask_user {"parent": true}.
         .parent_ask = h.sandbox.own_ask,
+        // Who spawned this run, so the nested graph records its parent.
+        .parent_run_id = h.sandbox.parent_run_id,
         .runner = runner,
     };
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;

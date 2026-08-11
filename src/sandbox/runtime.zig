@@ -516,7 +516,7 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     defer mod.deinit();
 
     const write_in =
-        \\{"write":{"run_id":"test-run-cmd-graph-roundtrip","task":"t","provider":"p",
+        \\{"write":{"run_id":"test-run-cmd-graph-roundtrip","parent_run_id":"run-parent","task":"t","provider":"p",
         \\"started_at":1,"duration_ms":5,"total_prompt_tokens":10,"total_completion_tokens":2,
         \\"nodes":[{"kind":"tool","iteration":1,"label":"gate","ok":true,"result_bytes":3}]}}
     ;
@@ -536,6 +536,14 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     defer std.testing.allocator.free(read_out);
     try std.testing.expect(std.mem.indexOf(u8, read_out, run_id) != null);
     try std.testing.expect(std.mem.indexOf(u8, read_out, "tool gate  3 B") != null);
+
+    // The parent link survives the round trip: a nested run's graph must
+    // still name its caller when read back as JSON (the web UI's view).
+    const mod3 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod3.deinit();
+    const json_out = try mod3.executeTool("{\"args\":\"json " ++ run_id ++ "\"}");
+    defer std.testing.allocator.free(json_out);
+    try std.testing.expect(std.mem.indexOf(u8, json_out, "\\\"parent_run_id\\\":\\\"run-parent\\\"") != null);
 }
 
 test "cmd_sessions and cmd_graph report empty when the state dir does not exist" {
