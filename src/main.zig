@@ -28,6 +28,7 @@ comptime {
     _ = @import("agent/graph.zig");
     _ = @import("util/dotenv.zig");
     _ = @import("util/atomic_write.zig");
+    _ = @import("util/filelock.zig");
     _ = @import("agent/autolearn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");

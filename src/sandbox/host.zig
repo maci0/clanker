@@ -17,6 +17,7 @@ const subagent_mod = @import("../agent/subagent.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const todos_mod = @import("../peers/todos.zig");
+const filelock = @import("../util/filelock.zig");
 const token_stats = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
 
@@ -1503,7 +1504,10 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
 /// end and the second write lands on top of the first. The lock makes the pair
 /// atomic between cooperating writers.
 pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8) u32 {
-    var file = base.createFile(io, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
+    // Through the retrying create: racing creates of a not-yet-existing log
+    // spuriously fail ENOENT on macOS, and mapping that to Err.invalid here
+    // silently dropped the append (filelock.createFileRetry has the story).
+    var file = filelock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
