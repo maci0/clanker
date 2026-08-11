@@ -28,6 +28,7 @@ const tui_transcript = @import("tui/transcript.zig");
 const tui_palette = @import("tui/palette.zig");
 const tui_approval = @import("tui/approval.zig");
 const tui_theme = @import("tui/theme.zig");
+const repl_vaxis = @import("tui2/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const token_stats = @import("stats/tokens.zig");
@@ -71,6 +72,10 @@ pub const Command = enum {
     phonebook,
     serve,
     repl,
+    /// Phase 1 of the libvaxis migration (docs/ROADMAP.md): a minimal
+    /// vaxis-backed skeleton, separate from `repl`, proving the dependency
+    /// integrates before anything user-facing moves onto it.
+    repl_vaxis,
     graph,
     gate,
     autolearn,
@@ -222,6 +227,8 @@ pub fn parse(args: []const []const u8) !Options {
                 opts.command = .autolearn;
             } else if (std.mem.eql(u8, a, "repl")) {
                 opts.command = .repl;
+            } else if (std.mem.eql(u8, a, "repl-vaxis")) {
+                opts.command = .repl_vaxis;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else {
@@ -337,6 +344,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
         .repl => try cmdRepl(init, opts),
+        .repl_vaxis => try repl_vaxis.cmdReplVaxis(init),
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),

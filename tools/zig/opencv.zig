@@ -39,7 +39,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var args: std.ArrayList([]const u8) = .empty;
     // `uv run --with` builds a throwaway env: no host package is touched.
-    for ([_][]const u8{ "run", "--quiet", "--with", "opencv-python-headless~=4.14", "--with", "numpy", "python3", script, req.op, req.path }) |a| {
+    for ([_][]const u8{ "run", "--quiet", "--with", "opencv-python-headless~=4.14", "--with", "numpy>=1.26,<3", "python3", script, req.op, req.path }) |a| {
         try args.append(alloc, a);
     }
     try args.append(alloc, opts);

@@ -32,6 +32,14 @@ pub fn build(b: *std.Build) void {
     const zwasm_dep = b.dependency("zwasm", .{});
     const zwasm_mod = zwasm_dep.module("zwasm");
 
+    // vaxis: native-tty TUI library (Phase 1 of the libvaxis migration,
+    // see docs/ROADMAP.md). Declares its own standardTargetOptions, so
+    // target/optimize must be passed explicitly or its module resolves
+    // against its own defaults instead of ours. Native-only — irrelevant
+    // to the wasm32-freestanding tool build below.
+    const vaxis_dep = b.dependency("vaxis", .{ .target = exe_target, .optimize = optimize });
+    const vaxis_mod = vaxis_dep.module("vaxis");
+
     // ---------------------------------------------------------------- harness
     const exe = b.addExecutable(.{
         .name = "clanker",
@@ -42,6 +50,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
                 .{ .name = "build_options", .module = build_options.createModule() },
+                .{ .name = "vaxis", .module = vaxis_mod },
             },
         }),
     });
@@ -59,6 +68,7 @@ pub fn build(b: *std.Build) void {
     // `exe_target`: a `-Dtarget=` cross-compile would produce a test binary the
     // build runner cannot execute.
     const test_target = b.resolveTargetQuery(native_query);
+    const vaxis_test_dep = b.dependency("vaxis", .{ .target = test_target, .optimize = optimize });
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = test_target,
@@ -66,6 +76,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "zwasm", .module = zwasm_mod },
             .{ .name = "build_options", .module = build_options.createModule() },
+            .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
         },
     });
     const exe_tests = b.addTest(.{ .root_module = test_mod });
