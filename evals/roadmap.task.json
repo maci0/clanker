@@ -1,0 +1,19 @@
+{
+  "name": "roadmap",
+  "kind": "task",
+  "description": "roadmap must surface the planned items from docs/ROADMAP.md. The tool once grepped for \"- [ ]\" checkboxes the file never used and answered \"(no planned items)\" forever, so ok:true alone proves nothing — the assertion is that the planned list is non-empty. Shape-based on purpose: any wording of any planned item passes, so editing the roadmap cannot break it. It fails only when the tool reads the real file and finds nothing, which is either this regression back from the dead or a roadmap with no open work at all — both worth a red eval.",
+  "prompt": "Use the roadmap tool with input {}. Look at the text field of its JSON result. If it lists at least one roadmap item — anything other than \"(no planned items)\" — reply with exactly ITEMS. If it says \"(no planned items)\" or the call failed, reply with exactly EMPTY.",
+  "requires_tool": "roadmap",
+  "criteria": [
+    {
+      "includes": [
+        "ITEMS"
+      ]
+    },
+    {
+      "excludes": [
+        "EMPTY"
+      ]
+    }
+  ]
+}
