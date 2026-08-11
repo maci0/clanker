@@ -131,9 +131,13 @@ pub const History = struct {
             if (prior.len > 0 and prior[prior.len - 1] != '\n') try buf.append(self.gpa, '\n');
         }
 
-        var w: std.Io.Writer = .fixed(try self.gpa.alloc(u8, 1 << 20));
-        defer self.gpa.free(w.buffer);
-        var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+        // Grows to fit the record rather than a fixed cap: a build-failure
+        // detail can legitimately exceed 1 MiB, and the old fixed buffer
+        // made the whole append error out at that size, silently dropping
+        // the entry and any memory of the failed attempt.
+        var out: std.Io.Writer.Allocating = .init(self.gpa);
+        defer out.deinit();
+        var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
 
         try s.beginObject();
         try s.objectField("id");
@@ -168,7 +172,7 @@ pub const History = struct {
         try s.endArray();
         try s.endObject();
 
-        try buf.appendSlice(self.gpa, w.buffer[0..w.end]);
+        try buf.appendSlice(self.gpa, out.written());
         try buf.append(self.gpa, '\n');
         try self.dir().writeFile(self.io, .{ .sub_path = self.logPath(), .data = buf.items });
     }
@@ -606,4 +610,36 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
         try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
     }
+}
+
+test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // A build-failure detail can push a record past 1 MiB; it must be logged
+    // whole. The old fixed 1 MiB record buffer errored the append at that
+    // size, so the entry silently disappeared.
+    const big_detail = try gpa.alloc(u8, (1 << 20) + 500);
+    defer gpa.free(big_detail);
+    @memset(big_detail, 'x');
+
+    try hist.append("big", .failed, "instruction", "summary", &.{"src/main.zig"}, 0.0, 0.0, big_detail, &.{});
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 24));
+    defer gpa.free(raw);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"id\":\"big\"") != null);
+    // The full detail survives the round trip; a fixed-buffer write would
+    // have errored the append and left no entry at all.
+    try std.testing.expect(std.mem.indexOf(u8, raw, big_detail) != null);
 }
