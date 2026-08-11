@@ -51,15 +51,11 @@ board by folding the room's whole log, oldest first, deduplicated by message
 id, sorted by `(ts, id)`. The response after a write is re-derived rather
 than assumed, because a concurrent claim from a peer may have won.
 
-**Paging bound (intent, not current behavior — see Known issues).** The guest
-reads history in pages through a 64 KB host buffer, up to `max_pages = 64`.
-The design intent, stated in `board.zig`'s own comments, is that a board
-reaching the cap is reported as an error rather than silently folded from a
-partial log, since a partial fold would quietly resurrect deleted cards and
-lose moves. `history()` does not currently enforce this: it returns whatever
-it collected when the page budget runs out, with no error. `error.TooLarge`
-only fires if a single page's JSON exceeds the 64 KB buffer, not when the
-page-count cap is hit.
+**Paging bound.** The guest reads history in pages through a 64 KB host
+buffer, up to `max_pages = 64`. A board reaching the cap is reported as
+`error.TooLarge` rather than silently folded from a partial log, since a
+partial fold would quietly resurrect deleted cards and lose moves
+(`pageCapExceeded` in `board.zig`, exercised by its own unit test).
 
 **Ops.** `list`, `create`/`add`, `update`, `move`, `claim`, `assign`,
 `close`, `delete`, `log`, `usage`, `subtask_add`, `subtask_toggle`,
@@ -91,17 +87,15 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Known issues
 
-- **`board_add` and `board_update` manifests advertise a dead `assignee`
-  field.** Neither tool's `Req` struct has an `assignee` field (`board.zig`
-  parses `who` for reassignment on `update`); the manifested field is
-  silently dropped by `ignore_unknown_fields`. A card can't be assigned at
-  creation despite the manifest promising it, and `board_update` callers who
-  follow their own tool's schema get a silent no-op.
-- **`board_move`'s `position` field is a no-op.** No ordering/position
-  concept exists in `cards.zig` or `board.zig`'s `move` handling.
-- These three are manifest/implementation drift, not doc drift — the
-  manifests describe a design the Zig side moved past. Fix by either
-  implementing the fields or removing them from the manifests.
+- Resolved: `board_add`'s manifest advertised a dead `assignee` field (no
+  `Req` field backed it; creation cannot assign, only `update` can), and
+  `board_update`'s manifest named its assign field `assignee` instead of the
+  `who` field `board.zig` actually reads — both silently no-op'd under
+  `ignore_unknown_fields`. Fixed by removing `assignee` from `board_add` and
+  renaming it to `who` on `board_update`.
+- Resolved: `board_move`'s `position` field was a no-op (no ordering concept
+  exists in `cards.zig` or `board.zig`'s `move` handling). Removed from the
+  manifest; see Open questions for card ordering as future work.
 
 ## Failure modes
 
