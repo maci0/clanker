@@ -147,9 +147,9 @@ peer keeps the message only when it subscribes to that room.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages
   newer than the cursor, so a subscribed clanker notices what its peers said.
 
-### Patch application (`src/patch/apply.zig`)
+### Patch application (`tools/zig/patch_apply.zig`)
 
-Proposals are applied via exact-match `old` → `new` replacements. The first occurrence of each `old` is replaced.
+Proposals are applied via exact-match `old` → `new` replacements, through the sandboxed `patch_apply` WASM tool (`fs_prefixes: ["state/staging"]`). The first occurrence of each `old` is replaced. The improve engine (`src/improve/engine.zig`) decides what to apply and whether to promote the result; the tool only performs the text edits.
 
 ## WASM tool ABI
 

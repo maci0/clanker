@@ -34,7 +34,6 @@ comptime {
     _ = @import("improve/proposal.zig");
     _ = @import("improve/history.zig");
     _ = @import("improve/engine.zig");
-    _ = @import("patch/apply.zig");
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
     _ = @import("llm/gcp_jwt.zig");

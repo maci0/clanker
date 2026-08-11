@@ -28,8 +28,9 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.
-- `src/mcp/`, `src/peers/`, `src/patch/`, `src/util/` — MCP server, peer
-  notify/phonebook, patch application, logging and dotenv.
+- `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/todos,
+  logging and dotenv. Peer notify/phonebook and patch application moved to
+  the sandboxed `peers` and `patch_apply` WASM tools (`tools/zig/`).
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
   `cli.zig`, and `config.zig` sit directly in `src/`. A new module with tests
   must be added to the `comptime` block in `src/main.zig` or its tests never
