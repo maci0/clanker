@@ -384,19 +384,26 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
     }
     if (system_parts.items.len > 0) {
         try s.objectField("system");
-        // Always the block form, so the last block can carry a cache
-        // breakpoint. Tools and the system prompt are the stable prefix of
-        // every turn in a run, and they render ahead of the messages, so one
-        // breakpoint here caches both: without it a long system prompt is
-        // re-billed in full on every iteration.
+        // Always the block form, so a block can carry a cache breakpoint.
+        // Tools and the system prompt are the stable prefix of every turn in a
+        // run, and they render ahead of the messages, so a breakpoint here
+        // caches both: without it a long system prompt is re-billed in full on
+        // every iteration.
+        //
+        // The last two blocks are marked rather than only the last. A lookup
+        // matches the longest cached prefix, so a caller that puts what changes
+        // in its final block keeps the bulk cached when that block changes.
+        // The improve engine does exactly this: the file it is about to patch
+        // sits alone at the end, and everything before it survives the patch.
         try s.beginArray();
+        const first_marked = system_parts.items.len -| 2;
         for (system_parts.items, 0..) |part, i| {
             try s.beginObject();
             try s.objectField("type");
             try jstr(&s, "text");
             try s.objectField("text");
             try jstr(&s, part);
-            if (i == system_parts.items.len - 1) {
+            if (i >= first_marked) {
                 try s.objectField("cache_control");
                 try s.beginObject();
                 try s.objectField("type");

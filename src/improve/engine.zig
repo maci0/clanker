@@ -241,7 +241,11 @@ pub const Engine = struct {
         // message. Sent the other way round — as one user message beginning
         // with the instruction — every attempt re-billed the whole context at
         // full price, which is why this path ran at a 0% cache hit rate.
-        const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context });
+        const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context.bulk });
+        const focus_prompt = if (context.focus.len > 0)
+            try std.fmt.allocPrint(self.arena, improve_focus_fmt, .{context.focus})
+        else
+            "";
         // What earlier runs already did and where they failed. Volatile, so it
         // belongs in the user half with the instruction, not in the cached
         // system half.
@@ -253,17 +257,24 @@ pub const Engine = struct {
             last_error orelse "none",
         });
 
-        log.log(.info, "iteration attempt {d}: asking model for a proposal ({d} bytes context)", .{ attempt, context.len });
+        log.log(.info, "iteration attempt {d}: asking model for a proposal ({d} bytes context)", .{ attempt, context.bytes });
 
         // ---- 2. proposal from the model ----
-        const messages = [_]types.Message{
-            .{ .role = .system, .content = system_prompt },
-            .{ .role = .user, .content = user_prompt },
-        };
+        var msg_buf: [3]types.Message = undefined;
+        var msg_n: usize = 0;
+        msg_buf[msg_n] = .{ .role = .system, .content = system_prompt };
+        msg_n += 1;
+        if (focus_prompt.len > 0) {
+            msg_buf[msg_n] = .{ .role = .system, .content = focus_prompt };
+            msg_n += 1;
+        }
+        msg_buf[msg_n] = .{ .role = .user, .content = user_prompt };
+        msg_n += 1;
+        const messages = msg_buf[0..msg_n];
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{
             .provider = self.provider,
-            .messages = &messages,
+            .messages = messages,
             .max_tokens = opts.response_tokens,
         }, &err_detail) catch |err| {
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
@@ -840,7 +851,22 @@ pub const Engine = struct {
         return std.math.clamp(window, 64 * 1024, 256 * 1024);
     }
 
-    fn collectContext(self: *Engine, max_bytes: usize) ![]const u8 {
+    /// The source context, split at the cache breakpoint.
+    ///
+    /// `bulk` is everything the patch is unlikely to touch and `focus` the few
+    /// files it is about. They go out as two system blocks, each with its own
+    /// breakpoint, so a promotion that rewrites a focus file leaves the bulk
+    /// cached. Ordered the other way round, the file being edited sat first and
+    /// invalidated the entire block: the first call of every run after a
+    /// promotion missed completely and re-billed the whole context.
+    pub const Context = struct {
+        bulk: []const u8,
+        focus: []const u8,
+        files: usize,
+        bytes: usize,
+    };
+
+    fn collectContext(self: *Engine, max_bytes: usize) !Context {
         const instructions = self.instructions;
         var keywords: std.ArrayList([]const u8) = .empty;
         var kw_it = std.mem.tokenizeAny(u8, instructions, " \n\r\t,.;:'\"()[]{}");
@@ -890,20 +916,31 @@ pub const Engine = struct {
         }.lt);
 
         var buf: std.ArrayList(u8) = .empty;
+        var focus: std.ArrayList(u8) = .empty;
         var omitted: std.ArrayList([]const u8) = .empty;
         var included_any = false;
+
+        // The files the instruction names are the ones a patch rewrites, so
+        // they are the volatile tail. pinNamedFiles marks them with a score no
+        // keyword count can reach.
         for (cands.items) |c| {
+            if (c.score < 1_000_000) continue;
+            included_any = true;
+            try self.appendWholeFile(&focus, &omitted, c, max_bytes);
+        }
+        for (cands.items) |c| {
+            if (c.score >= 1_000_000) continue;
             // Keep the context tight: only include files that matched the
             // instruction keywords (plus always build.zig / config.json), so
             // the model cannot lose track of which file has what.
             const always = std.mem.eql(u8, c.path, "build.zig") or std.mem.eql(u8, c.path, "config.json") or std.mem.eql(u8, c.path, "build.zig.zon");
             if (c.score == 0 and !always) continue;
             included_any = true;
-            try self.appendWholeFile(&buf, &omitted, c, max_bytes);
+            try self.appendWholeFile(&buf, &omitted, c, max_bytes - focus.items.len);
         }
         if (!included_any) {
             // No keyword matches — fall back to the top candidates by score.
-            for (cands.items) |c| try self.appendWholeFile(&buf, &omitted, c, max_bytes);
+            for (cands.items) |c| try self.appendWholeFile(&buf, &omitted, c, max_bytes - focus.items.len);
         }
         // A file that did not fit has to be named. Silently cutting one off
         // mid-way, or dropping it entirely, left the model writing exact-match
@@ -916,10 +953,16 @@ pub const Engine = struct {
                 try buf.appendSlice(self.arena, "\n");
             }
         }
-        if (buf.items.len == 0) return "(no source files found)";
-        log.log(.debug, "context: {d} files, {d} bytes (budget {d}, {d} omitted)", .{ cands.items.len, buf.items.len, max_bytes, omitted.items.len });
+        const total = buf.items.len + focus.items.len;
+        if (total == 0) return .{ .bulk = "(no source files found)", .focus = "", .files = 0, .bytes = 0 };
+        log.log(.debug, "context: {d} files, {d} bytes ({d} focus, budget {d}, {d} omitted)", .{ cands.items.len, total, focus.items.len, max_bytes, omitted.items.len });
         for (omitted.items) |o| log.log(.debug, "context: omitted {s}", .{o});
-        return buf.toOwnedSlice(self.arena);
+        return .{
+            .bulk = try buf.toOwnedSlice(self.arena),
+            .focus = try focus.toOwnedSlice(self.arena),
+            .files = cands.items.len,
+            .bytes = total,
+        };
     }
 
     /// Appends a candidate whole or not at all. A half file is worse than an
@@ -1379,6 +1422,14 @@ const improve_system_fmt =
 ;
 
 /// Volatile half: what to do this time, and what went wrong last time.
+/// The files the instruction names, kept in their own block so the cached bulk
+/// survives a patch to them.
+const improve_focus_fmt =
+    \\# The files this instruction is about
+    \\{s}
+    \\
+;
+
 const improve_user_fmt =
     \\# Improvement instruction
     \\{s}
