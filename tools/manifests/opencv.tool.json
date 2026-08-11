@@ -5,11 +5,31 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "op": { "type": "string", "enum": ["info", "edges", "contours", "faces", "grayscale", "resize"] },
-      "path": { "type": "string" },
-      "options": { "type": "object" }
+      "op": {
+        "type": "string",
+        "enum": [
+          "info",
+          "edges",
+          "contours",
+          "faces",
+          "grayscale",
+          "resize"
+        ]
+      },
+      "path": {
+        "type": "string"
+      },
+      "options": {
+        "type": "object"
+      }
     },
-    "required": ["op", "path"]
+    "required": [
+      "op",
+      "path"
+    ]
   },
-  "exec_allow": ["uv"]
+  "exec_allow": [
+    "uv"
+  ],
+  "category": "media"
 }

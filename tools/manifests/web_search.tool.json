@@ -17,5 +17,6 @@
     "html.duckduckgo.com"
   ],
   "fs_prefixes": [],
-  "wasm": "zig-out/tools/web_search.wasm"
+  "wasm": "zig-out/tools/web_search.wasm",
+  "category": "web"
 }

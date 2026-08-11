@@ -5,12 +5,26 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "action": { "type": "string", "enum": ["check", "list"] },
-      "provider": { "type": "string" }
+      "action": {
+        "type": "string",
+        "enum": [
+          "check",
+          "list"
+        ]
+      },
+      "provider": {
+        "type": "string"
+      }
     },
-    "required": ["action"]
+    "required": [
+      "action"
+    ]
   },
-  "fs_prefixes": ["config.json", "config.local.json"],
+  "fs_prefixes": [
+    "config.json",
+    "config.local.json"
+  ],
   "llm": true,
-  "network_from_config": "providers"
+  "network_from_config": "providers",
+  "category": "peers"
 }

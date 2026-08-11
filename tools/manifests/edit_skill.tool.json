@@ -19,5 +19,6 @@
   },
   "fs_prefixes": [
     "skills/"
-  ]
+  ],
+  "category": "agent"
 }

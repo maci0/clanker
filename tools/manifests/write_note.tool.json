@@ -15,5 +15,6 @@
   },
   "fs_prefixes": [
     "state/"
-  ]
+  ],
+  "category": "agent"
 }

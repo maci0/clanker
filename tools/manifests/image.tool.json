@@ -2,7 +2,18 @@
   "name": "image",
   "description": "read an image file and return it as a multimodal part (base64) so you can SEE it on your next turn. Use when a task involves an image (screenshot, photo, diagram). The image is attached to the conversation after this tool returns.",
   "wasm": "zig-out/tools/image.wasm",
-  "input_schema": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
   "fs_prefixes": [],
-  "network_allow": []
+  "network_allow": [],
+  "category": "media"
 }

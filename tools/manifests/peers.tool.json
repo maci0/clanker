@@ -5,12 +5,28 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "action": { "type": "string", "enum": ["phonebook", "notify"] },
-      "peer": { "type": "string" },
-      "message": { "type": "string" }
+      "action": {
+        "type": "string",
+        "enum": [
+          "phonebook",
+          "notify"
+        ]
+      },
+      "peer": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      }
     },
-    "required": ["action"]
+    "required": [
+      "action"
+    ]
   },
-  "fs_prefixes": ["config.json", "config.local.json"],
-  "network_from_config": "peers"
+  "fs_prefixes": [
+    "config.json",
+    "config.local.json"
+  ],
+  "network_from_config": "peers",
+  "category": "peers"
 }

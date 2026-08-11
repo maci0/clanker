@@ -2,7 +2,18 @@
   "name": "cmd_plugins",
   "description": "list plugins and switch the optional ones on or off",
   "wasm": "zig-out/tools/cmd_plugins.wasm",
-  "input_schema": { "type": "object", "properties": { "args": { "type": "string" } } },
-  "fs_prefixes": ["tools/manifests/", "state/"],
-  "internal": true
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      }
+    }
+  },
+  "fs_prefixes": [
+    "tools/manifests/",
+    "state/"
+  ],
+  "internal": true,
+  "category": "harness"
 }

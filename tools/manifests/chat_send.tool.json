@@ -5,13 +5,25 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": { "type": "string", "description": "Room name, e.g. \"dev\"" },
-      "text": { "type": "string", "description": "Message text (max 4096 chars)" }
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      },
+      "text": {
+        "type": "string",
+        "description": "Message text (max 4096 chars)"
+      }
     },
-    "required": ["room", "text"]
+    "required": [
+      "room",
+      "text"
+    ]
   },
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "config": { "op": "send" }
+  "config": {
+    "op": "send"
+  },
+  "category": "chat"
 }

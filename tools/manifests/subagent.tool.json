@@ -2,7 +2,21 @@
   "name": "subagent",
   "description": "delegate a task to a nested sub-agent run with its own context and bounded iterations; returns the sub-agent's final answer. Use for isolated sub-problems (research a file, draft a patch, verify a claim) while you keep working.",
   "wasm": "zig-out/tools/subagent.wasm",
-  "input_schema": { "type": "object", "properties": { "task": { "type": "string" }, "provider": { "type": "string" } }, "required": ["task"] },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "task": {
+        "type": "string"
+      },
+      "provider": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task"
+    ]
+  },
   "fs_prefixes": [],
-  "network_allow": []
+  "network_allow": [],
+  "category": "agent"
 }

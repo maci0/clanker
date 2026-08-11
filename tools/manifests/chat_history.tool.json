@@ -5,13 +5,24 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": { "type": "string", "description": "Room name, e.g. \"dev\"" },
-      "after": { "type": "integer", "description": "Only messages with ts greater than this (optional; 0 = all)" }
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      },
+      "after": {
+        "type": "integer",
+        "description": "Only messages with ts greater than this (optional; 0 = all)"
+      }
     },
-    "required": ["room"]
+    "required": [
+      "room"
+    ]
   },
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "config": { "op": "history" }
+  "config": {
+    "op": "history"
+  },
+  "category": "chat"
 }

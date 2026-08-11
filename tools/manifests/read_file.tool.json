@@ -27,5 +27,6 @@
     "required": [
       "path"
     ]
-  }
+  },
+  "category": "code"
 }

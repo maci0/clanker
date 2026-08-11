@@ -2,5 +2,19 @@
   "name": "git",
   "description": "Run sandboxed git commands on the project. Input: {\"args\": [\"status\", \"--porcelain\"]}. Allowed: status, diff, log, show, add, commit, ls-files, rev-parse, branch. Destructive commands (push, reset, rebase, checkout, clean, rm, fetch, merge, revert, stash) are denied. Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
   "wasm": "zig-out/tools/git.wasm",
-  "input_schema": { "type": "object", "properties": { "args": { "type": "array", "items": { "type": "string" } } }, "required": ["args"] }
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "args"
+    ]
+  },
+  "category": "code"
 }

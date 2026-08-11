@@ -28,5 +28,6 @@
       "op"
     ]
   },
-  "network_allow": []
+  "network_allow": [],
+  "category": "compute"
 }

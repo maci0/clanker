@@ -1981,6 +1981,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var chat_poll_base_ms = 5000;
   var chat_poll_max_ms = 60000;
   var chatBackoff = chat_poll_base_ms;
+  var chatFailing = false;
 
   function chatRoomLabel(r) {
     return isDm(r.room) ? dmPartner(r.room) : r.room;
@@ -2100,6 +2101,12 @@ document.addEventListener("DOMContentLoaded", function () {
       })
       .then(function (data) {
         chatBackoff = chat_poll_base_ms;
+        // Leaving the failure notice up after recovery would keep promising a
+        // retry that already happened.
+        if (chatFailing) {
+          chatFailing = false;
+          el.chatStatus.textContent = "Reconnected.";
+        }
         // The log is returned newest-first (it is read backwards to honour the
         // 50-message limit); a conversation reads downwards, so it is flipped
         // before appending.
@@ -2124,6 +2131,7 @@ document.addEventListener("DOMContentLoaded", function () {
         // transient 500 — a server restart, say — silently ended live updates
         // for the rest of the session, with only a stale error line to show
         // for it.
+        chatFailing = true;
         chatBackoff = Math.min(chatBackoff * 3, chat_poll_max_ms);
         el.chatStatus.textContent = "Could not load messages: " + err.message +
           " — retrying in " + Math.round(chatBackoff / 1000) + "s.";

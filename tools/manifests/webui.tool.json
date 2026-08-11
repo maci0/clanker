@@ -5,11 +5,16 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "path": { "type": "string" }
+      "path": {
+        "type": "string"
+      }
     },
-    "required": ["path"]
+    "required": [
+      "path"
+    ]
   },
   "network_allow": [],
   "fs_prefixes": [],
-  "internal": true
+  "internal": true,
+  "category": "harness"
 }

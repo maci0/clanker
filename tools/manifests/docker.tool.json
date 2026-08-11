@@ -5,11 +5,18 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "path": { "type": "string" },
-      "method": { "type": "string" }
+      "path": {
+        "type": "string"
+      },
+      "method": {
+        "type": "string"
+      }
     },
-    "required": ["path"]
+    "required": [
+      "path"
+    ]
   },
   "network_allow": [],
-  "fs_prefixes": []
+  "fs_prefixes": [],
+  "category": "infra"
 }

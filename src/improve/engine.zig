@@ -147,7 +147,20 @@ pub const Engine = struct {
         const proposal = proposal_mod.parseProposal(self.arena, json_text, opts.max_changes, opts.max_change_bytes) catch |err| {
             log.log(.error_, "proposal rejected: {s}", .{@errorName(err)});
             log.log(.debug, "proposal text (first 1500): {s}", .{json_text[0..@min(json_text.len, 1500)]});
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous response was not a valid patch proposal: {s}. Respond with ONLY the JSON object described above — nothing else.", .{@errorName(err)});
+            // "SyntaxError" alone tells the model nothing it can act on. The
+            // usual cause is a file whose own content is full of quotes and
+            // braces (a .tool.json descriptor), escaped wrongly inside the
+            // proposal, so say that and show what actually arrived.
+            const head = json_text[0..@min(json_text.len, 400)];
+            const tail = if (json_text.len > 400) json_text[json_text.len - @min(json_text.len - 400, 200) ..] else "";
+            feedback = try std.fmt.allocPrint(
+                self.arena,
+                "Your previous response was not a valid patch proposal: {s}.\n" ++
+                    "Respond with ONLY the JSON object described above.\n" ++
+                    "Every character of a file's new content goes in the \"new\" string, so each \" inside it must be written \\\" and each newline \\n. A descriptor file (.tool.json) is mostly quotes; escape them all.\n" ++
+                    "This is how your last answer started:\n{s}\n...and ended:\n{s}",
+                .{ @errorName(err), head, tail },
+            );
             if (err == error.NoChanges) return .no_change;
             return .failed;
         };

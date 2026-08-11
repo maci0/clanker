@@ -5,13 +5,29 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "objective": { "type": "string" },
-      "completion_criterion": { "type": "string" },
-      "proof": { "type": "string" },
-      "boundaries": { "type": "string" },
-      "stop_rule": { "type": "string" }
+      "objective": {
+        "type": "string"
+      },
+      "completion_criterion": {
+        "type": "string"
+      },
+      "proof": {
+        "type": "string"
+      },
+      "boundaries": {
+        "type": "string"
+      },
+      "stop_rule": {
+        "type": "string"
+      }
     },
-    "required": ["objective", "completion_criterion"]
+    "required": [
+      "objective",
+      "completion_criterion"
+    ]
   },
-  "fs_prefixes": ["state/"]
+  "fs_prefixes": [
+    "state/"
+  ],
+  "category": "agent"
 }

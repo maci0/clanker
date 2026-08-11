@@ -5,13 +5,24 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": { "type": "string", "description": "Room name, e.g. \"dev\"" },
-      "on": { "type": "boolean", "description": "true to subscribe, false to unsubscribe (default true)" }
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      },
+      "on": {
+        "type": "boolean",
+        "description": "true to subscribe, false to unsubscribe (default true)"
+      }
     },
-    "required": ["room"]
+    "required": [
+      "room"
+    ]
   },
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "config": { "op": "subscribe" }
+  "config": {
+    "op": "subscribe"
+  },
+  "category": "chat"
 }

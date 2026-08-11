@@ -32,5 +32,6 @@
     "config.local.json"
   ],
   "network_allow": [],
-  "network_from_config": "peers"
+  "network_from_config": "peers",
+  "category": "agent"
 }
