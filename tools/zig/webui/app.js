@@ -2986,7 +2986,19 @@ function buildToolRow(t) {
   // is what a person scanning the list needs.
   var text = (t.description || "").trim();
   var stop = text.indexOf(". ");
-  desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : text.slice(0, 160);
+  // A description is trimmed to its first sentence, or failing that to the
+  // last word that fits. Slicing at a fixed byte cut a word in half and said
+  // nothing about the rest ("guessing would waste w"), so a shortened line now
+  // ends on a word and admits it was shortened.
+  if (stop > 0 && stop < 160) {
+    desc.textContent = text.slice(0, stop + 1);
+  } else if (text.length <= 160) {
+    desc.textContent = text;
+  } else {
+    var cut = text.slice(0, 160);
+    var space = cut.lastIndexOf(" ");
+    desc.textContent = (space > 80 ? cut.slice(0, space) : cut).replace(/[,;:.\s]+$/, "") + "…";
+  }
   desc.title = text;
   row.appendChild(desc);
 

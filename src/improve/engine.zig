@@ -1221,19 +1221,7 @@ pub const Engine = struct {
     /// Removes a directory tree rooted at `rel` under `base`. Split from
     /// removeTree so the unit test can operate on a tmpDir instead of cwd.
     fn removeTreeAt(self: *Engine, base: std.Io.Dir, rel: []const u8) void {
-        var dir = base.openDir(self.ctx.io, rel, .{ .iterate = true }) catch return;
-        var it = dir.iterate();
-        while (it.next(self.ctx.io) catch null) |entry| {
-            const sub = std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ rel, entry.name }) catch continue;
-            defer self.ctx.gpa.free(sub);
-            switch (entry.kind) {
-                .directory => self.removeTreeAt(base, sub),
-                .file => base.deleteFile(self.ctx.io, sub) catch {},
-                else => {},
-            }
-        }
-        dir.close(self.ctx.io);
-        base.deleteDir(self.ctx.io, rel) catch {};
+        diskcap.removeTree(self.ctx.gpa, self.ctx.io, base, rel);
     }
 
     /// Looks like an id this engine mints: "imp-" followed by digits.

@@ -112,6 +112,23 @@ generic message. When chatrooms are disabled at the sandbox level, chat
 tools surface a bare `SandboxDenied` with no friendly text, unlike the
 board's custom "chatrooms are disabled, and the board is a chatroom".
 
+## Known issues
+
+- **`chat_send`'s `"to"` field was never built.** Goal 3 and the acceptance
+  criteria below promise DM rooms with no special-casing by senders; the
+  code only offers the manual `dm:<a>|<b>` convention (see Design). Fix by
+  implementing `to` with canonicalized ordering, or by rewriting the goal
+  and acceptance criterion to describe the convention that actually exists.
+- **History page size is three different numbers depending on surface**
+  (tool: 20, CLI/HTTP: 50, `chatrooms.zig`'s `history_limit` constant: 50
+  but unused by the tool path). Pick one, or document why the tool path is
+  deliberately smaller (e.g. token budget for agent context).
+- **`rooms` and `todo_*` fall through to a generic `InvalidArg` message**
+  while `send`/`history`/`subscribe` get field-naming errors; and a
+  sandbox-disabled chat tool surfaces a bare `SandboxDenied` instead of the
+  board's friendlier "chatrooms are disabled, and the board is a chatroom."
+  Inconsistent, not incorrect — low priority.
+
 ## Failure modes
 
 | Condition | Behaviour |
@@ -128,8 +145,8 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 
 - [x] A message sent in a room appears in `state/chatrooms.jsonl` and at
       every subscribed peer.
-- [ ] `dm:<a>|<b>` requires no special-casing by senders — not true today;
-      there is no `to` field or canonicalization, only a manual convention.
+- [ ] `dm:<a>|<b>` requires no special-casing by senders — not true today,
+      see Known issues.
 - [x] Eight descriptors share one wasm module via descriptor `config`.
 - [x] Sub-agent private todos never leak to a room.
 

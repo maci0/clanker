@@ -71,6 +71,18 @@ your working plan, gone when the run ends; if another clanker should see or
 claim it, it belongs on the board. This rule of thumb still holds even
 though the room-scoped middle ground it used to also cover is gone.
 
+## Known issues
+
+- **Top-level runs can't use `todo_*` at all.** No code path ever attaches a
+  private list to a top-level `Agent` (only `subagent.zig` does, after
+  calling `runNested`). Every `todo_*` call outside a sub-agent run fails
+  regardless of whether `room` is given.
+- **The failure error recommends a dead option.** `src/sandbox/host.zig`'s
+  message for "no private list attached" tells the caller to pass `room`
+  instead — but passing `room` unconditionally errors too (room-scoped todos
+  were replaced by the board). Fix the message regardless of how the
+  top-level-support open question below resolves.
+
 ## Acceptance criteria
 
 - [x] Omitting `room` never touches any room log.
@@ -79,23 +91,18 @@ though the room-scoped middle ground it used to also cover is gone.
       whenever the list is non-empty (in practice this covers, but is not
       conditioned on, hitting the iteration cap).
 - [x] Board claims resolve races deterministically across peers.
-- [ ] A top-level run can use private todos. Not true today — see Design.
-- [ ] The "pass room to use a shared room list" error text matches a real,
-      working path. Not true today — that path was removed; the error
-      needs rewriting regardless of how the open question below resolves.
+- [ ] A top-level run can use private todos. Not true today — see Known
+      issues.
 
 ## Open questions
 
 - Should a top-level (non-sub-agent) run be able to use private todos at
   all, or is "private todos" meant to stay a sub-agent-only concept with
   top-level work always going straight to the board? Right now it's neither
-  decision on purpose — it's an unwired path plus a stale error message.
-  This needs an explicit answer, since the current state is silently broken
-  rather than deliberately scoped.
+  decision on purpose — it's an unwired path plus a stale error message
+  (Known issues). This needs an explicit answer, since the current state is
+  silently broken rather than deliberately scoped.
 - Should a top-level run's final answer also summarise its leftover open
   private todos, once/if the above is resolved? The sub-agent path already
   does this via the answer appendix; the top-level path has no list to
   summarise.
-- Fix the error text at `src/sandbox/host.zig` (private-todos-unavailable
-  path) regardless of the above — it currently recommends an option
-  (`room`) that fails too.

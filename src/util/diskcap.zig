@@ -73,7 +73,10 @@ pub fn isBuildCachePath(rel: []const u8) bool {
     return std.mem.eql(u8, name, ".zig-cache");
 }
 
-fn removeTree(gpa: std.mem.Allocator, io: std.Io, base: std.Io.Dir, rel: []const u8) void {
+/// Recursively deletes `rel` (relative to `base`), including symlinks and
+/// other non-directory entries. Callers are responsible for validating that
+/// `rel` is safe to remove: this walks and deletes unconditionally.
+pub fn removeTree(gpa: std.mem.Allocator, io: std.Io, base: std.Io.Dir, rel: []const u8) void {
     var dir = base.openDir(io, rel, .{ .iterate = true }) catch return;
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
