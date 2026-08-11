@@ -514,6 +514,30 @@ pub const History = struct {
             }
             try buf.appendSlice(arena, "\n");
         }
+        // Append a hot-files section when files have been rejected multiple
+        // times, so the model sees which targets to avoid or approach
+        // differently.
+        const hot = try self.hotFiles(arena, max_entries);
+        if (hot.len > 0) {
+            var any_hot = false;
+            for (hot) |h| {
+                if (h.rejections >= 2) {
+                    any_hot = true;
+                    break;
+                }
+            }
+            if (any_hot) {
+                try buf.appendSlice(arena, "\nFiles with repeated rejections (try a different file or a fundamentally different approach):\n");
+                for (hot) |h| {
+                    if (h.rejections < 2) continue;
+                    var rbuf: [128]u8 = undefined;
+                    var rw: std.Io.Writer = .fixed(&rbuf);
+                    rw.print("- {s} ({d} rejections)\n", .{ h.file, h.rejections }) catch {};
+                    try buf.appendSlice(arena, rbuf[0..rw.end]);
+                }
+            }
+        }
+
         return buf.toOwnedSlice(arena);
     }
 };
