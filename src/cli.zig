@@ -2179,19 +2179,15 @@ fn toolText(
     args: []const u8,
 ) ![]const u8 {
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const tool = reg.get(tool_name) orelse {
-        log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
-        return error.UnknownTool;
-    };
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
-        log.log(.error_, "'{s}' wasm missing: {s} (run `zig build tools`)", .{ tool_name, tool.wasm });
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
+        if (err == error.UnknownTool) {
+            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
+        } else {
+            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+        }
         return error.ToolWasmMissing;
     };
-    defer gpa.free(wasm_bytes);
-
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    var sb = try host.sandboxFor(gpa, io, arena, environ_map, cfg, tool, &ctx);
-    const mod = try runtime.ToolModule.load(gpa, io, &sb, wasm_bytes);
     defer mod.deinit();
 
     var ibuf: [8192]u8 = undefined;
@@ -2375,18 +2371,14 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const message = opts.message orelse return error.MissingMessage;
 
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const tool = reg.get("peers") orelse {
-        log.log(.error_, "internal tool 'peers' not found in {s}", .{cfg.agent.tools_dir});
-        return error.UnknownTool;
-    };
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
-        log.log(.error_, "'peers' wasm missing: {s} (run `zig build tools`)", .{tool.wasm});
+    const mod = runtime.loadNamedTool(gpa, io, arena, init.environ_map, &cfg, &reg, "peers", null) catch |err| {
+        if (err == error.UnknownTool) {
+            log.log(.error_, "internal tool 'peers' not found in {s}", .{cfg.agent.tools_dir});
+        } else {
+            log.log(.error_, "'peers' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
+        }
         return error.ToolWasmMissing;
     };
-    defer gpa.free(wasm_bytes);
-
-    var sb = try host.sandboxFor(gpa, io, arena, init.environ_map, &cfg, tool, null);
-    const mod = try runtime.ToolModule.load(gpa, io, &sb, wasm_bytes);
     defer mod.deinit();
 
     var ibuf: [4096]u8 = undefined;
@@ -3549,11 +3541,21 @@ fn handleRuns(
 /// plugin (the way `/api/runs` reaches cmd_graph) because session.zig already
 /// owns this store on the native side, and a long transcript exceeds the
 /// 64 KiB host arena a WASM tool reads through.
-/// Byte weight of a transcript, the same measure
-/// `agent.compact_threshold_bytes` is compared against.
+/// Byte weight of a transcript.
+///
+/// Must match what `session.listSessions` reports, because that is the number
+/// the picker shows and the number the owner is looking at when they decide to
+/// compact. Counting only `content` here meant Compact aimed at a smaller
+/// figure than the one on screen and reported a result in a different unit: a
+/// transcript full of tool calls could be "compacted" and barely move.
 fn transcriptBytes(msgs: []const types.Message) usize {
     var n: usize = 0;
-    for (msgs) |m| n += if (m.content) |c| c.len else 0;
+    for (msgs) |m| {
+        if (m.content) |c| n += c.len;
+        if (m.tool_calls) |calls| {
+            for (calls) |tc| n += tc.arguments.len;
+        }
+    }
     return n;
 }
 
@@ -3594,6 +3596,17 @@ test "compactSession keeps whole messages and the last exchange" {
     };
     try std.testing.expectEqual(@as(usize, 400), transcriptBytes(&msgs));
     try std.testing.expectEqual(@as(usize, 200), transcriptBytes(msgs[2..]));
+}
+
+test "transcriptBytes counts tool call arguments, like the session listing" {
+    // A turn that called a tool carries most of its weight in the arguments;
+    // ignoring them made Compact aim at a number nobody was shown.
+    const calls = [_]types.ToolCall{.{ .id = "1", .name = "read_file", .arguments = "x" ** 500 }};
+    const msgs = [_]types.Message{
+        .{ .role = .user, .content = "a" ** 10 },
+        .{ .role = .assistant, .content = null, .tool_calls = &calls },
+    };
+    try std.testing.expectEqual(@as(usize, 510), transcriptBytes(&msgs));
 }
 
 /// Every configured provider and its models, so the composer can offer the
