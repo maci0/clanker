@@ -56,7 +56,7 @@ export function toDagInput(built) {
   return data;
 }
 
-function buildIncompleteNode(nodeW) {
+export function buildIncompleteNode(nodeW) {
   var stop = document.createElement("div");
   stop.className = "run-node-incomplete";
   stop.style.width = nodeW + "px";
@@ -202,3 +202,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
     if (statusEl) statusEl.textContent = errEl2.textContent;
   });
 }
+
+if (typeof window !== "undefined") {
+  window.ckGraph = { metricsFor: metricsFor, buildStages: buildStages, graphSummaryText: graphSummaryText, toDagInput: toDagInput, buildIncompleteNode: buildIncompleteNode, buildNodeBox: buildNodeBox, layoutGraph: layoutGraph };
+}
+

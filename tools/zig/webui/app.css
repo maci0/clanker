@@ -492,6 +492,8 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   border-color: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .rail-tab[aria-selected="true"]:hover { background: var(--accent-dim); }
+.rail-tab:active:not(:disabled) { transform: translateY(1px); }
+@media (prefers-reduced-motion: reduce) { .rail-tab:active:not(:disabled) { transform: none; } }
 /* The engaged channel's lamp: lit blue, because blue is operator action. */
 .rail-tab[aria-selected="true"]::before {
   content: "";
@@ -677,6 +679,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   border-radius: var(--radius-sm); cursor: pointer;
 }
 .copy-code-btn:hover { color: var(--fg); border-color: var(--accent); }
+.copy-code-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* highlight.js token colors, mapped to clanker's own theme tokens instead
    of an imported hljs theme file — stays in sync with the light/dark and
@@ -809,7 +812,7 @@ h2 {
 /* Each label takes a full row so both sit above their own control, the way
    the composer's Task label does — otherwise one wraps above and the other
    lands beside its field. */
-.run-picker label { margin: 0; flex-basis: 100%; }
+.run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }
 .session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
 select, #run-filter {
   flex: 0 1 auto; max-width: 100%; min-height: 44px; padding: 0.4rem 0.6rem;
@@ -993,10 +996,15 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
 .tool-row {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.7rem;
-  padding: 0.45rem 0; border-bottom: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--rule);
+  transition: background 120ms ease, border-color 120ms ease;
 }
-.tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; }
+.tool-row:hover { background: color-mix(in srgb, var(--surface-2) 55%, transparent); border-color: var(--rule); padding-left: var(--space-2); margin-left: calc(-1 * var(--space-2)); margin-right: calc(-1 * var(--space-2)); padding-right: var(--space-2); border-radius: var(--radius-sm); }
+@media (prefers-reduced-motion: reduce) { .tool-row { transition: none; } .tool-row:hover { background: transparent; } }
+.tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; letter-spacing: -0.01em; line-height: 1.4; }
+button.tool-name:hover { color: var(--accent-text); }
+button.tool-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
 .tool-desc {
   flex: 1 1 18rem; font-family: var(--sans); font-size: var(--step-0);
   color: var(--fg-muted); overflow-wrap: anywhere;
@@ -1054,6 +1062,9 @@ button.tool-name:hover { color: var(--accent-text); }
 .tool-none { font-style: italic; }
 @media (max-width: 40rem) { .tool-params { grid-template-columns: 1fr; } .tool-params dt { margin-top: 0.4rem; } }
 .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
+.tool-toggle:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.18); }
+.tool-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .tool-toggle:active:not(:disabled) { transform: none; } }
 
 /* A plugin's own settings, shown only when its descriptor opted some in. */
 .tool-config { flex-basis: 100%; margin: 0.35rem 0 0.15rem 0; }
@@ -1182,7 +1193,6 @@ button:active:not(:disabled) {
   display: flex; justify-content: center; align-items: flex-start;
   padding: 10vh var(--space-5) var(--space-5);
   background: var(--scrim);
-  backdrop-filter: blur(2px);
 }
 .overlay[hidden] { display: none; }
 .overlay-box {
@@ -1209,6 +1219,7 @@ button:active:not(:disabled) {
 }
 .palette-item[aria-selected="true"] { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; color: var(--fg); }
 .palette-item:hover { background: var(--surface-2); }
+.palette-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .palette-kind {
   flex: none; min-width: 4.5rem; color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: 0.1em; font-size: var(--step-0);
@@ -1290,8 +1301,12 @@ input[type="checkbox"] {
 .transcript-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
   margin-top: var(--space-5);
+  border-left: 1px solid var(--rule);
+  padding-left: var(--space-4);
 }
+.transcript-tools:has(input:focus-visible) { border-left-color: var(--accent); }
 .transcript-tools > label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step--1); }
+.transcript-tools #turn-filter:focus-visible { outline-offset: 2px; }
 .turn[hidden] { display: none; }
 /* The match itself, not the whole turn: scanning a long answer for the word
    you searched is the part a filter alone does not help with. */
@@ -1315,7 +1330,9 @@ mark {
 }
 .scroll-bottom[hidden] { display: none; }
 .scroll-bottom:hover { border-color: var(--accent); color: var(--accent-text); }
+.scroll-bottom:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.12); }
 .scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
 /* Transcript empty — hero when there is nothing to show yet */
 #transcript-empty {
@@ -1402,7 +1419,10 @@ mark {
   color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0);
   padding: 0 var(--space-2); min-height: 32px; min-width: 32px;
 }
+.rail-pin:hover { color: var(--fg); }
+.rail-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
 .rail-pin[aria-pressed="true"] { color: var(--accent); }
+.rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .rail-row { display: flex; align-items: center; gap: var(--space-1); }
 .rail-row .rail-item { flex: 1; min-width: 0; }
 /* A scrim only exists on narrow screens, where the rail floats over the page
@@ -1475,6 +1495,8 @@ main {
   box-shadow: none;
 }
 .rail-item:hover { background: var(--surface-2); }
+.rail-item:active:not(:disabled) { transform: translateY(1px); }
+@media (prefers-reduced-motion: reduce) { .rail-item:active:not(:disabled) { transform: none; } }
 .rail-item[aria-current="true"] {
   background: var(--accent-dim);
   color: var(--fg);
@@ -1596,8 +1618,10 @@ h2#session-title {
   font-family: var(--sans); font-size: var(--step-0);
   display: flex; flex-direction: column; gap: var(--space-2);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transition: border-color 160ms ease;
 }
 .card:hover { border-color: var(--border); }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.1); }
 .card[data-dragging="true"] { opacity: 0.5; }
 .card-title { overflow-wrap: anywhere; }
@@ -1707,11 +1731,18 @@ h2#session-title {
 .fleet-roster-list li + li { margin-top: var(--space-2); }
 .fleet-meta { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; overflow-wrap: anywhere; }
 .fleet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
-.fleet-card { transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease; cursor: pointer; }
-.fleet-card:hover { background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%); border-color: var(--rule); box-shadow: var(--lift); transform: translateY(-1px); }
+.fleet-card { transition: border-color 160ms ease, background 160ms ease; cursor: pointer; }
+.fleet-card:hover { background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%); border-color: var(--rule); }
 .fleet-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.fleet-card--accent, .fleet-card--parent { border-left: 3px solid var(--accent); padding-left: var(--space-3); }
-.fleet-card--plain { border-left: 3px solid transparent; padding-left: var(--space-3); }
+.fleet-card--accent::before, .fleet-card--parent::before, .fleet-card--plain::before {
+  content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%;
+}
+.fleet-card--accent::before, .fleet-card--parent::before {
+  color: var(--accent);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85) 0%, currentColor 50%, color-mix(in srgb, currentColor 60%, #000) 100%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent), 0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
+}
+.fleet-card--plain::before { background: var(--rule); opacity: 0.45; }
 .fleet-card__main { flex: 1 1 18rem; min-width: 0; }
 .fleet-child-group, .fleet-children { margin-left: var(--space-4); border-left: 1px dashed var(--rule); padding-left: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
 .fleet-child { padding: var(--space-1) 0; }
@@ -1736,29 +1767,26 @@ h2#session-title {
 .fleet-stage__tools { margin: var(--space-2) 0 0 1rem; list-style: disc; padding-left: 1.1rem; }
 .fleet-stage__tools li + li { margin-top: var(--space-1); }
 .fleet-fail { color: var(--danger); }
-.fleet-skeleton { height: 2.4rem; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 78%, var(--rule) 22%) 37%, var(--surface-2) 63%); background-size: 400% 100%; animation: fleet-shimmer 1.2s ease infinite; margin: var(--space-2) 0; }
+.fleet-skeleton { height: 2.4rem; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--rule); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08); margin: var(--space-2) 0; }
 .fleet-skeleton--sm { height: 1.2rem; max-width: 18rem; }
-@keyframes fleet-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
-/* Skeletons: shimmer placeholder for async panels — used by markLoading etc. */
+/* Loading blanks are unpowered instrument slots, not generic shimmer cards. */
 .skeleton {
   height: 2.4rem;
   border-radius: var(--radius);
-  background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 78%, var(--rule) 22%) 37%, var(--surface-2) 63%);
-  background-size: 400% 100%;
-  animation: skeleton-shimmer 1.2s ease infinite;
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .skeleton-row {
   display: flex; gap: var(--space-3); align-items: center;
   padding: var(--space-2) 0;
 }
 .skeleton-bar {
-  flex: 1; height: 0.9rem; border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 78%, var(--rule) 22%) 37%, var(--surface-2) 63%);
-  background-size: 400% 100%;
-  animation: skeleton-shimmer 1.2s ease infinite;
+  flex: 1; height: 0.9rem; border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
 }
-@keyframes skeleton-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
 /* Alive lamp phase: chip pending amber; turn data-phase left border */
 .chip[data-state="pending"] { color: var(--warn); }
@@ -1789,10 +1817,7 @@ h2#session-title {
 
 @media (prefers-reduced-motion: reduce) {
   .json-node > summary::before, .tool-config > summary::before { transition: none; }
-  .fleet-card, .rail-tab[aria-selected="true"]::before { transition: none; transform: none; }
-  .fleet-card:hover { transform: none; }
-  .fleet-skeleton { animation: none; background: var(--surface-2); }
-  .skeleton, .skeleton-bar { animation: none; background: var(--surface-2); }
+  .fleet-card, .card, .rail-tab[aria-selected="true"]::before { transition: none; }
 }
 @media (max-width: 900px) {
   #view-fleet .runs { margin-top: var(--space-4); }

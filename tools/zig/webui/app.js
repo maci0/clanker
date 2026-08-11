@@ -136,53 +136,11 @@ var el = {
    van.tags builds real DOM nodes and sets text as text, so nothing here can
    introduce markup from data. */
 
-var T = van.tags;
-
-/* State a view derives from. `bind` runs its render whenever the state
-   changes and never on any other occasion, which is what removes the manual
-   "clear the container and rebuild" that lost focus and half-typed edits. */
-function bind(node, state, render) {
-  van.derive(function () {
-    var value = state.val;
-    node.textContent = "";
-    var built = render(value);
-    if (built == null) return;
-    if (Array.isArray(built)) built.forEach(function (n) { if (n) van.add(node, n); });
-    else van.add(node, built);
-  });
-}
-
-function skeletonRows(container, n) {
-  if (!container) return;
-  container.textContent = "";
-  container.setAttribute("aria-busy", "true");
-  for (var i = 0; i < n; i++) {
-    var row = document.createElement("div");
-    row.className = "skeleton";
-    container.appendChild(row);
-    var r = document.createElement("div");
-    r.className = "skeleton-row";
-    for (var j = 0; j < 3; j++) {
-      var bar = document.createElement("div");
-      bar.className = "skeleton-bar";
-      r.appendChild(bar);
-    }
-    container.appendChild(r);
-  }
-}
-
-function setTurnPhase(turn, phase) {
-  if (!turn || !turn.root || !turn.root.setAttribute) return;
-  if (!turn.root.isConnected) return;
-  var cur = turn.root.getAttribute("data-phase");
-  if (phase) {
-    if (cur === phase) return;
-    turn.root.setAttribute("data-phase", phase);
-  } else {
-    if (cur === null) return;
-    turn.root.removeAttribute("data-phase");
-  }
-}
+/* Bind/skeletons/turn-phase live in core/ui.js (bridged on window.ckUi). */
+var T = (window.ckUi && window.ckUi.T) ? window.ckUi.T : van.tags;
+var bind = window.ckUi ? window.ckUi.bind : function(node, state, render){ if(!window.van||!window.van.derive) return; window.van.derive(function(){ var v=state.val; node.textContent=""; var b=render(v); if(b==null) return; if(Array.isArray(b)) b.forEach(function(n){ if(n) window.van.add(node,n); }); else window.van.add(node,b); }); };
+var skeletonRows = window.ckUi ? window.ckUi.skeletonRows : function(c,n){ if(!c) return; c.textContent=""; c.setAttribute("aria-busy","true"); for(var i=0;i<n;i++){ var row=document.createElement("div"); row.className="skeleton"; c.appendChild(row); var r=document.createElement("div"); r.className="skeleton-row"; for(var j=0;j<3;j++){ var bar=document.createElement("div"); bar.className="skeleton-bar"; r.appendChild(bar);} c.appendChild(r);} };
+var setTurnPhase = window.ckUi ? window.ckUi.setTurnPhase : function(turn,phase){ if(!turn||!turn.root||!turn.root.setAttribute) return; if(!turn.root.isConnected) return; var cur=turn.root.getAttribute("data-phase"); if(phase){ if(cur===phase) return; turn.root.setAttribute("data-phase",phase);} else { if(cur===null) return; turn.root.removeAttribute("data-phase");} };
 
 /* Icons live in core/icons.js (module, bridged on window.ckIcons). Kept
    locally only until this file also becomes a module. */
@@ -193,99 +151,15 @@ var icon = window.ckIcons ? window.ckIcons.icon : function(){ return document.cr
 var UI = window.ckUi ? window.ckUi.UI : null;
 
 
-/* Fetches a vendored library on first use and caches the promise, so the
-   ~200 KB of d3-dag + highlight.js stays off the initial load of a page
-   whose common visit needs neither. Every caller must tolerate rejection:
-   the graph falls back to an error line, code blocks stay unhighlighted. */
-var vendorLoads = {};
-function loadVendor(file, ready) {
-  if (vendorLoads[file]) return vendorLoads[file];
-  vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
-    var s = document.createElement("script");
-    s.src = "/webui/vendor/" + file;
-    s.onload = function () {
-      if (ready()) resolve();
-      else reject(new Error(file + " loaded but exported nothing"));
-    };
-    s.onerror = function () { reject(new Error("could not load " + file)); };
-    document.head.appendChild(s);
-  });
-  return vendorLoads[file];
-}
-
-function loadD3() {
-  return loadVendor("d3-dag.min.js", function () { return !!(window.d3 && window.d3.dagStratify); });
-}
-
-var tomlRegistered = false;
-function loadHljs() {
-  return loadVendor("hljs.min.js", function () { return !!window.hljs; }).then(registerToml);
-}
-
-// highlight.js doesn't ship a TOML grammar in any of its distributed
-// bundles (it lives in a separate, unpublished third-party repo) — a
-// small hand-written one is simpler and more honest than pulling in a
-// whole extra vendored file for one language. className values match the
-// .hljs-* tokens already themed above (attr/string/number/literal/
-// comment/meta), so no new CSS is needed.
-function registerToml() {
-  if (tomlRegistered) return;
-  tomlRegistered = true;
-  window.hljs.registerLanguage("toml", function (hljs) {
-    return {
-      name: "TOML",
-      case_insensitive: false,
-      contains: [
-        hljs.COMMENT("#", "$"),
-        { className: "section", begin: /^\s*\[+/, end: /\]+/ },
-        { className: "attr", begin: /^\s*[A-Za-z0-9_.-]+(?=\s*=)/ },
-        { className: "meta", begin: /\b\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?\b/ },
-        { className: "literal", begin: /\b(true|false)\b/ },
-        hljs.QUOTE_STRING_MODE,
-        hljs.APOS_STRING_MODE,
-        hljs.C_NUMBER_MODE
-      ]
-    };
-  });
-}
-
-/* Motion the CSS can't reach: scrollIntoView's smooth behavior is a JS
-   argument, so the @media blocks above never see it. */
-var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-function scrollTo(node, block) {
-  node.scrollIntoView({ block: block, behavior: reducedMotion.matches ? "auto" : "smooth" });
-}
-
-/* The async clipboard API is undefined outside a secure context, which is
-   exactly what `clanker serve` is when reached over a LAN address rather
-   than localhost. Failing silently there left a dead button, so the text
-   gets selected instead and the label says what to press. */
-/* readJson lives in core/utils.js: the server explains itself, and every response
-   goes through it so a switched-off module never reads as a broken page. */
-
-function copyText(text, btn, restoreLabel, selectTarget) {
-  function restore() {
-    window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
-  }
-  function selectInstead() {
-    var sel = window.getSelection && window.getSelection();
-    if (selectTarget && sel && document.createRange) {
-      var range = document.createRange();
-      range.selectNodeContents(selectTarget);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      btn.textContent = "Selected — press Ctrl+C";
-    } else {
-      btn.textContent = "Copy unavailable";
-    }
-    restore();
-  }
-  if (!navigator.clipboard || !window.isSecureContext) return selectInstead();
-  navigator.clipboard.writeText(text).then(function () {
-    btn.textContent = "Copied";
-    restore();
-  }, selectInstead);
-}
+/* Vendored loader + clipboard live in core/vendor.js (bridged). Kept as
+   locals until this file becomes a module itself. */
+var vendorLoads = window.vendorLoads || {};
+var loadVendor = window.loadVendor || function(){ return Promise.resolve(); };
+var loadD3 = window.loadD3;
+var loadHljs = window.loadHljs;
+var registerToml = window.registerToml;
+var reducedMotion = window.reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)");
+var copyText = window.copyText;
 
 var busy = false;
 var controller = null;
@@ -304,19 +178,10 @@ function renderSessionChip() {
   el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
 }
 
-var THEMES = ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day"];
-
-function loadTheme() {
-  var t = null;
-  try { t = window.localStorage.getItem("clanker.theme"); } catch (e) {}
-  return THEMES.indexOf(t) === -1 ? "system" : t;
-}
-
-function applyTheme(theme) {
-  if (theme === "system") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", theme);
-  el.themeToggle.textContent = "theme: " + theme;
-}
+/* THEMES/loadTheme/applyTheme live in core/theme.js (bridged). */
+var THEMES = (window.THEMES || (window.ckTheme && window.ckTheme.THEMES)) || ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day"];
+var loadTheme = (window.ckTheme && window.ckTheme.loadTheme) || function(){ var t=null; try{ t=window.localStorage.getItem("clanker.theme"); }catch(e){} return THEMES.indexOf(t)===-1?"system":t; };
+var applyTheme = (window.ckTheme && window.ckTheme.applyTheme) || function(theme){ if(theme==="system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", theme); if(el && el.themeToggle) el.themeToggle.textContent="theme: "+theme; };
 
 var theme = loadTheme();
 applyTheme(theme);
@@ -918,296 +783,15 @@ function showCaret(turn, on) {
    innerHTML, so markup a model writes lands as visible characters and is
    never parsed as markup. */
 
-var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
-
-/* isSafeLinkUrl lives in core/utils.js: only a scheme that cannot execute script
-   is ever assigned to href/src. */
-
-function inlineInto(parent, text) {
-  while (text.length) {
-    var m = INLINE_RE.exec(text);
-    if (!m) { parent.appendChild(document.createTextNode(text)); return; }
-    if (m.index > 0) parent.appendChild(document.createTextNode(text.slice(0, m.index)));
-    var tok = m[0], node;
-    if (tok.charAt(0) === "`") {
-      node = document.createElement("code");
-      node.textContent = tok.slice(1, -1);
-    } else if (tok.slice(0, 2) === "**") {
-      node = document.createElement("strong");
-      inlineInto(node, tok.slice(2, -2));
-    } else if (tok.charAt(0) === "*" || tok.charAt(0) === "_") {
-      var before = m.index > 0 ? text.charAt(m.index - 1) : " ";
-      var after = text.charAt(m.index + tok.length) || " ";
-      // Intra-word underscores are identifiers, not emphasis: snake_case
-      // names in an answer used to render as italics with the underscores
-      // eaten.
-      if (tok.charAt(0) === "_" && (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(after))) {
-        parent.appendChild(document.createTextNode(tok));
-        text = text.slice(m.index + tok.length);
-        continue;
-      }
-      node = document.createElement("em");
-      inlineInto(node, tok.slice(1, -1));
-    } else if (tok.slice(0, 2) === "![") {
-      // An image, not a link to one: the link branch below matched the second
-      // half and left the "!" behind as text.
-      var isplit = tok.indexOf("](");
-      var isrc = tok.slice(isplit + 2, -1);
-      if (isSafeLinkUrl(isrc)) {
-        node = document.createElement("img");
-        node.src = isrc;
-        node.alt = tok.slice(2, isplit);
-        node.className = "md-img";
-        node.loading = "lazy";
-      } else {
-        node = document.createTextNode(tok);
-      }
-    } else if (tok.charAt(0) === "[") {
-      var split = tok.indexOf("](");
-      var href = tok.slice(split + 2, -1);
-      if (isSafeLinkUrl(href)) {
-        node = document.createElement("a");
-        node.href = href;
-        node.rel = "noreferrer noopener";
-        inlineInto(node, tok.slice(1, split));
-      } else {
-        node = document.createDocumentFragment();
-        inlineInto(node, tok.slice(1, split));
-      }
-    } else {
-      node = document.createElement("a");
-      node.href = tok;
-      node.rel = "noreferrer noopener";
-      node.textContent = tok;
-    }
-    parent.appendChild(node);
-    text = text.slice(m.index + tok.length);
-  }
-}
-
-/* A single newline inside a paragraph is kept as a line break rather than
-   collapsed to a space: agent output leans on hard-wrapped lines, and
-   joining them reflows tables of numbers into prose. */
-function paragraphInto(parent, lines) {
-  lines.forEach(function (line, i) {
-    if (i) parent.appendChild(document.createElement("br"));
-    inlineInto(parent, line);
-  });
-}
-
-function tableRow(tr, cells, cellTag) {
-  cells.forEach(function (c) {
-    var cell = document.createElement(cellTag);
-    inlineInto(cell, c.trim());
-    tr.appendChild(cell);
-  });
-}
-
-/* splitRow lives in core/utils.js. */
-
-function renderMarkdown(text) {
-  var frag = document.createDocumentFragment();
-  var lines = text.split("\n");
-  var i = 0;
-  /* Indentation is structure: agent output leans on nested bullets, and
-     flattening a plan into one level loses what depends on what. Each level
-     recurses, so a sub-list becomes a list inside its parent's item. */
-  function buildList(ordered, indent) {
-    var list = document.createElement(ordered ? "ol" : "ul");
-    var li = null;
-    var first = true;
-    while (i < lines.length) {
-      var line = lines[i];
-      var m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line);
-      if (!m) break;
-      var depth = m[1].length;
-      if (depth < indent) break;
-      if (depth > indent) {
-        // Deeper than this list: it belongs to the item just added.
-        var childOrdered = /\d/.test(m[2]);
-        var child = buildList(childOrdered, depth);
-        (li || list).appendChild(child);
-        continue;
-      }
-      var isOrdered = /\d/.test(m[2]);
-      if (isOrdered !== ordered) break;
-      // Keep the author's numbering. An answer that numbers eight steps and
-      // writes a paragraph under each one ends the list at every paragraph, so
-      // each step became its own <ol> and every one of them rendered as "1.".
-      // The marker the author wrote is the number the reader should see.
-      if (first && ordered) {
-        var startAt = parseInt(m[2], 10);
-        if (startAt > 1) list.setAttribute("start", String(startAt));
-      }
-      first = false;
-      li = document.createElement("li");
-      var text = m[3];
-      // A task list is a checklist, not two literal brackets.
-      var task = /^\[([ xX])\]\s+(.*)$/.exec(text);
-      if (task) {
-        var box = document.createElement("input");
-        box.type = "checkbox";
-        box.checked = task[1] !== " ";
-        box.disabled = true;
-        li.className = "md-task";
-        li.appendChild(box);
-        text = task[2];
-      }
-      inlineInto(li, text);
-      list.appendChild(li);
-      i += 1;
-    }
-    return list;
-  }
-
-  function flushList(ordered) {
-    var indent = /^(\s*)/.exec(lines[i])[1].length;
-    frag.appendChild(buildList(ordered, indent));
-  }
-  while (i < lines.length) {
-    var line = lines[i];
-    if (!line.trim()) { i += 1; continue; }
-    var head = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (head) {
-      // Answers live under the page's own h2, so the smallest heading a
-      // model writes still nests below it rather than competing with it.
-      var h = document.createElement("h" + Math.min(6, head[1].length + 2));
-      h.className = "md-h";
-      inlineInto(h, head[2]);
-      frag.appendChild(h);
-      i += 1;
-      continue;
-    }
-    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) {
-      frag.appendChild(document.createElement("hr"));
-      i += 1;
-      continue;
-    }
-    if (/^\s*>\s?/.test(line)) {
-      var quote = document.createElement("blockquote");
-      var qlines = [];
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
-        qlines.push(lines[i].replace(/^\s*>\s?/, ""));
-        i += 1;
-      }
-      paragraphInto(quote, qlines);
-      frag.appendChild(quote);
-      continue;
-    }
-    if (/^\s*[-*+]\s+/.test(line)) { flushList(false); continue; }
-    if (/^\s*\d+[.)]\s+/.test(line)) { flushList(true); continue; }
-    // A table needs its separator row to be a table at all, which keeps a
-    // line that merely contains a pipe from becoming one.
-    if (line.indexOf("|") !== -1 && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
-      var table = document.createElement("table");
-      table.className = "md-table";
-      var thead = document.createElement("thead");
-      var htr = document.createElement("tr");
-      tableRow(htr, splitRow(line), "th");
-      thead.appendChild(htr);
-      table.appendChild(thead);
-      var tbody = document.createElement("tbody");
-      i += 2;
-      while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
-        var btr = document.createElement("tr");
-        tableRow(btr, splitRow(lines[i]), "td");
-        tbody.appendChild(btr);
-        i += 1;
-      }
-      table.appendChild(tbody);
-      var wrap = document.createElement("div");
-      wrap.className = "md-table-wrap";
-      wrap.appendChild(table);
-      frag.appendChild(wrap);
-      continue;
-    }
-    var para = [];
-    while (i < lines.length && lines[i].trim() &&
-           !/^(#{1,6})\s|^\s*[-*+]\s|^\s*\d+[.)]\s|^\s*>/.test(lines[i])) {
-      para.push(lines[i]);
-      i += 1;
-    }
-    var p2 = document.createElement("p");
-    p2.className = "md-p";
-    paragraphInto(p2, para);
-    frag.appendChild(p2);
-  }
-  return frag;
-}
-
-function finalizeAnswer(turn) {
-  if (turn.answer.querySelector(".failed")) return;
-  var raw = turn.root.markdownSource || turn.answer.textContent;
-  if (!raw) return;
-  var frag = document.createDocumentFragment();
-  var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)(?:```|$)/g;
-  var last = 0, m;
-  while ((m = re.exec(raw))) {
-    // Zero-length match at the end of the string: nothing left to promote.
-    if (m[0] === "") break;
-    if (m.index > last) frag.appendChild(renderMarkdown(raw.slice(last, m.index)));
-    frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
-    last = re.lastIndex;
-  }
-  if (last < raw.length) frag.appendChild(renderMarkdown(raw.slice(last)));
-  turn.answer.textContent = "";
-  // Block elements do their own wrapping; leaving the container on pre-wrap
-  // would add the source's newlines on top of the markup's.
-  turn.answer.className = "turn-answer md";
-  turn.answer.appendChild(frag);
-}
-
-/* prettyJsonIfPossible lives in core/utils.js. */
-
-/* Fills codeEl with the text to display and kicks off highlighting once
-   hljs has loaded. Returns what it decided, because the language is needed
-   for the label and cannot be read back off codeEl.className afterwards —
-   hljs appends its own "hljs" class there. */
-function highlightInto(codeEl, lang, rawText) {
-  var pretty = lang ? null : prettyJsonIfPossible(rawText);
-  var text = pretty !== null ? pretty : rawText;
-  var effectiveLang = pretty !== null ? "json" : (lang || "");
-  codeEl.textContent = text;
-  if (effectiveLang) {
-    codeEl.className = "language-" + effectiveLang;
-    loadHljs().then(function () {
-      try { window.hljs.highlightElement(codeEl); } catch (e) {}
-    }).catch(function () {});
-  }
-  return { text: text, lang: effectiveLang };
-}
-
-function buildCodeBlock(lang, code) {
-  var wrap = document.createElement("div");
-  wrap.className = "code-block";
-
-  var pre = document.createElement("pre");
-  var codeEl = document.createElement("code");
-  var shown = highlightInto(codeEl, lang, code);
-  pre.appendChild(codeEl);
-
-  var head = document.createElement("div");
-  head.className = "code-head";
-  var langTag = document.createElement("span");
-  langTag.className = "code-lang";
-  langTag.textContent = shown.lang;
-  head.appendChild(langTag);
-
-  var copyBtn = document.createElement("button");
-  copyBtn.type = "button";
-  copyBtn.className = "copy-code-btn";
-  copyBtn.textContent = "Copy";
-  // Copies what's actually shown (prettified JSON, not the original
-  // one-line source) — that's what a person just read and expects to paste.
-  copyBtn.addEventListener("click", function () {
-    copyText(shown.text, copyBtn, "Copy", codeEl);
-  });
-  head.appendChild(copyBtn);
-
-  wrap.appendChild(head);
-  wrap.appendChild(pre);
-  return wrap;
-}
+/* Markdown + code rendering lives in lib/markdown.js (bridged as window.ckMarkdown). */
+var INLINE_RE = window.ckMarkdown ? window.ckMarkdown.INLINE_RE : /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+var inlineInto = window.ckMarkdown ? window.ckMarkdown.inlineInto : function(parent,text){ parent.appendChild(document.createTextNode(text)); };
+var paragraphInto = window.ckMarkdown ? window.ckMarkdown.paragraphInto : function(parent,lines){ lines.forEach(function(ln,i){ if(i) parent.appendChild(document.createElement("br")); parent.appendChild(document.createTextNode(ln)); }); };
+var tableRow = window.ckMarkdown ? window.ckMarkdown.tableRow : function(tr,cells,tag){ cells.forEach(function(c){ var cell=document.createElement(tag); cell.textContent=c.trim(); tr.appendChild(cell); }); };
+var renderMarkdown = window.ckMarkdown ? window.ckMarkdown.renderMarkdown : function(text){ var f=document.createDocumentFragment(); var p=document.createElement("p"); p.textContent=text; f.appendChild(p); return f; };
+var highlightInto = window.ckMarkdown ? window.ckMarkdown.highlightInto : function(codeEl,lang,raw){ codeEl.textContent=raw; return {text:raw, lang:lang||""}; };
+var buildCodeBlock = window.ckMarkdown ? window.ckMarkdown.buildCodeBlock : function(lang,code){ var d=document.createElement("div"); d.textContent=code; return d; };
+var finalizeAnswer = window.ckMarkdown ? window.ckMarkdown.finalizeAnswer : function(turn){};
 
 function addToolEvent(turn, names) {
   var row = document.createElement("div");
@@ -1918,15 +1502,7 @@ function loadRun(id) {
     });
 }
 
-function metricsFor(n) {
-  if (n.kind === "llm") {
-    return n.prompt_tokens + "/" + n.completion_tokens + " tok · " + n.duration_ms + "ms";
-  }
-  if (n.kind === "tool") {
-    return n.result_bytes + " B · " + n.duration_ms + "ms";
-  }
-  return "answer " + n.result_bytes + " B";
-}
+var metricsFor = window.ckGraph ? window.ckGraph.metricsFor : function(n){ if(n.kind==="llm") return n.prompt_tokens+"/"+n.completion_tokens+" tok · "+n.duration_ms+"ms"; if(n.kind==="tool") return n.result_bytes+" B · "+n.duration_ms+"ms"; return "answer "+n.result_bytes+" B"; };
 
 /* The run is a chain of iterations: one llm node decides, then zero or
    more tool nodes run (in parallel when the model asked for several at
@@ -1934,16 +1510,7 @@ function metricsFor(n) {
    decides it's done and a final node closes the run. Group the flat node
    list back into that shape so it can be drawn as boxes and arrows instead
    of a bar chart pretending to be a timeline. */
-function buildStages(nodes) {
-  var stages = [];
-  var final = null;
-  nodes.forEach(function (n) {
-    if (n.kind === "llm") stages.push({ iteration: n.iteration, llm: n, tools: [] });
-    else if (n.kind === "tool" && stages.length) stages[stages.length - 1].tools.push(n);
-    else if (n.kind === "final") final = n;
-  });
-  return { stages: stages, final: final };
-}
+var buildStages = window.ckGraph ? window.ckGraph.buildStages : function(nodes){ var stages=[], fin=null; nodes.forEach(function(n){ if(n.kind==="llm") stages.push({iteration:n.iteration, llm:n, tools:[]}); else if(n.kind==="tool"&&stages.length) stages[stages.length-1].tools.push(n); else if(n.kind==="final") fin=n; }); return {stages:stages, final:fin}; };
 
 var lastGraph = null;
 var lastBuilt = null;
@@ -2029,21 +1596,7 @@ function drawRun(g) {
   });
 }
 
-function graphSummaryText(built) {
-  var parts = ["Execution graph:"];
-  built.stages.forEach(function (stage) {
-    var seg = "iteration " + stage.iteration + " called the model";
-    if (stage.tools.length === 1) {
-      seg += ", then ran 1 tool (" + stage.tools[0].label + ")";
-    } else if (stage.tools.length > 1) {
-      seg += ", then ran " + stage.tools.length + " tools in parallel (" +
-        stage.tools.map(function (t) { return t.label; }).join(", ") + ")";
-    }
-    parts.push(seg + ".");
-  });
-  parts.push(built.final ? "The run ended with a final answer." : "The run ended without a final answer.");
-  return parts.join(" ");
-}
+var graphSummaryText = window.ckGraph ? window.ckGraph.graphSummaryText : function(built){ return "Execution graph"; };
 
 /* Turns the stage list into d3-dag's flat {id, parentIds} input: each llm
    node's parents are whatever fed it (the previous llm directly, or that
@@ -2051,29 +1604,7 @@ function graphSummaryText(built) {
    and a synthetic "incomplete" node closes off a run that ended without a
    final node (hit the iteration cap or the token budget) instead of
    leaving the chain dangling with no visible outcome. */
-function toDagInput(built) {
-  var data = [];
-  var parents = [];
-  built.stages.forEach(function (stage) {
-    var llmId = "n" + data.length;
-    data.push({ id: llmId, parentIds: parents, kind: "llm", node: stage.llm, iteration: stage.iteration });
-    if (stage.tools.length) {
-      parents = stage.tools.map(function (tn) {
-        var tid = "n" + data.length;
-        data.push({ id: tid, parentIds: [llmId], kind: "tool", node: tn });
-        return tid;
-      });
-    } else {
-      parents = [llmId];
-    }
-  });
-  if (data.length) {
-    data.push(built.final
-      ? { id: "n" + data.length, parentIds: parents, kind: "final", node: built.final }
-      : { id: "n" + data.length, parentIds: parents, kind: "incomplete", node: null });
-  }
-  return data;
-}
+var toDagInput = window.ckGraph ? window.ckGraph.toDagInput : function(built){ return []; };
 
 /* Lays the DAG out with d3-dag's Sugiyama layered algorithm (proper
    crossing minimization instead of hand-rolled fan-out math — this is the
@@ -2081,198 +1612,11 @@ function toDagInput(built) {
    and draws the result as accessible DOM boxes with an SVG arrow layer
    behind them. A layer wider than the viewport scrolls horizontally
    inside .run-canvas rather than wrapping or shrinking nodes. */
-function layoutGraph(canvas, built, slowest) {
-  var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
-  // The iteration-number tag hangs left of each llm node's own box (see
-  // .run-iter-tag placement below), so the left edge needs extra room or
-  // it clips into an unnecessary scrollbar.
-  var tagPad = 42;
-  var containerW = canvas.clientWidth || el.runGraph.clientWidth || 320;
+var layoutGraph = window.ckGraph ? window.ckGraph.layoutGraph : function(){ return Promise.resolve(); };
 
-  var data = toDagInput(built);
-  if (!data.length) return;
+var buildIncompleteNode = window.ckGraph ? window.ckGraph.buildIncompleteNode : function(nodeW){ var d=document.createElement("div"); d.className="run-node-incomplete"; d.textContent="did not finish"; return d; };
 
-  /* Build every box first and measure it. A box's height depends on its
-     kind (a final node has no duration bar) and on whether its metrics line
-     wraps, so it ranges from roughly 60 to 90px. The layout used to assume
-     one constant instead, which put consecutive layers on top of each other
-     and left every arrowhead buried under the box it pointed at. */
-  data.forEach(function (d) {
-    d.el = d.kind === "incomplete" ? buildIncompleteNode(nodeW) : buildNodeBox(d, slowest, nodeW);
-    d.el.style.visibility = "hidden";
-    canvas.appendChild(d.el);
-  });
-  var nodeH = 0;
-  data.forEach(function (d) {
-    d.h = d.el.offsetHeight;
-    nodeH = Math.max(nodeH, d.h);
-  });
-
-  var dag;
-  try {
-    dag = window.d3.dagStratify()(data);
-  } catch (e) {
-    canvas.textContent = "";
-    var errEl = document.createElement("p");
-    errEl.className = "run-empty";
-    errEl.textContent = "Could not lay out this run's graph: " + e.message;
-    canvas.appendChild(errEl);
-    el.runStatus.textContent = errEl.textContent;
-    return;
-  }
-  // The tallest box sets the layer pitch, so no pair of layers can collide
-  // however the shorter boxes in between are sized.
-  window.d3.sugiyama().nodeSize([nodeW + hGap, nodeH + vGap])(dag);
-
-  var xs = [], ys = [];
-  for (var dn0 of dag.idescendants()) { xs.push(dn0.x); ys.push(dn0.y); }
-  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
-  var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
-  var graphW = maxX - minX + nodeW;
-  var graphH = maxY - minY + nodeH;
-  // Left-aligned, not centred. A run is usually a single chain, so centring it
-  // parked a narrow column in the middle of a wide canvas with empty space on
-  // both sides — the only block on the page that did not start where every
-  // other block starts.
-  var offsetX = pad + tagPad + nodeW / 2 - minX;
-  var offsetY = pad + nodeH / 2 - minY;
-
-  var totalW = Math.max(containerW, graphW + pad * 2 + tagPad);
-  var totalH = graphH + pad * 2;
-  canvas.style.height = totalH + "px";
-  // No canvas.style.minWidth here on purpose: absolutely-positioned nodes
-  // and the SVG edge layer (sized to totalW) create scrollable overflow
-  // inside .run-canvas on their own once they exceed its box. Forcing the
-  // box itself to totalW via min-width would make the *page* that wide
-  // instead of scrolling inside this container.
-
-  var svgNS = "http://www.w3.org/2000/svg";
-  var svg = document.createElementNS(svgNS, "svg");
-  svg.setAttribute("class", "run-edges");
-  svg.setAttribute("width", totalW);
-  svg.setAttribute("height", totalH);
-  svg.setAttribute("aria-hidden", "true");
-
-  var defs = document.createElementNS(svgNS, "defs");
-  var marker = document.createElementNS(svgNS, "marker");
-  marker.setAttribute("id", "run-arrow");
-  marker.setAttribute("viewBox", "0 0 8 8");
-  marker.setAttribute("refX", "7");
-  marker.setAttribute("refY", "4");
-  marker.setAttribute("markerWidth", "6");
-  marker.setAttribute("markerHeight", "6");
-  marker.setAttribute("orient", "auto-start-reverse");
-  var arrowPath = document.createElementNS(svgNS, "path");
-  arrowPath.setAttribute("d", "M0,0 L8,4 L0,8 z");
-  arrowPath.setAttribute("fill", "var(--border)");
-  marker.appendChild(arrowPath);
-  defs.appendChild(marker);
-  svg.appendChild(defs);
-
-  /* Sugiyama hands back centre-to-centre polylines. Drawing them as-is put
-     the arrowhead inside the opaque target box, so no arrow was ever
-     visible: clip the ends back to each box's edge instead. */
-  for (var link of dag.ilinks()) {
-    var pts = link.points.map(function (p) { return [p.x + offsetX, p.y + offsetY]; });
-    pts[0][1] = link.source.y + offsetY + link.source.data.h / 2;
-    pts[pts.length - 1][1] = link.target.y + offsetY - link.target.data.h / 2 - 3;
-    var d = "M" + pts[0][0] + "," + pts[0][1];
-    for (var pi = 1; pi < pts.length; pi++) d += " L" + pts[pi][0] + "," + pts[pi][1];
-    var path = document.createElementNS(svgNS, "path");
-    path.setAttribute("d", d);
-    path.setAttribute("marker-end", "url(#run-arrow)");
-    svg.appendChild(path);
-  }
-  // Behind the boxes, which are already in the canvas from the measuring pass.
-  canvas.insertBefore(svg, canvas.firstChild);
-
-  for (var dn of dag.idescendants()) {
-    var cx = dn.x + offsetX, cy = dn.y + offsetY;
-    let kind = dn.data.kind, node = dn.data.node, box = dn.data.el;
-
-    // Each box is centred on its own height, not on a shared constant.
-    box.style.left = (cx - nodeW / 2) + "px";
-    box.style.top = (cy - dn.data.h / 2) + "px";
-    box.style.visibility = "";
-
-    if (kind === "incomplete") continue;
-
-    if (kind === "llm") {
-      var tag = document.createElement("span");
-      tag.className = "run-iter-tag";
-      tag.textContent = dn.data.iteration;
-      tag.style.left = (cx - nodeW / 2 - 20) + "px";
-      tag.style.top = (cy - 11) + "px";
-      tag.setAttribute("aria-hidden", "true");
-      canvas.appendChild(tag);
-    }
-
-    box.addEventListener("click", function () {
-      el.runGraph.querySelectorAll(".run-node.selected").forEach(function (n) { n.classList.remove("selected"); });
-      box.classList.add("selected");
-      showNodeDetail(kind, node);
-    });
-  }
-}
-
-function buildIncompleteNode(nodeW) {
-  var stop = document.createElement("div");
-  stop.className = "run-node-incomplete";
-  stop.style.width = nodeW + "px";
-  stop.textContent = "did not finish";
-  // Real text, not aria-label: this is a plain <div> with no role, where
-  // aria-label is ignored by most screen readers — so the reason, the only
-  // place the *why* is stated, never reached assistive tech at all.
-  var why = document.createElement("span");
-  why.className = "sr-only";
-  why.textContent = " — the run ended without a final answer, most likely hitting the iteration limit or the token budget.";
-  stop.appendChild(why);
-  return stop;
-}
-
-function buildNodeBox(d, slowest, nodeW) {
-  var kind = d.kind, node = d.node;
-  var box = document.createElement("button");
-  box.type = "button";
-  box.className = "run-node";
-  box.dataset.kind = kind;
-  if (node.ok === false) box.dataset.ok = "false";
-  box.style.width = nodeW + "px";
-
-  var kindEl = document.createElement("span");
-  kindEl.className = "run-node-kind";
-  kindEl.textContent = "";
-  if (node.ok === false) kindEl.appendChild(icon("strike", 12));
-  kindEl.appendChild(document.createTextNode(kind));
-  box.appendChild(kindEl);
-
-  var label = document.createElement("span");
-  label.className = "run-node-label";
-  label.textContent = node.label || node.detail || kind;
-  // The box ellipsises a long tool name; without this only a screen-reader
-  // user (via aria-label below) could find out what it was.
-  label.title = label.textContent;
-  box.appendChild(label);
-
-  var metrics = document.createElement("span");
-  metrics.className = "run-node-metrics";
-  metrics.textContent = metricsFor(node);
-  box.appendChild(metrics);
-
-  if (kind !== "final") {
-    var bar = document.createElement("span");
-    bar.className = "run-node-bar";
-    var barFill = document.createElement("span");
-    barFill.style.width = Math.max(2, Math.round((node.duration_ms || 0) / slowest * 100)) + "%";
-    bar.appendChild(barFill);
-    box.appendChild(bar);
-  }
-
-  // The bar and the strike mark are decorative; the label already carries
-  // kind, name, and every number a screen reader needs.
-  box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
-  return box;
-}
+var buildNodeBox = window.ckGraph ? window.ckGraph.buildNodeBox : function(d,slowest,nodeW){ var b=document.createElement("button"); b.textContent=d.node.label||d.kind; return b; };
 
 /* A collapsible tree for JSON-shaped node output — most tool results are
    JSON, and a flat highlighted blob makes a large payload (a big file
@@ -5490,17 +4834,8 @@ function paletteEntries() {
 var paletteItems = [];
 var paletteIndex = 0;
 
-/* Subsequence matching, the same thing an editor's file finder does: "grp"
-   finds "run graph". Cheap, and it forgives the order you remember. */
-function fuzzyMatch(query, text) {
-  if (!query) return true;
-  var t = text.toLowerCase();
-  var qi = 0;
-  for (var i = 0; i < t.length && qi < query.length; i++) {
-    if (t.charAt(i) === query.charAt(qi)) qi += 1;
-  }
-  return qi === query.length;
-}
+/* fuzzyMatch lives in core/utils.js (bridged as window.ckUtil.fuzzyMatch). */
+var fuzzyMatch = window.ckUtil ? window.ckUtil.fuzzyMatch : function(q,t){ if(!q) return true; var tt=String(t).toLowerCase(), qq=String(q).toLowerCase(), qi=0; for(var i=0;i<tt.length&&qi<qq.length;i++) if(tt.charAt(i)===qq.charAt(qi)) qi+=1; return qi===qq.length; };
 
 function renderPalette() {
   var rawQ = el.paletteInput.value.trim();

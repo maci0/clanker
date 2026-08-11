@@ -213,6 +213,76 @@ test "autoFormatAndCheck short-circuits when there is nothing to format" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// Rejects a proposal that lists the same file path more than once.
+/// Multiple changes to one file risk the second edit's `old` text no longer
+/// matching after the first edit is applied, causing a silent misapply or a
+/// confusing "old text not found" error. Catching it here gives a clear
+/// diagnostic before any file I/O.
+pub fn duplicateFileGate(files: []const []const u8) GateResult {
+    for (files, 0..) |f, i| {
+        for (files[i + 1 ..]) |g| {
+            if (std.mem.eql(u8, f, g)) {
+                return .{ .ok = false, .label = "duplicate-file", .detail = f };
+            }
+        }
+    }
+    return .{ .ok = true, .label = "duplicate-file" };
+}
+
+test "duplicateFileGate rejects repeated files and accepts distinct ones" {
+    const dup = duplicateFileGate(&.{ "src/a.zig", "src/b.zig", "src/a.zig" });
+    try std.testing.expect(!dup.ok);
+    try std.testing.expectEqualStrings("duplicate-file", dup.label);
+    try std.testing.expectEqualStrings("src/a.zig", dup.detail);
+
+    const ok = duplicateFileGate(&.{ "src/a.zig", "src/b.zig", "src/c.zig" });
+    try std.testing.expect(ok.ok);
+
+    const empty = duplicateFileGate(&.{});
+    try std.testing.expect(empty.ok);
+
+    const single = duplicateFileGate(&.{"src/x.zig"});
+    try std.testing.expect(single.ok);
+}
+
+/// Validates that a set of proposed changes are semantically meaningful:
+/// every (old, new) pair must differ, and at least one change must exist.
+/// Returns ok=false with a diagnostic when the proposal is a no-op.
+pub fn proposalDiffGate(old_texts: []const []const u8, new_texts: []const []const u8) GateResult {
+    if (old_texts.len == 0) return .{ .ok = false, .label = "proposal-diff", .detail = "proposal contains no changes" };
+    if (old_texts.len != new_texts.len) return .{ .ok = false, .label = "proposal-diff", .detail = "mismatched old/new change count" };
+    for (old_texts, new_texts) |old, new| {
+        if (std.mem.eql(u8, old, new)) return .{ .ok = false, .label = "proposal-diff", .detail = "a change has identical old and new text (no-op)" };
+    }
+    return .{ .ok = true, .label = "proposal-diff" };
+}
+
+test "proposalDiffGate rejects no-op and empty proposals" {
+    // Empty proposal.
+    const empty = proposalDiffGate(&.{}, &.{});
+    try std.testing.expect(!empty.ok);
+    try std.testing.expectEqualStrings("proposal-diff", empty.label);
+
+    // Identical old/new is a no-op.
+    const noop = proposalDiffGate(&.{"const x = 1;"}, &.{"const x = 1;"});
+    try std.testing.expect(!noop.ok);
+
+    // A real change passes.
+    const real = proposalDiffGate(&.{"const x = 1;"}, &.{"const x = 2;"});
+    try std.testing.expect(real.ok);
+
+    // Mixed: one real change and one no-op fails.
+    const mixed = proposalDiffGate(
+        &.{ "const a = 1;", "const b = 2;" },
+        &.{ "const a = 99;", "const b = 2;" },
+    );
+    try std.testing.expect(!mixed.ok);
+
+    // Mismatched lengths.
+    const mismatch = proposalDiffGate(&.{"x"}, &.{ "y", "z" });
+    try std.testing.expect(!mismatch.ok);
+}
+
 test "fmtGate and formatFiles short-circuit when there is nothing to format" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
