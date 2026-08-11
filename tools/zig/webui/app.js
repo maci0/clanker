@@ -415,9 +415,20 @@ function fmtBytes(n) {
   return (n / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+/* Shortening that ends on a word. Slicing at a fixed character cut names in
+   half ("repl: write a markdow…"), which reads as a rendering fault rather
+   than as a title too long to show. Falls back to the hard cut when a single
+   word is longer than the budget. */
+function clip(text, max) {
+  if (text.length <= max) return text;
+  var cut = text.slice(0, max);
+  var space = cut.lastIndexOf(" ");
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-]+$/, "") + "\u2026";
+}
+
 function sessionLabel(s) {
   var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
-  if (title.length > 56) title = title.slice(0, 55) + "…";
+  title = clip(title, 56);
   var label = title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
   // Transcript weight, because agent.compact_threshold_bytes is measured in
   // exactly these bytes and compaction is otherwise invisible until it fires.
@@ -1750,7 +1761,7 @@ el.form.addEventListener("submit", function (e) {
 
 function runLabel(r) {
   var task = (r.task || "").replace(/\s+/g, " ").trim();
-  if (task.length > 60) task = task.slice(0, 59) + "…";
+  task = clip(task, 60);
   return r.run_id + "  ·  " + (task || "(no task)");
 }
 
@@ -3060,15 +3071,7 @@ function buildToolRow(t) {
   // last word that fits. Slicing at a fixed byte cut a word in half and said
   // nothing about the rest ("guessing would waste w"), so a shortened line now
   // ends on a word and admits it was shortened.
-  if (stop > 0 && stop < 160) {
-    desc.textContent = text.slice(0, stop + 1);
-  } else if (text.length <= 160) {
-    desc.textContent = text;
-  } else {
-    var cut = text.slice(0, 160);
-    var space = cut.lastIndexOf(" ");
-    desc.textContent = (space > 80 ? cut.slice(0, space) : cut).replace(/[,;:.\s]+$/, "") + "…";
-  }
+  desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : clip(text, 160);
   desc.title = text;
   row.appendChild(desc);
 

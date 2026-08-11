@@ -476,13 +476,7 @@ label {
   letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--fg-muted); margin-bottom: 0.4rem;
 }
-#view-chat > label,
-#view-chat > section > label,
-#view-chat .composer label,
-#view-chat .filter-row label {
-  position: relative; background: var(--paper);
-  padding-right: var(--space-2); width: fit-content;
-}
+
 textarea {
   width: 100%; min-height: 5rem; padding: 0.75rem;
   font-family: var(--sans); font-size: var(--step-1); line-height: 1.5;
@@ -494,6 +488,8 @@ textarea {
   display: flex; flex-wrap: wrap; justify-content: space-between;
   align-items: center; gap: var(--space-4); margin-top: var(--space-4);
 }
+.toolbar > .meta { margin-right: auto; }
+.toolbar > .meta:empty { display: none; }
 .toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
 button {
   min-height: 44px; padding: 0.5rem 1.25rem;
@@ -822,6 +818,8 @@ button.tool-name:hover { color: var(--accent); }
 .goal-field b { color: var(--fg); font-weight: 700; }
 
 dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
+dd ul { list-style: none; margin: 0; padding: 0; }
+dd ul li + li { margin-top: 0.25rem; }
 dt { font-size: var(--step-0); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); }
 dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
 dd ul { margin: 0; padding-left: 1.1rem; }
@@ -919,7 +917,7 @@ button:active:not(:disabled) { transform: scale(0.97); }
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
   margin-top: var(--space-3);
 }
-.run-options > label { color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); }
+.run-options > label { flex-basis: 100%; margin-bottom: 0; }
 .params-grid { align-items: center; }
 .params-grid label { color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); }
 .params-grid input[type="number"] { width: 6rem; }
@@ -970,9 +968,11 @@ mark {
 .suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
 .toasts {
-  position: fixed; right: var(--space-5); top: calc(var(--space-5) + 3.5rem); z-index: 30;
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: var(--space-5); z-index: 30;
   display: flex; flex-direction: column; gap: var(--space-2);
-  align-items: flex-end; pointer-events: none;
+  align-items: center; pointer-events: none;
+  max-width: min(40rem, calc(100vw - var(--space-5) * 2));
 }
 .toast {
   pointer-events: auto; max-width: min(40rem, 90vw);
@@ -984,7 +984,7 @@ mark {
   animation: toast-in 140ms ease-out;
 }
 .toast[data-kind="bad"] { border-color: var(--danger); color: var(--danger); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(-0.4rem); } to { opacity: 1; transform: none; } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
 .goal-form {
@@ -1026,7 +1026,7 @@ mark {
    a line through each row of Tools and each goal; scoped here it runs the
    chat column and stops. The offset drops --space-5 because this sits inside
    main's padding rather than on it. */
-#view-chat {
+#view-chat .transcript {
   background:
     repeating-linear-gradient(180deg,
       var(--fg-muted) 0 1px, transparent 1px 9px)
