@@ -90,6 +90,12 @@ pub const Agent = struct {
     max_iterations: u32 = 12,
     compact_threshold_bytes: usize = 24000,
     max_total_tokens: ?u32 = null,
+    /// Per-turn cap on input tokens; conversation is compacted before a turn
+    /// whose content would exceed it.
+    max_tokens_per_turn: u32 = 4096,
+    /// Total history token budget; when accumulated conversation history goes
+    /// beyond this, older messages are compacted away.
+    max_history_tokens: u32 = 16000,
     tools_dir: []const u8 = "tools",
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
@@ -460,6 +466,8 @@ pub const Config = struct {
         if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
         if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
         if (obj.get("max_total_tokens")) |k| a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
+        if (obj.get("max_tokens_per_turn")) |k| a.max_tokens_per_turn = @intCast(try jsonInt(k, "max_tokens_per_turn"));
+        if (obj.get("max_history_tokens")) |k| a.max_history_tokens = @intCast(try jsonInt(k, "max_history_tokens"));
         if (obj.get("tools_dir")) |k| a.tools_dir = try jsonStr(k, "tools_dir");
         if (obj.get("skills_dir")) |k| a.skills_dir = try jsonStr(k, "skills_dir");
         if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");
