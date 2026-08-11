@@ -229,6 +229,109 @@ pub const Registry = struct {
     }
 
     /// Converts registry tools into LLM ToolDefs (in the given arena).
+    /// Name of the tool that hands out schemas on demand. Defined here
+    /// because both the registry (which advertises it) and the agent (which
+    /// answers it) have to agree on the spelling.
+    pub const load_tool_name = "load_tools";
+
+    /// The schema the model needs to ask for other schemas.
+    pub fn loadToolDef(arena: std.mem.Allocator) !types.ToolDef {
+        var names_schema: json.ObjectMap = .empty;
+        try names_schema.put(arena, "type", .{ .string = "array" });
+        var item: json.ObjectMap = .empty;
+        try item.put(arena, "type", .{ .string = "string" });
+        try names_schema.put(arena, "items", .{ .object = item });
+
+        var props: json.ObjectMap = .empty;
+        try props.put(arena, "names", .{ .object = names_schema });
+
+        var required = json.Array.init(arena);
+        try required.append(.{ .string = "names" });
+
+        var schema: json.ObjectMap = .empty;
+        try schema.put(arena, "type", .{ .string = "object" });
+        try schema.put(arena, "properties", .{ .object = props });
+        try schema.put(arena, "required", .{ .array = required });
+
+        return .{
+            .name = load_tool_name,
+            .description = "Load the full input schemas for tools listed in the tool catalog, so they can be called. " ++
+                "Pass the exact names from the catalog. The tools stay available for the rest of this run.",
+            .input_schema = .{ .object = schema },
+        };
+    }
+
+    /// One line per tool: what exists, and enough of what it does to decide
+    /// whether to ask for its schema. This is what the system prompt carries
+    /// instead of every schema, which for this repo is the difference between
+    /// roughly 6,600 tokens and roughly 1,000 in every single request.
+    pub fn catalogText(self: *const Registry, arena: std.mem.Allocator, revealed: *const std.StringArrayHashMapUnmanaged(void)) ![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        // Not "names": Registry.names is a method on this same type, and a
+        // local of that name shadows it and does not compile.
+        var listed: std.ArrayList([]const u8) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr.*;
+            if (t.internal or !t.enabled) continue;
+            try listed.append(arena, t.name);
+        }
+        std.mem.sort([]const u8, listed.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        for (listed.items) |name| {
+            const t = self.get(name).?;
+            // A tool whose schema is already loaded is marked, so the model
+            // does not spend a call asking for what it can already call.
+            const mark: []const u8 = if (revealed.contains(name)) "* " else "  ";
+            try out.writer.print("{s}{s}: {s}\n", .{ mark, name, firstLine(t.description) });
+        }
+        return out.written();
+    }
+
+    fn firstLine(s: []const u8) []const u8 {
+        const line = s[0 .. std.mem.indexOfScalar(u8, s, '\n') orelse s.len];
+        // Long enough to choose by, short enough that forty of them stay cheap.
+        return if (line.len > 160) line[0..160] else line;
+    }
+
+    test firstLine {
+        try std.testing.expectEqualStrings("one", firstLine("one\ntwo"));
+        try std.testing.expectEqualStrings("short", firstLine("short"));
+        try std.testing.expectEqual(@as(usize, 160), firstLine("x" ** 400).len);
+    }
+
+    /// The tool definitions to send with a request: the always-available core,
+    /// everything revealed so far, and `load_tools` itself. The rest of the
+    /// registry is reachable through the catalog, not through this list.
+    pub fn lazyToolDefs(
+        self: *const Registry,
+        arena: std.mem.Allocator,
+        core: []const []const u8,
+        revealed: *const std.StringArrayHashMapUnmanaged(void),
+    ) ![]types.ToolDef {
+        var out: std.ArrayList(types.ToolDef) = .empty;
+        try out.append(arena, try loadToolDef(arena));
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr.*;
+            if (t.internal or !t.enabled) continue;
+            const in_core = for (core) |c| {
+                if (std.mem.eql(u8, c, t.name)) break true;
+            } else false;
+            if (!in_core and !revealed.contains(t.name)) continue;
+            try out.append(arena, .{
+                .name = t.name,
+                .description = t.description,
+                .input_schema = t.input_schema,
+                .internal = t.internal,
+            });
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     pub fn toToolDefs(self: *const Registry, arena: std.mem.Allocator) ![]types.ToolDef {
         var out: std.ArrayList(types.ToolDef) = .empty;
         var it = self.tools.iterator();

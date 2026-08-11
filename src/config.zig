@@ -104,6 +104,14 @@ pub const Agent = struct {
     /// Total history token budget; when accumulated conversation history goes
     /// beyond this, older messages are compacted away.
     max_history_tokens: u32 = 16000,
+    /// Send full schemas only for the tools this clanker actually uses,
+    /// and let the model ask for the rest by name. With forty-odd tools the
+    /// schemas are several thousand tokens in every single request, and most
+    /// of them are not wanted on most turns.
+    tool_catalog: bool = true,
+    /// How many of the most-used tools keep their schemas loaded without
+    /// being asked for. Measured, not configured: see tools/usage.zig.
+    hot_tools: u32 = 10,
     tools_dir: []const u8 = "tools",
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",

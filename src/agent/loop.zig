@@ -6,6 +6,7 @@ const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const registry = @import("../tools/registry.zig");
+const tool_usage = @import("../tools/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
 const system_prompt = @import("system_prompt.zig");
@@ -68,6 +69,16 @@ pub const Agent = struct {
     cfg: *const config.Config,
     reg: *const registry.Registry,
     tool_defs: []const types.ToolDef,
+    /// How often each tool has been called, across every run this clanker has
+    /// ever done. Decides which schemas are loaded without being asked for.
+    usage: tool_usage.Usage = .{},
+    /// Tools whose schemas the model asked for during this run. They stay
+    /// available until the run ends: a tool wanted once is usually wanted
+    /// again, and re-sending the catalog line is cheaper than a second
+    /// round-trip to load it.
+    revealed: std.StringArrayHashMapUnmanaged(void) = .empty,
+    /// False when every schema is sent every time (config.agent.tool_catalog).
+    catalog_mode: bool = false,
     max_iterations: u32,
     /// The system prompt (arena-owned), rebuilt when skills change.
     system_prompt_text: []const u8,
@@ -147,6 +158,23 @@ pub const Agent = struct {
     ) !Agent {
         var peer_names: std.ArrayList([]const u8) = .empty;
         for (cfg.peers) |p| peer_names.append(arena, p.name) catch {};
+
+        var usage = tool_usage.Usage.load(ctx.io, arena, std.Io.Dir.cwd());
+        var revealed: std.StringArrayHashMapUnmanaged(void) = .empty;
+        var defs = tool_defs;
+        var catalog: []const u8 = "";
+        if (cfg.agent.tool_catalog) {
+            // The hot set is measured rather than configured: whatever this
+            // clanker actually reaches for keeps its schema in front of the
+            // model, and everything else is one `load_tools` call away.
+            const hot = usage.top(arena, cfg.agent.hot_tools) catch &.{};
+            var core: std.ArrayList([]const u8) = .empty;
+            for (hot) |e| core.append(arena, e.name) catch {};
+            defs = reg.lazyToolDefs(arena, core.items, &revealed) catch tool_defs;
+            catalog = reg.catalogText(arena, &revealed) catch "";
+        }
+
+        log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
         const base_prompt = try system_prompt.build(arena, ctx.io, .{
             .system_prompt_file = cfg.agent.system_prompt_file,
             .skills_dir = cfg.agent.skills_dir,
@@ -154,7 +182,8 @@ pub const Agent = struct {
             .instance_name = cfg.instance.name,
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
-        }, tool_defs);
+            .catalog = catalog,
+        }, defs);
         const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt});
         return .{
             .ctx = ctx,
@@ -162,7 +191,10 @@ pub const Agent = struct {
             .provider = provider,
             .cfg = cfg,
             .reg = reg,
-            .tool_defs = tool_defs,
+            .tool_defs = defs,
+            .usage = usage,
+            .revealed = revealed,
+            .catalog_mode = cfg.agent.tool_catalog,
             .max_iterations = cfg.agent.max_iterations,
             .system_prompt_text = prompt_text,
             .instance_name = cfg.instance.name,
@@ -187,6 +219,7 @@ pub const Agent = struct {
             .instance_name = self.instance_name,
             .instance_id = self.instance_id,
             .peers = self.peer_names,
+            .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
@@ -214,6 +247,10 @@ pub const Agent = struct {
         // reset, a multi-turn REPL session accumulated prior runs' totals in
         // `stats`, and `session_stats` double-counted them on every call.
         self.stats = .{};
+        // The tally is what decides which schemas are loaded next time, so it
+        // is written whatever happens to this run — including the runs that
+        // fail, which are exactly the ones that reached for something unusual.
+        defer self.usage.save(self.ctx.io, self.arena, std.Io.Dir.cwd());
         // Rebuild the system prompt so new skills/learnings from prior turns
         // (or external edits) are visible to the model on this turn.
         self.refreshSystemPrompt(messages);
@@ -1448,6 +1485,70 @@ pub const Agent = struct {
     }
 
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
+    /// Reveals schemas the model asked for and reports what it got. The tool
+    /// list for the next request is rebuilt from `revealed`, so the tools
+    /// become callable on the very next turn.
+    fn loadTools(self: *Agent, tc: types.ToolCall) ![]const u8 {
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, tc.arguments, .{}) catch {
+            return "{\"ok\":false,\"error\":\"expected {\\\"names\\\":[\\\"tool_name\\\"]}\"}";
+        };
+        const names = switch (parsed) {
+            .object => |o| switch (o.get("names") orelse std.json.Value{ .null = {} }) {
+                .array => |a| a,
+                else => return "{\"ok\":false,\"error\":\"names must be an array of tool names\"}",
+            },
+            else => return "{\"ok\":false,\"error\":\"names must be an array of tool names\"}",
+        };
+
+        var out: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &out.writer };
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("loaded");
+        try s.beginArray();
+        var found: usize = 0;
+        for (names.items) |n| {
+            if (n != .string) continue;
+            const t = self.reg.get(n.string) orelse continue;
+            if (t.internal or !t.enabled) continue;
+            self.revealed.put(self.arena, t.name, {}) catch continue;
+            found += 1;
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write(t.name);
+            try s.objectField("description");
+            try s.write(t.description);
+            try s.objectField("input_schema");
+            try s.write(t.input_schema);
+            try s.endObject();
+        }
+        try s.endArray();
+        // Names that matched nothing are said plainly rather than silently
+        // dropped, so a typo does not look like an empty tool.
+        try s.objectField("unknown");
+        try s.beginArray();
+        for (names.items) |n| {
+            if (n != .string) continue;
+            const t = self.reg.get(n.string);
+            if (t == null or t.?.internal or !t.?.enabled) try s.write(n.string);
+        }
+        try s.endArray();
+        try s.endObject();
+
+        if (found > 0) self.rebuildToolDefs();
+        return out.written();
+    }
+
+    /// Recomputes what goes in the next request's tool array.
+    fn rebuildToolDefs(self: *Agent) void {
+        if (!self.catalog_mode) return;
+        const hot = self.usage.top(self.arena, self.cfg.agent.hot_tools) catch return;
+        var core: std.ArrayList([]const u8) = .empty;
+        for (hot) |e| core.append(self.arena, e.name) catch {};
+        self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
+    }
+
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse {
             log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
@@ -1518,6 +1619,39 @@ pub const Agent = struct {
         // initial value and a possible result.
         const results = try self.arena.alloc(?[]const u8, calls.len);
         @memset(results, null);
+
+        for (calls, 0..) |tc, i| {
+            // Counted here, not in executeTool: there are two execution paths
+            // and a third for duplicates, and this is the only point all of
+            // them pass through. Counted before the call, because a tool the
+            // model keeps reaching for should get its schema loaded whether or
+            // not the call succeeds.
+            self.usage.record(self.arena, tc.name);
+            // load_tools is answered by this process rather than the sandbox:
+            // it decides what the next request carries, which no wasm module
+            // can see. It has no registry entry, so filling its slot here also
+            // keeps the passes below from reporting it as an unknown tool.
+            if (self.catalog_mode and std.mem.eql(u8, tc.name, registry.Registry.load_tool_name)) {
+                results[i] = try self.loadTools(tc);
+                continue;
+            }
+            // A model that names a catalogued tool without loading it first is
+            // answered rather than refused. The tool array is what the provider
+            // was offered, but dispatch resolves against the registry, so the
+            // call can simply run — and the schema is revealed so the next
+            // request carries it and the model can get the arguments right if
+            // it guessed them wrong. Without this the catalog costs capability
+            // rather than only tokens, which is not a trade worth making.
+            if (self.catalog_mode and !self.revealed.contains(tc.name)) {
+                if (self.reg.get(tc.name)) |t| {
+                    if (!t.internal and t.enabled) {
+                        self.revealed.put(self.arena, t.name, {}) catch {};
+                        self.rebuildToolDefs();
+                        log.log(.info, "tool '{s}' called from the catalog; its schema is now loaded", .{t.name});
+                    }
+                }
+            }
+        }
 
         // Warm the shared caches on the main thread before any worker
         // spawns: every tool's wasm bytes and every registered transform

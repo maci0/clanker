@@ -15,6 +15,9 @@ pub const PromptParts = struct {
     instance_id: []const u8 = "",
     /// Names of the peer instances it can talk to.
     peers: []const []const u8 = &.{},
+    /// One line per tool, from registry.catalogText. When set, it replaces the
+    /// full "Available tools" listing.
+    catalog: []const u8 = "",
 };
 
 /// Builds the system prompt into `arena`-owned memory. Returns the prompt text.
@@ -128,7 +131,25 @@ pub fn build(
     for (tool_defs) |t| {
         if (!t.internal) visible_tools += 1;
     }
-    if (visible_tools > 0) {
+    // With a catalog, this section is the catalog: one line per tool for every
+    // tool that exists, whether or not its schema is loaded. Without one it is
+    // the full description of everything, which duplicates the descriptions
+    // already carried by the tool schemas in the same request.
+    if (parts.catalog.len > 0) {
+        try buf.appendSlice(arena, "## Tool catalog\n\n");
+        try buf.appendSlice(arena, parts.catalog);
+        try buf.appendSlice(arena,
+            \\
+            \\Lines marked `*` are loaded and can be called now. To call any other
+            \\tool, first call `load_tools` with its exact name from this list; its
+            \\schema then stays available for the rest of this run. Do not guess a
+            \\tool's arguments — load it and read them.
+            \\
+            \\Tool results come back as JSON. If a tool reports {"ok":false,...},
+            \\adapt and retry or answer directly.
+            \\
+        );
+    } else if (visible_tools > 0) {
         try buf.appendSlice(arena, "## Available tools\n\n");
         for (tool_defs) |t| {
             if (t.internal) continue;
