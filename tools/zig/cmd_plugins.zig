@@ -44,7 +44,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
     var args: []const u8 = "";
     if (parsed == .object) {
@@ -53,12 +53,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
-    const plugins = readPlugins(alloc) catch |err| return errJson(out, @errorName(err));
+    const plugins = readPlugins(alloc) catch |err| return lib.fail(out, @errorName(err));
 
     if (args.len == 0) return listJson(out, alloc, plugins);
 
     const sep = std.mem.indexOfScalar(u8, args, ' ') orelse
-        return errJson(out, "usage: /plugins [on|off <name>]");
+        return lib.fail(out, "usage: /plugins [on|off <name>]");
     const verb = args[0..sep];
     const name = std.mem.trim(u8, args[sep + 1 ..], " \t");
 
@@ -67,9 +67,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     else if (std.mem.eql(u8, verb, "off"))
         false
     else
-        return errJson(out, "usage: /plugins [on|off <name>]");
+        return lib.fail(out, "usage: /plugins [on|off <name>]");
 
-    if (name.len == 0) return errJson(out, "usage: /plugins [on|off <name>]");
+    if (name.len == 0) return lib.fail(out, "usage: /plugins [on|off <name>]");
 
     var target: ?*Plugin = null;
     for (plugins) |*p| {
@@ -83,7 +83,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return textJson(out, alloc, if (want_enabled) "already on: " else "already off: ", name);
 
     plugin.enabled = want_enabled;
-    writeDisabled(plugins) catch |err| return errJson(out, @errorName(err));
+    writeDisabled(plugins) catch |err| return lib.fail(out, @errorName(err));
     return textJson(out, alloc, if (want_enabled) "enabled: " else "disabled: ", name);
 }
 
@@ -189,20 +189,5 @@ fn textJson(out: *lib.Out, alloc: std.mem.Allocator, prefix: []const u8, name: [
 }
 
 fn writeText(out: *lib.Out, text: []const u8) !void {
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(text);
-    try s.endObject();
-    try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
+    return lib.okText(out, text);
 }

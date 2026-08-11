@@ -12,21 +12,21 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const path = switch (obj.get("path") orelse return errJson(out, "missing path")) {
+    const path = switch (obj.get("path") orelse return lib.fail(out, "missing path")) {
         .string => |s| s,
-        else => return errJson(out, "path must be a string"),
+        else => return lib.fail(out, "path must be a string"),
     };
 
-    const data = lib.fsRead(path) catch |err| return errJson(out, @errorName(err));
+    const data = lib.fsRead(path) catch |err| return lib.fail(out, @errorName(err));
     // Keep the base64 + JSON under the guest output cap.
-    if (data.len > 40000) return errJson(out, "image too large (max 40000 bytes)");
+    if (data.len > 40000) return lib.fail(out, "image too large (max 40000 bytes)");
 
     const mime = mimeFor(path);
     const b64_len = std.base64.standard.Encoder.calcSize(data.len);
-    const b64 = std.heap.wasm_allocator.alloc(u8, b64_len) catch return errJson(out, "alloc");
-    defer std.heap.wasm_allocator.free(b64);
+    const b64 = lib.alloc.alloc(u8, b64_len) catch return lib.fail(out, "alloc");
+    defer lib.alloc.free(b64);
     _ = std.base64.standard.Encoder.encode(b64, data);
 
     var rbuf: [65536]u8 = undefined;
@@ -52,10 +52,4 @@ fn mimeFor(path: []const u8) []const u8 {
     if (std.mem.endsWith(u8, path, ".webp")) return "image/webp";
     if (std.mem.endsWith(u8, path, ".gif")) return "image/gif";
     return "image/png";
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

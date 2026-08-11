@@ -19,10 +19,10 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 const default_limit: usize = 64 * 1024;
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const path = jsonString(input, "path") orelse return errJson(out, "missing required field: path");
-    if (path.len == 0) return errJson(out, "path must not be empty");
+    const path = jsonString(input, "path") orelse return lib.fail(out, "missing required field: path");
+    if (path.len == 0) return lib.fail(out, "path must not be empty");
 
-    const raw = lib.fsRead(path) catch |err| return errJson(out, switch (err) {
+    const raw = lib.fsRead(path) catch |err| return lib.fail(out, switch (err) {
         error.SandboxDenied => "path is outside the sandbox",
         error.NotFound => "no such file",
         error.TooLarge => "file is too large to read",
@@ -52,12 +52,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }
 
 /// Minimal field readers: the guest has no allocator, and the arguments object

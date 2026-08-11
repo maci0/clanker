@@ -22,11 +22,11 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const query = switch (obj.get("query") orelse return errJson(out, "missing query")) {
+    const query = switch (obj.get("query") orelse return lib.fail(out, "missing query")) {
         .string => |s| s,
-        else => return errJson(out, "query must be a string"),
+        else => return lib.fail(out, "query must be a string"),
     };
     var lang: []const u8 = "";
     if (obj.get("lang")) |l| {
@@ -38,72 +38,57 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const q = try encodeQuery(query);
-    defer std.heap.wasm_allocator.free(q);
+    defer lib.alloc.free(q);
     const url = if (lang.len > 0)
-        try std.fmt.allocPrint(std.heap.wasm_allocator, "https://sourcegraph.com/.api/search/stream?q=context:global+{s}+lang:{s}+count:{d}&display={d}", .{ q, lang, max, max })
+        try std.fmt.allocPrint(lib.alloc, "https://sourcegraph.com/.api/search/stream?q=context:global+{s}+lang:{s}+count:{d}&display={d}", .{ q, lang, max, max })
     else
-        try std.fmt.allocPrint(std.heap.wasm_allocator, "https://sourcegraph.com/.api/search/stream?q=context:global+{s}+count:{d}&display={d}", .{ q, max, max });
-    defer std.heap.wasm_allocator.free(url);
+        try std.fmt.allocPrint(lib.alloc, "https://sourcegraph.com/.api/search/stream?q=context:global+{s}+count:{d}&display={d}", .{ q, max, max });
+    defer lib.alloc.free(url);
 
-    const body = lib.httpGet(url) catch |err| return errJson(out, @errorName(err));
+    const body = lib.httpGet(url) catch |err| return lib.fail(out, @errorName(err));
 
     var text: std.ArrayList(u8) = .empty;
-    defer text.deinit(std.heap.wasm_allocator);
+    defer text.deinit(lib.alloc);
     // SSE: lines of "event: matches" followed by "data: [<json array>]".
     var lines = std.mem.splitScalar(u8, body, '\n');
     while (lines.next()) |line| {
         if (std.mem.indexOf(u8, line, "event: matches") != null) {
             const data_line = lines.next() orelse continue;
             if (std.mem.indexOf(u8, data_line, "data: ")) |d| {
-                const arr = std.json.parseFromSliceLeaky([]const Match, std.heap.wasm_allocator, data_line[d + 6 ..], .{ .ignore_unknown_fields = true }) catch continue;
+                const arr = std.json.parseFromSliceLeaky([]const Match, lib.alloc, data_line[d + 6 ..], .{ .ignore_unknown_fields = true }) catch continue;
                 for (arr) |m| {
                     for (m.lineMatches) |lm| {
-                        if (text.items.len > 0) try text.append(std.heap.wasm_allocator, '\n');
-                        try text.appendSlice(std.heap.wasm_allocator, m.repository);
-                        try text.append(std.heap.wasm_allocator, ' ');
-                        try text.appendSlice(std.heap.wasm_allocator, m.path);
-                        try text.append(std.heap.wasm_allocator, ':');
-                        const ln = try std.fmt.allocPrint(std.heap.wasm_allocator, "{d}", .{lm.lineNumber + 1});
-                        defer std.heap.wasm_allocator.free(ln);
-                        try text.appendSlice(std.heap.wasm_allocator, ln);
-                        try text.appendSlice(std.heap.wasm_allocator, " — ");
-                        try text.appendSlice(std.heap.wasm_allocator, lm.line);
+                        if (text.items.len > 0) try text.append(lib.alloc, '\n');
+                        try text.appendSlice(lib.alloc, m.repository);
+                        try text.append(lib.alloc, ' ');
+                        try text.appendSlice(lib.alloc, m.path);
+                        try text.append(lib.alloc, ':');
+                        const ln = try std.fmt.allocPrint(lib.alloc, "{d}", .{lm.lineNumber + 1});
+                        defer lib.alloc.free(ln);
+                        try text.appendSlice(lib.alloc, ln);
+                        try text.appendSlice(lib.alloc, " — ");
+                        try text.appendSlice(lib.alloc, lm.line);
                     }
                 }
             }
         }
     }
-    if (text.items.len == 0) try text.appendSlice(std.heap.wasm_allocator, "(no matches)");
+    if (text.items.len == 0) try text.appendSlice(lib.alloc, "(no matches)");
 
-    var rbuf: [65536]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&rbuf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(text.items);
-    try s.endObject();
-    try out.writeAll(rbuf[0..w.end]);
+    return lib.okText(out, text.items);
 }
 
 fn encodeQuery(q: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(std.heap.wasm_allocator);
+    defer out.deinit(lib.alloc);
     for (q) |c| {
         if (std.ascii.isAlphanumeric(c) or c == '_' or c == '-' or c == '.') {
-            try out.append(std.heap.wasm_allocator, c);
+            try out.append(lib.alloc, c);
         } else if (c == ' ') {
-            try out.appendSlice(std.heap.wasm_allocator, "+");
+            try out.appendSlice(lib.alloc, "+");
         } else {
-            try out.append(std.heap.wasm_allocator, c);
+            try out.append(lib.alloc, c);
         }
     }
-    return out.toOwnedSlice(std.heap.wasm_allocator);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
+    return out.toOwnedSlice(lib.alloc);
 }

@@ -25,15 +25,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch
-        return errJson(out, "input must be {\"op\": ..., \"path\": ...}");
+        return lib.fail(out, "input must be {\"op\": ..., \"path\": ...}");
 
-    if (req.path.len == 0) return errJson(out, "path is required");
+    if (req.path.len == 0) return lib.fail(out, "path is required");
     // The script reads whatever path it is handed, so the traversal check
     // belongs here rather than in Python: keep it inside the project.
     if (std.mem.startsWith(u8, req.path, "/") or std.mem.indexOf(u8, req.path, "..") != null)
-        return errJson(out, "path must be relative and stay inside the project");
+        return lib.fail(out, "path must be relative and stay inside the project");
 
     const opts = try std.fmt.allocPrint(alloc, "{f}", .{std.json.fmt(req.options, .{})});
 
@@ -44,13 +44,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     try args.append(alloc, opts);
 
-    const raw = lib.exec("uv", args.items) catch |err| return errJson(out, @errorName(err));
+    const raw = lib.exec("uv", args.items) catch |err| return lib.fail(out, @errorName(err));
 
     // ck_exec answers {"code":N,"stdout":"...","stderr":"..."}; the script's
     // own JSON is on stdout and is what the agent should see.
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .ignore_unknown_fields = true }) catch
-        return errJson(out, "exec returned no JSON");
-    if (parsed != .object) return errJson(out, "exec returned no JSON");
+        return lib.fail(out, "exec returned no JSON");
+    if (parsed != .object) return lib.fail(out, "exec returned no JSON");
 
     const stdout = if (parsed.object.get("stdout")) |v| (if (v == .string) v.string else "") else "";
     const trimmed = std.mem.trim(u8, stdout, " \t\r\n");
@@ -68,10 +68,4 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try es.write(if (tail.len > 0) tail else "opencv script produced no output");
     try es.endObject();
     try out.writeAll(ebuf[0..ew.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

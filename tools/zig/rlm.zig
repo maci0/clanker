@@ -17,15 +17,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const instruction = switch (obj.get("instruction") orelse return errJson(out, "missing instruction")) {
+    const instruction = switch (obj.get("instruction") orelse return lib.fail(out, "missing instruction")) {
         .string => |s| s,
-        else => return errJson(out, "instruction must be a string"),
+        else => return lib.fail(out, "instruction must be a string"),
     };
-    const text = switch (obj.get("text") orelse return errJson(out, "missing text")) {
+    const text = switch (obj.get("text") orelse return lib.fail(out, "missing text")) {
         .string => |s| s,
-        else => return errJson(out, "text must be a string"),
+        else => return lib.fail(out, "text must be a string"),
     };
     var depth: u32 = 0;
     if (obj.get("depth")) |d| {
@@ -36,31 +36,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (depth >= max_depth) {
         const cap: usize = 2000;
         const excerpt = if (text.len > cap) text[0..cap] else text;
-        result = try std.fmt.allocPrint(std.heap.wasm_allocator, "(rlm depth limit {d} reached) excerpt: {s}", .{ depth, excerpt });
+        result = try std.fmt.allocPrint(lib.alloc, "(rlm depth limit {d} reached) excerpt: {s}", .{ depth, excerpt });
     } else {
         const task = try std.fmt.allocPrint(
-            std.heap.wasm_allocator,
+            lib.alloc,
             "{s}\n\n<rlm chunk at depth {d}>\n{s}\n</rlm chunk>\n\nProcess the chunk per the instruction above. You may call the rlm tool again with depth {d} (and a smaller sub-chunk) for portions needing more analysis. Return your analysis as the final answer.",
             .{ instruction, depth, text, depth + 1 },
         );
-        defer std.heap.wasm_allocator.free(task);
-        result = lib.subagent(task, null) catch |err| return errJson(out, @errorName(err));
+        defer lib.alloc.free(task);
+        result = lib.subagent(task, null) catch |err| return lib.fail(out, @errorName(err));
     }
 
-    var rbuf: [65536]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&rbuf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(result);
-    try s.endObject();
-    try out.writeAll(rbuf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
+    return lib.okText(out, result);
 }

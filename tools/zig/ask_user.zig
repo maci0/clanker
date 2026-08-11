@@ -21,36 +21,36 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{}) catch
-        return errJson(out, "input must be a JSON object");
-    if (parsed != .object) return errJson(out, "input must be a JSON object");
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{}) catch
+        return lib.fail(out, "input must be a JSON object");
+    if (parsed != .object) return lib.fail(out, "input must be a JSON object");
 
-    const q = parsed.object.get("question") orelse return errJson(out, "missing required field: question");
-    if (q != .string or q.string.len == 0) return errJson(out, "question must be a non-empty string");
+    const q = parsed.object.get("question") orelse return lib.fail(out, "missing required field: question");
+    if (q != .string or q.string.len == 0) return lib.fail(out, "question must be a non-empty string");
 
     var options: std.ArrayList([]const u8) = .empty;
-    defer options.deinit(std.heap.wasm_allocator);
+    defer options.deinit(lib.alloc);
     if (parsed.object.get("options")) |o| {
         if (o == .array) {
             for (o.array.items) |item| {
-                if (item == .string and item.string.len > 0) try options.append(std.heap.wasm_allocator, item.string);
+                if (item == .string and item.string.len > 0) try options.append(lib.alloc, item.string);
             }
         }
     }
-    if (options.items.len < 2) return errJson(out, "give at least two options; ask in your answer instead when the question is open-ended");
+    if (options.items.len < 2) return lib.fail(out, "give at least two options; ask in your answer instead when the question is open-ended");
 
     var answered_by: []const u8 = "user";
     var answer: []const u8 = undefined;
     if (parsed.object.get("peer")) |p| {
-        if (p != .string or p.string.len == 0) return errJson(out, "peer must be a peer instance name");
+        if (p != .string or p.string.len == 0) return lib.fail(out, "peer must be a peer instance name");
         answered_by = p.string;
-        answer = askPeer(p.string, q.string, options.items) catch |err| return errJson(out, switch (err) {
+        answer = askPeer(p.string, q.string, options.items) catch |err| return lib.fail(out, switch (err) {
             error.NoSuchPeer => "no peer by that name in config; call peers to see who is reachable",
             error.SandboxDenied => "that peer's host is not allowlisted for this tool",
             else => "the peer did not answer",
         });
     } else {
-        answer = lib.ask(q.string, options.items) catch |err| return errJson(out, switch (err) {
+        answer = lib.ask(q.string, options.items) catch |err| return lib.fail(out, switch (err) {
             // Scripted runs have no human: say so plainly so the model picks.
             error.NotFound => "no interactive user is attached; decide yourself and say which option you took and why, or ask a peer with {\"peer\": \"<name>\"}",
             else => "could not ask the user",
@@ -99,7 +99,7 @@ fn askPeer(name: []const u8, question: []const u8, options: []const []const u8) 
         error.SandboxDenied => error.SandboxDenied,
         else => error.NoAnswer,
     };
-    const reply = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{}) catch return error.NoAnswer;
+    const reply = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return error.NoAnswer;
     if (reply != .object) return error.NoAnswer;
     // /api/run answers in "content"; the other two are accepted so a peer
     // running an older build still gets understood.
@@ -124,16 +124,10 @@ fn peerUrl(name: []const u8) ?[]const u8 {
     var found: ?[]const u8 = null;
     for ([_][]const u8{ "config.json", "config.local.json" }) |path| {
         const raw = lib.fsRead(path) catch continue;
-        const cfg = std.json.parseFromSliceLeaky(ConfigFile, std.heap.wasm_allocator, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        const cfg = std.json.parseFromSliceLeaky(ConfigFile, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch continue;
         for (cfg.peers) |peer| {
             if (std.mem.eql(u8, peer.name, name) and peer.url.len > 0) found = peer.url;
         }
     }
     return found;
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

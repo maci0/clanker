@@ -32,7 +32,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch
         return declineJson(out, "input is not a transform request");
     if (req.payload.len == 0) return declineJson(out, "empty payload");

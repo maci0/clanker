@@ -43,16 +43,16 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch
         Request{};
 
     const peers = try loadPeers(alloc);
-    if (peers.len == 0) return errJson(out, "no peers configured");
+    if (peers.len == 0) return lib.fail(out, "no peers configured");
 
     if (std.mem.eql(u8, req.action, "phonebook")) return phonebook(out, alloc, peers);
     if (std.mem.eql(u8, req.action, "notify")) return notify(out, alloc, peers, req);
-    return errJson(out, "action must be \"phonebook\" or \"notify\"");
+    return lib.fail(out, "action must be \"phonebook\" or \"notify\"");
 }
 
 /// config.local.json wins over config.json, matching the harness's own merge.
@@ -125,14 +125,14 @@ fn phonebook(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer) !void
 }
 
 fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Request) !void {
-    if (req.peer.len == 0) return errJson(out, "notify needs a peer name");
-    if (req.message.len == 0) return errJson(out, "notify needs a message");
+    if (req.peer.len == 0) return lib.fail(out, "notify needs a peer name");
+    if (req.message.len == 0) return lib.fail(out, "notify needs a message");
 
     var target: ?Peer = null;
     for (peers) |p| {
         if (std.mem.eql(u8, p.name, req.peer)) target = p;
     }
-    const peer = target orelse return errJson(out, "no such peer");
+    const peer = target orelse return lib.fail(out, "no such peer");
 
     var body_buf: [16 * 1024]u8 = undefined;
     var bw: std.Io.Writer = .fixed(&body_buf);
@@ -147,7 +147,7 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
     try bs.endObject();
 
     const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
-    _ = lib.httpPost(url, body_buf[0..bw.end]) catch |err| return errJson(out, @errorName(err));
+    _ = lib.httpPost(url, body_buf[0..bw.end]) catch |err| return lib.fail(out, @errorName(err));
 
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -159,10 +159,4 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
     try s.write(peer.name);
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

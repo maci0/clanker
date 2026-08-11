@@ -10,18 +10,9 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
-    var buf: [4096]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(help_text);
-    try s.endObject();
-    try out.writeAll(buf[0..w.end]);
+    return lib.okText(out, help_text);
 }
 
 const help_text =

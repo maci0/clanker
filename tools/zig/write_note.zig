@@ -11,11 +11,11 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const note = switch (obj.get("note") orelse return errJson(out, "missing note")) {
+    const note = switch (obj.get("note") orelse return lib.fail(out, "missing note")) {
         .string => |s| s,
-        else => return errJson(out, "note must be a string"),
+        else => return lib.fail(out, "note must be a string"),
     };
 
     const path = "state/learnings.md";
@@ -25,24 +25,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else |_| {}
 
     var new_content: std.ArrayList(u8) = .empty;
-    defer new_content.deinit(std.heap.wasm_allocator);
-    try new_content.appendSlice(std.heap.wasm_allocator, existing);
+    defer new_content.deinit(lib.alloc);
+    try new_content.appendSlice(lib.alloc, existing);
     if (existing.len > 0 and existing[existing.len - 1] != '\n') {
-        try new_content.append(std.heap.wasm_allocator, '\n');
+        try new_content.append(lib.alloc, '\n');
     }
-    try new_content.appendSlice(std.heap.wasm_allocator, "- ");
-    try new_content.appendSlice(std.heap.wasm_allocator, note);
-    try new_content.append(std.heap.wasm_allocator, '\n');
+    try new_content.appendSlice(lib.alloc, "- ");
+    try new_content.appendSlice(lib.alloc, note);
+    try new_content.append(lib.alloc, '\n');
 
     lib.fsWrite(path, new_content.items) catch |err| {
-        return errJson(out, @errorName(err));
+        return lib.fail(out, @errorName(err));
     };
 
     try out.writeAll("{\"ok\":true}");
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

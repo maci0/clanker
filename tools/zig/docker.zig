@@ -11,11 +11,11 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const path = switch (obj.get("path") orelse return errJson(out, "missing path")) {
+    const path = switch (obj.get("path") orelse return lib.fail(out, "missing path")) {
         .string => |s| s,
-        else => return errJson(out, "path must be a string"),
+        else => return lib.fail(out, "path must be a string"),
     };
     var method: []const u8 = "GET";
     if (obj.get("method")) |m| {
@@ -26,7 +26,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const body = lib.dockerRequest(method, path) catch |err| {
-        return errJson(out, @errorName(err));
+        return lib.fail(out, @errorName(err));
     };
 
     var buf: [256 * 1024]u8 = undefined;
@@ -41,10 +41,4 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(body);
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

@@ -10,15 +10,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const url = switch (obj.get("url") orelse return errJson(out, "missing url")) {
+    const url = switch (obj.get("url") orelse return lib.fail(out, "missing url")) {
         .string => |s| s,
-        else => return errJson(out, "url must be a string"),
+        else => return lib.fail(out, "url must be a string"),
     };
 
     const body = lib.httpGet(url) catch |err| {
-        return errJson(out, @errorName(err));
+        return lib.fail(out, @errorName(err));
     };
 
     const cap = @min(body.len, 8000);
@@ -43,10 +43,4 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
     try out.writeAll("\"}");
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

@@ -11,11 +11,11 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const name = switch (obj.get("name") orelse return errJson(out, "missing name")) {
+    const name = switch (obj.get("name") orelse return lib.fail(out, "missing name")) {
         .string => |s| s,
-        else => return errJson(out, "name must be a string"),
+        else => return lib.fail(out, "name must be a string"),
     };
     const path = if (obj.get("path")) |p| switch (p) {
         .string => |s| s,
@@ -23,24 +23,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else ".";
     const kinds = [_][]const u8{ "fn", "const", "var", "struct", "enum", "union" };
     var argv: std.ArrayList([]const u8) = .empty;
-    defer argv.deinit(std.heap.wasm_allocator);
-    try argv.append(std.heap.wasm_allocator, "-n");
-    try argv.append(std.heap.wasm_allocator, "-g");
-    try argv.append(std.heap.wasm_allocator, "*.zig");
+    defer argv.deinit(lib.alloc);
+    try argv.append(lib.alloc, "-n");
+    try argv.append(lib.alloc, "-g");
+    try argv.append(lib.alloc, "*.zig");
     for (kinds) |k| {
-        const e = try std.fmt.allocPrint(std.heap.wasm_allocator, "^[[:space:]]*(pub[[:space:]]+)?{s}[[:space:]]+{s}\\b", .{ k, name });
+        const e = try std.fmt.allocPrint(lib.alloc, "^[[:space:]]*(pub[[:space:]]+)?{s}[[:space:]]+{s}\\b", .{ k, name });
         // NOTE: no defer-free — the wasm allocator is a bump arena and the
         // argv list keeps these pointers alive until the call ends.
-        try argv.append(std.heap.wasm_allocator, "-e");
-        try argv.append(std.heap.wasm_allocator, e);
+        try argv.append(lib.alloc, "-e");
+        try argv.append(lib.alloc, e);
     }
-    try argv.append(std.heap.wasm_allocator, path);
-    const raw = lib.exec("rg", argv.items) catch |err| return errJson(out, @errorName(err));
+    try argv.append(lib.alloc, path);
+    const raw = lib.exec("rg", argv.items) catch |err| return lib.fail(out, @errorName(err));
     try out.writeAll(raw);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

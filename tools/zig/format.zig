@@ -13,15 +13,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const text = switch (obj.get("text") orelse return errJson(out, "missing text")) {
+    const text = switch (obj.get("text") orelse return lib.fail(out, "missing text")) {
         .string => |s| s,
-        else => return errJson(out, "text must be a string"),
+        else => return lib.fail(out, "text must be a string"),
     };
 
     const ansi = try render(text);
-    defer std.heap.wasm_allocator.free(ansi);
+    defer lib.alloc.free(ansi);
 
     try out.writeAll("{\"ok\":true,\"text\":\"");
     try writeEscaped(out, ansi);
@@ -30,7 +30,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
 fn render(input: []const u8) ![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.heap.wasm_allocator);
+    defer buf.deinit(lib.alloc);
 
     var in_fence = false;
     var in_bold = false;
@@ -42,27 +42,27 @@ fn render(input: []const u8) ![]const u8 {
         // triple backtick (fenced code block)
         if (i + 2 < input.len and std.mem.eql(u8, input[i .. i + 3], "```")) {
             if (!in_fence) {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[2m");
+                try buf.appendSlice(lib.alloc, "\x1b[2m");
                 in_fence = true;
             } else {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
+                try buf.appendSlice(lib.alloc, "\x1b[0m");
                 in_fence = false;
             }
             i += 3;
             continue;
         }
         if (in_fence) {
-            try buf.append(std.heap.wasm_allocator, input[i]);
+            try buf.append(lib.alloc, input[i]);
             i += 1;
             continue;
         }
         // bold **
         if (i + 1 < input.len and std.mem.eql(u8, input[i .. i + 2], "**")) {
             if (!in_bold) {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[1m");
+                try buf.appendSlice(lib.alloc, "\x1b[1m");
                 in_bold = true;
             } else {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
+                try buf.appendSlice(lib.alloc, "\x1b[0m");
                 in_bold = false;
             }
             i += 2;
@@ -71,10 +71,10 @@ fn render(input: []const u8) ![]const u8 {
         // inline code `
         if (input[i] == '`') {
             if (!in_code) {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[36m");
+                try buf.appendSlice(lib.alloc, "\x1b[36m");
                 in_code = true;
             } else {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
+                try buf.appendSlice(lib.alloc, "\x1b[0m");
                 in_code = false;
             }
             i += 1;
@@ -83,10 +83,10 @@ fn render(input: []const u8) ![]const u8 {
         // italic *
         if (input[i] == '*') {
             if (!in_italic) {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[3m");
+                try buf.appendSlice(lib.alloc, "\x1b[3m");
                 in_italic = true;
             } else {
-                try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
+                try buf.appendSlice(lib.alloc, "\x1b[0m");
                 in_italic = false;
             }
             i += 1;
@@ -94,20 +94,20 @@ fn render(input: []const u8) ![]const u8 {
         }
         // bullet prefix: line starting with "- "
         if ((i == 0 or input[i - 1] == '\n') and i + 1 < input.len and input[i] == '-' and input[i + 1] == ' ') {
-            try buf.appendSlice(std.heap.wasm_allocator, "\u{2022} ");
+            try buf.appendSlice(lib.alloc, "\u{2022} ");
             i += 2;
             continue;
         }
-        try buf.append(std.heap.wasm_allocator, input[i]);
+        try buf.append(lib.alloc, input[i]);
         i += 1;
     }
     // Close any open formatting (defensive)
-    if (in_code) try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
-    if (in_italic) try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
-    if (in_bold) try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
-    if (in_fence) try buf.appendSlice(std.heap.wasm_allocator, "\x1b[0m");
+    if (in_code) try buf.appendSlice(lib.alloc, "\x1b[0m");
+    if (in_italic) try buf.appendSlice(lib.alloc, "\x1b[0m");
+    if (in_bold) try buf.appendSlice(lib.alloc, "\x1b[0m");
+    if (in_fence) try buf.appendSlice(lib.alloc, "\x1b[0m");
 
-    return buf.toOwnedSlice(std.heap.wasm_allocator);
+    return buf.toOwnedSlice(lib.alloc);
 }
 
 fn writeEscaped(out: *lib.Out, s: []const u8) !void {
@@ -126,10 +126,4 @@ fn writeEscaped(out: *lib.Out, s: []const u8) !void {
             else => try out.writeAll(&[_]u8{ch}),
         }
     }
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

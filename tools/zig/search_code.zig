@@ -10,15 +10,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
-    const engine = switch (obj.get("engine") orelse return errJson(out, "missing engine")) {
+    const engine = switch (obj.get("engine") orelse return lib.fail(out, "missing engine")) {
         .string => |s| s,
-        else => return errJson(out, "engine must be a string"),
+        else => return lib.fail(out, "engine must be a string"),
     };
-    const query = switch (obj.get("query") orelse return errJson(out, "missing query")) {
+    const query = switch (obj.get("query") orelse return lib.fail(out, "missing query")) {
         .string => |s| s,
-        else => return errJson(out, "query must be a string"),
+        else => return lib.fail(out, "query must be a string"),
     };
     const path = if (obj.get("path")) |p| switch (p) {
         .string => |s| s,
@@ -26,44 +26,38 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else ".";
 
     var args: std.ArrayList([]const u8) = .empty;
-    defer args.deinit(std.heap.wasm_allocator);
+    defer args.deinit(lib.alloc);
 
     if (std.mem.eql(u8, engine, "rg")) {
-        try args.append(std.heap.wasm_allocator, "--json");
-        try args.append(std.heap.wasm_allocator, "-n");
-        try args.append(std.heap.wasm_allocator, query);
-        try args.append(std.heap.wasm_allocator, path);
+        try args.append(lib.alloc, "--json");
+        try args.append(lib.alloc, "-n");
+        try args.append(lib.alloc, query);
+        try args.append(lib.alloc, path);
     } else if (std.mem.eql(u8, engine, "ast-grep")) {
-        try args.append(std.heap.wasm_allocator, "run");
+        try args.append(lib.alloc, "run");
         // ast-grep ships no Zig parser; sgconfig.yml registers one built by
         // tools/grammars/build.sh. Passing the config always (not only for
         // .zig) also picks up any rules the project defines.
-        try args.append(std.heap.wasm_allocator, "--config");
-        try args.append(std.heap.wasm_allocator, "sgconfig.yml");
+        try args.append(lib.alloc, "--config");
+        try args.append(lib.alloc, "sgconfig.yml");
         if (std.mem.endsWith(u8, path, ".zig") or std.mem.indexOf(u8, path, ".") == null) {
             // The Zig grammar is a custom language, so it has to be named:
             // ast-grep will not infer it from the extension alone.
-            try args.append(std.heap.wasm_allocator, "-l");
-            try args.append(std.heap.wasm_allocator, "zig");
+            try args.append(lib.alloc, "-l");
+            try args.append(lib.alloc, "zig");
         }
-        try args.append(std.heap.wasm_allocator, "-p");
-        try args.append(std.heap.wasm_allocator, query);
-        try args.append(std.heap.wasm_allocator, path);
+        try args.append(lib.alloc, "-p");
+        try args.append(lib.alloc, query);
+        try args.append(lib.alloc, path);
     } else if (std.mem.eql(u8, engine, "semcode")) {
-        try args.append(std.heap.wasm_allocator, "-q");
-        try args.append(std.heap.wasm_allocator, query);
+        try args.append(lib.alloc, "-q");
+        try args.append(lib.alloc, query);
     } else {
-        return errJson(out, "engine must be rg | ast-grep | semcode");
+        return lib.fail(out, "engine must be rg | ast-grep | semcode");
     }
 
     const result = lib.exec(engine, args.items) catch |err| {
-        return errJson(out, @errorName(err));
+        return lib.fail(out, @errorName(err));
     };
     try out.writeAll(result);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

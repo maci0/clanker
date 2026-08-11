@@ -83,10 +83,117 @@ fn memSlice(ptr: u32, len: u32) ?[]const u8 {
 }
 
 fn writeErr(out: *Out, name: []const u8) void {
+    fail(out, name) catch return;
+}
+
+// ------------------------------------------------------------- responding --
+
+/// The guest allocator. Named here so a tool never has to know which one it
+/// is; `std.heap.wasm_allocator` was spelled out in nearly every tool.
+pub const alloc = std.heap.wasm_allocator;
+
+/// A writer over the remaining output buffer. Tools used to declare a
+/// second, hand-sized buffer (77 of them, in 12 different sizes) and copy it
+/// into `out` afterwards; writing here directly removes both the guess and
+/// the copy. The real ceiling is `out_cap`, which is the only one that was
+/// ever true.
+pub fn writer(out: *Out) std.Io.Writer {
+    return .fixed(out.buf[out.len..]);
+}
+
+/// Commits bytes written through `writer`. Kept separate from `writer` so a
+/// tool that fails halfway through simply never commits, leaving the buffer
+/// untouched for `fail` to overwrite.
+pub fn commit(out: *Out, w: *const std.Io.Writer) void {
+    out.len += w.end;
+}
+
+/// A `Stringify` positioned on this tool's output. The caller writes the
+/// value, then calls `commit`.
+pub fn json(w: *std.Io.Writer) std.json.Stringify {
+    return .{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
+}
+
+/// `{"ok":false,"error":"<msg>"}`, with `msg` escaped as a JSON string.
+///
+/// Every tool used to carry its own copy of this that interpolated the
+/// message raw, so any message containing a quote, backslash, or newline
+/// produced output the host could not parse — turning a useful error into a
+/// parse failure. Escaping it once here makes that unrepresentable.
+pub fn fail(out: *Out, msg: []const u8) !void {
     out.reset();
-    out.writeAll("{\"ok\":false,\"error\":\"") catch return;
-    out.writeAll(name) catch return;
-    out.writeAll("\"}") catch return;
+    var w = writer(out);
+    var s = json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(false);
+    try s.objectField("error");
+    try s.write(msg);
+    try s.endObject();
+    commit(out, &w);
+}
+
+/// `{"ok":true,"text":"<text>"}` — the entire successful reply of 14 tools.
+pub fn okText(out: *Out, text: []const u8) !void {
+    var w = writer(out);
+    var s = json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("text");
+    try s.write(text);
+    try s.endObject();
+    commit(out, &w);
+}
+
+// ----------------------------------------------------------------- input --
+
+/// Parses the tool input and requires it to be a JSON object. Tools that want
+/// the raw text, or that scan for one key without paying for a parse (see
+/// read_file.zig), can keep ignoring this.
+pub fn object(input: []const u8) !std.json.Value {
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
+    if (parsed != .object) return error.InputNotAnObject;
+    return parsed;
+}
+
+/// A string field, or null when absent or not a string. `obj` is the value
+/// returned by `object`.
+pub fn optStr(obj: std.json.Value, name: []const u8) ?[]const u8 {
+    if (obj != .object) return null;
+    const v = obj.object.get(name) orelse return null;
+    return switch (v) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+/// A string field that must be present and non-empty.
+pub fn str(obj: std.json.Value, name: []const u8) ![]const u8 {
+    const s = optStr(obj, name) orelse return error.MissingField;
+    if (s.len == 0) return error.MissingField;
+    return s;
+}
+
+/// A numeric field as f64, accepting both JSON number spellings.
+pub fn optNum(obj: std.json.Value, name: []const u8) ?f64 {
+    if (obj != .object) return null;
+    const v = obj.object.get(name) orelse return null;
+    return switch (v) {
+        .float => |f| f,
+        .integer => |i| @floatFromInt(i),
+        else => null,
+    };
+}
+
+/// A boolean field, or `default` when absent or not a boolean.
+pub fn optBool(obj: std.json.Value, name: []const u8, default: bool) bool {
+    if (obj != .object) return default;
+    const v = obj.object.get(name) orelse return default;
+    return switch (v) {
+        .bool => |b| b,
+        else => default,
+    };
 }
 
 /// Entry point shared by all tools: slices the input, runs `handler`, and

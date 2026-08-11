@@ -23,35 +23,29 @@ const Op = struct {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     // The descriptor config pins the op: {"op":"send"} etc.
     const cfg_json = lib.config();
-    const cfg_parsed = std.json.parseFromSliceLeaky(Op, std.heap.wasm_allocator, cfg_json, .{ .ignore_unknown_fields = true }) catch {
-        return errJson(out, "chat tool missing \"config\": {\"op\":...}");
+    const cfg_parsed = std.json.parseFromSliceLeaky(Op, lib.alloc, cfg_json, .{ .ignore_unknown_fields = true }) catch {
+        return lib.fail(out, "chat tool missing \"config\": {\"op\":...}");
     };
     const op = cfg_parsed.op orelse {
-        return errJson(out, "chat tool missing op in config");
+        return lib.fail(out, "chat tool missing op in config");
     };
 
     // Re-emit the input object verbatim so we can inject the op: the host
     // ignores unknown fields, so this is just {"op":"send", ...args...}.
     var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.heap.wasm_allocator);
-    try buf.appendSlice(std.heap.wasm_allocator, "{\"op\":\"");
-    try buf.appendSlice(std.heap.wasm_allocator, op);
-    try buf.appendSlice(std.heap.wasm_allocator, "\"");
+    defer buf.deinit(lib.alloc);
+    try buf.appendSlice(lib.alloc, "{\"op\":\"");
+    try buf.appendSlice(lib.alloc, op);
+    try buf.appendSlice(lib.alloc, "\"");
     if (input.len > 2 and input[0] == '{') {
         // Merge the argument fields; input keeps its closing brace.
-        try buf.appendSlice(std.heap.wasm_allocator, ",");
-        try buf.appendSlice(std.heap.wasm_allocator, input[1..]);
+        try buf.appendSlice(lib.alloc, ",");
+        try buf.appendSlice(lib.alloc, input[1..]);
     } else {
         // "{}" (or non-object input): close the object ourselves.
-        try buf.appendSlice(std.heap.wasm_allocator, "}");
+        try buf.appendSlice(lib.alloc, "}");
     }
 
-    const result = lib.chat(buf.items) catch |err| return errJson(out, @errorName(err));
+    const result = lib.chat(buf.items) catch |err| return lib.fail(out, @errorName(err));
     try out.writeAll(result);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

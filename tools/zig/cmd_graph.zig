@@ -41,7 +41,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
     var args: []const u8 = "";
     if (parsed == .object) {
@@ -50,7 +50,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
-    const raw = lib.fsList("state/runs") catch |err| return errJson(out, @errorName(err));
+    const raw = lib.fsList("state/runs") catch |err| return lib.fail(out, @errorName(err));
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     if (std.mem.eql(u8, args, "list")) return listRuns(out, alloc, names);
@@ -76,83 +76,74 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
     const fname = best orelse {
-        if (args.len > 0) return errJson(out, "no such run");
+        if (args.len > 0) return lib.fail(out, "no such run");
         try out.writeAll("{\"ok\":true,\"text\":\"(no runs yet — clanker run creates one)\"}");
         return;
     };
-    const path = try std.fmt.allocPrint(std.heap.wasm_allocator, "state/runs/{s}", .{fname});
-    defer std.heap.wasm_allocator.free(path);
-    const content = lib.fsRead(path) catch |err| return errJson(out, @errorName(err));
-    const g = std.json.parseFromSliceLeaky(GraphFile, std.heap.wasm_allocator, content, .{ .ignore_unknown_fields = true }) catch |err| return errJson(out, @errorName(err));
+    const path = try std.fmt.allocPrint(lib.alloc, "state/runs/{s}", .{fname});
+    defer lib.alloc.free(path);
+    const content = lib.fsRead(path) catch |err| return lib.fail(out, @errorName(err));
+    const g = std.json.parseFromSliceLeaky(GraphFile, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.fail(out, @errorName(err));
 
     var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.heap.wasm_allocator);
-    try buf.appendSlice(std.heap.wasm_allocator, g.run_id);
-    try buf.appendSlice(std.heap.wasm_allocator, " — ");
-    try buf.appendSlice(std.heap.wasm_allocator, g.task);
-    const hdr = try std.fmt.allocPrint(std.heap.wasm_allocator, "  ({s}, {d}ms, prompt={d} completion={d})\n", .{ g.provider, g.duration_ms, g.total_prompt_tokens, g.total_completion_tokens });
-    defer std.heap.wasm_allocator.free(hdr);
-    try buf.appendSlice(std.heap.wasm_allocator, hdr);
+    defer buf.deinit(lib.alloc);
+    try buf.appendSlice(lib.alloc, g.run_id);
+    try buf.appendSlice(lib.alloc, " — ");
+    try buf.appendSlice(lib.alloc, g.task);
+    const hdr = try std.fmt.allocPrint(lib.alloc, "  ({s}, {d}ms, prompt={d} completion={d})\n", .{ g.provider, g.duration_ms, g.total_prompt_tokens, g.total_completion_tokens });
+    defer lib.alloc.free(hdr);
+    try buf.appendSlice(lib.alloc, hdr);
 
     var iter_note: u32 = 0;
     for (g.nodes) |n| {
         if (n.iteration != iter_note) {
             iter_note = n.iteration;
-            if (iter_note > 1) try buf.append(std.heap.wasm_allocator, '\n');
-            const ih = try std.fmt.allocPrint(std.heap.wasm_allocator, "iter {d}\n", .{n.iteration});
-            defer std.heap.wasm_allocator.free(ih);
-            try buf.appendSlice(std.heap.wasm_allocator, ih);
+            if (iter_note > 1) try buf.append(lib.alloc, '\n');
+            const ih = try std.fmt.allocPrint(lib.alloc, "iter {d}\n", .{n.iteration});
+            defer lib.alloc.free(ih);
+            try buf.appendSlice(lib.alloc, ih);
         }
         if (std.mem.eql(u8, n.kind, "tool")) {
             // A retried step is one line with a count, and a step the run came
             // back around to says where it looped from.
             const line = if (n.repeats > 1)
-                try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B  x{d}\n", .{ n.label, n.result_bytes, n.repeats })
+                try std.fmt.allocPrint(lib.alloc, "  tool {s}  {d} B  x{d}\n", .{ n.label, n.result_bytes, n.repeats })
             else if (n.loop_to > 0)
-                try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B  (loops back to iter {d})\n", .{ n.label, n.result_bytes, n.loop_to })
+                try std.fmt.allocPrint(lib.alloc, "  tool {s}  {d} B  (loops back to iter {d})\n", .{ n.label, n.result_bytes, n.loop_to })
             else
-                try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B\n", .{ n.label, n.result_bytes });
-            defer std.heap.wasm_allocator.free(line);
-            try buf.appendSlice(std.heap.wasm_allocator, line);
+                try std.fmt.allocPrint(lib.alloc, "  tool {s}  {d} B\n", .{ n.label, n.result_bytes });
+            defer lib.alloc.free(line);
+            try buf.appendSlice(lib.alloc, line);
         } else if (std.mem.eql(u8, n.kind, "check")) {
             // The verdict a run turned on, and where it sent the run back to.
             const mark: []const u8 = if (n.ok) "pass" else "FAIL";
-            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  check {s} {s}{s}{s}\n", .{
+            const line = try std.fmt.allocPrint(lib.alloc, "  check {s} {s}{s}{s}\n", .{
                 n.label,
                 mark,
                 if (n.detail.len > 0) "  " else "",
                 n.detail,
             });
-            defer std.heap.wasm_allocator.free(line);
-            try buf.appendSlice(std.heap.wasm_allocator, line);
+            defer lib.alloc.free(line);
+            try buf.appendSlice(lib.alloc, line);
         } else if (std.mem.eql(u8, n.kind, "decision")) {
             // What the human chose, and out of what: a run that turned on a
             // human decision reads as unmotivated without it.
-            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  ask  {s}\n       -> {s}\n", .{ n.label, n.output });
-            defer std.heap.wasm_allocator.free(line);
-            try buf.appendSlice(std.heap.wasm_allocator, line);
+            const line = try std.fmt.allocPrint(lib.alloc, "  ask  {s}\n       -> {s}\n", .{ n.label, n.output });
+            defer lib.alloc.free(line);
+            try buf.appendSlice(lib.alloc, line);
         } else if (std.mem.eql(u8, n.kind, "final")) {
-            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  done {d} B, {s}\n", .{ n.result_bytes, n.detail });
-            defer std.heap.wasm_allocator.free(line);
-            try buf.appendSlice(std.heap.wasm_allocator, line);
+            const line = try std.fmt.allocPrint(lib.alloc, "  done {d} B, {s}\n", .{ n.result_bytes, n.detail });
+            defer lib.alloc.free(line);
+            try buf.appendSlice(lib.alloc, line);
         } else {
             const ntps: f64 = if (n.duration_ms > 0) @as(f64, @floatFromInt(n.completion_tokens)) / (@as(f64, @floatFromInt(n.duration_ms)) / 1000.0) else 0;
-            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  llm  {s}  {d}/{d} tok, {d}ms ({d:.1} tok/s)\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms, ntps });
-            defer std.heap.wasm_allocator.free(line);
-            try buf.appendSlice(std.heap.wasm_allocator, line);
+            const line = try std.fmt.allocPrint(lib.alloc, "  llm  {s}  {d}/{d} tok, {d}ms ({d:.1} tok/s)\n", .{ n.label, n.prompt_tokens, n.completion_tokens, n.duration_ms, ntps });
+            defer lib.alloc.free(line);
+            try buf.appendSlice(lib.alloc, line);
         }
     }
 
-    var rbuf: [65536]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&rbuf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(buf.items);
-    try s.endObject();
-    try out.writeAll(rbuf[0..w.end]);
+    return lib.okText(out, buf.items);
 }
 
 /// `list`: one line per recorded run, oldest first, with the task and shape of
@@ -232,7 +223,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
 
 /// `json <run-id>`: the whole graph, node by node, for the web UI's chart.
 fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want: []const u8) !void {
-    if (want.len == 0) return errJson(out, "usage: json <run-id>");
+    if (want.len == 0) return lib.fail(out, "usage: json <run-id>");
     var found: ?[]const u8 = null;
     if (names == .array) {
         for (names.array.items) |item| {
@@ -242,12 +233,12 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
             if (std.mem.eql(u8, stem, want)) found = item.string;
         }
     }
-    const fname = found orelse return errJson(out, "no such run");
+    const fname = found orelse return lib.fail(out, "no such run");
     const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
-    const content = lib.fsRead(path) catch |err| return errJson(out, @errorName(err));
+    const content = lib.fsRead(path) catch |err| return lib.fail(out, @errorName(err));
     // Parsed and re-emitted rather than passed through, so a hand-edited file
     // in state/runs/ cannot become the response body verbatim.
-    const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return errJson(out, @errorName(err));
+    const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.fail(out, @errorName(err));
 
     var buf: [48 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -257,20 +248,5 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
 }
 
 fn writeText(out: *lib.Out, text: []const u8) !void {
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(text);
-    try s.endObject();
-    try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
+    return lib.okText(out, text);
 }

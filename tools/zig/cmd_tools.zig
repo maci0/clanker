@@ -18,11 +18,11 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
 
-    const alloc = std.heap.wasm_allocator;
-    const raw = lib.fsList("tools/manifests") catch |err| return errJson(out, @errorName(err));
+    const alloc = lib.alloc;
+    const raw = lib.fsList("tools/manifests") catch |err| return lib.fail(out, @errorName(err));
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     const Entry = struct { name: []const u8, meta: Meta };
@@ -56,16 +56,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     defer alloc.free(summary);
     try buf.appendSlice(alloc, summary);
 
-    var rbuf: [65536]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&rbuf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("text");
-    try s.write(buf.items);
-    try s.endObject();
-    try out.writeAll(rbuf[0..w.end]);
+    return lib.okText(out, buf.items);
 }
 
 /// Writes entries grouped under their category heading, categories in first-
@@ -120,7 +111,7 @@ fn describeFull(file_name: []const u8) Meta {
     var path_buf: [256]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return .{};
     const raw = lib.fsRead(path) catch return .{};
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{}) catch return .{};
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return .{};
     if (parsed != .object) return .{};
     var meta = Meta{};
     if (parsed.object.get("description")) |d| {
@@ -145,14 +136,8 @@ fn describe(file_name: []const u8) []const u8 {
     var path_buf: [256]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return "";
     const raw = lib.fsRead(path) catch return "";
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{}) catch return "";
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return "";
     if (parsed != .object) return "";
     const d = parsed.object.get("description") orelse return "";
     return if (d == .string) d.string else "";
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

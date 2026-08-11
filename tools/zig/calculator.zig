@@ -13,16 +13,16 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
 
     if (obj.get("expr")) |expr_val| {
         const expr = switch (expr_val) {
             .string => |s| s,
-            else => return errJson(out, "expr must be a string"),
+            else => return lib.fail(out, "expr must be a string"),
         };
         const result = evalExpr(expr) catch |err| {
-            return errJson(out, if (err == error.DivisionByZero) "division by zero" else "invalid expression");
+            return lib.fail(out, if (err == error.DivisionByZero) "division by zero" else "invalid expression");
         };
         var buf: [128]u8 = undefined;
         const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"result\":{d}}}", .{result});
@@ -30,19 +30,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return;
     }
 
-    const a: f64 = switch (obj.get("a") orelse return errJson(out, "missing a")) {
+    const a: f64 = switch (obj.get("a") orelse return lib.fail(out, "missing a")) {
         .float => |f| f,
         .integer => |i| @floatFromInt(i),
-        else => return errJson(out, "a must be a number"),
+        else => return lib.fail(out, "a must be a number"),
     };
-    const b: f64 = switch (obj.get("b") orelse return errJson(out, "missing b")) {
+    const b: f64 = switch (obj.get("b") orelse return lib.fail(out, "missing b")) {
         .float => |f| f,
         .integer => |i| @floatFromInt(i),
-        else => return errJson(out, "b must be a number"),
+        else => return lib.fail(out, "b must be a number"),
     };
-    const op = switch (obj.get("op") orelse return errJson(out, "missing op")) {
+    const op = switch (obj.get("op") orelse return lib.fail(out, "missing op")) {
         .string => |s| s,
-        else => return errJson(out, "op must be a string"),
+        else => return lib.fail(out, "op must be a string"),
     };
 
     const result: f64 = if (std.mem.eql(u8, op, "+"))
@@ -52,11 +52,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     else if (std.mem.eql(u8, op, "*"))
         a * b
     else if (std.mem.eql(u8, op, "/"))
-        if (b == 0) return errJson(out, "division by zero") else a / b
+        if (b == 0) return lib.fail(out, "division by zero") else a / b
     else if (std.mem.eql(u8, op, "^"))
         std.math.pow(f64, a, b)
     else
-        return errJson(out, "unknown op");
+        return lib.fail(out, "unknown op");
 
     var buf: [128]u8 = undefined;
     const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"result\":{d}}}", .{result});
@@ -181,9 +181,3 @@ const ExprParser = struct {
         return value;
     }
 };
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
-}

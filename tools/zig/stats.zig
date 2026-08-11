@@ -13,12 +13,6 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     _ = input;
-    const result = lib.stats() catch |err| return errJson(out, @errorName(err));
+    const result = lib.stats() catch |err| return lib.fail(out, @errorName(err));
     try out.writeAll(result);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

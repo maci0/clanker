@@ -40,7 +40,7 @@ fn percentEncodeSpaces(s: []const u8, buf: []u8) []const u8 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.wasm_allocator);
+    var arena_state = std.heap.ArenaAllocator.init(lib.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 

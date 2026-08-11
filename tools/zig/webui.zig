@@ -46,7 +46,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
     // Any path serves the single-page app (client-side routing is handled in JS).
     // Encoded straight into the shared output buffer: an intermediate stack

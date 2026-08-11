@@ -19,7 +19,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 const default_gates = [_][]const u8{ "build", "tools", "test" };
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     var gates: []const []const u8 = &default_gates;
 
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{}) catch std.json.Value{ .object = .empty };
@@ -54,7 +54,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             !std.mem.eql(u8, gate, "tools") and !std.mem.eql(u8, gate, "fmt") and
             !std.mem.eql(u8, gate, "astcheck"))
         {
-            return errJson(out, "unknown gate; use build, tools, test, fmt or astcheck");
+            return lib.fail(out, "unknown gate; use build, tools, test, fmt or astcheck");
         }
 
         // astcheck parses a single file against the real Zig grammar in
@@ -67,11 +67,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else
             &[_][]const u8{ "build", gate };
 
-        const res = lib.exec("zig", args) catch return errJson(out, "could not run zig");
+        const res = lib.exec("zig", args) catch return lib.fail(out, "could not run zig");
         const failed = std.mem.indexOf(u8, res, "\"code\":0") == null;
         if (failed) {
             var buf: [4096]u8 = undefined;
-            const tail = res[res.len -| 1500 ..];
+            const tail = res[res.len -| 1500..];
             const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s} failed\",\"text\":{f}}}", .{ gate, std.json.fmt(tail, .{}) });
             return out.writeAll(body);
         }
@@ -89,10 +89,4 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(std.mem.trimEnd(u8, report.items, "; "));
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }

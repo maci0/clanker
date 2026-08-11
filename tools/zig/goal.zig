@@ -12,30 +12,30 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, input, .{});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     const obj = parsed.object;
 
-    const objective = switch (obj.get("objective") orelse return errJson(out, "missing objective")) {
+    const objective = switch (obj.get("objective") orelse return lib.fail(out, "missing objective")) {
         .string => |s| s,
-        else => return errJson(out, "objective must be a string"),
+        else => return lib.fail(out, "objective must be a string"),
     };
-    if (objective.len == 0) return errJson(out, "objective must not be empty");
+    if (objective.len == 0) return lib.fail(out, "objective must not be empty");
 
-    const completion = switch (obj.get("completion_criterion") orelse return errJson(out, "missing completion_criterion")) {
+    const completion = switch (obj.get("completion_criterion") orelse return lib.fail(out, "missing completion_criterion")) {
         .string => |s| s,
-        else => return errJson(out, "completion_criterion must be a string"),
+        else => return lib.fail(out, "completion_criterion must be a string"),
     };
-    if (completion.len == 0) return errJson(out, "completion_criterion must not be empty");
+    if (completion.len == 0) return lib.fail(out, "completion_criterion must not be empty");
 
     const proof = fieldString(obj, "proof") orelse "";
     const boundaries = fieldString(obj, "boundaries") orelse "";
     const stop_rule = fieldString(obj, "stop_rule") orelse "";
 
     const now = ck_now();
-    const id = std.fmt.allocPrint(std.heap.wasm_allocator, "{d}", .{now}) catch return errJson(out, "alloc");
+    const id = std.fmt.allocPrint(lib.alloc, "{d}", .{now}) catch return lib.fail(out, "alloc");
 
     var obj_buf: std.ArrayList(u8) = .empty;
-    defer obj_buf.deinit(std.heap.wasm_allocator);
+    defer obj_buf.deinit(lib.alloc);
     try writeGoalObject(&obj_buf, id, objective, completion, proof, boundaries, stop_rule, now);
 
     var existing: []const u8 = "";
@@ -44,28 +44,28 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else |err| {
         switch (err) {
             error.NotFound => existing = "[]",
-            else => return errJson(out, @errorName(err)),
+            else => return lib.fail(out, @errorName(err)),
         }
     }
 
     const e = std.mem.trim(u8, existing, " \t\r\n");
     if (e.len < 2 or e[0] != '[' or e[e.len - 1] != ']') {
-        return errJson(out, "state/goals.json is not a JSON array");
+        return lib.fail(out, "state/goals.json is not a JSON array");
     }
 
     var new_content: std.ArrayList(u8) = .empty;
-    defer new_content.deinit(std.heap.wasm_allocator);
+    defer new_content.deinit(lib.alloc);
     const inner = std.mem.trim(u8, e[1 .. e.len - 1], " \t\r\n");
-    try new_content.appendSlice(std.heap.wasm_allocator, "[");
+    try new_content.appendSlice(lib.alloc, "[");
     if (inner.len > 0) {
-        try new_content.appendSlice(std.heap.wasm_allocator, inner);
-        try new_content.appendSlice(std.heap.wasm_allocator, ",");
+        try new_content.appendSlice(lib.alloc, inner);
+        try new_content.appendSlice(lib.alloc, ",");
     }
-    try new_content.appendSlice(std.heap.wasm_allocator, obj_buf.items);
-    try new_content.appendSlice(std.heap.wasm_allocator, "]");
+    try new_content.appendSlice(lib.alloc, obj_buf.items);
+    try new_content.appendSlice(lib.alloc, "]");
 
     lib.fsWrite("state/goals.json", new_content.items) catch |err| {
-        return errJson(out, @errorName(err));
+        return lib.fail(out, @errorName(err));
     };
 
     try out.writeAll("{\"ok\":true,\"goal\":");
@@ -90,8 +90,8 @@ fn writeGoalObject(
     stop_rule: []const u8,
     now: u64,
 ) !void {
-    const wbuf = try std.heap.wasm_allocator.alloc(u8, 32 * 1024);
-    defer std.heap.wasm_allocator.free(wbuf);
+    const wbuf = try lib.alloc.alloc(u8, 32 * 1024);
+    defer lib.alloc.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
@@ -114,11 +114,5 @@ fn writeGoalObject(
     try s.objectField("updated");
     try s.print("{d}", .{now});
     try s.endObject();
-    try buf.appendSlice(std.heap.wasm_allocator, w.buffer[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var b: [256]u8 = undefined;
-    const body = try std.fmt.bufPrint(&b, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
+    try buf.appendSlice(lib.alloc, w.buffer[0..w.end]);
 }

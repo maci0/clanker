@@ -40,7 +40,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch Request{};
 
     // Merged the way the harness merges: config.local.json overrides individual
@@ -54,11 +54,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         var pit = parsed.providers.map.iterator();
         while (pit.next()) |kv| try providers.put(alloc, kv.key_ptr.*, kv.value_ptr.*);
     }
-    if (providers.count() == 0) return errJson(out, "no providers configured");
+    if (providers.count() == 0) return lib.fail(out, "no providers configured");
 
     const check = std.mem.eql(u8, req.action, "check");
     if (!check and !std.mem.eql(u8, req.action, "list"))
-        return errJson(out, "action must be \"check\" or \"list\"");
+        return lib.fail(out, "action must be \"check\" or \"list\"");
 
     var buf: [48 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -130,12 +130,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.endArray();
     try s.endObject();
 
-    if (req.provider.len > 0 and !matched) return errJson(out, "no such provider");
+    if (req.provider.len > 0 and !matched) return lib.fail(out, "no such provider");
     try out.writeAll(buf[0..w.end]);
-}
-
-fn errJson(out: *lib.Out, msg: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{msg});
-    try out.writeAll(body);
 }
