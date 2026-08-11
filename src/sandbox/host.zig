@@ -722,6 +722,7 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 const ChatOp = struct {
     op: ?[]const u8 = null,
     room: ?[]const u8 = null,
+    to: ?[]const u8 = null,
     text: ?[]const u8 = null,
     after: ?i64 = null,
     on: ?bool = null,
@@ -729,10 +730,21 @@ const ChatOp = struct {
     todo: ?[]const u8 = null,
 };
 
+/// A direct message remains an ordinary chatroom so history, persistence and
+/// peer fan-out need no second transport. Sorting the two participants gives
+/// both callers exactly one room name, regardless of who sends first.
+fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []const u8) ![]const u8 {
+    const from = std.mem.trim(u8, from_raw, " \t\r\n");
+    const to = std.mem.trim(u8, to_raw, " \t\r\n");
+    if (from.len == 0 or to.len == 0 or std.mem.eql(u8, from, to)) return error.InvalidDirectMessage;
+    const pair = if (std.mem.lessThan(u8, from, to)) .{ from, to } else .{ to, from };
+    return std.fmt.allocPrint(arena, "dm:{s}|{s}", pair);
+}
+
 /// ck_chat(op_json) — chatroom operations for the chat_* tools, plus the
 /// private-list todo_* ops (see below).
 /// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
-///          "room":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
+///          "room"|"to":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
 /// Output (in the host arena):
 ///   send:      {"ok":true,"ts":...,"id":"..."}
 ///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...]}
@@ -790,7 +802,16 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const state_dir = h.sandbox.state_dir;
 
     if (std.mem.eql(u8, op, "send")) {
-        const room = parsed.room orelse return Err.invalid;
+        // `to` is the direct-message spelling. It resolves to the same
+        // ordinary room on either participant, so senders never need to know
+        // or manually order the `dm:<a>|<b>` convention.
+        if (parsed.room != null and parsed.to != null) return Err.invalid;
+        const room = if (parsed.room) |r|
+            r
+        else if (parsed.to) |to|
+            directMessageRoom(arena, cfg.instance.name, to) catch return Err.invalid
+        else
+            return Err.invalid;
         const text = parsed.text orelse return Err.invalid;
         if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
         const msg = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
@@ -1054,6 +1075,19 @@ test "parseCustomHeaders parses valid JSON object into headers" {
     }
     try std.testing.expect(found_auth);
     try std.testing.expect(found_ct);
+}
+
+test "directMessageRoom canonicalizes the two participants" {
+    const arena = std.testing.allocator;
+    const alice_to_bob = try directMessageRoom(arena, "alice", "bob");
+    defer arena.free(alice_to_bob);
+    const bob_to_alice = try directMessageRoom(arena, "bob", "alice");
+    defer arena.free(bob_to_alice);
+    try std.testing.expectEqualStrings("dm:alice|bob", alice_to_bob);
+    try std.testing.expectEqualStrings(alice_to_bob, bob_to_alice);
+
+    try std.testing.expectError(error.InvalidDirectMessage, directMessageRoom(arena, "alice", "alice"));
+    try std.testing.expectError(error.InvalidDirectMessage, directMessageRoom(arena, "alice", "  \t"));
 }
 
 test "parseCustomHeaders handles null, empty, non-object, and non-string values" {
