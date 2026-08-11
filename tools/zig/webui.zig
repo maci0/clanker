@@ -43,6 +43,7 @@ const logs = @embedFile("webui/core/logs.js");
 const plugins = @embedFile("webui/core/plugins.js");
 const palette = @embedFile("webui/core/palette.js");
 const modelpicker = @embedFile("webui/core/modelpicker.js");
+const tools = @embedFile("webui/core/tools.js");
 const markdown = @embedFile("webui/lib/markdown.js");
 const graph = @embedFile("webui/lib/graph.js");
 const board = @embedFile("webui/lib/board.js");
@@ -69,7 +70,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, van_boot, fleet, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, van_boot, fleet, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -111,6 +112,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/plugins.js")) return .{ .body = plugins, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/palette.js")) return .{ .body = palette, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/modelpicker.js")) return .{ .body = modelpicker, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/tools.js")) return .{ .body = tools, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/markdown.js")) return .{ .body = markdown, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/graph.js")) return .{ .body = graph, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/board.js")) return .{ .body = board, .content_type = "text/javascript; charset=utf-8" };

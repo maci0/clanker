@@ -207,15 +207,17 @@
   --accent-dim: #8839ef1f;
   --accent-text: #8534ef;
   --on-accent: #eff1f5;
-  --ok: #40a02b;
-  --ok-fill: #40a02b;
-  --violet: #ea76cb;
-  --violet-text: #ea76cb;
+  /* Upstream green/pink/yellow read at 2.3-3.0:1 on this base, below the
+     4.5:1 every other theme's text clears; darkened here, same hue. */
+  --ok: #327c21;
+  --ok-fill: #327c21;
+  --violet: #c71f9a;
+  --violet-text: #c71f9a;
   --danger: #d20f39;
   --on-danger: #eff1f5;
   --scrim: rgba(76, 79, 105, 0.45);
-  --warn: #df8e1d;
-  --warn-text: #df8e1d;
+  --warn: #996114;
+  --warn-text: #996114;
   --lift: 0 1px 2px rgba(76, 79, 105, 0.10), 0 6px 18px -8px rgba(76, 79, 105, 0.30);
   --lift-high: 0 2px 4px rgba(76, 79, 105, 0.12), 0 20px 44px -16px rgba(76, 79, 105, 0.40);
 }
@@ -347,15 +349,17 @@
   --accent-dim: #7847bd1f;
   --accent-text: #6e3fb0;
   --on-accent: #e1e2e7;
-  --ok: #587539;
-  --ok-fill: #587539;
-  --violet: #9854f1;
-  --violet-text: #9854f1;
-  --danger: #f52a65;
+  /* Night's raw violet/red/yellow read at 3.0-3.8:1 on this lighter base,
+     below the 4.5:1 every other theme's text clears; darkened, same hue. */
+  --ok: #526c35;
+  --ok-fill: #526c35;
+  --violet: #812eee;
+  --violet-text: #812eee;
+  --danger: #c90941;
   --on-danger: #e1e2e7;
   --scrim: rgba(55, 96, 191, 0.35);
-  --warn: #8c6c3e;
-  --warn-text: #8c6c3e;
+  --warn: #7c6037;
+  --warn-text: #7c6037;
   --lift: 0 1px 2px rgba(55, 96, 191, 0.10), 0 6px 18px -8px rgba(55, 96, 191, 0.30);
   --lift-high: 0 2px 4px rgba(55, 96, 191, 0.12), 0 20px 44px -16px rgba(55, 96, 191, 0.40);
 }
@@ -1625,9 +1629,11 @@ h2#session-title {
   transition: border-color 160ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 .card:hover { border-color: var(--border); transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
+.card:hover .card-title { color: var(--accent-text); }
 .card:active { transform: translateY(0); }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.1); }
+.card[aria-current="true"] .card-title { color: var(--accent-text); }
 .card[data-dragging="true"] { opacity: 0.5; transform: rotate(1deg) scale(1.02); }
 .card-title { overflow-wrap: anywhere; }
 .card-meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); color: var(--fg-muted); font-variant-numeric: tabular-nums; }

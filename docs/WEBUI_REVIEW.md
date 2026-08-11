@@ -29,10 +29,10 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - `tools/zig/webui/lib/graph.js` — execution-graph layout (`~8.7KB`): `metricsFor, buildStages, graphSummaryText, toDagInput, buildIncompleteNode, buildNodeBox, layoutGraph`
 - `tools/zig/webui/lib/board.js` — `BOARD_COLUMNS, boardActionLine, doneColumn, blockers, dueState`
 - `tools/zig/webui/features/fleet.js` — Fleet view (`clip` + `readJson`), groups runs by `parent_run_id` with `[subagent run: sub-…]` fallback, peers roster, DM channels, detail fetch, collapsible children, keyboard, skeletons + retry.
-- `tools/zig/webui.zig` — embed + comptime `encodedLen` guard + `assetFor` for all **29** webui assets (now incl. `core/composer.js` + `core/dialog.js` + `core/status.js` + `core/attachments.js` + `core/logs.js` + `core/plugins.js` + `core/palette.js` + `core/modelpicker.js` + `core/usage.js`).
-- `src/cli.zig` — `is_webui` exact paths + `handleWebuiAsset` `RenderCache/GzipCache` vars for each new module (now 29 routes); `composer`/`attachments` alongside `overlay`/`search`/`labels`/`chat`/`ui`/`stream`/`board`/`status`; `Accept-Encoding` now parses `q=` quality values per RFC — `gzip;q=0` no longer falsely negotiates gzip.
-- `tools/zig/webui/index.html` — rail `Watch > Fleet` tab, `#view-fleet` with roster/DMs/runs/detail, script order `van-boot → van-ui defer → core/utils → core/icons → core/ui → core/vendor → core/chat → core/labels → core/goals → core/stream → core/theme → core/overlay → core/search → core/composer → core/scroll → core/dialog → core/status → core/attachments → core/logs → core/plugins → core/palette → core/modelpicker → core/usage → lib/markdown → lib/graph → lib/board → features/fleet → app.js type=module` (modules defer implicitly; DOMContentLoaded spans them).
-- `tools/zig/webui/app.js` — **now a native ES module** (was classic `defer`): top-level `import` from `./core/*` and `./lib/*` replaces all `window.ck*` aliases; no `window.ckUtil/ckUi/ckTheme/ckChat/ckChat/ckLabels/ckGoals/ckGraph/ckMarkdown/ckBoard/ckStream` reads remain (apart from comments). `providerCache` hoisted before `modelLabel` curry so import order is explicit. **3897** lines (from 5511 at start; −1614 total).
+- `tools/zig/webui.zig` — embed + comptime `encodedLen` guard + `assetFor` for all **30** webui assets (now incl. `core/composer.js` + `core/dialog.js` + `core/status.js` + `core/attachments.js` + `core/logs.js` + `core/plugins.js` + `core/palette.js` + `core/modelpicker.js` + `core/tools.js` + `core/usage.js`).
+- `src/cli.zig` — `is_webui` exact paths + `handleWebuiAsset` `RenderCache/GzipCache` vars for each new module (now 30 routes); `composer`/`attachments` alongside `overlay`/`search`/`labels`/`chat`/`ui`/`stream`/`board`/`status`; `Accept-Encoding` now parses `q=` quality values per RFC — `gzip;q=0` no longer falsely negotiates gzip.
+- `tools/zig/webui/index.html` — rail `Watch > Fleet` tab, `#view-fleet` with roster/DMs/runs/detail, script order `van-boot → van-ui defer → core/utils → core/icons → core/ui → core/vendor → core/chat → core/labels → core/goals → core/stream → core/theme → core/overlay → core/search → core/composer → core/scroll → core/dialog → core/status → core/attachments → core/logs → core/plugins → core/palette → core/modelpicker → core/tools → core/usage → lib/markdown → lib/graph → lib/board → features/fleet → app.js type=module` (modules defer implicitly; DOMContentLoaded spans them).
+- `tools/zig/webui/app.js` — **now a native ES module** (was classic `defer`): top-level `import` from `./core/*` and `./lib/*` replaces all `window.ck*` aliases; no `window.ckUtil/ckUi/ckTheme/ckChat/ckChat/ckLabels/ckGoals/ckGraph/ckMarkdown/ckBoard/ckStream` reads remain (apart from comments). `providerCache` hoisted before `modelLabel` curry so import order is explicit. **3571** lines (from 5511 at start; −1940 total, +2 line alias fix `goalSortKey = goalSortKeyMod`).
 - Fleet `app.js`/`features/fleet.js` a11y: fleet cards/rows lose duplicate `tabIndex`/`aria-label`/`keydown` handlers — the inner `Open` button is the single tab stop. Toasts gain `aria-label` + keyboard dismiss (`Enter`/`Space`/`Escape`).
 
 ### Design / alive polish
@@ -41,6 +41,8 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - Skeletons `.skeleton/.skeleton-bar/.fleet-skeleton` (reduced-motion → static).
 - Alive lamps: refined `turn[data-phase=llm|tool|ask]` — shared base rule, tuned glows (`accent 35%/40%/60%`, `ok 40%`), `ask` brightest; `ask` now **breathes** (`lamp-breathe 2.2s` opacity pulse, reduced-motion gated); `chip[data-state=pending]` amber. Rail lamp `180ms ease-out`.
 - Board narrow: `<900px` tightens gaps + min-width so Done stays reachable without sideways overflow.
+- Board cards: `hover` lifts title to `accent-text` (`:hover` + `[aria-current]`), board polish slice (CSS-only, `prefers-reduced-motion` gated transform).
+- Contrast audit: `latte`/`tokyonight-day` ok/violet/warn/danger darkened to clear 4.5:1 on their light bases (same hue, lower lightness).
 - Fleet tokens all via `var(--…)` (`accent/rule/surface/space/step/radius/lift`), hover `color-mix`, `focus-visible`, `collapsed` state.
 - Goal actions empty state suppressed (`:empty` → `display:none`) so stale margin doesn't linger.
 
@@ -50,7 +52,7 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 
 ## Constraints honored
 
-- `lib.out_cap = 2MiB` comptime guard passes (largest encoded `app.js` ~180KB; new modules 1–9KB each; headroom ~1.8MB; 29 assets).
+- `lib.out_cap = 2MiB` comptime guard passes (largest encoded `app.js` ~180KB; new modules 1–9KB each; headroom ~1.8MB; 30 assets).
 - `script-src 'self'` only: all scripts `src="/webui/…" module` or `defer`, no inline script, no `style=` attrs.
 - Offline-capable, vendored `/webui/vendor/*` lazy via `loadVendor`, no third-party fetch, no new sockets, no `eval/new Function`.
 - No `src/improve/`, `src/evals/`, `evals/`, `src/tools/builder.zig` edits (non-webui stashes kept aside).
@@ -60,12 +62,14 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 ## Verification (this turn)
 
 - `zig build` EXIT 0, `zig build tools` EXIT 0, `zig build test --summary all` 375/376 pass (1 skipped).
-- `zig fmt --check src/cli.zig tools/zig/webui.zig` EXIT 0; `node --check` on `app.js`, `core/*`, `lib/*`, `features/fleet.js` → OK (all 25 js files).
-- `out_cap` per-file: all `ok` (max ~180KB well under 2MiB; 29 assets via assetFor).
+- `zig fmt --check src/cli.zig tools/zig/webui.zig` EXIT 0; `node --check` on `app.js`, `core/*`, `lib/*`, `features/fleet.js` → OK (all 26 js files).
+- `out_cap` per-file: all `ok` (max ~180KB well under 2MiB; 30 assets via assetFor).
 - CSP/connect: only `/api/*` + `/.well-known/agent.json` same-origin fetches; `/webui/vendor` immutable-cache + gzip; no inline script, no third-party origin.
 
 ### Shipped this turn
-- `core/modelpicker.js` — model/provider picker + sampling controls extracted (provider/model search, temp/top_p, enter-to-send; `providerCache` kept live via holder so `modelLabel`/`renderContextMeter` stay correct); `app.js` 3897 lines (from 4094).
+- `core/tools.js` — tools list delegated via `bindTools` (holds `allToolsHolder`/`toolState` live; `palette` now reads `allToolsHolder.list` so filter stays in sync); `app.js` 3571 lines (from 3897, 353-line block removed + alias fix).
+- `app.css` — board `card:hover .card-title` accent tint (+ `[aria-current]` match); `var(--card-title)` hover (~4 lines); `latte`/`tokyonight-day` contrast fix (`ok`/`violet`/`warn`/`danger` darkened).
+- `core/modelpicker.js` — model/provider picker + sampling controls extracted (provider/model search, temp/top_p, enter-to-send; `providerCache` kept live via holder so `modelLabel`/`renderContextMeter` stay correct); `app.js` was 3897 lines pre-tools.
 - `core/palette.js` — full command palette extracted (`paletteEntries`/`openPalette`/`paletteKeyHandler`, `VIEWS`/`showView`/`el`/`knownSessions`/`allRuns`/`board`/`goalState`/`allTools`/`runLabel`/`sessionLabel` via live `refs` holders — `knownSessions`/`allRuns`/`allTools` wrapped in `{list}` so reassignment stays live; `board` mutates `columns`/`cards` in place); `app.js` was 4094 lines pre-provider split.
 - `core/plugins.js` — `window.clanker/registerView` + `pluginApi/loadPluginAssets/loadWebuiPlugins/renderWebuiPlugins/pluginViews` extracted (`VIEWS`/`viewLoaders`/`wireTab`/`showView`/`el`/`readJson`/`fmt` bound via `bindPlugins`); `app.js` was 4232 lines pre-palette.
 - `core/logs.js` — `loadLog/loadLogList` extracted (`el`/`readJson`/`fmtBytes` injected, tail + sort); `app.js` was 4430 lines pre-plugins.

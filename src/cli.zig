@@ -2521,6 +2521,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const path = target[0..(std.mem.indexOfScalar(u8, target, '?') orelse target.len)];
         request_method = method;
         request_path = path;
+        // Binding to loopback prevents direct remote connections, but does not
+        // stop DNS rebinding: a hostile hostname can resolve to 127.0.0.1 and
+        // make the browser treat this control plane as its own origin. Require
+        // the authority the server actually advertises before serving even a
+        // GET, since several read endpoints expose logs and conversations.
+        if (unexpectedHost(headers_raw, port)) {
+            respond(stream, 421, "Misdirected Request", "{\"ok\":false,\"error\":\"invalid host\"}");
+            return;
+        }
         // The listen socket is 127.0.0.1-only, but any page open in the
         // user's browser can still reach it: every non-GET route here either
         // runs the agent, execs sandboxed tools, or writes state, so a
@@ -3676,9 +3685,10 @@ fn handleWebuiAsset(
     const is_plugins = std.mem.endsWith(u8, target, "plugins.js");
     const is_palette = std.mem.endsWith(u8, target, "palette.js");
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
+    const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -5333,6 +5343,7 @@ var render_logs: RenderCache = .{};
 var render_plugins: RenderCache = .{};
 var render_palette: RenderCache = .{};
 var render_modelpicker: RenderCache = .{};
+var render_tools: RenderCache = .{};
 var render_ui: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
@@ -5359,6 +5370,7 @@ var gzip_logs: GzipCache = .{};
 var gzip_plugins: GzipCache = .{};
 var gzip_palette: GzipCache = .{};
 var gzip_modelpicker: GzipCache = .{};
+var gzip_tools: GzipCache = .{};
 var gzip_ui: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
@@ -5491,6 +5503,38 @@ fn crossOriginRequest(headers_raw: []const u8, port: u16) bool {
     const want_host = std.fmt.bufPrint(&buf2, "http://localhost:{d}", .{port}) catch return true;
     if (std.mem.eql(u8, origin, want_host)) return false;
     return true;
+}
+
+/// Refuse requests addressed through any authority other than the two local
+/// names exposed by `clanker serve`. This closes DNS rebinding for both the
+/// state-changing API and sensitive GET endpoints. HTTP/1.1 requires Host;
+/// treating a missing or duplicate Host as invalid also avoids ambiguity
+/// between intermediaries and this deliberately small parser.
+fn unexpectedHost(headers_raw: []const u8, port: u16) bool {
+    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
+    var authority: ?[]const u8 = null;
+    while (lines.next()) |line| {
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        if (!std.ascii.eqlIgnoreCase(line[0..colon], "host")) continue;
+        if (authority != null) return true;
+        authority = std.mem.trim(u8, line[colon + 1 ..], " \t");
+    }
+    const value = authority orelse return true;
+    var ip_buf: [32]u8 = undefined;
+    const ip = std.fmt.bufPrint(&ip_buf, "127.0.0.1:{d}", .{port}) catch return true;
+    if (std.mem.eql(u8, value, ip)) return false;
+    var local_buf: [32]u8 = undefined;
+    const local = std.fmt.bufPrint(&local_buf, "localhost:{d}", .{port}) catch return true;
+    return !std.ascii.eqlIgnoreCase(value, local);
+}
+
+test "unexpectedHost only accepts the loopback authorities for this listener" {
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\n", 4173));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nhOsT: LOCALHOST:4173\r\n", 4173));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: attacker.example:4173\r\n", 4173));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:9999\r\n", 4173));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nUser-Agent: test\r\n", 4173));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:4173\r\nHost: attacker.example\r\n", 4173));
 }
 
 test "crossOriginRequest allows same-origin and no-Origin requests, refuses others" {
