@@ -4983,7 +4983,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .messages = messages.items,
                 .created = created,
                 .updated = updated,
-            }) catch {};
+            }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
         }
         const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
         // Otherwise the answer was already streamed via runStreamDelta; a
@@ -5028,7 +5028,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .messages = messages.items,
             .created = created,
             .updated = updated,
-        }) catch {};
+        }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
     }
 
     const content = resp.message.content orelse "";
