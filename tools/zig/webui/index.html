@@ -776,7 +776,10 @@
   }
   .rail-new:hover { background: var(--accent); color: var(--on-accent); }
   .rail input[type="search"] { width: 100%; box-sizing: border-box; }
-  .rail-list { margin-top: var(--space-4); display: flex; flex-direction: column; gap: 1px; }
+  .rail-list {
+    margin-top: var(--space-4); padding: 0; list-style: none;
+    display: flex; flex-direction: column; gap: 1px;
+  }
   .rail-group {
     margin: var(--space-4) 0 var(--space-2);
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
@@ -791,7 +794,7 @@
     font-family: var(--mono); font-size: var(--step-0);
   }
   .rail-item:hover { background: var(--surface-2); }
-  .rail-item[aria-selected="true"] {
+  .rail-item[aria-current="true"] {
     background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); color: var(--fg);
   }
   .rail-item-title {
@@ -909,7 +912,7 @@
     <label class="sr-only" for="session-filter">Filter conversations</label>
     <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
   </div>
-  <div class="rail-list" id="rail-list" role="listbox" aria-label="Conversations"></div>
+  <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
 </aside>
 
 <main id="main" tabindex="-1">
@@ -1441,8 +1444,9 @@ document.addEventListener("DOMContentLoaded", function () {
     var b = document.createElement("button");
     b.type = "button";
     b.className = "rail-item";
-    b.setAttribute("role", "option");
-    b.setAttribute("aria-selected", String(selected));
+    // aria-current, not aria-selected: this is the conversation you are in,
+    // not one of several selected in a listbox.
+    if (selected) b.setAttribute("aria-current", "true");
     var t = document.createElement("span");
     t.className = "rail-item-title";
     t.textContent = title;
@@ -1489,8 +1493,9 @@ document.addEventListener("DOMContentLoaded", function () {
       if (q && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
       var group = isPinned(s.id) ? "Pinned" : recencyGroup(s.updated);
       if (group !== lastGroup) {
-        var head = document.createElement("p");
+        var head = document.createElement("li");
         head.className = "rail-group";
+        head.setAttribute("role", "presentation");
         head.textContent = group;
         el.railList.appendChild(head);
         lastGroup = group;
@@ -1498,7 +1503,7 @@ document.addEventListener("DOMContentLoaded", function () {
       var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
       var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
         (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
-      var row = document.createElement("div");
+      var row = document.createElement("li");
       row.className = "rail-row";
       row.appendChild(railRow(s, title, meta, s.id === sessionId));
       var pin = document.createElement("button");
@@ -1516,11 +1521,13 @@ document.addEventListener("DOMContentLoaded", function () {
        without this row the rail would show nothing selected while the
        composer was plainly pointed at something. */
     if (!seen && !q) {
-      var pending = railRow(null, "New conversation", "unsaved", true);
-      el.railList.insertBefore(pending, el.railList.firstChild);
+      var pendingRow = document.createElement("li");
+      pendingRow.className = "rail-row";
+      pendingRow.appendChild(railRow(null, "New conversation", "unsaved", true));
+      el.railList.insertBefore(pendingRow, el.railList.firstChild);
     }
     if (!shown && q) {
-      var none = document.createElement("p");
+      var none = document.createElement("li");
       none.className = "rail-empty";
       none.textContent = "No conversation matches.";
       el.railList.appendChild(none);
@@ -1549,6 +1556,45 @@ document.addEventListener("DOMContentLoaded", function () {
     setRailOpen(el.rail.getAttribute("data-open") !== "true");
   });
   el.railScrim.addEventListener("click", function () { setRailOpen(false); });
+
+  function railItems() {
+    return Array.prototype.slice.call(el.railList.querySelectorAll(".rail-item"));
+  }
+
+  function moveRailFocus(from, step) {
+    var items = railItems();
+    if (!items.length) return;
+    var at = items.indexOf(from);
+    var next = at === -1 ? (step > 0 ? 0 : items.length - 1) : at + step;
+    if (next < 0) {
+      el.sessionFilter.focus();
+      return;
+    }
+    if (next >= items.length) next = items.length - 1;
+    items[next].focus();
+  }
+
+  el.railList.addEventListener("keydown", function (e) {
+    var item = e.target.closest ? e.target.closest(".rail-item") : null;
+    if (!item) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveRailFocus(item, e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      var items = railItems();
+      if (items.length) items[e.key === "Home" ? 0 : items.length - 1].focus();
+    }
+  });
+
+  el.sessionFilter.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowDown") return;
+    e.preventDefault();
+    var items = railItems();
+    if (items.length) items[0].focus();
+  });
 
   el.railNew.addEventListener("click", function () {
     el.newChat.click();
