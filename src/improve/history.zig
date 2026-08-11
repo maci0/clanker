@@ -277,6 +277,29 @@ pub const History = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// Every file touched by the last `max_entries` attempts.
+    ///
+    /// These are the files most likely to change again, and a file that
+    /// changes invalidates the cache block it sits in. Keeping them out of the
+    /// stable bulk is what lets the bulk survive from one run to the next.
+    pub fn recentlyTouched(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var out: std.ArrayList([]const u8) = .empty;
+        for (entries[start..]) |e| {
+            for (e.files) |f| {
+                var seen = false;
+                for (out.items) |have| {
+                    if (std.mem.eql(u8, have, f)) seen = true;
+                }
+                if (!seen) try out.append(arena, f);
+            }
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// The last `max_entries` attempts, as a block for the improve prompt:
     /// what was already done, and what was tried and rejected.
     ///

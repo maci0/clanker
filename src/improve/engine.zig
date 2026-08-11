@@ -100,6 +100,20 @@ fn nextStdSourceRef(text: []const u8) ?SourceRef {
     return null;
 }
 
+/// Whether a file already went into the focus block, by its header line.
+fn pathInFocus(focus: []const u8, path: []const u8) bool {
+    var buf: [512]u8 = undefined;
+    const header = std.fmt.bufPrint(&buf, "===== FILE: {s} =====", .{path}) catch return false;
+    return std.mem.indexOf(u8, focus, header) != null;
+}
+
+fn pathIn(list: []const []const u8, path: []const u8) bool {
+    for (list) |p| {
+        if (std.mem.eql(u8, p, path)) return true;
+    }
+    return false;
+}
+
 const Found = struct { sym: []const u8, rest: []const u8 };
 
 fn nextSymbol(text: []const u8) ?Found {
@@ -920,37 +934,64 @@ pub const Engine = struct {
         var omitted: std.ArrayList([]const u8) = .empty;
         var included_any = false;
 
-        // The files the instruction names are the ones a patch rewrites, so
-        // they are the volatile tail. pinNamedFiles marks them with a score no
-        // keyword count can reach.
+        // The volatile tail: the files the instruction names (pinNamedFiles
+        // marks them with a score no keyword count can reach) plus whatever
+        // recent runs already changed. Those are the files most likely to
+        // change again, and one changed file invalidates the block it sits in,
+        // so keeping them together is what lets the bulk stay cached from one
+        // run to the next.
+        // Bounded: twelve runs' worth of changed files is most of the large
+        // files in the project, and an unbounded focus block is just the old
+        // single block under a new name. Pinned files first, then churn, until
+        // the tail has taken its share.
+        const churn = self.hist.recentlyTouched(self.arena, 6) catch &.{};
+        const focus_budget = max_bytes / 4;
         for (cands.items) |c| {
             if (c.score < 1_000_000) continue;
             included_any = true;
-            try self.appendWholeFile(&focus, &omitted, c, max_bytes);
+            try self.appendWholeFile(&focus, &omitted, c, focus_budget);
         }
         for (cands.items) |c| {
-            if (c.score >= 1_000_000) continue;
-            // Keep the context tight: only include files that matched the
-            // instruction keywords (plus always build.zig / config.json), so
-            // the model cannot lose track of which file has what.
-            const always = std.mem.eql(u8, c.path, "build.zig") or std.mem.eql(u8, c.path, "config.json") or std.mem.eql(u8, c.path, "build.zig.zon");
-            if (c.score == 0 and !always) continue;
+            if (c.score >= 1_000_000 or !pathIn(churn, c.path)) continue;
+            if (focus.items.len >= focus_budget) break;
             included_any = true;
-            try self.appendWholeFile(&buf, &omitted, c, max_bytes - focus.items.len);
+            try self.appendWholeFile(&focus, &omitted, c, focus_budget);
         }
-        if (!included_any) {
-            // No keyword matches — fall back to the top candidates by score.
-            for (cands.items) |c| try self.appendWholeFile(&buf, &omitted, c, max_bytes - focus.items.len);
+        // The bulk is deliberately chosen without reference to the
+        // instruction, and emitted in path order. Selecting it by keyword
+        // score made its bytes different on every run, which is the same thing
+        // as having no cache at all: relevance decided the tail, and the tail
+        // is what a prefix cache cannot tolerate moving. Relevance still
+        // decides the focus block, which is where the instruction's own files
+        // are.
+        const bulk_order = try self.arena.dupe(Candidate, cands.items);
+        std.mem.sort(Candidate, bulk_order, {}, struct {
+            fn lt(_: void, a: Candidate, b: Candidate) bool {
+                return std.mem.lessThan(u8, a.path, b.path);
+            }
+        }.lt);
+        // A fixed share, not "whatever the focus left over": a cache block has
+        // to be identical byte for byte, and a budget that moves with the focus
+        // size changes which file lands last on every run.
+        const bulk_budget = max_bytes - focus_budget;
+        for (bulk_order) |c| {
+            if (pathIn(churn, c.path)) continue;
+            included_any = true;
+            try self.appendWholeFile(&buf, &omitted, c, bulk_budget);
         }
         // A file that did not fit has to be named. Silently cutting one off
         // mid-way, or dropping it entirely, left the model writing exact-match
         // patches against text it had never seen and could not know was
         // missing.
+        // Into the volatile block, not the bulk: which files did not fit
+        // depends on the instruction, and a list that changes every run sitting
+        // at the end of the cached block invalidates the whole thing. This is
+        // what kept the hit rate at zero even after the split.
         if (omitted.items.len > 0) {
-            try buf.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; do not patch these blind) =====\n");
+            try focus.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; do not patch these blind) =====\n");
             for (omitted.items) |path| {
-                try buf.appendSlice(self.arena, path);
-                try buf.appendSlice(self.arena, "\n");
+                try focus.appendSlice(self.arena, path);
+                try focus.appendSlice(self.arena, "\n");
             }
         }
         const total = buf.items.len + focus.items.len;
