@@ -708,7 +708,8 @@ const improve_system =
     \\    {
     \\      "file": "relative/path/within/src",
     \\      "old": "exact text currently in the file (must match verbatim; first occurrence is replaced)",
-    \\      "new": "replacement text"
+    \\      "new": "replacement text",
+    \\      "note": "when the file content is full of quotes (any .json descriptor), send old_b64 and new_b64 with the same text base64-encoded instead of old/new: nothing to escape, nothing to get wrong"
     \\    }
     \\  ]
     \\}

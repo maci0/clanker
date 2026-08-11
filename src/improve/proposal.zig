@@ -100,8 +100,13 @@ pub fn parseProposal(arena: std.mem.Allocator, raw: []const u8, max_changes: usi
                     log.log(.warn, "proposal rejected: '{s}' is outside the modifiable surface", .{file});
                     return error.PathNotAllowed;
                 }
-                const old = try strField(co, "old");
-                const new = try strField(co, "new");
+                // A descriptor or JSON file is mostly quotes, and escaping it
+                // into this proposal is where models reliably fail: the whole
+                // patch comes back as a SyntaxError with nothing salvageable.
+                // Either field may instead arrive base64-encoded, which has no
+                // characters to escape.
+                const old = try textField(arena, co, "old");
+                const new = try textField(arena, co, "new");
                 if (old.len + new.len > max_change_bytes) return error.ChangeTooLarge;
                 try list.append(arena, .{ .file = file, .old = old, .new = new });
             }
@@ -110,6 +115,28 @@ pub fn parseProposal(arena: std.mem.Allocator, raw: []const u8, max_changes: usi
         else => return error.ChangesNotArray,
     }
     return p;
+}
+
+/// A change's text, taken from `<key>` or, when that is absent, decoded from
+/// `<key>_b64`. Exactly one of the two must be present.
+fn textField(arena: std.mem.Allocator, obj: json.ObjectMap, key: []const u8) ![]const u8 {
+    if (obj.get(key)) |v| {
+        return switch (v) {
+            .string => |str| str,
+            else => error.FieldNotString,
+        };
+    }
+    var b64_key_buf: [32]u8 = undefined;
+    const b64_key = std.fmt.bufPrint(&b64_key_buf, "{s}_b64", .{key}) catch return error.MissingField;
+    const encoded = switch (obj.get(b64_key) orelse return error.MissingField) {
+        .string => |str| str,
+        else => return error.FieldNotString,
+    };
+    const decoder = std.base64.standard.Decoder;
+    const len = decoder.calcSizeForSlice(encoded) catch return error.BadBase64;
+    const out = try arena.alloc(u8, len);
+    decoder.decode(out, encoded) catch return error.BadBase64;
+    return out;
 }
 
 fn strField(obj: json.ObjectMap, key: []const u8) ![]const u8 {
@@ -153,4 +180,39 @@ test "stripMarkdownFence and parse fenced proposal" {
     try std.testing.expectEqualStrings("s", p.summary);
     try std.testing.expectEqual(@as(usize, 1), p.changes.len);
     try std.testing.expectEqualStrings("skills/SYSTEM.md", p.changes[0].file);
+}
+
+test "a change may carry its text base64-encoded" {
+    // Escaping a quote-heavy descriptor into the proposal JSON is where model
+    // patches reliably died as an unsalvageable SyntaxError; base64 has
+    // nothing to escape.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // {"name": "x"}  ->  eyJuYW1lIjogIngifQ==
+    const text =
+        \\{"summary":"s","rationale":"r","changes":[
+        \\{"file":"tools/manifests/x.tool.json","old_b64":"eyJuYW1lIjogIngifQ==","new_b64":"eyJuYW1lIjogInkifQ=="}]}
+    ;
+    const p = try parseProposal(arena, text, 10, 4096);
+    try std.testing.expectEqual(@as(usize, 1), p.changes.len);
+    try std.testing.expectEqualStrings("{\"name\": \"x\"}", p.changes[0].old);
+    try std.testing.expectEqualStrings("{\"name\": \"y\"}", p.changes[0].new);
+
+    // The plain fields still work, and mixing the two is fine.
+    const mixed =
+        \\{"summary":"s","rationale":"r","changes":[
+        \\{"file":"src/cli.zig","old":"a","new_b64":"Yg=="}]}
+    ;
+    const m = try parseProposal(arena, mixed, 10, 4096);
+    try std.testing.expectEqualStrings("a", m.changes[0].old);
+    try std.testing.expectEqualStrings("b", m.changes[0].new);
+
+    // Garbage base64 is rejected rather than silently patched with nonsense.
+    const bad =
+        \\{"summary":"s","rationale":"r","changes":[
+        \\{"file":"src/cli.zig","old_b64":"!!!not base64!!!","new":"x"}]}
+    ;
+    try std.testing.expectError(error.BadBase64, parseProposal(arena, bad, 10, 4096));
 }
