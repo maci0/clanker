@@ -149,6 +149,12 @@ peer keeps the message only when it subscribes to that room.
   the sub-agent's answer so the parent sees progress even when the run hits
   its iteration cap. Ids are `p1`, `p2`, ... to keep them distinct from
   shared-list message ids.
+- Sub-agents can ask the parent: `ask_user {"parent": true}` in a nested run
+  routes the question to the agent that spawned it. The answer is one bounded
+  completion on the parent's provider over a snapshot of the parent's
+  transcript (`answerAsParent`, `src/agent/loop.zig`) — safe because
+  `ck_subagent` joins the nested thread, so the parent is parked with no tool
+  of its own in flight while the question is answered.
 - HTTP: `POST /api/chat/message` (delivery), `GET /api/chat/messages?room=..&after=..`,
   `GET /api/chat/rooms`.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages
@@ -222,7 +228,7 @@ changes as tools are added.
 | `file_ops` | source dirs | move, copy, delete, mkdir, stat, append and hash. move and copy refuse an existing destination unless `overwrite` is set |
 | `lsp` | `.` | Resolve a Zig symbol through zls: where it is defined, or everywhere it is referenced |
 | `image` | `.` | Read an image file and return it as a multimodal part, so the model can see it |
-| `ask_user` | none | Put a multiple-choice question to the human, or to another clanker instance |
+| `ask_user` | none | Put a multiple-choice question to the human, to another clanker instance, or (in a sub-agent run) to the parent agent via `{"parent": true}` |
 | `forget_note` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
 | `search_code` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
 | `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |

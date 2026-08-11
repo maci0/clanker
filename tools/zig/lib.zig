@@ -338,6 +338,13 @@ pub fn subagentBriefed(input: []const u8, task: []const u8, provider: ?[]const u
 /// chose. `error.NotFound` means nobody is attached to answer (a scripted run),
 /// which the caller should treat as "decide it yourself", not as a failure.
 pub fn ask(question: []const u8, options: []const []const u8) FsError![]const u8 {
+    return askTarget(question, options, null);
+}
+
+/// Like `ask`, aimed at a specific host-side answerer: `to` = "parent" routes
+/// the question to the agent that spawned this sub-agent (null asks the
+/// human). NotFound means the requested answerer is not attached.
+pub fn askTarget(question: []const u8, options: []const []const u8, to: ?[]const u8) FsError![]const u8 {
     var buf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
@@ -348,6 +355,10 @@ pub fn ask(question: []const u8, options: []const []const u8) FsError![]const u8
     s.beginArray() catch return error.IoError;
     for (options) |o| s.write(o) catch return error.IoError;
     s.endArray() catch return error.IoError;
+    if (to) |t| {
+        s.objectField("to") catch return error.IoError;
+        s.write(t) catch return error.IoError;
+    }
     s.endObject() catch return error.IoError;
 
     const req = sliceToMem(buf[0..w.end]);

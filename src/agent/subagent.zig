@@ -49,7 +49,7 @@ pub fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]
     if (buf.items.len == 0) return task;
     try buf.appendSlice(arena, "Your task: ");
     try buf.appendSlice(arena, task);
-    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs. For multi-step work, track your steps on your private todo list (todo_add / todo_close / todo_list with no \"room\"): its final state is reported back with your answer, so your caller sees your progress even if you run out of iterations.");
+    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs. For multi-step work, track your steps on your private todo list (todo_add / todo_close / todo_list with no \"room\"): its final state is reported back with your answer, so your caller sees your progress even if you run out of iterations. If a decision hinges on something only your parent knows — context it did not put in this brief — ask it with ask_user {\"parent\": true} instead of guessing or burning iterations rediscovering it.");
     return buf.toOwnedSlice(arena);
 }
 
@@ -63,6 +63,7 @@ pub fn runNested(
     task: []const u8,
     provider_name: ?[]const u8,
     brief: Brief,
+    parent_ask: ?host.ParentAsk,
 ) ![]const u8 {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -82,6 +83,10 @@ pub fn runNested(
     // Run tools sequentially: the nested run happens on a tool-call thread
     // already, so spawning worker threads from within would explode threads.
     a.no_parallel_tools = true;
+    // The parent as answerer: ask_user {"parent": true} in this run reaches
+    // the agent that spawned it (see host.ParentAsk for the concurrency
+    // story).
+    a.parent_ask = parent_ask;
 
     // The run's private todo list: arena-owned, so it is discarded with the
     // run. Nothing about it persists except the summary appended below.
@@ -122,6 +127,8 @@ test "the brief tells a sub-agent what it cannot see" {
     try std.testing.expect(std.mem.indexOf(u8, briefed, "do not re-derive") != null);
     // The private todo list is only useful if the sub-agent is told it has one.
     try std.testing.expect(std.mem.indexOf(u8, briefed, "private todo list") != null);
+    // Likewise the channel back up to the parent.
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "ask_user {\"parent\": true}") != null);
 
     // With nothing to hand down, the task is passed through untouched rather
     // than wrapped in an empty preamble.
