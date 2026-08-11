@@ -882,6 +882,43 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
 }
 
+/// The REPL's opening banner. On a terminal it reuses the left-bar card
+/// style already established for tool calls and the input box (`╭─`/`│`/
+/// `╰─`, no right-hand border — transcript.zig's doc comment explains why a
+/// closed box was rejected); piped output degrades to one dense plain line,
+/// so scripts get a header without box art.
+fn printReplBanner(w: *std.Io.Writer, theme: *const tui_theme.Theme, provider_name: []const u8, model_name: []const u8, sid: []const u8, tty: bool) void {
+    if (!tty) {
+        w.print("{s}clanker repl \xc2\xb7 {s}/{s}{s}\n", .{ theme.dim, provider_name, model_name, theme.reset }) catch {};
+        return;
+    }
+    w.print("{s}\xe2\x95\xad\xe2\x94\x80 {s}{s}\xe2\x9a\xa1 clanker{s} {s}repl{s}\n", .{ theme.tool, theme.reset, theme.answer_marker, theme.reset, theme.dim, theme.reset }) catch {};
+    w.print("{s}\xe2\x94\x82{s}  {s}{s}/{s} \xc2\xb7 session {s}{s}\n", .{ theme.tool, theme.reset, theme.dim, provider_name, model_name, sid, theme.reset }) catch {};
+    w.print("{s}\xe2\x95\xb0\xe2\x94\x80{s} {s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n", .{ theme.tool, theme.reset, theme.dim, theme.reset }) catch {};
+}
+
+test "printReplBanner draws a left-bar card on a tty" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", true);
+    const bytes = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad\xe2\x94\x80") != null); // ╭─
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x9a\xa1 clanker") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "openai/gpt-x") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "session repl-42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xb0\xe2\x94\x80") != null); // ╰─
+}
+
+test "printReplBanner degrades to one dense line when piped" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", false);
+    const bytes = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad") == null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "clanker repl \xc2\xb7 openai/gpt-x") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\n"));
+}
+
 fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -955,10 +992,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     a.on_tool_results = &replToolResults;
     a.on_tool_result = &replToolResult;
 
-    try out_w.interface.print(
-        "{s}\xe2\x9a\xa1 clanker{s} {s}repl \xc2\xb7 {s}/{s}{s}\n{s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n",
-        .{ repl_theme.answer_marker, repl_theme.reset, repl_theme.dim, provider.name, provider.activeModelName(), repl_theme.reset, repl_theme.dim, repl_theme.reset },
-    );
+    printReplBanner(&out_w.interface, &repl_theme, provider.name, provider.activeModelName(), sid, stdout_file.isTty(io) catch false);
     try out_w.interface.flush();
 
     // On a terminal, keystrokes go through the line editor: a cooked TTY hands
