@@ -333,6 +333,25 @@ main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: 
 .event-tool .run-state { color: var(--fg-muted); }
 @media (prefers-reduced-motion: no-preference) { .event-tool .run-state { display: none; } }
 @media (prefers-reduced-motion: reduce) { .spin { display: none; } }
+/* A question the run is blocked on (ask_user over the stream): the accent
+   border marks it as the one thing on the page waiting for the user. */
+.event-ask {
+  border-left: 3px solid var(--accent);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0;
+}
+.event-ask .ask-question {
+  font-family: var(--sans); font-size: var(--step-0);
+  max-width: var(--measure);
+}
+.event-ask .ask-options {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.event-ask .ask-answered {
+  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  margin-top: var(--space-2);
+}
 .turn-answer {
   font-family: var(--sans); font-size: var(--step-1);
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
