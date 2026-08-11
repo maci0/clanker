@@ -161,23 +161,19 @@ const ExprParser = struct {
                 self.i += 1;
             } else break;
         }
-        if (self.i == start) return error.MissingOperand;
-        var value: f64 = 0;
-        var scale: f64 = 0.1;
-        var frac = false;
-        for (self.s[start..self.i]) |ch| {
-            if (ch == '.') {
-                frac = true;
-                continue;
-            }
-            const digit = @as(f64, @floatFromInt(ch - '0'));
-            if (frac) {
-                value += digit * scale;
-                scale *= 0.1;
-            } else {
-                value = value * 10 + digit;
-            }
+        // Scientific notation: 1e3, 2.5E-2. Only consumed when at least one
+        // exponent digit follows, so a trailing bare 'e' still errors out.
+        if (self.i > start and self.i < self.s.len and (self.s[self.i] == 'e' or self.s[self.i] == 'E')) {
+            var j = self.i + 1;
+            if (j < self.s.len and (self.s[j] == '+' or self.s[j] == '-')) j += 1;
+            const digits_start = j;
+            while (j < self.s.len and self.s[j] >= '0' and self.s[j] <= '9') j += 1;
+            if (j > digits_start) self.i = j;
         }
-        return value;
+        if (self.i == start) return error.MissingOperand;
+        // Correctly-rounded parsing (and a hard error on malformed literals
+        // like ".") instead of hand-rolled accumulation that compounds
+        // rounding error on every fractional digit.
+        return std.fmt.parseFloat(f64, self.s[start..self.i]) catch error.InvalidExpression;
     }
 };
