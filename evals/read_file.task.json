@@ -1,8 +1,8 @@
 {
   "name": "read_file",
   "kind": "task",
-  "description": "One case for the whole read_file contract: a read at a byte offset past 64 KiB (src/agent/loop.zig is over 100 KB, and no tool could see past that ceiling until the guest arena stopped being 64 KiB), and the pagination signal that tells a caller there is more to come. Both were silently broken while every build gate stayed green.",
-  "prompt": "Use the read_file tool twice on src/agent/loop.zig. First with offset 70000 and limit 20000: does that text contain the string 'parallel_tool_stack_bytes'? Second with offset 0 and limit 1024: does that result JSON contain the field 'next_offset'? Answer with only YES if both are true, otherwise NO.",
+  "description": "Reading past the old 64 KiB ceiling, and the pagination signal. No tool could see beyond 64 KiB of any file until the guest arena stopped being that size, and this project's own largest source files are well past it. The assertions are deliberately about the shape of the answer rather than its content: an earlier version of this case looked for a symbol between byte 70000 and 90000 of src/agent/loop.zig, and started failing when that file grew and the symbol moved to byte 94703. An eval that goes red because the code grew teaches everyone to ignore it.",
+  "prompt": "Use the read_file tool twice on src/agent/loop.zig, a file well over 100 KB. First with offset 70000 and limit 20000: that offset is past the old 64 KiB limit, so answer whether it returned a non-empty text field. Second with offset 0 and limit 1024: a bounded read of a much larger file, so answer whether the result carries a next_offset field saying where to resume. Reply with only YES if both were true, otherwise NO.",
   "requires_tool": "read_file",
   "criteria": [
     {
