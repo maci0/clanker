@@ -36,6 +36,27 @@ pub const RunEvent = struct {
     tools: []const []const u8 = &.{},
 };
 
+/// Byte caps for event fields written to state/autolearn.jsonl: a runaway
+/// tool label, error detail, or task text must cost a bounded number of log
+/// bytes rather than grow the line or overflow a fixed buffer and silently
+/// drop the observation it belongs to.
+const cap_tool_bytes: usize = 128;
+const cap_detail_bytes: usize = 512;
+const cap_task_bytes: usize = 2048;
+const cap_name_bytes: usize = 128;
+
+/// Truncates `s` to at most `max_bytes` bytes without splitting a UTF-8
+/// codepoint. The JSONL log must stay valid UTF-8 even when an event field
+/// runs long; the cut backs up to a whole-codepoint boundary so a capped
+/// line is never corrupted by a dangling continuation byte.
+fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
+    if (s.len <= max_bytes) return s;
+    var end = max_bytes;
+    // gated on s.len > max_bytes, so end < s.len: the read is in bounds.
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
 /// Appends one event line to state/autolearn.jsonl (best effort).
 pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
     recordTo(std.Io.Dir.cwd(), io, gpa, arena, type_, tool, detail);
@@ -47,22 +68,27 @@ fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
         return;
     };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    // Long tool labels / error details are capped UTF-8-safe instead of
+    // overflowing a fixed buffer and dropping the whole event: a runaway
+    // field should cost bounded log bytes, never the observation itself.
+    const tool_capped = capUtf8(tool, cap_tool_bytes);
+    const detail_capped = capUtf8(detail, cap_detail_bytes);
 
-    var buf: [2048]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
     s.beginObject() catch return;
     s.objectField("ts") catch return;
     s.print("{d}", .{ts}) catch return;
     s.objectField("type") catch return;
     s.write(type_) catch return;
     s.objectField("tool") catch return;
-    s.write(tool) catch return;
+    s.write(tool_capped) catch return;
     s.objectField("detail") catch return;
-    s.write(detail) catch return;
+    s.write(detail_capped) catch return;
     s.endObject() catch return;
 
-    appendLine(base, io, gpa, arena, buf[0..w.end]);
+    appendLine(base, io, gpa, arena, out.written());
 }
 
 /// Appends one line via a locked seek-to-end write: O(1) in the log size,
@@ -126,19 +152,24 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
         return;
     };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    // Same reasoning as recordTo: task text and names are capped UTF-8-safe
+    // so a long prompt cannot overflow into a dropped event.
+    const provider_capped = capUtf8(e.provider, cap_name_bytes);
+    const model_capped = capUtf8(e.model, cap_name_bytes);
+    const task_capped = capUtf8(e.task, cap_task_bytes);
 
-    var buf: [8192]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
     s.beginObject() catch return;
     s.objectField("ts") catch return;
     s.print("{d}", .{ts}) catch return;
     s.objectField("type") catch return;
     s.write("run") catch return;
     s.objectField("provider") catch return;
-    s.write(e.provider) catch return;
+    s.write(provider_capped) catch return;
     s.objectField("model") catch return;
-    s.write(e.model) catch return;
+    s.write(model_capped) catch return;
     s.objectField("prompt_tokens") catch return;
     s.print("{d}", .{e.prompt_tokens}) catch return;
     s.objectField("completion_tokens") catch return;
@@ -150,14 +181,14 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     s.objectField("duration_ms") catch return;
     s.print("{d}", .{e.duration_ms}) catch return;
     s.objectField("task") catch return;
-    s.write(e.task) catch return;
+    s.write(task_capped) catch return;
     s.objectField("tools") catch return;
     s.beginArray() catch return;
-    for (e.tools) |t| s.write(t) catch return;
+    for (e.tools) |t| s.write(capUtf8(t, cap_name_bytes)) catch return;
     s.endArray() catch return;
     s.endObject() catch return;
 
-    appendLine(base, io, gpa, arena, buf[0..w.end]);
+    appendLine(base, io, gpa, arena, out.written());
 }
 
 // Aggregating state/autolearn.jsonl into roadmap items and upserting
@@ -238,4 +269,25 @@ test "trimLog keeps only the newest keep_lines lines" {
     try std.testing.expectEqual(@as(usize, keep_lines), lines);
     // The oldest 500 lines (ts 0..499) were dropped.
     try std.testing.expectEqual(@as(usize, 500), first_ts.?);
+}
+
+test "capUtf8 never splits a codepoint" {
+    // At or under the cap the input is returned unchanged.
+    try std.testing.expectEqualStrings("", capUtf8("", 5));
+    try std.testing.expectEqualStrings("hello", capUtf8("hello", 100));
+
+    // ASCII truncates at the byte cap.
+    try std.testing.expectEqualStrings("hel", capUtf8("hello", 3));
+
+    // "é" is 2 bytes (0xC3 0xA9). A cap of 2 lands mid-é; the cut backs up
+    // to the "h" so no dangling continuation byte is emitted.
+    try std.testing.expectEqualStrings("h", capUtf8("héllo", 2));
+    // A cap inside a lone multi-byte codepoint yields the empty string.
+    try std.testing.expectEqualStrings("", capUtf8("é", 1));
+    // A cap that lands exactly on a codepoint end keeps it whole.
+    try std.testing.expectEqualStrings("é", capUtf8("é", 2));
+
+    // Mixed: "aéé" is 5 bytes; a cap of 3 ("a" + complete first "é") leaves
+    // the second "é" untouched rather than half of it.
+    try std.testing.expectEqualStrings("aé", capUtf8("aéé", 3));
 }
