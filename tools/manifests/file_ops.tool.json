@@ -16,7 +16,8 @@
     "build.zig.zon",
     "config.json",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    ".agents"
   ],
   "input_schema": {
     "type": "object",

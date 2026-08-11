@@ -11,7 +11,8 @@
     "docs",
     "skills",
     "evals",
-    "state"
+    "state",
+    ".agents"
   ],
   "input_schema": {
     "type": "object",
