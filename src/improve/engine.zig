@@ -862,7 +862,14 @@ pub const Engine = struct {
     /// model knows not to patch it blind.
     fn contextBudget(self: *const Engine) usize {
         const window: usize = self.provider.activeModel().context_window;
-        return std.math.clamp(window, 64 * 1024, 256 * 1024);
+        // The upper clamp used to be 256 KiB, which made the web UI
+        // unreachable: `collectContext` gives focus a quarter of the budget,
+        // so a 256 KiB ceiling left 64 KiB of focus for a single 133 KiB file
+        // that is the entire web UI. The page was gathered and then omitted
+        // every time, and the model answered "no changes needed" about a file
+        // it had never seen. A million-token model can hold it; the clamp is
+        // what decides whether it is offered.
+        return std.math.clamp(window, 64 * 1024, 1024 * 1024);
     }
 
     /// The source context, split at the cache breakpoint.
@@ -1645,7 +1652,7 @@ test "the context budget follows the model's own window" {
     const arena = arena_state.allocator();
     var cfg = config.Config{};
 
-    // A small window keeps the floor; a large one is capped rather than
+    // A small window keeps the floor; a large one is still capped rather than
     // billing the whole repository on every attempt.
     var small = try config.Provider.single(arena, "s", "http://x", .openai_compat, "m", .{ .context_window = 8192 });
     var engine = Engine{ .ctx = undefined, .arena = arena, .provider = &small, .cfg = &cfg, .hist = undefined, .instructions = "" };
@@ -1657,7 +1664,14 @@ test "the context budget follows the model's own window" {
 
     var huge = try config.Provider.single(arena, "h", "http://x", .openai_compat, "m", .{ .context_window = 1_048_576 });
     engine.provider = &huge;
-    try std.testing.expectEqual(@as(usize, 256 * 1024), engine.contextBudget());
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), engine.contextBudget());
+
+    // The ceiling exists to make the largest single file in the modifiable
+    // surface reachable. collectContext gives focus a quarter of the budget,
+    // and tools/zig/webui/index.html — the entire web UI, one file — is over
+    // 130 KiB, so a ceiling under ~536 KiB silently omits it and the model is
+    // asked to edit a page it cannot see.
+    try std.testing.expect(engine.contextBudget() / 4 > 133 * 1024);
 }
 
 test "pruneStaging keeps the newest N and removes the rest" {
