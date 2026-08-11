@@ -267,7 +267,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return respond(out, b);
     }
 
-    // Every remaining op names one card.
+    // Every remaining op names one card, but the op is checked first: a request
+    // with both a bad op and a bad id should be told the op is not real, since
+    // no id would have made it work.
+    const card_ops = [_][]const u8{
+        "update",         "move",       "delete",        "subtask_add", "subtask_toggle",
+        "subtask_remove", "depend_add", "depend_remove", "log",         "usage",
+    };
+    var known = false;
+    for (card_ops) |name| {
+        if (std.mem.eql(u8, req.op, name)) known = true;
+    }
+    if (!known) return lib.fail(out, "unknown op");
+
     var at: ?usize = null;
     for (cards.items, 0..) |c, i| {
         if (std.mem.eql(u8, c.id, req.id)) at = i;
