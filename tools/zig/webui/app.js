@@ -3905,94 +3905,93 @@ function fmtDeadline(ts) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/* The board derives from the card set, the column set and the "only mine"
+   filter. It used to clear #board and rebuild it, which is what forced the
+   focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
+   everything. */
+var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null });
+
 function renderBoard(next) {
-  board = next;
+  board = next || board;
+  boardState.val = {
+    columns: board.columns || [],
+    cards: board.cards || [],
+    mine: el.boardMine.checked,
+    me: (el.instanceChip.textContent || "").trim(),
+    open: openCardId
+  };
+
   // The "new card" column choice follows the board rather than a fixed list.
   var keepCol = el.cardColumn.value;
   el.cardColumn.textContent = "";
-  board.columns.forEach(function (c) {
-    var opt = document.createElement("option");
-    opt.value = c.id;
-    opt.textContent = c.title;
-    el.cardColumn.appendChild(opt);
-  });
+  van.add(el.cardColumn, (board.columns || []).map(function (c) {
+    return T.option({ value: c.id }, c.title);
+  }));
   if (keepCol) el.cardColumn.value = keepCol;
+}
 
-  var mineOnly = el.boardMine.checked;
-  var me = (el.instanceChip.textContent || "").trim();
-  el.board.textContent = "";
-  var openTotal = 0;
+function boardColumn(col, s) {
+  var shown = s.cards
+    .filter(function (c) { return c.column === col.id; })
+    .filter(function (c) { return !s.mine || c.assignee === s.me; })
+    .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
-  board.columns.forEach(function (col) {
-    var colEl = document.createElement("section");
-    colEl.className = "board-col";
-    colEl.setAttribute("data-column", col.id);
-    colEl.setAttribute("aria-labelledby", "board-col-" + col.id);
+  var over = col.wip && shown.length > col.wip;
+  var count = T.span({
+    class: "board-col-count",
+    "data-over": over ? "true" : null,
+    // Over the limit is said in words as well as colour, because colour is the
+    // one thing forced-colors and colour blindness both take away.
+    title: over ? shown.length + " of " + col.wip + ", over the limit" : null
+  }, shown.length + (col.wip ? " / " + col.wip : ""));
 
-    var head = document.createElement("div");
-    head.className = "board-col-head";
-    var title = document.createElement("h3");
-    title.className = "board-col-title";
-    title.id = "board-col-" + col.id;
-    title.textContent = col.title;
-    var count = document.createElement("span");
-    count.className = "board-col-count";
-    head.appendChild(title);
-    head.appendChild(count);
-    colEl.appendChild(head);
+  var list = T.ul({
+    class: "board-cards",
+    "aria-label": col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards")
+  }, shown.map(function (c) { return T.li(cardNode(c)); }));
 
-    var list = document.createElement("ul");
-    list.className = "board-cards";
-
-    var shown = board.cards
-      .filter(function (c) { return c.column === col.id; })
-      .filter(function (c) { return !mineOnly || c.assignee === me; })
-      .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
-
-    count.textContent = shown.length + (col.wip ? " / " + col.wip : "");
-    // Over the limit is said in words as well as colour, because colour is
-    // the one thing forced-colors and colour blindness both take away.
-    if (col.wip && shown.length > col.wip) {
-      count.setAttribute("data-over", "true");
-      count.title = shown.length + " of " + col.wip + ", over the limit";
-    }
-    list.setAttribute("aria-label", col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards"));
-    if (col.id !== doneColumn()) openTotal += shown.length;
-
-    shown.forEach(function (c) {
-      var li = document.createElement("li");
-      li.appendChild(cardNode(c));
-      list.appendChild(li);
-    });
-    colEl.appendChild(list);
-
-    // Pointer drop target. The keyboard equivalent lives on the card.
-    colEl.addEventListener("dragover", function (e) {
-      e.preventDefault();
-      colEl.setAttribute("data-drop", "true");
-    });
-    colEl.addEventListener("dragleave", function () { colEl.removeAttribute("data-drop"); });
-    colEl.addEventListener("drop", function (e) {
+  var colEl = T.section({
+    class: "board-col",
+    "data-column": col.id,
+    "aria-labelledby": "board-col-" + col.id,
+    ondragover: function (e) { e.preventDefault(); colEl.setAttribute("data-drop", "true"); },
+    ondragleave: function () { colEl.removeAttribute("data-drop"); },
+    ondrop: function (e) {
       e.preventDefault();
       colEl.removeAttribute("data-drop");
       var id = e.dataTransfer.getData("text/plain");
       if (id) postBoard({ op: "move", id: id, column: col.id }, "Moved to " + col.title + ".");
-    });
+    }
+  },
+    T.div({ class: "board-col-head" },
+      T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
+      count),
+    list);
+  return colEl;
+}
 
-    el.board.appendChild(colEl);
+bind(el.board, boardState, function (s) {
+  var open = 0;
+  var done = s.columns.length ? s.columns[s.columns.length - 1].id : "done";
+  s.cards.forEach(function (c) {
+    if (c.column !== done && (!s.mine || c.assignee === s.me)) open += 1;
   });
+  setTabCount("board", open);
+  el.boardEmpty.hidden = s.cards.length > 0;
 
-  setTabCount("board", openTotal);
+  // The detail panel is rebuilt with the board because it shows one of these
+  // cards; the edit draft and the focus snapshot carry across it.
   var focusSnap = captureFocus();
-  if (openCardId && cardById(openCardId)) {
-    showCardDetail(openCardId);
+  if (s.open && cardById(s.open)) {
+    showCardDetail(s.open);
     restoreFocus(focusSnap);
   } else {
     closeCardDetail();
   }
 
-  el.boardEmpty.hidden = board.cards.length > 0;
-}
+  return s.columns.map(function (col) { return boardColumn(col, s); });
+});
+
 
 function cardNode(c) {
   var b = document.createElement("button");
