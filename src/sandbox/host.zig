@@ -2412,6 +2412,32 @@ fn stringArray(arena: std.mem.Allocator, value: ?std.json.Value) ![]const []cons
     return out.toOwnedSlice(arena);
 }
 
+/// Apply the lexical policy and reject every existing symlink component.
+/// Host filesystem APIs follow symlinks, so the lexical check alone would let
+/// `allowed/link/secret` escape when `allowed/link` points outside the root.
+fn safeJoinSecure(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
+    const full = try safeJoin(sb, sub_path);
+    errdefer sb.gpa.free(full);
+
+    // Check components from the root down. Once a component is absent, all
+    // remaining components are absent too; write operations may create them.
+    // This is deliberately no-follow so the symlink itself is visible.
+    var end: usize = if (full.len > 0 and full[0] == '/') 1 else 0;
+    while (end < full.len) {
+        end = std.mem.indexOfScalarPos(u8, full, end, '/') orelse full.len;
+        if (end > 0) {
+            const stat = std.Io.Dir.cwd().statFile(sb.io, full[0..end], .{ .follow_symlinks = false }) catch |err| switch (err) {
+                error.FileNotFound => break,
+                else => return err,
+            };
+            if (stat.kind == .sym_link) return error.PathOutsideSandbox;
+        }
+        if (end == full.len) break;
+        end += 1;
+    }
+    return full;
+}
+
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     if (sub_path[0..@min(sub_path.len, 1)].len > 0 and sub_path[0] == '/') return error.PathOutsideSandbox;
     // The root itself, written "" or ".". Without this no host call could

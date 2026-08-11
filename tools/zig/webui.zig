@@ -25,6 +25,7 @@ const fleet = @embedFile("webui/features/fleet.js");
 const utils = @embedFile("webui/core/utils.js");
 const vendor = @embedFile("webui/core/vendor.js");
 const theme = @embedFile("webui/core/theme.js");
+const markdown = @embedFile("webui/lib/markdown.js");
 
 /// Bytes this asset occupies once JSON-encoded into the response envelope.
 /// Matches std.json's default (escape_unicode = false): bytes 0x20-0x21,
@@ -48,7 +49,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, van_boot, fleet, utils, vendor, theme }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/utils.js", "core/vendor.js", "core/theme.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, van_boot, fleet, utils, vendor, theme, markdown }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/utils.js", "core/vendor.js", "core/theme.js", "lib/markdown.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -72,6 +73,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/utils.js")) return .{ .body = utils, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/vendor.js")) return .{ .body = vendor, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/theme.js")) return .{ .body = theme, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/lib/markdown.js")) return .{ .body = markdown, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/fleet.js")) return .{ .body = fleet, .content_type = "text/javascript; charset=utf-8" };
     return .{ .body = page, .content_type = "text/html; charset=utf-8" };
 }

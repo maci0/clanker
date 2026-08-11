@@ -2422,7 +2422,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+            std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
@@ -2466,7 +2467,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
                 std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or
-                std.mem.eql(u8, path, "/webui/features/fleet.js")))
+                std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+                std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
@@ -3532,10 +3534,13 @@ fn handleWebuiAsset(
 
     const is_css = std.mem.endsWith(u8, target, ".css");
     const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
+    const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
+    const is_theme = std.mem.endsWith(u8, target, "theme.js");
+    const is_markdown = std.mem.endsWith(u8, target, "markdown.js");
     const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
     const is_utils = std.mem.endsWith(u8, target, "utils.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -5117,6 +5122,9 @@ var render_page: RenderCache = .{};
 var render_css: RenderCache = .{};
 var render_js: RenderCache = .{};
 var render_van_boot: RenderCache = .{};
+var render_vendor: RenderCache = .{};
+var render_theme: RenderCache = .{};
+var render_markdown: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_utils: RenderCache = .{};
 
@@ -5124,6 +5132,9 @@ var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
 var gzip_js: GzipCache = .{};
 var gzip_van_boot: GzipCache = .{};
+var gzip_vendor: GzipCache = .{};
+var gzip_theme: GzipCache = .{};
+var gzip_markdown: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_utils: GzipCache = .{};
 var gzip_van: GzipCache = .{};
