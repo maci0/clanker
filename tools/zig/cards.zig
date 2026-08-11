@@ -37,7 +37,8 @@
 //!
 //! Actions in message text:
 //!   @todo {"action":"add","title":"...","body":"...","column":"...",
-//!          "priority":"...","deadline":0}       card id := message id
+//!          "priority":"...","deadline":0,"who":"..."}   card id := message id;
+//!                                               "who" assigns at creation
 //!   @todo {"action":"update","todo":"<id>","title":"...","body":"...",
 //!          "priority":"...","deadline":0}
 //!   @todo {"action":"move","todo":"<id>","column":"doing"}
@@ -301,6 +302,15 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .priority = if (act.priority) |p| (if (validPriority(p)) p else "normal") else "normal",
             .deadline = act.deadline orelse 0,
         };
+        // Assignment at creation folds like an assign stamped with the add
+        // itself, so a later assign or claim overrides it by the usual rule.
+        if (act.who) |w| {
+            if (w.len > 0) {
+                gop.value_ptr.assignee = w;
+                gop.value_ptr.assigned_by = m.from;
+                gop.value_ptr.assign_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
     }
 
     for (msgs) |m| {
@@ -571,6 +581,30 @@ test "add + claim + close round-trip" {
     try std.testing.expectEqualStrings("beta", cards[0].assignee);
     try std.testing.expectEqualStrings("done", cards[0].column);
     try std.testing.expectEqualStrings("closed", cards[0].status());
+}
+
+test "a card can be assigned at creation, and a later assign still wins" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const add = try encode(arena, .{ .action = "add", .title = "task", .who = "beta" });
+    const one = [_]Message{msg("m1", "alpha", 100, add)};
+    const born = try derive(arena, &one);
+    try std.testing.expectEqualStrings("beta", born[0].assignee);
+    try std.testing.expectEqualStrings("alpha", born[0].assigned_by);
+    try std.testing.expectEqualStrings("claimed", born[0].status());
+
+    // The creation assignment is stamped with the add itself, so a later
+    // reassign outranks it in either arrival order.
+    const re = try encode(arena, .{ .action = "assign", .todo = "m1", .who = "gamma" });
+    const order_a = [_]Message{ msg("m1", "alpha", 100, add), msg("m2", "boss", 200, re) };
+    const order_b = [_]Message{ msg("m2", "boss", 200, re), msg("m1", "alpha", 100, add) };
+    const ca = try derive(arena, &order_a);
+    const cb = try derive(arena, &order_b);
+    try std.testing.expectEqualStrings("gamma", ca[0].assignee);
+    try std.testing.expectEqualStrings("gamma", cb[0].assignee);
+    try std.testing.expectEqualStrings("boss", ca[0].assigned_by);
 }
 
 test "concurrent claims resolve to the same winner in either log order" {

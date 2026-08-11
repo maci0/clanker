@@ -25,6 +25,10 @@
         "type": "string",
         "description": "Longer notes"
       },
+      "assignee": {
+        "type": "string",
+        "description": "Instance name to put the card on at creation; omit to leave unassigned"
+      },
       "room": {
         "type": "string",
         "description": "Board room name; omit for the default 'board' room"

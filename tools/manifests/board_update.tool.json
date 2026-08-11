@@ -23,6 +23,10 @@
         "type": "string",
         "description": "Instance name to assign to, or empty to unassign"
       },
+      "assignee": {
+        "type": "string",
+        "description": "Alias of who; instance name to assign to, or empty to unassign"
+      },
       "priority": {
         "type": "string",
         "description": "low, normal or high"
