@@ -38,6 +38,7 @@ const types = @import("../llm/types.zig");
 const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
 const session_mod = @import("../agent/session.zig");
+const runtime = @import("../sandbox/runtime.zig");
 const agent_loop = @import("../agent/loop.zig");
 const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
@@ -430,18 +431,151 @@ const Model = struct {
             // The prompt tells the agent which CLI to invoke; the old stub just echoed a hint.
         }
 
+        // General slash-command palette: /sessions, /graph, /status, /plugins
+        // run the same internal `cmd_*` WASM tools the CLI subcommands invoke,
+        // so the REPL is not a walled-off corner of clanker. Output is folded
+        // into the transcript as dim lines, exactly like a tool result.
+        if (self.runSlashCommand(ctx, task)) return;
+
+        try self.submitTask(ctx, task);
+    }
+
+    /// The general slash-command palette: /sessions, /graph, /status, /plugins
+    /// each run the internal `cmd_*` WASM tool the corresponding CLI subcommand
+    /// invokes (via `runtime.loadNamedTool`, the same loader cli.zig uses), and
+    /// /goal routes into a goal-design task (see below). Returns true when the
+    /// command was handled here (nothing should be submitted to the agent);
+    /// false for anything that is not a recognized slash command.
+    fn runSlashCommand(self: *Model, ctx: *vxfw.EventContext, task: []const u8) bool {
+        const Tool = struct { slash: []const u8, tool: []const u8, args: []const u8 };
+        const tools = [_]Tool{
+            .{ .slash = "/sessions", .tool = "cmd_sessions", .args = "" },
+            .{ .slash = "/graph", .tool = "cmd_graph", .args = "list" },
+            .{ .slash = "/status", .tool = "cmd_status", .args = "" },
+            .{ .slash = "/plugins", .tool = "cmd_plugins", .args = "" },
+        };
+        for (tools) |t| {
+            if (std.mem.eql(u8, task, t.slash)) return self.runInternalTool(t.tool, t.args);
+        }
+        // /goal <intent> designs a goal through the agent (which calls the goal
+        // tool to persist it), matching `clanker goal "<intent>"`. Run it as a
+        // normal task so it streams like any other turn.
+        if (std.mem.eql(u8, task, "/goal")) {
+            self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
+            return true;
+        }
+        if (std.mem.startsWith(u8, task, "/goal ")) {
+            const intent = std.mem.trim(u8, task[6..], " ");
+            if (intent.len == 0) {
+                self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
+                return true;
+            }
+            return self.runGoalTask(ctx, intent);
+        }
+        return false;
+    }
+
+    /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
+    /// and folds its output into the transcript as dim lines. Returns true so
+    /// submit treats it as handled. A failure is reported in the transcript
+    /// rather than bubbling: a broken internal tool should not take down the
+    /// REPL, just be visible.
+    fn runInternalTool(self: *Model, tool_name: []const u8, args: []const u8) bool {
+        const mod = runtime.loadNamedTool(
+            self.gpa,
+            self.io,
+            self.arena,
+            self.ctx.environ_map,
+            &self.cfg,
+            &self.reg,
+            tool_name,
+            null,
+        ) catch |err| {
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, @errorName(err) }) catch "[internal tool failed]", .dim = true }) catch {};
+            return true;
+        };
+        defer mod.deinit();
+
+        var ibuf: [8192]u8 = undefined;
+        var iw: std.Io.Writer = .fixed(&ibuf);
+        var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+        is.beginObject() catch return true;
+        is.objectField("args") catch return true;
+        is.write(args) catch return true;
+        is.endObject() catch return true;
+
+        const raw = mod.executeTool(ibuf[0..iw.end]) catch |err| {
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, @errorName(err) }) catch "[internal tool failed]", .dim = true }) catch {};
+            return true;
+        };
+        defer self.gpa.free(raw);
+
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, raw, .{ .ignore_unknown_fields = true }) catch {
+            self.lines.append(self.arena, .{ .text = "[internal tool returned unparseable output]", .dim = true }) catch {};
+            return true;
+        };
+        if (parsed != .object) {
+            self.lines.append(self.arena, .{ .text = "[internal tool returned an empty result]", .dim = true }) catch {};
+            return true;
+        }
+        var ok = false;
+        if (parsed.object.get("ok")) |k| {
+            if (k == .bool) ok = k.bool;
+        }
+        if (!ok) {
+            const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[{s}: {s}]", .{ tool_name, detail }) catch "[internal tool failed]", .dim = true }) catch {};
+            return true;
+        }
+        const text = parsed.object.get("text") orelse {
+            self.lines.append(self.arena, .{ .text = "[internal tool returned no text]", .dim = true }) catch {};
+            return true;
+        };
+        if (text != .string) {
+            self.lines.append(self.arena, .{ .text = "[internal tool returned no text]", .dim = true }) catch {};
+            return true;
+        }
+        var it = std.mem.splitScalar(u8, text.string, '\n');
+        while (it.next()) |line| {
+            const trimmed = std.mem.trimRight(u8, line, " \t\r");
+            self.lines.append(self.arena, .{ .text = self.arena.dupe(u8, trimmed) catch trimmed, .dim = true }) catch {};
+        }
+        return true;
+    }
+
+    /// Submits a goal-design task through the agent, exactly like
+    /// `clanker goal "<intent>"`. Runs as a normal turn so it streams, is
+    /// saved to the session, and can be stopped like any other task.
+    fn runGoalTask(self: *Model, ctx: *vxfw.EventContext, intent: []const u8) bool {
+        const task = std.fmt.allocPrint(
+            self.arena,
+            "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.",
+            .{intent},
+        ) catch return true;
+        self.submitTask(ctx, task) catch {
+            self.lines.append(self.arena, .{ .text = "[could not start the goal task]", .dim = true }) catch {};
+            return true;
+        };
+        return true;
+    }
+
+    /// The tail of `submit` that runs a task: echoes it, records it in
+    /// history, and spawns the worker thread. Extracted so slash commands like
+    /// /goal can submit a synthesized task without duplicating the plumbing.
+    ///
+    /// self.thread is assigned here and read by finishTurn on the background
+    /// thread (to detach itself); spawning and storing the handle under the
+    /// same lock finishTurn locks before reading it gives that read a
+    /// happens-after relationship to this write. Doing the assignment outside
+    /// the lock let a background thread that fails fast in Agent.init race
+    /// finishTurn's read of self.thread against this store, seeing it still
+    /// null and leaking the handle.
+    fn submitTask(self: *Model, ctx: *vxfw.EventContext, task: []const u8) !void {
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
         self.hist_draft = "";
 
-        // self.thread is assigned here and read by finishTurn on the
-        // background thread (to detach itself); spawning and storing the
-        // handle under the same lock finishTurn locks before reading it
-        // gives that read a happens-after relationship to this write. Doing
-        // the assignment outside the lock let a background thread that
-        // fails fast in Agent.init race finishTurn's read of self.thread
-        // against this store, seeing it still null and leaking the handle.
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
         bridge_streaming = true;
@@ -1315,6 +1449,14 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     if (session_id == null and opts.continue_last) {
         session_id = session_mod.latestSessionId(io, arena, std.Io.Dir.cwd());
     }
+    // The id becomes a path fragment under state/sessions/, so it is validated
+    // before it could walk out of the store (mirrors cli.zig's validSessionId).
+    if (session_id) |sid| {
+        if (!validSessionId(sid)) {
+            log.log(.warn, "repl: ignoring invalid --session id '{s}'", .{sid});
+            session_id = null;
+        }
+    }
     if (session_id == null and cfg.modules.sessions) {
         session_id = try std.fmt.allocPrint(arena, "repl-{d}", .{now_s});
     }
@@ -1358,51 +1500,23 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         if (m.role == .system) continue;
         try model.messages.append(arena, m);
     }
+    if (session_id) |sid| {
+        // Say which conversation was resumed, so re-entering `--continue` is
+        // not indistinguishable from a fresh REPL. Only when it actually
+        // loaded something — a brand-new minted id has nothing to announce.
+        var non_system: usize = 0;
+        for (model.messages.items) |m| {
+            if (m.role != .system) non_system += 1;
+        }
+        if (non_system > 0) {
+            model.lines.append(arena, .{
+                .text = std.fmt.allocPrint(arena, "[resumed session {s}: {d} messages]", .{ sid, non_system }) catch "[resumed session]",
+                .dim = true,
+            }) catch {};
+        }
+    }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     defer model.text_field.deinit();
-
-    // Session persistence: `--session <id>` resumes that conversation, else
-    // `--continue` resumes the most recently touched one, else a fresh
-    // conversation whose id is minted on its first save. The id becomes a
-    // path fragment under state/sessions/, so it is validated before either
-    // load or save.
-    model.session_created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var exit_session_id = opts.session;
-    if (exit_session_id == null and opts.continue_last) exit_session_id = latestSessionId(io, arena);
-    if (exit_session_id) |sid| {
-        if (!validSessionId(sid)) {
-            log.log(.warn, "repl: ignoring invalid --session id '{s}'", .{sid});
-            exit_session_id = null;
-        }
-    }
-    model.session_id = exit_session_id;
-    if (cfg.modules.sessions) {
-        if (exit_session_id) |sid| {
-            const loaded = session_mod.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
-                error.FileNotFound => null,
-                else => blk: {
-                    log.log(.warn, "repl: could not load session '{s}': {s}", .{ sid, @errorName(err) });
-                    break :blk null;
-                },
-            };
-            if (loaded) |s| {
-                model.session_created = s.created;
-                model.session_title = s.title;
-                var loaded_count: usize = 0;
-                for (s.messages) |m| {
-                    if (m.role == .system) continue;
-                    model.messages.append(arena, m) catch {};
-                    loaded_count += 1;
-                }
-                model.lines.append(arena, .{
-                    .text = std.fmt.allocPrint(arena, "[resumed session {s}: {d} messages]", .{ sid, loaded_count }) catch "[resumed session]",
-                    .dim = true,
-                }) catch {};
-            } else {
-                log.log(.info, "repl: no existing session '{s}', starting fresh", .{sid});
-            }
-        }
-    }
 
     // Save on every exit path: app.run returns for /quit and for Ctrl-C while
     // idle alike, so persisting here (rather than in submit) is what makes the
