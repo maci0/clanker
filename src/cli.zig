@@ -1882,6 +1882,8 @@ fn replToolCall(calls: []const types.ToolCall) void {
     for (calls) |tc| {
         w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
         w.interface.writeAll(tc.name) catch {};
+        // Show a dim, truncated preview of arguments so the user knows
+        // *what* is being searched / read / written, not just which tool.
         if (tc.arguments.len > 0 and !std.mem.eql(u8, tc.arguments, "{}")) {
             w.interface.writeAll("\x1b[0m\x1b[2m  ") catch {};
             if (tc.arguments.len <= arg_preview_cap) {
