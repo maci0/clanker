@@ -124,6 +124,13 @@ peer keeps the message only when it subscribes to that room.
   fold of the log (`src/peers/todos.zig`) and racing claims resolve
   deterministically (lowest `(ts, id)` wins — `todo_claim` returns the
   winner and a `yours` flag).
+- Private sub-agent todos: the same `todo_*` tools called without a `room`
+  operate on a per-nested-run in-memory list (`src/agent/private_todos.zig`),
+  wired only by `subagent.runNested`. Nothing is logged or fanned out; the
+  list is discarded when the run returns, and its final state is appended to
+  the sub-agent's answer so the parent sees progress even when the run hits
+  its iteration cap. Ids are `p1`, `p2`, ... to keep them distinct from
+  shared-list message ids.
 - HTTP: `POST /api/chat/message` (delivery), `GET /api/chat/messages?room=..&after=..`,
   `GET /api/chat/rooms`.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages

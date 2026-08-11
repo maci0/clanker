@@ -10,6 +10,7 @@ const client = @import("../llm/client.zig");
 const registry = @import("../tools/registry.zig");
 const types = @import("../llm/types.zig");
 const Agent = @import("loop.zig").Agent;
+const private_todos = @import("private_todos.zig");
 
 /// Bounded iteration budget for sub-agent runs.
 const sub_max_iterations: u32 = 6;
@@ -63,7 +64,7 @@ pub fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]
     if (buf.items.len == 0) return task;
     try buf.appendSlice(arena, "Your task: ");
     try buf.appendSlice(arena, task);
-    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs.");
+    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs. For multi-step work, track your steps on your private todo list (todo_add / todo_close / todo_list with no \"room\"): its final state is reported back with your answer, so your caller sees your progress even if you run out of iterations.");
     return buf.toOwnedSlice(arena);
 }
 
@@ -97,12 +98,22 @@ pub fn runNested(
     // already, so spawning worker threads from within would explode threads.
     a.no_parallel_tools = true;
 
+    // The run's private todo list: arena-owned, so it is discarded with the
+    // run. Nothing about it persists except the summary appended below.
+    var todos = private_todos.List{ .alloc = arena };
+    a.private_todos = &todos;
+
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
     const resp = try a.run(&messages, try briefedTask(arena, task, brief), &err_detail);
+    const content = resp.message.content orelse "";
     // gpa-owned so the caller (ckSubagent) can use it after this fn's arena
     // is gone; the caller frees it.
-    return gpa.dupe(u8, resp.message.content orelse "");
+    const todo_summary = try private_todos.summary(&todos, arena);
+    if (todo_summary.len == 0) return gpa.dupe(u8, content);
+    // Surface how far the run got: with items still open (iteration cap,
+    // usually) the summary is the parent's only view of the remaining work.
+    return std.fmt.allocPrint(gpa, "{s}\n\n{s}", .{ content, todo_summary });
 }
 
 test "the brief tells a sub-agent what it cannot see" {
@@ -124,6 +135,8 @@ test "the brief tells a sub-agent what it cannot see" {
     // Facts are marked as settled, or the sub-agent spends its budget
     // rediscovering them.
     try std.testing.expect(std.mem.indexOf(u8, briefed, "do not re-derive") != null);
+    // The private todo list is only useful if the sub-agent is told it has one.
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "private todo list") != null);
 
     // With nothing to hand down, the task is passed through untouched rather
     // than wrapped in an empty preamble.

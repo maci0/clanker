@@ -1,18 +1,16 @@
 {
   "name": "todo_list",
-  "description": "List a chatroom's shared todo list: every todo with its id, title, status (open/claimed/closed), creator, and claimant. Use it to find unclaimed work before todo_claim, and to get the todo id todo_claim/todo_close need.",
+  "description": "List a todo list: every todo with its id, title, and status (open/claimed/closed). With \"room\": that chatroom's shared list, including creator and claimant — use it to find unclaimed work before todo_claim, and to get the todo id todo_claim/todo_close need. Without \"room\" (sub-agent runs only): your private run-scoped list.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "room": {
         "type": "string",
-        "description": "Room name, e.g. \"dev\""
+        "description": "Room name for the shared list, e.g. \"dev\". Omit it inside a sub-agent run to use your private list."
       }
     },
-    "required": [
-      "room"
-    ]
+    "required": []
   },
   "fs_prefixes": [],
   "network_allow": [],

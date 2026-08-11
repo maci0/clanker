@@ -8,6 +8,7 @@ const protocol = @import("protocol.zig");
 const host = @import("host.zig");
 const config_mod = @import("../config.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
+const private_todos_mod = @import("../agent/private_todos.zig");
 const token_stats_mod = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
 
@@ -288,6 +289,69 @@ test "chat wasm tool executes (send + history via ck_chat)" {
     try std.testing.expectEqual(@as(usize, 1), hist.len);
     try std.testing.expectEqualStrings("hello from wasm", hist[0].text);
     try std.testing.expectEqualStrings("test-clanker", hist[0].from);
+}
+
+test "chat wasm tool routes roomless todo ops to the private list" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    // Chatrooms deliberately OFF: the private list must not need the module.
+    var cfg = config_mod.Config{};
+    var todos = private_todos_mod.List{ .alloc = std.testing.allocator };
+    defer todos.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // The descriptor config pins the op, so each op is its own sandbox+module.
+    const Step = struct { op: []const u8, args: []const u8, expect: []const u8 };
+    const steps = [_]Step{
+        .{ .op = "todo_add", .args = "{\"title\":\"first step\"}", .expect = "\"todo\":\"p1\"" },
+        .{ .op = "todo_claim", .args = "{\"todo\":\"p1\"}", .expect = "\"yours\":true" },
+        .{ .op = "todo_close", .args = "{\"todo\":\"p1\"}", .expect = "\"status\":\"closed\"" },
+        .{ .op = "todo_list", .args = "{}", .expect = "\"title\":\"first step\"" },
+    };
+    for (steps) |step| {
+        var sb = host.Sandbox{
+            .gpa = std.testing.allocator,
+            .io = io,
+            .root_dir = "/tmp/ck-sandbox-test",
+            .network_allow = &.{},
+            .environ_map = &env_map,
+            .cfg = &cfg,
+            .private_todos = &todos,
+            .config_json = try std.fmt.allocPrint(std.testing.allocator, "{{\"op\":\"{s}\"}}", .{step.op}),
+        };
+        defer std.testing.allocator.free(@constCast(sb.config_json));
+        const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+        defer mod.deinit();
+        const out = try mod.executeTool(step.args);
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, step.expect) != null);
+    }
+
+    // Without a private list attached (a top-level agent), the same roomless
+    // call answers ok:false and points at the shared lists.
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .config_json = "{\"op\":\"todo_add\"}",
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const out = try mod.executeTool("{\"title\":\"nope\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sub-agent") != null);
 }
 
 test "model_stats wasm tool executes (ck_stats host fn)" {
