@@ -1,4 +1,9 @@
-// Vanilla, no bundler. Minimal UI helpers + rail/toast state.
+// Vanilla, no bundler. UI primitives: VanJS tags, binding, toasts, skeletons,
+// component vocabulary, and the sheet's one visual language for controls.
+// Extracted from app.js so every view shares the same spelling; the module
+// bridges onto window.ckUi because app.js is still a classic script that
+// cannot import (the bridge dies with the last classic script).
+
 export var T = (typeof window !== "undefined" && window.van && window.van.tags) ? window.van.tags : null;
 
 export function bind(node, state, render) {
@@ -14,10 +19,7 @@ export function bind(node, state, render) {
 }
 
 // A fixed timer is too short to read a long message, so hovering or
-// focusing a toast (mouse or keyboard) holds it on screen; it resumes
-// counting down once you look away instead of vanishing mid-read.
-// app.js's status-observer calls this via window.ckUi.toast, so every
-// toast in the app (mutation-observed or direct) goes through one path.
+// focusing a toast (mouse or keyboard) holds it on screen.
 export function toast(msg, kind) {
   if (!msg || typeof document === "undefined") return;
   var host = document.getElementById("toasts");
@@ -79,4 +81,41 @@ export function setTurnPhase(turn, phase) {
   }
 }
 
-if (typeof window !== "undefined") window.ckUi = { bind: bind, toast: toast, skeletonRows: skeletonRows, setTurnPhase: setTurnPhase, T: T };
+// One vocabulary for the whole sheet, built on VanJS. Every view is written
+// in these, so a control cannot drift into its own spelling of a button or
+// label — which is how the page once had two Refresh behaviours and three
+// status conventions.
+export var UI = {
+  button: function (label, onclick, opts) {
+    opts = opts || {};
+    var cls = "secondary";
+    if (opts.kind === "danger") cls += " danger";
+    var icon = window.ckIcons && window.ckIcons.icon ? window.ckIcons.icon : function(){ return document.createElement("span"); };
+    var attrs = {
+      type: "button",
+      class: opts.kind === "primary" ? "" : cls,
+      onclick: onclick
+    };
+    if (opts.label) attrs["aria-label"] = opts.label;
+    if (opts.title) attrs.title = opts.title;
+    if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label);
+    return T.button(attrs, label);
+  },
+  field: function (id, label, control) {
+    return [T.label({ for: id }, label), control];
+  },
+  empty: function (text) {
+    return T.p({ class: "run-empty" }, text);
+  },
+  meta: function (text) {
+    return T.span({ class: "meta" }, text);
+  },
+  bar: function (children) {
+    return T.div({ class: "toolbar-actions" }, children);
+  },
+  head: function (title, controls) {
+    return T.div({ class: "section-head" }, T.h2(title), controls || null);
+  }
+};
+
+if (typeof window !== "undefined") window.ckUi = { bind: bind, toast: toast, skeletonRows: skeletonRows, setTurnPhase: setTurnPhase, T: T, UI: UI };

@@ -2554,7 +2554,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or
             std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
@@ -3681,8 +3681,9 @@ fn handleWebuiAsset(
     const is_graph = std.mem.endsWith(u8, target, "graph.js");
     const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
     const is_utils = std.mem.endsWith(u8, target, "utils.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
+    const is_icons = std.mem.endsWith(u8, target, "icons.js");
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -5311,6 +5312,7 @@ var render_markdown: RenderCache = .{};
 var render_graph: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_utils: RenderCache = .{};
+var render_icons: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
@@ -5322,6 +5324,7 @@ var gzip_markdown: GzipCache = .{};
 var gzip_graph: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_utils: GzipCache = .{};
+var gzip_icons: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};

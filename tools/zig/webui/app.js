@@ -184,107 +184,13 @@ function setTurnPhase(turn, phase) {
   }
 }
 
-/* ---------- icons ----------
+/* Icons live in core/icons.js (module, bridged on window.ckIcons). Kept
+   locally only until this file also becomes a module. */
+var ICON_PATHS = window.ckIcons ? window.ckIcons.ICON_PATHS : {};
+var icon = window.ckIcons ? window.ckIcons.icon : function(){ return document.createElement("span"); };
 
-   Drawn, not typed. A star glyph and a multiplication sign were standing in
-   for an icon system, which means they inherited the text face's weight and
-   could not share a stroke with anything. These are one 24-grid, one 1.75
-   stroke, square cap, and they take their colour from the text around them. */
-
-var ICON_PATHS = {
-  // A survey marker: the pin that says this layer matters.
-  pin: ["M12 3.5v9", "M7.5 12.5h9l-1.5 3h-6z", "M12 15.5v5"],
-  // Struck through: remove this entry.
-  strike: ["M5.5 5.5l13 13", "M18.5 5.5l-13 13"],
-  // A rule and tick: the depth column itself.
-  log: ["M6 4v16", "M6 8h5", "M6 13h8", "M6 18h4"],
-  // Loupe over the sheet.
-  find: ["M11 4.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z", "M16 16l3.5 3.5"],
-  // A sample vial: one recorded run.
-  sample: ["M9.5 3.5h5", "M10.5 3.5v6L7 19a1.5 1.5 0 001.4 2h7.2a1.5 1.5 0 001.4-2l-3.5-9.5v-6"],
-  // Two sheets: a copy.
-  copy: ["M8.5 8.5h10v11h-10z", "M5.5 15.5v-11h10"],
-  // A gate that held.
-  held: ["M5 12.5l4.5 4.5L19 7.5"],
-  // Deposited: an arrow settling onto the rule.
-  deposit: ["M12 4v12", "M7.5 11.5L12 16l4.5-4.5", "M5 20h14"],
-  // Disclosure, pointing at what it opens.
-  chevron: ["M9 6l6 6-6 6"],
-  // A question, drawn rather than typed.
-  help: ["M9 9a3 3 0 114 2.8c-.8.4-1 1-1 1.7v.5", "M12 17.5v.01"]
-};
-
-function icon(name, size) {
-  var paths = ICON_PATHS[name];
-  if (!paths) return document.createElement("span");
-  var ns = "http://www.w3.org/2000/svg";
-  var svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", String(size || 16));
-  svg.setAttribute("height", String(size || 16));
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.75");
-  svg.setAttribute("stroke-linecap", "square");
-  svg.setAttribute("stroke-linejoin", "miter");
-  // Decorative in every use here: each icon sits beside or inside a control
-  // that already carries its own accessible name.
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  svg.classList.add("icon");
-  paths.forEach(function (d) {
-    var path = document.createElementNS(ns, "path");
-    path.setAttribute("d", d);
-    svg.appendChild(path);
-  });
-  return svg;
-}
-
-var UI = {
-  /* A button in the sheet's vocabulary. `kind` is "primary" for the one
-     action a view exists for, "danger" for one that destroys, absent for the
-     rest. */
-  button: function (label, onclick, opts) {
-    opts = opts || {};
-    var cls = "secondary";
-    if (opts.kind === "danger") cls += " danger";
-    var attrs = {
-      type: "button",
-      class: opts.kind === "primary" ? "" : cls,
-      onclick: onclick
-    };
-    if (opts.label) attrs["aria-label"] = opts.label;
-    if (opts.title) attrs.title = opts.title;
-    if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label);
-    return T.button(attrs, label);
-  },
-
-  /* A printed label above its field, the way the sheet labels every column. */
-  field: function (id, label, control) {
-    return [T.label({ for: id }, label), control];
-  },
-
-  /* Said in the product's own voice: what is absent, and what would put
-     something here. Never an apology, never a shrug. */
-  empty: function (text) {
-    return T.p({ class: "run-empty" }, text);
-  },
-
-  /* A measurement. Mono, tabular, so a column of them lines up. */
-  meta: function (text) {
-    return T.span({ class: "meta" }, text);
-  },
-
-  /* A row of controls with one rhythm. */
-  bar: function (children) {
-    return T.div({ class: "toolbar-actions" }, children);
-  },
-
-  /* The heading a section is named by, with its controls on the same rule. */
-  head: function (title, controls) {
-    return T.div({ class: "section-head" }, T.h2(title), controls || null);
-  }
-};
+/* UI vocabulary lives in core/ui.js (bridged on window.ckUi.UI). */
+var UI = window.ckUi ? window.ckUi.UI : null;
 
 
 /* Fetches a vendored library on first use and caches the promise, so the
