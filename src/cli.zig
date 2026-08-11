@@ -988,7 +988,9 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var tmp: [4096]u8 = undefined;
 
     while (true) {
-        try out_w.interface.writeAll("\x1b[32mclanker> \x1b[0m");
+        // repl_prompt already carries the theme (built in cmdRepl above), so
+        // NO_COLOR/--theme mono strips the piped prompt the same as raw mode.
+        try out_w.interface.writeAll(repl_prompt);
         try out_w.interface.flush();
 
         // Short read on the raw fd: readSliceShort blocks until the buffer is
@@ -1108,7 +1110,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
             const owned = try arena.dupe(u8, picked orelse line);
             if (picked) |choice| {
                 a.pending_decision = .{ .question = repl_last_question, .answer = owned };
-                const echo = try std.fmt.allocPrint(arena, "\x1b[2m→ {s}\x1b[0m\n", .{choice});
+                const echo = try std.fmt.allocPrint(arena, "{s}→ {s}{s}\n", .{ repl_theme.dim, choice, repl_theme.reset });
                 try out_w.interface.writeAll(echo);
                 try out_w.interface.flush();
             }
