@@ -13,6 +13,7 @@ import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMo
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark } from "./core/search.js";
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
+import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -2973,18 +2974,9 @@ el.turnFilter.addEventListener("input", applyTurnFilter);
 
 /* ---------- keeping up with a streaming answer ---------- */
 
-function nearBottom() {
-  return window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
-}
-
-function prefersReducedMotion() {
-  return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function syncScrollButton() {
-  var show = !nearBottom() && el.transcript.querySelector(".turn") !== null;
-  el.scrollBottom.hidden = !show;
-}
+var nearBottom = scrollNearBottom;
+var prefersReducedMotion = scrollPrefersReducedMotion;
+function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom); }
 
 van.add(el.scrollBottom, icon("deposit", 14));
 el.scrollBottom.addEventListener("click", function () {
