@@ -766,7 +766,10 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
     }) catch return Err.network;
 
     const response = resp_buf[0..w.end];
-    if (@intFromEnum(result.status) >= 400) return Err.network;
+    if (@intFromEnum(result.status) >= 400) {
+        log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ url, @intFromEnum(result.status) });
+        return Err.network;
+    }
     return h.writeResult(mem_bytes, response);
 }
 
