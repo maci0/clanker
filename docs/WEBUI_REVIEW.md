@@ -67,9 +67,9 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 ### Shipped this turn
 - `app.js` ↔ `features/fleet.js` now import-linked: `app.js` imports `refreshFleet/setNavShowView/setOpenRun`, `fleet.js` exports them and `app.js` wires `showView/openRun` at startup. `viewLoaders.fleet` no longer probes `window.clankerFleet`.
 - Board cards: hover lift + press sink + drag tilt + accent drop wash (reduced-motion gated).
+- Remove dead `window.ck*` bridges: `core/{utils,chat,labels,goals,icons,stream,theme,ui}` + `lib/{board,graph,markdown}` no longer assign to `window.ck*`; header comments updated; `core/ui.js` now `import {icon}` directly.
 
 ## Left / next
 
-- Remove dead `window.ck*` bridges from `core/*`/`lib/*` (still present for standalone `node --check`, no longer read by app.js — remove once every consumer is a module).
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, `features/tools.js`, palette/model-picker) per `docs/webui-framework-research.md` §4 — now cheaper because imports are real.
 - `axe-core` + `playwright` screenshot proof per view (incl. Fleet) — no harness vendored yet, manual verification until added.
