@@ -823,9 +823,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   main { padding: 1rem; }
   dl { grid-template-columns: 1fr; gap: 0.25rem; }
   dt { margin-top: 0.75rem; }
-  .toolbar button { width: 100%; }
   .toolbar-actions { width: 100%; }
-  .toolbar-actions button { flex: 1; }
 }
 
 /* Touch feedback on press; harmless on pointer devices too. */
