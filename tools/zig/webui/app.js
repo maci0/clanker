@@ -71,12 +71,7 @@ var el = {
   boardMine: document.getElementById("board-mine"),
   boardRefresh: document.getElementById("board-refresh"),
   boardStatus: document.getElementById("board-status"),
-  roomTodos: document.getElementById("room-todos"),
-  roomTodoForm: document.getElementById("room-todo-form"),
-  roomTodoRoom: document.getElementById("room-todo-room"),
-  roomTodoTitle: document.getElementById("room-todo-title"),
-  roomTodosRefresh: document.getElementById("room-todos-refresh"),
-  roomTodosStatus: document.getElementById("room-todos-status"),
+  boardRoom: document.getElementById("board-room"),
   webuiPlugins: document.getElementById("webui-plugins"),
   webuiPluginsRefresh: document.getElementById("webui-plugins-refresh"),
   webuiPluginsStatus: document.getElementById("webui-plugins-status"),
@@ -3218,7 +3213,7 @@ var viewLoaders = {
   runs: loadRuns,
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
-  board: function () { return Promise.all([loadBoard(), loadRoomTodos()]); },
+  board: function () { return loadBoardRooms(); },
   tools: loadTools,
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
@@ -3600,7 +3595,7 @@ if (window.MutationObserver) {
       showToast(text);
     });
   });
-  ["session-status", "run-status", "chat-status", "board-status", "room-todos-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+  ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
@@ -3899,14 +3894,39 @@ el.runCopy.addEventListener("click", function () {
 var board = { columns: [], cards: [] };
 var openCardId = null;
 
+/* A board belongs to a chatroom, because a card *is* a message in that room's
+   log. The picker is the room list, so joining a room is what gives you its
+   board; there is no separate "create a board" step and no board that exists
+   without anyone subscribed to see it. */
+function loadBoardRooms() {
+  return fetch("/api/chat/rooms")
+    .then(readJson)
+    .then(function (d) {
+      // The listing calls the field "room", not "name".
+      var rooms = (d.rooms || []).map(function (r) { return typeof r === "string" ? r : r.room; });
+      if (rooms.indexOf("board") === -1) rooms.unshift("board");
+      var keep = el.boardRoom.value;
+      el.boardRoom.textContent = "";
+      van.add(el.boardRoom, rooms.map(function (name) { return T.option({ value: name }, name); }));
+      if (keep && rooms.indexOf(keep) !== -1) el.boardRoom.value = keep;
+      return loadBoard();
+    })
+    .catch(function () { return loadBoard(); });
+}
+
+function boardRoom() {
+  return (el.boardRoom && el.boardRoom.value) || "board";
+}
+
 function loadBoard() {
-  return fetch("/api/board")
+  return fetch("/api/board?room=" + encodeURIComponent(boardRoom()))
     .then(readJson)
     .then(function (d) { renderBoard(d.board || { columns: [], cards: [] }); })
     .catch(function (err) { el.boardStatus.textContent = "Could not load the board: " + err.message; });
 }
 
 function postBoard(payload, status) {
+  payload.room = boardRoom();
   return fetch("/api/board", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4491,6 +4511,7 @@ function wireRefresh(button, load) {
 }
 
 wireRefresh(el.boardRefresh, loadBoard);
+el.boardRoom.addEventListener("change", function () { loadBoard(); });
 
 
 /* ---------- web UI plugins ----------
@@ -4708,135 +4729,6 @@ function renderWebuiPlugins(list) {
 }
 
 el.webuiPluginsRefresh.addEventListener("click", function () { loadWebuiPlugins(); });
-
-/* ---------- room todos ---------- */
-
-/* A second list, deliberately: board cards are this instance's plan, room
-   todos are what a room has agreed to and are replicated to every peer in it.
-   They are shown together so nobody has to remember which is which to find
-   their work. */
-var roomTodoRooms = [];
-
-function loadRoomTodos() {
-  return fetch("/api/chat/rooms")
-    .then(readJson)
-    .then(function (d) {
-      // The listing calls the field "room", not "name".
-      roomTodoRooms = (d.rooms || []).map(function (r) { return typeof r === "string" ? r : r.room; });
-      var keep = el.roomTodoRoom.value;
-      el.roomTodoRoom.textContent = "";
-      roomTodoRooms.forEach(function (name) {
-        var opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = name;
-        el.roomTodoRoom.appendChild(opt);
-      });
-      if (keep && roomTodoRooms.indexOf(keep) !== -1) el.roomTodoRoom.value = keep;
-      if (!roomTodoRooms.length) {
-        renderRoomTodos({ todos: [] }, "No rooms joined, so there are no shared todos yet.");
-        return;
-      }
-      return fetchRoomTodos(el.roomTodoRoom.value);
-    })
-    .catch(function (err) { el.roomTodosStatus.textContent = "Could not load room todos: " + err.message; });
-}
-
-function fetchRoomTodos(room) {
-  if (!room) return Promise.resolve();
-  return fetch("/api/room-todos?room=" + encodeURIComponent(room))
-    .then(readJson)
-    .then(function (d) { renderRoomTodos(d, null); })
-    .catch(function (err) { el.roomTodosStatus.textContent = "Could not load room todos: " + err.message; });
-}
-
-function postRoomTodo(payload, status) {
-  payload.room = el.roomTodoRoom.value;
-  return fetch("/api/room-todos", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  })
-    .then(readJson)
-    .then(function (d) {
-      renderRoomTodos(d, null);
-      el.roomTodosStatus.textContent = status;
-    })
-    .catch(function (err) { el.roomTodosStatus.textContent = "Room todo: " + err.message; });
-}
-
-/* Written with VanJS rather than by hand.
-
-   The rest of the page rebuilds a container from scratch on every change,
-   which is fine where a render is cheap and was the direct cause of a bug in
-   the board panel (a rebuild threw away half-typed edits). Here the list is a
-   piece of state and the DOM is derived from it: postRoomTodo sets the state
-   and the rows follow, so there is no second copy of "what is on screen" to
-   keep in step.
-
-   The elements are still created and their text still set as text — van.tags
-   builds real DOM nodes, so nothing about the no-innerHTML rule changes. */
-
-var roomTodoState = van.state({ todos: [], me: "", empty: null });
-
-function renderRoomTodos(d, emptyText) {
-  roomTodoState.val = { todos: (d && d.todos) || [], me: (d && d.me) || "", empty: emptyText || null };
-}
-
-function roomTodoRow(t, me) {
-  var tags = van.tags;
-  var status = t.status === "claimed" ? "claimed by " + (t.claimed_by === me ? "you" : t.claimed_by)
-    : t.status === "closed" ? "closed by " + (t.closed_by === me ? "you" : t.closed_by)
-    : "open";
-
-  var children = [
-    tags.span({ class: "room-todo-title" }, t.title),
-    tags.span({
-      class: "room-todo-status",
-      "data-status": t.status,
-      "data-mine": String(t.status === "claimed" && t.claimed_by === me)
-    }, status),
-    tags.span({ class: "room-todo-who" }, t.created_by + "  ·  " + formatChatTime(t.ts))
-  ];
-  if (t.status === "open") {
-    children.push(tags.button({
-      type: "button",
-      class: "secondary",
-      onclick: function () { postRoomTodo({ op: "claim", id: t.id }, "Claim sent."); }
-    }, "Claim"));
-  }
-  if (t.status !== "closed") {
-    children.push(tags.button({
-      type: "button",
-      class: "secondary",
-      onclick: function () { postRoomTodo({ op: "close", id: t.id }, "Closed."); }
-    }, "Close"));
-  }
-  return tags.li({ class: "room-todo", "data-status": t.status }, children);
-}
-
-/* One derivation: whenever the state changes, this is the list. */
-van.derive(function () {
-  var s = roomTodoState.val;
-  var tags = van.tags;
-  el.roomTodos.textContent = "";
-  if (!s.todos.length) {
-    van.add(el.roomTodos, tags.li({ class: "run-empty" }, s.empty || "Nothing on this room's list."));
-    return;
-  }
-  s.todos.forEach(function (t) { van.add(el.roomTodos, roomTodoRow(t, s.me)); });
-});
-
-el.roomTodoForm.addEventListener("submit", function (e) {
-  e.preventDefault();
-  var title = el.roomTodoTitle.value.trim();
-  if (!title) return;
-  postRoomTodo({ op: "add", title: title }, "Added to the room.").then(function () {
-    el.roomTodoTitle.value = "";
-  });
-});
-el.roomTodoRoom.addEventListener("change", function () { fetchRoomTodos(el.roomTodoRoom.value); });
-el.roomTodosRefresh.addEventListener("click", function () { loadRoomTodos(); });
-el.boardMine.addEventListener("change", function () { renderBoard(board); });
 
 /* ---------- logs ---------- */
 

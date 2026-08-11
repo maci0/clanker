@@ -252,6 +252,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <div class="section-head">
         <h2>Board</h2>
         <div class="toolbar-actions">
+          <label class="checkbox-row" for="board-room">
+            <span>Room</span>
+            <select id="board-room"></select>
+          </label>
           <label class="checkbox-row" for="board-mine">
             <input type="checkbox" id="board-mine">
             <span>Only mine</span>
@@ -259,8 +263,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <button type="button" class="secondary" id="board-refresh">Refresh</button>
         </div>
       </div>
-      <!-- state/board.json is a plain file: a card moved by a clanker is the
-           same card that moves here. -->
+      <!-- A card is a message in the room's log, so a card moved by a clanker
+           on another machine is the same card that moves here. -->
       <form id="card-form" class="goal-form">
         <label for="card-title">New card</label>
         <input type="text" id="card-title" placeholder="What needs doing?" maxlength="500" autocomplete="off" required>
@@ -272,30 +276,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <!-- A sibling, not a child: inside .board it became a flex item after the
            last column and needed sideways scrolling to find, which is the
            opposite of what a first-run message is for. -->
-      <p class="run-empty" id="board-empty" hidden>No cards yet. Anything added here is in state/board.json, which every clanker can read.</p>
+      <p class="run-empty" id="board-empty" hidden>No cards yet. A card added here goes into the room's log, so every clanker in the room sees it.</p>
       <div id="card-detail" class="run-detail" role="region" aria-label="Selected card" hidden></div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
     </section>
 
-    <section>
-      <div class="section-head">
-        <h2>Room todos</h2>
-        <button type="button" class="secondary" id="room-todos-refresh">Refresh</button>
-      </div>
-      <!-- These are not board cards. They ride the chatroom log, replicate to
-           peers with the rest of the room, and settle competing claims on
-           their own. Shown here because someone tracking work should not have
-           to know which transport a task arrived on. -->
-      <form id="room-todo-form" class="goal-form">
-        <label for="room-todo-room">Room</label>
-        <select id="room-todo-room"></select>
-        <label for="room-todo-title">Add</label>
-        <input type="text" id="room-todo-title" placeholder="What should the room do?" maxlength="512" autocomplete="off">
-        <button type="submit" class="secondary">Add to room</button>
-      </form>
-      <ul class="room-todos" id="room-todos"></ul>
-      <p class="sr-only" id="room-todos-status" role="status" aria-live="polite"></p>
-    </section>
   </div>
   <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
     <section>

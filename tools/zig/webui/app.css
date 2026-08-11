@@ -1196,21 +1196,7 @@ h2#session-title {
 .webui-plugin-desc { flex: 1; min-width: 14rem; color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); }
 .webui-plugin-group { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
 
-.room-todos { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-.room-todo {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
-  min-height: 32px; padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-2);
-  font-family: var(--sans); font-size: var(--step-0);
-}
-.room-todo-title { flex: 1; min-width: 12rem; overflow-wrap: anywhere; }
-.room-todo[data-status="closed"] .room-todo-title { color: var(--fg-muted); text-decoration: line-through; }
-.room-todo-who { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.room-todo-status { border-radius: var(--radius-pill); padding: 0 var(--space-2); border: 1px solid var(--rule); color: var(--fg-muted); }
-.room-todo-status[data-status="claimed"] { color: var(--accent); border-color: var(--accent); }
-.room-todo-status[data-status="closed"] { color: var(--ok); border-color: var(--ok); }
 /* Claimed by this instance: the one thing you scan a shared list for. */
-.room-todo-status[data-mine="true"] { font-weight: 700; }
 .detail-head {
   margin: var(--space-5) 0 var(--space-2); font-family: var(--mono); font-size: var(--step-0);
   color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em;
