@@ -16,6 +16,7 @@ const autolearn = @import("autolearn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
 const log = @import("../util/log.zig");
 const toolout = @import("../util/toolout.zig");
+const mock_server = @import("../llm/mock_server.zig");
 
 /// Appended to the system prompt so a model asked for an exact-format answer
 /// (a string, a number, JSON) does not wrap it in prose or markdown fences.
@@ -105,6 +106,14 @@ pub const Agent = struct {
     /// top-level agents. Handed to every tool sandbox so todo_* calls that
     /// name no "room" reach it (see src/agent/private_todos.zig).
     private_todos: ?*private_todos.List = null,
+    /// A nested run's channel to the agent that spawned it, wired by
+    /// subagent.runNested and null for top-level agents. Handed to every tool
+    /// sandbox so ask_user {"parent": true} can reach it.
+    parent_ask: ?host.ParentAsk = null,
+    /// The messages of the run in flight, so this agent can answer a
+    /// sub-agent's question from its own transcript. Only read while the
+    /// agent is parked in ck_subagent's join (see host.ParentAsk).
+    current_messages: ?*std.ArrayList(types.Message) = null,
     /// When set, tool calls run strictly sequentially (no worker threads).
     /// Used by sub-agent runs to avoid spawning threads from within threads.
     no_parallel_tools: bool = false,
@@ -306,6 +315,7 @@ pub const Agent = struct {
             g.deinit(self.ctx.gpa);
         }
         self.current_task = task;
+        self.current_messages = messages;
         // A decision the user made before this turn started (they picked one
         // of the options the last answer offered): first node, so the graph
         // says why this run exists.
@@ -1283,6 +1293,11 @@ pub const Agent = struct {
         sb.subagent_runner = self.subagent_runner;
         sb.private_todos = self.private_todos;
         sb.ask_fn = self.ask_fn;
+        sb.parent_ask = self.parent_ask;
+        // Offer this agent as an answerer only where a sub-agent could exist
+        // to ask: ckSubagent hands own_ask down as the nested run's
+        // parent_ask.
+        if (self.subagent_runner != null) sb.own_ask = .{ .ctx = self, .call = &parentAskTrampoline };
         sb.parent_task = self.current_task;
         sb.state_dir = self.cfg.agent.state_dir;
         // A tool that named no provider of its own follows the agent, which may
@@ -1793,6 +1808,108 @@ pub const Agent = struct {
         return self.runChain(tc.name, .after, owned) catch owned;
     }
 };
+
+/// How much of the parent's transcript a sub-agent's question gets to see:
+/// the most recent messages, each clipped, so the answer prompt stays bounded
+/// whatever the parent has been doing.
+const parent_answer_max_msgs = 10;
+const parent_answer_max_msg_bytes = 400;
+
+/// Renders the one-shot prompt that answers a sub-agent's question on the
+/// parent's behalf: the parent's task, the tail of its transcript (the part
+/// the sub-agent cannot see — it started with an empty transcript on
+/// purpose), and the question with its options, under the same
+/// answer-verbatim contract the ask_user peer path uses.
+pub fn parentAnswerPrompt(
+    arena: std.mem.Allocator,
+    parent_task: []const u8,
+    messages: []const types.Message,
+    question: []const u8,
+    options: []const []const u8,
+) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    try buf.appendSlice(arena, "A sub-agent you spawned to help with your task cannot resolve a decision alone and is asking you.\n\nYour task: ");
+    try buf.appendSlice(arena, if (parent_task.len > 0) parent_task else "(none recorded)");
+    const start = if (messages.len > parent_answer_max_msgs) messages.len - parent_answer_max_msgs else 0;
+    if (messages.len > start) {
+        try buf.appendSlice(arena, "\n\nYour conversation so far (most recent last):\n");
+        for (messages[start..]) |m| {
+            // The system prompt is boilerplate the answerer's own model
+            // already has; tool-call frames carry no prose.
+            if (m.role == .system) continue;
+            const content = m.content orelse continue;
+            if (content.len == 0) continue;
+            try buf.appendSlice(arena, "- ");
+            try buf.appendSlice(arena, @tagName(m.role));
+            try buf.appendSlice(arena, ": ");
+            try buf.appendSlice(arena, content[0..@min(content.len, parent_answer_max_msg_bytes)]);
+            try buf.appendSlice(arena, "\n");
+        }
+    }
+    try buf.appendSlice(arena, "\nThe sub-agent asks: ");
+    try buf.appendSlice(arena, question);
+    try buf.appendSlice(arena, "\nOptions:\n");
+    for (options) |o| {
+        try buf.appendSlice(arena, "- ");
+        try buf.appendSlice(arena, o);
+        try buf.appendSlice(arena, "\n");
+    }
+    try buf.appendSlice(arena, "\nAnswer with exactly one of the options, verbatim, and nothing else — the one most consistent with your task and what you already know.");
+    return buf.toOwnedSlice(arena);
+}
+
+/// Answers a sub-agent's question with one bounded completion on the parent's
+/// provider — the re-entrant path host.ParentAsk documents. Runs on the
+/// sub-agent's thread while the parent is parked in ck_subagent's join, so it
+/// builds a fresh client Ctx per call rather than sharing the parent's HTTP
+/// state across threads (the same discipline runNested applies). Returns the
+/// answer gpa-owned; the caller (ckAsk) frees it.
+pub fn answerAsParent(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: ?*const config.Config,
+    provider: *const config.Provider,
+    parent_task: []const u8,
+    messages: []const types.Message,
+    question: []const u8,
+    options: []const []const u8,
+) ![]const u8 {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const prompt = try parentAnswerPrompt(arena, parent_task, messages, question, options);
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    const msgs = [_]types.Message{.{ .role = .user, .content = prompt }};
+    var err_detail: ?[]const u8 = null;
+    const resp = try client.chat(&ctx, arena, .{
+        .provider = provider,
+        .messages = &msgs,
+        .max_tokens = 256,
+    }, &err_detail);
+    const raw = std.mem.trim(u8, resp.message.content orelse "", " \t\r\n");
+    // An exact pick comes back verbatim. Anything else is passed through
+    // as-is: prose from the parent still answers the question better than an
+    // error would.
+    for (options) |o| {
+        if (std.mem.eql(u8, raw, o)) return gpa.dupe(u8, o);
+    }
+    return gpa.dupe(u8, raw);
+}
+
+/// host.ParentAsk.call for an Agent: recovers the agent and answers from its
+/// current task and transcript.
+fn parentAskTrampoline(
+    ctx_ptr: *anyopaque,
+    gpa: std.mem.Allocator,
+    question: []const u8,
+    options: []const []const u8,
+) anyerror![]const u8 {
+    const self: *Agent = @ptrCast(@alignCast(ctx_ptr));
+    const msgs: []const types.Message = if (self.current_messages) |m| m.items else &.{};
+    return answerAsParent(self.ctx.io, gpa, self.ctx.environ_map, self.cfg, self.provider, self.current_task, msgs, question, options);
+}
 
 /// zwasm's interpreter recurses on the native stack, so a tool that runs fine
 /// on the main thread can trap with CallStackExhausted on a std.Thread worker
@@ -2307,4 +2424,85 @@ test "finalAnswer prefers the first non-empty line over trailing prose" {
     const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online\n\nSome trailing explanation that must not replace the answer." } };
     const ans = try agent.finalAnswer(resp);
     try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "parentAnswerPrompt hands the sub-agent's question the parent's context" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const messages = [_]types.Message{
+        .{ .role = .system, .content = "system boilerplate" },
+        .{ .role = .user, .content = "please refactor the parser" },
+        .{ .role = .assistant, .content = "I found two candidate modules" },
+    };
+    const prompt = try parentAnswerPrompt(arena, "refactor the parser", &messages, "Which module do I split first?", &.{ "tokenizer.zig", "grammar.zig" });
+
+    // The parent's task, its transcript, the question, and the options all
+    // reach the answering model.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "refactor the parser") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "I found two candidate modules") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "Which module do I split first?") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "tokenizer.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "grammar.zig") != null);
+    // The answer contract matches the peer path: one option, verbatim.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "verbatim") != null);
+    // The system prompt is boilerplate, not context worth forwarding.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "system boilerplate") == null);
+}
+
+test "parentAnswerPrompt clips the transcript to a bounded recent tail" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var messages: std.ArrayList(types.Message) = .empty;
+    var i: usize = 0;
+    while (i < 30) : (i += 1) {
+        const text = try std.fmt.allocPrint(arena, "msg-{d}", .{i});
+        try messages.append(arena, .{ .role = .user, .content = text });
+    }
+    const long = try arena.alloc(u8, 1000);
+    @memset(long, 'x');
+    try messages.append(arena, .{ .role = .user, .content = long });
+
+    const prompt = try parentAnswerPrompt(arena, "task", messages.items, "Q?", &.{ "a", "b" });
+    // Recent messages survive; old ones do not ride along.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "msg-29") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "msg-1\n") == null);
+    // Each message is clipped, so one huge message cannot blow the prompt up.
+    const over = try arena.alloc(u8, parent_answer_max_msg_bytes + 1);
+    @memset(over, 'x');
+    try std.testing.expect(std.mem.indexOf(u8, prompt, over) == null);
+}
+
+test "answerAsParent answers through the parent's provider" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, gpa, .anthropic_text);
+    defer mock.stop();
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MOCK_ANTHROPIC_KEY", "sk-test");
+
+    const base_url = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{mock.port});
+    defer gpa.free(base_url);
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    var provider = try config.Provider.single(arena_state.allocator(), "anthropic-mock", base_url, .anthropic, "claude-sonnet-5", .{
+        .context_window = 1_000_000,
+        .max_tokens = 1024,
+    });
+    provider.api_key_env = "MOCK_ANTHROPIC_KEY";
+
+    const transcript = [_]types.Message{.{ .role = .user, .content = "the parent was doing something" }};
+    // The mock's canned text is not one of the options, so this exercises the
+    // pass-through: the parent's prose still reaches the sub-agent.
+    const answer = try answerAsParent(io, gpa, &env, null, &provider, "parent task", &transcript, "Which one?", &.{ "A", "B" });
+    defer gpa.free(@constCast(answer));
+    try std.testing.expectEqualStrings("Hello from Anthropic-mock", answer);
 }

@@ -381,6 +381,59 @@ test "chat wasm tool routes roomless todo ops to the private list" {
     try std.testing.expect(std.mem.indexOf(u8, out, "sub-agent") != null);
 }
 
+fn stubParentAnswer(ctx: *anyopaque, gpa: std.mem.Allocator, question: []const u8, options: []const []const u8) anyerror![]const u8 {
+    _ = ctx;
+    _ = question;
+    // Deterministically picks the second option, so the test can tell a real
+    // routed answer from any default.
+    return gpa.dupe(u8, options[1]);
+}
+
+test "ask_user wasm tool routes {parent:true} to the parent answerer" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/ask_user.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // A sub-agent run: parent_ask wired, no human ask_fn.
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .parent_ask = .{ .ctx = undefined, .call = &stubParentAnswer },
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const out = try mod.executeTool("{\"question\":\"Which one?\",\"options\":[\"A\",\"B\"],\"parent\":true}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"answer\":\"B\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"answered_by\":\"parent\"") != null);
+
+    // A top-level run: no parent attached, so the tool says to decide alone
+    // instead of pretending someone answered.
+    var sb_top = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+    };
+    const mod_top = try ToolModule.load(std.testing.allocator, io, &sb_top, wasm);
+    defer mod_top.deinit();
+    const out_top = try mod_top.executeTool("{\"question\":\"Which one?\",\"options\":[\"A\",\"B\"],\"parent\":true}");
+    defer std.testing.allocator.free(out_top);
+    try std.testing.expect(std.mem.indexOf(u8, out_top, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out_top, "no parent to ask") != null);
+}
+
 test "model_stats wasm tool executes (ck_stats host fn)" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();

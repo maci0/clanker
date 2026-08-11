@@ -6,12 +6,15 @@
 //!
 //! Input:  {"question": "Which first?", "options": ["fix the eval", "add the tool"]}
 //!         {"question": "...", "options": [...], "peer": "clanker-ember-raven"}
+//!         {"question": "...", "options": [...], "parent": true}
 //! Output: {"ok": true, "answer": "fix the eval", "answered_by": "user"}
 //!         {"ok": false, "error": "..."} when nobody is attached to answer.
 //!
 //! With `peer`, the question goes to another clanker instead of the human:
 //! same question, same options, answered by a peer that has its own tools and
-//! its own view of the work.
+//! its own view of the work. With `parent` (sub-agent runs only), it goes to
+//! the agent that spawned this run — the one holding the context the brief
+//! left out.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -39,9 +42,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (options.items.len < 2) return lib.fail(out, "give at least two options; ask in your answer instead when the question is open-ended");
 
+    const wants_parent = if (parsed.object.get("parent")) |p| p == .bool and p.bool else false;
+    if (wants_parent and parsed.object.get("peer") != null)
+        return lib.fail(out, "pick one target: either \"parent\" or \"peer\", not both");
+
     var answered_by: []const u8 = "user";
     var answer: []const u8 = undefined;
-    if (parsed.object.get("peer")) |p| {
+    if (wants_parent) {
+        answered_by = "parent";
+        answer = lib.askTarget(q.string, options.items, "parent") catch |err| return lib.fail(out, switch (err) {
+            error.NotFound => "you are not running as a sub-agent, so there is no parent to ask; decide yourself and say which option you took and why",
+            else => "the parent did not answer",
+        });
+    } else if (parsed.object.get("peer")) |p| {
         if (p != .string or p.string.len == 0) return lib.fail(out, "peer must be a peer instance name");
         answered_by = p.string;
         answer = askPeer(p.string, q.string, options.items) catch |err| return lib.fail(out, switch (err) {
