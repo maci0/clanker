@@ -76,9 +76,13 @@ pub fn applyTodoOp(
     title: ?[]const u8,
     todo_id: ?[]const u8,
 ) ![]const u8 {
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    // Arena-backed allocating writer: the reply for a full list of long
+    // titled items can exceed any fixed buffer (max_items * max_title_len
+    // with JSON escaping ≈ 100 KB), and a fixed buffer would silently
+    // truncate or panic on the largest legal list.
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
 
     if (std.mem.eql(u8, op, "todo_add")) {
         const t = title orelse "";
@@ -93,7 +97,7 @@ pub fn applyTodoOp(
         try s.objectField("todo");
         try s.print("\"p{d}\"", .{id});
         try s.endObject();
-        return arena.dupe(u8, buf[0..w.end]);
+        return arena.dupe(u8, out.written());
     } else if (std.mem.eql(u8, op, "todo_claim") or std.mem.eql(u8, op, "todo_close")) {
         const id = todo_id orelse "";
         if (id.len == 0) return fail(arena, "this op needs \\\"todo\\\" (an id from todo_list)");
@@ -117,7 +121,7 @@ pub fn applyTodoOp(
             try s.write(true);
         }
         try s.endObject();
-        return arena.dupe(u8, buf[0..w.end]);
+        return arena.dupe(u8, out.written());
     } else if (std.mem.eql(u8, op, "todo_list")) {
         try s.beginObject();
         try s.objectField("ok");
@@ -136,7 +140,7 @@ pub fn applyTodoOp(
         }
         try s.endArray();
         try s.endObject();
-        return arena.dupe(u8, buf[0..w.end]);
+        return arena.dupe(u8, out.written());
     }
     return fail(arena, "unknown private todo op");
 }
@@ -223,4 +227,30 @@ test "summary reports progress and is empty for an unused list" {
     try std.testing.expect(std.mem.indexOf(u8, sum, "1/2 closed") != null);
     try std.testing.expect(std.mem.indexOf(u8, sum, "- [x] p1 step one") != null);
     try std.testing.expect(std.mem.indexOf(u8, sum, "- [ ] p2 step two") != null);
+}
+
+test "todo_list reply for a full list of long escaped titles exceeds any fixed buffer" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var list = List{ .alloc = t_alloc };
+    defer list.deinit();
+
+    // Titles of max length whose every char is a double-quote, so the JSON
+    // escapes each to two bytes (\"): 100 items × ~1 KB each makes the
+    // serialized list >64 KiB — the size of the old fixed reply buffer.
+    const title = try arena.alloc(u8, max_title_len);
+    @memset(title, '"');
+    var i: usize = 0;
+    while (i < max_items) : (i += 1) {
+        _ = try applyTodoOp(&list, arena, "todo_add", title, null);
+    }
+
+    const listed = try applyTodoOp(&list, arena, "todo_list", null, null);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "\"ok\":true") != null);
+    // The first item's quoted title survives; it would be truncated/panicked
+    // in a fixed buffer.
+    try std.testing.expect(std.mem.indexOf(u8, listed, "\\\"\\\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "\"p1\"") != null);
 }
