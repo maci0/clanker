@@ -11,6 +11,7 @@ import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as 
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMod, doneColumn as doneColumnMod, blockers as blockersMod, dueState as dueStateMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
+import { clearMarks as searchClear, markMatches as searchMark } from "./core/search.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -2941,45 +2942,8 @@ el.task.addEventListener("keydown", function (e) {
 
 /* ---------- search inside the conversation ---------- */
 
-function clearMarks(root) {
-  var marks = root.querySelectorAll("mark");
-  Array.prototype.forEach.call(marks, function (m) {
-    var text = document.createTextNode(m.textContent);
-    m.parentNode.replaceChild(text, m);
-  });
-  // Splitting a text node to highlight leaves neighbours behind; rejoining
-  // them keeps repeated searches from fragmenting the answer into hundreds
-  // of nodes.
-  if (root.normalize) root.normalize();
-}
-
-function markMatches(root, needle) {
-  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  var targets = [];
-  var node;
-  while ((node = walker.nextNode())) {
-    if (node.nodeValue.toLowerCase().indexOf(needle) !== -1) targets.push(node);
-  }
-  var hits = 0;
-  targets.forEach(function (text) {
-    var value = text.nodeValue;
-    var frag = document.createDocumentFragment();
-    var at = 0;
-    var idx = value.toLowerCase().indexOf(needle, at);
-    while (idx !== -1) {
-      if (idx > at) frag.appendChild(document.createTextNode(value.slice(at, idx)));
-      var mark = document.createElement("mark");
-      mark.textContent = value.substr(idx, needle.length);
-      frag.appendChild(mark);
-      hits += 1;
-      at = idx + needle.length;
-      idx = value.toLowerCase().indexOf(needle, at);
-    }
-    if (at < value.length) frag.appendChild(document.createTextNode(value.slice(at)));
-    text.parentNode.replaceChild(frag, text);
-  });
-  return hits;
-}
+var clearMarks = searchClear;
+var markMatches = searchMark;
 
 function applyTurnFilter() {
   var q = el.turnFilter.value.trim().toLowerCase();
