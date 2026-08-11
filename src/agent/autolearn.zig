@@ -38,7 +38,11 @@ pub const RunEvent = struct {
 
 /// Appends one event line to state/autolearn.jsonl (best effort).
 pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
-    std.Io.Dir.cwd().createDirPath(io, "state") catch |err| {
+    recordTo(std.Io.Dir.cwd(), io, gpa, arena, type_, tool, detail);
+}
+
+fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type_: []const u8, tool: []const u8, detail: []const u8) void {
+    base.createDirPath(io, "state") catch |err| {
         std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };
@@ -58,24 +62,24 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
     s.write(detail) catch return;
     s.endObject() catch return;
 
-    appendLine(io, gpa, arena, buf[0..w.end]);
+    appendLine(base, io, gpa, arena, buf[0..w.end]);
 }
 
 /// Appends one line via a locked seek-to-end write: O(1) in the log size,
 /// unlike a read-modify-write which turns every tool call's event into a
 /// full read + rewrite of the whole log (quadratic over a session's calls).
 /// The lock still guards against two processes interleaving writes.
-fn appendLine(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line: []const u8) void {
-    var guard = filelock.acquire(io, std.Io.Dir.cwd(), "state", "autolearn", gpa);
+fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line: []const u8) void {
+    var guard = filelock.acquire(io, base, "state", "autolearn", gpa);
     defer guard.release();
 
     // Trim before opening for append below: trimming rewrites the file and
     // would otherwise contend with the handle appendLine is about to hold.
-    if (std.Io.Dir.cwd().statFile(io, event_path, .{})) |st| {
-        if (st.size > max_log_bytes) trimLog(io, gpa, arena) catch {};
+    if (base.statFile(io, event_path, .{})) |st| {
+        if (st.size > max_log_bytes) trimLog(base, io, gpa, arena) catch {};
     } else |_| {}
 
-    const file = std.Io.Dir.cwd().createFile(io, event_path, .{ .truncate = false }) catch |err| {
+    const file = base.createFile(io, event_path, .{ .truncate = false }) catch |err| {
         std.log.warn("autolearn: failed to open {s}: {s}", .{ event_path, @errorName(err) });
         return;
     };
@@ -90,9 +94,9 @@ fn appendLine(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line
 }
 
 /// Rewrites the log keeping only the newest `keep_lines` lines.
-fn trimLog(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
+fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
     _ = arena;
-    const raw = try std.Io.Dir.cwd().readFileAlloc(io, event_path, gpa, .limited(max_log_bytes));
+    const raw = try base.readFileAlloc(io, event_path, gpa, .limited(max_log_bytes));
     defer gpa.free(raw);
     var lines: std.ArrayList([]const u8) = .empty;
     defer lines.deinit(gpa);
@@ -108,12 +112,16 @@ fn trimLog(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
         try out.appendSlice(gpa, ln);
         try out.append(gpa, '\n');
     }
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items });
+    try base.writeFile(io, .{ .sub_path = event_path, .data = out.items });
 }
 
 /// Records a completed run (from agent stats + used tool names).
 pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e: RunEvent) void {
-    std.Io.Dir.cwd().createDirPath(io, "state") catch |err| {
+    recordRunTo(std.Io.Dir.cwd(), io, gpa, arena, e);
+}
+
+fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e: RunEvent) void {
+    base.createDirPath(io, "state") catch |err| {
         std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
         return;
     };
@@ -149,7 +157,7 @@ pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e
     s.endArray() catch return;
     s.endObject() catch return;
 
-    appendLine(io, gpa, arena, buf[0..w.end]);
+    appendLine(base, io, gpa, arena, buf[0..w.end]);
 }
 
 // Aggregating state/autolearn.jsonl into roadmap items and upserting
@@ -158,3 +166,76 @@ pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e
 // (tools/zig/cmd_autolearn.zig), not here. record()/recordRun() stay native
 // because they run inside the agent loop's hot path (every tool call / every
 // run), where a WASM dispatch per call would add real overhead.
+
+// ------------------------------------------------------------------- tests --
+
+test "recordTo appends without re-reading the existing log" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    recordTo(tmp.dir, io, std.testing.allocator, arena, "tool_call", "read_file", "");
+    recordTo(tmp.dir, io, std.testing.allocator, arena, "tool_error", "read_file", "not found");
+
+    const raw = try tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        lines += 1;
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, line, .{ .ignore_unknown_fields = true });
+        try std.testing.expect(parsed.object.get("tool") != null);
+    }
+    try std.testing.expectEqual(@as(usize, 2), lines);
+}
+
+test "trimLog keeps only the newest keep_lines lines" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var contents: std.ArrayList(u8) = .empty;
+    defer contents.deinit(std.testing.allocator);
+    var i: usize = 0;
+    while (i < keep_lines + 500) : (i += 1) {
+        const line = try std.fmt.allocPrint(arena, "{{\"ts\":{d}}}\n", .{i});
+        try contents.appendSlice(std.testing.allocator, line);
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = event_path, .data = contents.items });
+
+    try trimLog(tmp.dir, io, std.testing.allocator, std.testing.allocator);
+
+    const raw = try tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+    var lines: usize = 0;
+    var first_ts: ?usize = null;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        lines += 1;
+        if (first_ts == null) {
+            const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, line, .{});
+            defer parsed.deinit();
+            first_ts = @intCast(parsed.value.object.get("ts").?.integer);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, keep_lines), lines);
+    // The oldest 500 lines (ts 0..499) were dropped.
+    try std.testing.expectEqual(@as(usize, 500), first_ts.?);
+}
