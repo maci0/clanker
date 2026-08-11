@@ -99,6 +99,10 @@ pub const Agent = struct {
     /// Human prompt for the ask_user tool, wired by the REPL. Null elsewhere:
     /// a scripted run has nobody to ask.
     ask_fn: ?host.AskFn = null,
+    /// Images a caller (the /api/run composer) wants attached to the next
+    /// task message. run() consumes them once and clears the slot, so a
+    /// later turn never re-sends an old attachment.
+    pending_images: ?[]types.ImagePart = null,
     /// A decision the user already made outside a tool call (picking a
     /// numbered option the previous answer offered), recorded at the start of
     /// the run it caused so the graph shows why this turn happened.
@@ -298,13 +302,24 @@ pub const Agent = struct {
         if (messages.items.len == 0 or messages.items[0].role != .system) {
             try messages.insert(self.arena, 0, .{ .role = .system, .content = self.system_prompt_text });
         }
-        // A resumed session may have been persisted mid-tool-call: a crash or
-        // atomic-rename rebuild can hit between the assistant's tool_calls
-        // message and its tool results, or mid-batch with only some results
-        // written. Providers reject both tool_calls with no matching tool
-        // results and orphaned tool results, so drop the dangling exchange.
-        dropDanglingToolExchange(messages);
-        try messages.append(self.arena, .{ .role = .user, .content = task });
+        // A resumed session may have been persisted mid-tool-call (crash or
+        // atomic-rename rebuild between the assistant's tool_calls message
+        // and the tool results). Providers reject tool_calls with no matching
+        // tool results, so drop the dangling tail before continuing.
+        while (messages.items.len > 0) {
+            const last = messages.items[messages.items.len - 1];
+            if (last.role == .assistant and last.tool_calls != null and last.tool_calls.?.len > 0) {
+                _ = messages.pop();
+            } else break;
+        }
+        // Attachments queued by the caller ride on the task message itself,
+        // the same ImagePart shape the tool-result image path uses.
+        var task_images: ?[]types.ImagePart = null;
+        if (self.pending_images) |imgs| {
+            self.pending_images = null;
+            if (imgs.len > 0) task_images = imgs;
+        }
+        try messages.append(self.arena, .{ .role = .user, .content = task, .images = task_images });
         // Chatrooms inbox: surface messages that arrived since the last run
         // so a subscribed clanker actually notices what its peers said.
         if (self.cfg.modules.chatrooms and self.cfg.chatrooms.on) {
@@ -589,76 +604,6 @@ pub const Agent = struct {
         if (budget_hit) return error.SessionTokenBudgetExceeded;
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
-    }
-
-    /// Drops a dangling tool-call exchange from the tail of a resumed
-    /// transcript. A run persists its session between iterations, so a crash
-    /// (or an atomic-rename rebuild) can leave the transcript ending in
-    /// assistant(tool_calls: [A, B]) + tool(result A): strict providers
-    /// (kimi-k3 et al.) reject both tool_calls with no matching results and
-    /// orphaned tool results, so the resumed session could never make another
-    /// LLM call. Pops the partial exchange — the trailing tool results plus
-    /// the assistant message whose calls they do not exactly answer — and
-    /// re-checks until the tail is consistent.
-    fn dropDanglingToolExchange(messages: *std.ArrayList(types.Message)) void {
-        while (messages.items.len > 0) {
-            const last = messages.items[messages.items.len - 1];
-            if (last.role == .assistant and last.tool_calls != null and last.tool_calls.?.len > 0) {
-                _ = messages.pop();
-                continue;
-            }
-            if (last.role != .tool) break;
-            // The trailing run of tool-result messages...
-            var tool_run: usize = 0;
-            while (tool_run < messages.items.len and
-                messages.items[messages.items.len - 1 - tool_run].role == .tool) tool_run += 1;
-            const rest = messages.items.len - tool_run;
-            // ...must exactly answer the tool_calls of the nearest preceding
-            // assistant message: same count, and every result's tool_call_id
-            // matching one of its calls (which with equal counts also means
-            // no call is left unanswered).
-            var parent_idx: ?usize = null;
-            var i: usize = rest;
-            while (i > 0) {
-                i -= 1;
-                const m = messages.items[i];
-                if (m.role == .assistant and m.tool_calls != null and m.tool_calls.?.len > 0) {
-                    parent_idx = i;
-                    break;
-                }
-            }
-            const calls: []const types.ToolCall = if (parent_idx) |pi| messages.items[pi].tool_calls.? else &[_]types.ToolCall{};
-            const tail = messages.items[rest..];
-            var exact = calls.len == tail.len;
-            if (exact) {
-                for (tail) |tm| {
-                    const tid = tm.tool_call_id orelse {
-                        exact = false;
-                        break;
-                    };
-                    var matched = false;
-                    for (calls) |tc| {
-                        if (std.mem.eql(u8, tc.id, tid)) matched = true;
-                    }
-                    if (!matched) {
-                        exact = false;
-                        break;
-                    }
-                }
-            }
-            if (exact) break;
-            // Partial or orphaned exchange: drop the trailing results, then
-            // the assistant message that issued the calls when it is now the
-            // tail, and re-check whatever surfaces.
-            var n: usize = 0;
-            while (n < tool_run) : (n += 1) _ = messages.pop();
-            if (messages.items.len > 0) {
-                const new_tail = messages.items[messages.items.len - 1];
-                if (new_tail.role == .assistant and new_tail.tool_calls != null and new_tail.tool_calls.?.len > 0) {
-                    _ = messages.pop();
-                }
-            }
-        }
     }
 
     /// Reads a check tool's verdict out of its result: `ok` decides, and
@@ -2088,66 +2033,6 @@ test "compactionKeepStart returns null when the history is too short to compact"
     // Over the token threshold but fewer than 8 messages: compaction would
     // have to delete context it is supposed to preserve, so it must decline.
     try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
-}
-
-test "dropDanglingToolExchange keeps full exchanges and drops partial or orphaned ones" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const callA = [_]types.ToolCall{.{ .id = "a", .name = "t", .arguments = "{}" }};
-    const callAB = [_]types.ToolCall{
-        .{ .id = "a", .name = "t", .arguments = "{}" },
-        .{ .id = "b", .name = "t", .arguments = "{}" },
-    };
-
-    // A full exchange (every call answered) is kept untouched.
-    {
-        var messages: std.ArrayList(types.Message) = .empty;
-        try messages.append(arena, .{ .role = .system, .content = "sys" });
-        try messages.append(arena, .{ .role = .user, .content = "hi" });
-        try messages.append(arena, .{ .role = .assistant, .tool_calls = &callAB });
-        try messages.append(arena, .{ .role = .tool, .tool_call_id = "a", .content = "ra" });
-        try messages.append(arena, .{ .role = .tool, .tool_call_id = "b", .content = "rb" });
-        Agent.dropDanglingToolExchange(&messages);
-        try std.testing.expectEqual(@as(usize, 5), messages.items.len);
-    }
-
-    // A partial exchange (2 calls, 1 result — the mid-batch crash): the
-    // orphaned result AND the assistant tool_calls message are dropped.
-    {
-        var messages: std.ArrayList(types.Message) = .empty;
-        try messages.append(arena, .{ .role = .system, .content = "sys" });
-        try messages.append(arena, .{ .role = .user, .content = "hi" });
-        try messages.append(arena, .{ .role = .assistant, .tool_calls = &callAB });
-        try messages.append(arena, .{ .role = .tool, .tool_call_id = "a", .content = "ra" });
-        Agent.dropDanglingToolExchange(&messages);
-        try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-        try std.testing.expectEqual(types.Role.user, messages.items[messages.items.len - 1].role);
-    }
-
-    // An orphan tool result whose tool_call_id matches no call of the
-    // preceding assistant: result and parent assistant are both dropped.
-    {
-        var messages: std.ArrayList(types.Message) = .empty;
-        try messages.append(arena, .{ .role = .system, .content = "sys" });
-        try messages.append(arena, .{ .role = .user, .content = "hi" });
-        try messages.append(arena, .{ .role = .assistant, .tool_calls = &callA });
-        try messages.append(arena, .{ .role = .tool, .tool_call_id = "zzz", .content = "orphan" });
-        Agent.dropDanglingToolExchange(&messages);
-        try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-        try std.testing.expectEqual(types.Role.user, messages.items[messages.items.len - 1].role);
-    }
-
-    // A bare trailing assistant with unanswered calls is still popped.
-    {
-        var messages: std.ArrayList(types.Message) = .empty;
-        try messages.append(arena, .{ .role = .system, .content = "sys" });
-        try messages.append(arena, .{ .role = .assistant, .tool_calls = &callA });
-        Agent.dropDanglingToolExchange(&messages);
-        try std.testing.expectEqual(@as(usize, 1), messages.items.len);
-        try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-    }
 }
 
 test "finalAnswer preserves an exact string answer" {

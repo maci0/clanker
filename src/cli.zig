@@ -3217,6 +3217,12 @@ fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []c
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
+/// One image pasted or dropped into the web composer, sent with a run.
+const RunImage = struct {
+    mime: []const u8 = "",
+    b64: []const u8 = "",
+};
+
 const RunRequestBody = struct {
     task: []const u8 = "",
     /// When true, the answer is streamed back as plain text chunks as the
@@ -3227,7 +3233,24 @@ const RunRequestBody = struct {
     /// saved after, so the web UI can hold a real multi-turn conversation
     /// instead of one-shot, context-free requests.
     session: []const u8 = "",
+    /// Images the composer attached to this task (multimodal runs).
+    images: []const RunImage = &.{},
 };
+
+/// The composer refuses images over 4 MB; the server enforces the same cap on
+/// each attachment's decoded size, since a hand-written request is not the page.
+const max_image_bytes = 4 * 1024 * 1024;
+
+/// The decoded length of a base64 payload without decoding it, so the 4 MB
+/// image cap is enforced on bytes, not on the encoding.
+fn b64DecodedLen(b64: []const u8) usize {
+    if (b64.len == 0) return 0;
+    var n = (b64.len / 4) * 3;
+    if (b64.len % 4 != 0) n += 3;
+    if (b64[b64.len - 1] == '=') n -= 1;
+    if (b64.len >= 2 and b64[b64.len - 2] == '=') n -= 1;
+    return n;
+}
 
 /// Socket for streaming /api/run output. The agent's `on_token`/`on_tool_call`
 /// hooks are bare function pointers with no context argument, so the
@@ -3856,6 +3879,22 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
+    // Multimodal attachments from the composer: hand them to the agent, which
+    // attaches them to the task message exactly as the tool-result image path
+    // does. Same module flag as the agent's own image handling, and the 4 MB
+    // per-image cap the page promises is enforced here on decoded bytes.
+    if (cfg.modules.multimodal and req.images.len > 0) {
+        var imgs: std.ArrayList(types.ImagePart) = .empty;
+        for (req.images) |im| {
+            if (im.mime.len == 0 or im.b64.len == 0) continue;
+            if (b64DecodedLen(im.b64) > max_image_bytes) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"an image exceeds the 4 MB limit\"}");
+                return;
+            }
+            imgs.append(arena, .{ .mime = im.mime, .b64 = im.b64 }) catch {};
+        }
+        if (imgs.items.len > 0) a.pending_images = imgs.items;
+    }
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
 
@@ -4361,4 +4400,24 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" })).command);
     // A typo is still a typo, not a silent REPL start.
     try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }));
+}
+
+test "the run request body carries optional images, and the cap counts decoded bytes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A request without images parses to an empty list, not an error.
+    const bare = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 0), bare.images.len);
+
+    const with_img = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"look\",\"images\":[{\"mime\":\"image/png\",\"b64\":\"aGk=\"}]}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 1), with_img.images.len);
+    try std.testing.expectEqualStrings("image/png", with_img.images[0].mime);
+    try std.testing.expectEqualStrings("aGk=", with_img.images[0].b64);
+
+    // Decoded-length math: "aGk=" is "hi" (2 bytes), "aGVsbG8=" is "hello" (5).
+    try std.testing.expectEqual(@as(usize, 2), b64DecodedLen("aGk="));
+    try std.testing.expectEqual(@as(usize, 5), b64DecodedLen("aGVsbG8="));
+    try std.testing.expectEqual(@as(usize, 0), b64DecodedLen(""));
 }
