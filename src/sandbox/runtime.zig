@@ -1019,6 +1019,131 @@ test "assemblyscript csv_json round-trips through both directions" {
     try std.testing.expect(std.mem.indexOf(u8, to_csv, "2,") != null);
 }
 
+fn loadZigOutTool(gpa: std.mem.Allocator, io: std.Io, sb: *host.Sandbox, name: []const u8) !*ToolModule {
+    const path = try std.fmt.allocPrint(gpa, "zig-out/tools/{s}.wasm", .{name});
+    defer gpa.free(path);
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 20));
+    defer gpa.free(wasm);
+    return ToolModule.load(gpa, io, sb, wasm);
+}
+
+test "C tool crc32 computes the standard IEEE 802.3 checksum" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadZigOutTool(std.testing.allocator, io, &sb, "crc32");
+    defer mod.deinit();
+
+    // "123456789" -> 0xcbf43926 is the standard CRC-32/ISO-HDLC check value.
+    const out = try mod.executeTool("{\"text\": \"123456789\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"cbf43926\"}", out);
+}
+
+test "C tool base64 round-trips encode and decode" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadZigOutTool(std.testing.allocator, io, &sb, "base64");
+    defer mod.deinit();
+
+    const enc = try mod.executeTool("{\"text\": \"hello world\"}");
+    defer std.testing.allocator.free(enc);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"aGVsbG8gd29ybGQ=\"}", enc);
+
+    const dec = try mod.executeTool("{\"text\": \"aGVsbG8gd29ybGQ=\", \"mode\": \"decode\"}");
+    defer std.testing.allocator.free(dec);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"hello world\"}", dec);
+
+    const bad = try mod.executeTool("{\"text\": \"not!valid\", \"mode\": \"decode\"}");
+    defer std.testing.allocator.free(bad);
+    try std.testing.expect(std.mem.indexOf(u8, bad, "\"ok\":false") != null);
+}
+
+test "C tool hexdump renders 16-byte rows with an ASCII gutter" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadZigOutTool(std.testing.allocator, io, &sb, "hexdump");
+    defer mod.deinit();
+
+    const out = try mod.executeTool("{\"text\": \"Hi\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "00000000: 48 69") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Hi") != null);
+}
+
+test "C++ tool roman_numeral converts both directions" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadZigOutTool(std.testing.allocator, io, &sb, "roman_numeral");
+    defer mod.deinit();
+
+    const to_numeral = try mod.executeTool("{\"value\": 1994}");
+    defer std.testing.allocator.free(to_numeral);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"MCMXCIV\"}", to_numeral);
+
+    const to_int = try mod.executeTool("{\"text\": \"MCMXCIV\"}");
+    defer std.testing.allocator.free(to_int);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"1994\"}", to_int);
+
+    const out_of_range = try mod.executeTool("{\"value\": 4000}");
+    defer std.testing.allocator.free(out_of_range);
+    try std.testing.expect(std.mem.indexOf(u8, out_of_range, "\"ok\":false") != null);
+}
+
+test "C++ tool levenshtein computes edit distance" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadZigOutTool(std.testing.allocator, io, &sb, "levenshtein");
+    defer mod.deinit();
+
+    // kitten -> sitting is the textbook distance-3 example.
+    const out = try mod.executeTool("{\"a\": \"kitten\", \"b\": \"sitting\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"3\"}", out);
+}
+
+test "C++ tool run_length round-trips encode and decode" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadZigOutTool(std.testing.allocator, io, &sb, "run_length");
+    defer mod.deinit();
+
+    const enc = try mod.executeTool("{\"text\": \"aaabbbbc\"}");
+    defer std.testing.allocator.free(enc);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"3a4b1c\"}", enc);
+
+    const dec = try mod.executeTool("{\"text\": \"3a4b1c\", \"mode\": \"decode\"}");
+    defer std.testing.allocator.free(dec);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"aaabbbbc\"}", dec);
+
+    const malformed = try mod.executeTool("{\"text\": \"abc\", \"mode\": \"decode\"}");
+    defer std.testing.allocator.free(malformed);
+    try std.testing.expect(std.mem.indexOf(u8, malformed, "\"ok\":false") != null);
+}
+
 test "a tool with a tiny fuel budget runs out of fuel; the default budget answers" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
