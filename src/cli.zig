@@ -643,7 +643,9 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
 }
 
 /// `clanker autolearn` — review usage observations, refresh the roadmap
-/// Autolearn section, and print the generated items.
+/// Autolearn section, and print the generated items. The aggregate-and-write
+/// logic lives in the cmd_autolearn tool (fs-scoped read/aggregate/write,
+/// same shape as roadmap/history/learnings); this just runs it and reports.
 fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     _ = opts;
     const io = init.io;
@@ -656,8 +658,7 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "autolearn module is disabled (modules.autolearn=false in config)", .{});
         return error.ModuleDisabled;
     }
-    const section = try autolearn.review(io, gpa, arena);
-    try autolearn.applyRoadmap(io, gpa, arena, section);
+    const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
     const out = std.Io.File.stdout();
     try out.writeStreamingAll(io, "Autolearn section updated in docs/ROADMAP.md\n\n");
     try out.writeStreamingAll(io, section);
@@ -4397,8 +4398,15 @@ fn handleBoard(
                 // resequenced below. Sorting has to wait until every field of
                 // this card is written: it reorders the array `card` points
                 // into, and the pointer does not follow.
+                // Position comes from the request, so it is clamped before it is
+                // used in arithmetic: `want * 2 - 1` with i64 max overflowed and
+                // panicked, killing the server from one malformed body. Any
+                // index past the end means the end.
                 const want = req.position orelse -1;
-                card.order = if (want < 0) std.math.maxInt(i64) else want * 2 - 1;
+                card.order = if (want < 0)
+                    std.math.maxInt(i64)
+                else
+                    boardSlot(want, cards.items.len);
                 var entry: std.ArrayList(LogEntry) = .empty;
                 entry.appendSlice(arena, card.log) catch {};
                 entry.append(arena, .{ .ts = now, .who = actor, .what = std.fmt.allocPrint(arena, "moved to {s}", .{col}) catch "moved" }) catch {};
@@ -4542,6 +4550,29 @@ fn handleBoard(
     }
 
     respondBoard(arena, b, stream);
+}
+
+/// Where a card lands when dropped at `want` among `count` cards.
+///
+/// Odd values interleave with the even ones `resequence` assigns, so a card
+/// placed at index n sorts between n-1 and n. Clamped to the column's size
+/// first: the value is caller-supplied and the multiplication is not checked
+/// by anything else.
+fn boardSlot(want: i64, count: usize) i64 {
+    const limit: i64 = @intCast(@min(count, @as(usize, @intCast(std.math.maxInt(i32)))));
+    const capped = @min(@max(want, 0), limit);
+    return capped * 2 - 1;
+}
+
+test boardSlot {
+    try std.testing.expectEqual(@as(i64, -1), boardSlot(0, 5));
+    try std.testing.expectEqual(@as(i64, 1), boardSlot(1, 5));
+    try std.testing.expectEqual(@as(i64, 9), boardSlot(5, 5));
+    // Past the end is the end, not an overflow.
+    try std.testing.expectEqual(@as(i64, 9), boardSlot(1000, 5));
+    try std.testing.expectEqual(@as(i64, 9), boardSlot(std.math.maxInt(i64), 5));
+    // Negative never reaches here, but must not wrap if it ever does.
+    try std.testing.expectEqual(@as(i64, -1), boardSlot(std.math.minInt(i64), 5));
 }
 
 fn cardLessThan(_: void, a: Card, c: Card) bool {
