@@ -2873,12 +2873,6 @@ el.modelSearch.addEventListener("focusout", function (e) {
   window.setTimeout(function () {
     if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
     hideModelList(); syncModelSearchLabel();
-  }, 0);
-});
-el.modelSearch.addEventListener("blur", function () {
-  window.setTimeout(function () {
-    if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
-    hideModelList(); syncModelSearchLabel();
   }, 120);
 });
 el.modelSearch.addEventListener("keydown", function (e) {
