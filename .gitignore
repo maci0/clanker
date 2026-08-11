@@ -16,9 +16,6 @@ config.local.json
 # User-local project agent instructions
 .agents/
 
-# User-local Grok project rules (e.g. symlink into .agents/)
-.grok/
-
 # User-local Claude project rules (e.g. symlink into .agents/)
 .claude/
 
