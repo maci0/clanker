@@ -2077,7 +2077,11 @@ function layoutGraph(canvas, built, slowest) {
   var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
   var graphW = maxX - minX + nodeW;
   var graphH = maxY - minY + nodeH;
-  var offsetX = pad + tagPad + nodeW / 2 - minX + Math.max(0, (containerW - pad * 2 - tagPad - graphW) / 2);
+  // Left-aligned, not centred. A run is usually a single chain, so centring it
+  // parked a narrow column in the middle of a wide canvas with empty space on
+  // both sides — the only block on the page that did not start where every
+  // other block starts.
+  var offsetX = pad + tagPad + nodeW / 2 - minX;
   var offsetY = pad + nodeH / 2 - minY;
 
   var totalW = Math.max(containerW, graphW + pad * 2 + tagPad);

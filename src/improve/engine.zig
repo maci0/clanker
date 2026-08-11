@@ -568,17 +568,22 @@ pub const Engine = struct {
             try atomic_write.writeFile(self.ctx.io, std.Io.Dir.cwd(), c.file, data);
         }
 
+        // Recorded before git commit and peer notification, which are
+        // best-effort and safe to lose: a crash here must not leave a
+        // promoted file set with no history entry, because that entry is
+        // both the dedup guard (`alreadyAccepted`) and the only way to
+        // `revert` a promotion — without it a half-crashed run looks, to
+        // the next one, like work that never happened.
+        const live = try self.gateScore();
+        const score_after = live.score / @as(f64, @floatFromInt(@max(live.total, 1)));
+        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints);
+
         // Git strategy: commit the promoted change so history, diff review and
         // bisectability work; the state/history snapshot remains the fallback.
         if (self.cfg.agent.git_commit) {
             self.gitCommit(id, proposal.summary, files);
         }
         self.notifyPeers("improve", proposal.summary);
-
-        // Post-promotion gate on the live tree.
-        const live = try self.gateScore();
-        const score_after = live.score / @as(f64, @floatFromInt(@max(live.total, 1)));
-        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints);
 
         log.log(.info, "✓ promoted improvement {s} (gate {d:.2}/{d})", .{ id, live.score, live.total });
         // Clean up the staging directory now that promotion is done.
