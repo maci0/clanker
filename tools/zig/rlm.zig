@@ -6,11 +6,32 @@
 //! long inputs can be processed beyond any single context window.
 //! Input:  {"instruction": "summarize", "text": "<chunk>", "depth": 0}
 //! Output: {"ok": true, "text": "<sub-LM analysis>"}
+//!
+//! Settings come from the `config` object in tools/manifests/rlm.tool.json:
+//!   max_depth  how many levels of recursion are allowed (default 3)
+//! Note that `depth` in the input is the *current* level, counted up by each
+//! nested call; `max_depth` is the ceiling it is measured against.
 
 const std = @import("std");
 const lib = @import("lib.zig");
 
-const max_depth: u32 = 3;
+const Settings = struct {
+    max_depth: u32 = default_max_depth,
+};
+
+const default_max_depth: u32 = 3;
+
+/// Every extra level multiplies the number of sub-agent runs, and each of
+/// those is a model call with its own iteration budget. A misconfigured value
+/// is therefore a bill rather than a slow tool, so the configured setting is
+/// clamped instead of trusted.
+const depth_ceiling: u32 = 8;
+
+fn maxDepth() u32 {
+    const settings = std.json.parseFromSliceLeaky(Settings, lib.alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Settings{};
+    if (settings.max_depth == 0) return default_max_depth;
+    return @min(settings.max_depth, depth_ceiling);
+}
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -32,11 +53,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (d == .integer and d.integer > 0) depth = @intCast(d.integer);
     }
 
+    const max_depth = maxDepth();
+
     var result: []const u8 = undefined;
     if (depth >= max_depth) {
         const cap: usize = 2000;
         const excerpt = if (text.len > cap) text[0..cap] else text;
-        result = try std.fmt.allocPrint(lib.alloc, "(rlm depth limit {d} reached) excerpt: {s}", .{ depth, excerpt });
+        result = try std.fmt.allocPrint(lib.alloc, "(rlm depth limit {d} reached) excerpt: {s}", .{ max_depth, excerpt });
     } else {
         const task = try std.fmt.allocPrint(
             lib.alloc,

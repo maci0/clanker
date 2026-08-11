@@ -22,5 +22,8 @@
   },
   "fs_prefixes": [],
   "network_allow": [],
+  "config": {
+    "max_depth": 3
+  },
   "category": "agent"
 }
