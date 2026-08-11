@@ -187,6 +187,21 @@ pub const Sandbox = struct {
     /// Commands allowed through ck_exec for this tool. Empty falls back to the
     /// harness default set below.
     exec_allow: []const []const u8 = &.{},
+    /// Whether the `git` tool may run the PR-lifecycle verbs it otherwise
+    /// cannot: `push`, `merge`, `checkout`. From cfg.agent.git_remote_ops; the
+    /// git.zig guest mirrors it so its in-tool deny message does not pre-empt
+    /// the widening. Scoped to the command being `git` in ck_exec, so no other
+    /// tool inherits it. Default false = today's hardcoded denies.
+    git_remote_ops: bool = false,
+    /// Whole-command-line glob patterns a tool may run through ck_exec, from
+    /// cfg.agent.exec_pattern_allow. When a pattern names a command, that
+    /// command becomes strict: only an argv that matches one of its patterns
+    /// runs, and the match also overrides the deny tokens for the args it
+    /// grants ("gh pr merge" legitimately contains "merge"). Commands with no
+    /// pattern stay under the deny-list check, so a pattern for `gh` does not
+    /// widen `git` or anything else. `*` matches any run of characters,
+    /// including across spaces and empty.
+    exec_pattern_allow: []const []const u8 = &.{},
     /// Environment variables a guest may read, from the tool's manifest.
     env_allow: []const []const u8 = &.{},
     /// A nested run's private todo list (src/agent/private_todos.zig), wired
@@ -276,14 +291,63 @@ pub fn sandboxFor(
         .network_allow = net,
         .llm = llm_access,
         .exec_allow = tool.exec_allow,
+        .git_remote_ops = cfg.agent.git_remote_ops,
+        .exec_pattern_allow = cfg.agent.exec_pattern_allow,
         .env_allow = tool.env_allow,
         .fs_prefixes = tool.fs_prefixes,
         .fuel = tool.fuel,
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
         .cfg = cfg,
-        .config_json = tool.config_json,
+        // An exec-capable tool sees the harness's exec policy in its own
+        // `config` so the git.zig / gh.zig guests can mirror the host's deny
+        // decision instead of pre-empting it (e.g. a hardcoded in-tool "merge
+        // is denied" would block what git_remote_ops just granted).
+        .config_json = if (tool.exec_allow.len > 0)
+            try execPolicyConfig(arena, tool.config_json, cfg)
+        else
+            tool.config_json,
     };
+}
+
+/// Builds the `config` object handed to an exec-capable tool, merging its
+/// descriptor config with the harness's exec policy (git_remote_ops,
+/// exec_pattern_allow). Non-exec tools keep their own config untouched. The
+/// extra keys are inert to a tool that does not read `config`. The JSON is
+/// built by hand because it is small and controlled, and avoids relying on
+/// std.json.Stringify's serialization of a nested string slice.
+fn execPolicyConfig(
+    arena: std.mem.Allocator,
+    tool_config: []const u8,
+    cfg: *const config_mod.Config,
+) ![]const u8 {
+    _ = tool_config; // git.zig / gh.zig carry no descriptor config of their own.
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(arena, '{');
+    try out.appendSlice(arena, "\"git_remote_ops\":");
+    try out.appendSlice(arena, if (cfg.agent.git_remote_ops) "true" else "false");
+    try out.appendSlice(arena, ",\"exec_pattern_allow\":[");
+    for (cfg.agent.exec_pattern_allow, 0..) |p, i| {
+        if (i > 0) try out.append(arena, ',');
+        try appendJsonString(arena, &out, p);
+    }
+    try out.appendSlice(arena, "]}");
+    return out.toOwnedSlice(arena);
+}
+
+fn appendJsonString(arena: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
+    try out.append(arena, '"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.appendSlice(arena, "\\\""),
+            '\\' => try out.appendSlice(arena, "\\\\"),
+            '\n' => try out.appendSlice(arena, "\\n"),
+            '\r' => try out.appendSlice(arena, "\\r"),
+            '\t' => try out.appendSlice(arena, "\\t"),
+            else => try out.append(arena, c),
+        }
+    }
+    try out.append(arena, '"');
 }
 
 fn appendNetworkAllow(
@@ -1801,6 +1865,62 @@ const exec_deny_tokens = [_][]const u8{
     "repack", "prune",  "submodule", "-f",       "--force", "--exec",
 };
 
+/// The deny tokens that git_remote_ops: true lifts for the `git` command
+/// only. Everything else on exec_deny_tokens stays denied for git (and for
+/// every other command); this is the PR lifecycle, not a footgun.
+fn isGitRemoteOpToken(t: []const u8) bool {
+    return std.mem.eql(u8, t, "push") or std.mem.eql(u8, t, "merge") or std.mem.eql(u8, t, "checkout");
+}
+
+/// Whether `pattern` names `cmd` — i.e. its first whitespace-delimited token
+/// is exactly `cmd`. A pattern whose command token carries a `*` cannot name a
+/// specific command, so it does not make the command strict (it can still
+/// grant an argv via globMatch).
+fn patternNamesCmd(pattern: []const u8, cmd: []const u8) bool {
+    var i: usize = 0;
+    while (i < pattern.len and pattern[i] != ' ') : (i += 1) {}
+    return std.mem.eql(u8, pattern[0..i], cmd);
+}
+
+const ExecPolicy = struct {
+    /// Whether this command has an exec_pattern_allow pattern naming it. A
+    /// governed command is strict: only a matching argv runs.
+    governed: bool,
+    /// Whether the full argv matched one of the command's patterns, which
+    /// grants it (and overrides the deny tokens for the args it grants).
+    allowed: bool,
+};
+
+/// Decides how exec_pattern_allow applies to this argv. Joins argv with single
+/// spaces for the glob match so `*` spans argument boundaries. The joined
+/// string is written into `join_buf` (left empty when there are no patterns).
+fn execPolicyFor(
+    sb: *const Sandbox,
+    argv: []const []const u8,
+    join_buf: []u8,
+) ExecPolicy {
+    if (sb.exec_pattern_allow.len == 0) return .{ .governed = false, .allowed = false };
+    var j: usize = 0;
+    for (argv, 0..) |a, i| {
+        if (i > 0 and j < join_buf.len) {
+            join_buf[j] = ' ';
+            j += 1;
+        }
+        const n = @min(a.len, join_buf.len -| j);
+        @memcpy(join_buf[j..][0..n], a[0..n]);
+        j += n;
+    }
+    const joined = join_buf[0..j];
+    const cmd = if (argv.len > 0) argv[0] else "";
+    var governed = false;
+    var allowed = false;
+    for (sb.exec_pattern_allow) |pat| {
+        if (patternNamesCmd(pat, cmd)) governed = true;
+        if (globMatch(pat, joined)) allowed = true;
+    }
+    return .{ .governed = governed, .allowed = allowed };
+}
+
 /// Shell operators, refused only when the command being run is a shell.
 ///
 /// ckExec passes argv straight to std.process.run, never through a shell, so
@@ -2172,27 +2292,46 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
                         .string => |s| s,
                         else => return Err.invalid,
                     };
-                    // deny-list check: match whole arguments / flag prefixes /
-                    // word boundaries so single-char tokens like "-f", "rm",
-                    // "gc" don't false-positive on innocent arguments.
-                    for (exec_deny_tokens) |t| {
-                        if (argDenied(arg, t)) {
-                            log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ t, arg });
-                            return Err.denied;
-                        }
-                    }
-                    if (runsAShell(cmd)) {
-                        for (shell_op_deny_tokens) |t| {
-                            if (argDenied(arg, t)) {
-                                log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ t, arg });
-                                return Err.denied;
-                            }
-                        }
-                    }
                     argv.append(h.sandbox.gpa, arg) catch return Err.invalid;
                 }
             },
             else => {},
+        }
+    }
+
+    // exec_pattern_allow decides whether the deny list even applies. A command
+    // with a pattern is strict: only an argv matching one of its patterns runs,
+    // and a match also overrides the deny tokens for the args it grants. A
+    // command with no pattern stays under the deny-list check below.
+    var join_buf: [4096]u8 = undefined;
+    const policy = execPolicyFor(h.sandbox, argv.items, &join_buf);
+    if (policy.governed) {
+        if (!policy.allowed) {
+            log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd});
+            return Err.denied;
+        }
+    } else {
+        // deny-list check: match whole arguments / flag prefixes / word
+        // boundaries so single-char tokens like "-f", "rm", "gc" don't
+        // false-positive on innocent arguments.
+        for (argv.items) |arg| {
+            for (exec_deny_tokens) |t| {
+                // git_remote_ops lifts the PR-lifecycle verbs for `git` only;
+                // every other token stays denied.
+                if (h.sandbox.git_remote_ops and std.mem.eql(u8, cmd, "git") and isGitRemoteOpToken(t)) continue;
+                if (argDenied(arg, t)) {
+                    log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ t, arg });
+                    return Err.denied;
+                }
+            }
+            if (runsAShell(cmd)) {
+                for (shell_op_deny_tokens) |t| {
+                    if (argDenied(arg, t)) {
+                        log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ t, arg });
+                        return Err.denied;
+                    }
+                }
+            }
         }
     }
 
@@ -2510,6 +2649,72 @@ test "globMatch handles basic patterns" {
     // Empty pattern matches only empty name
     try std.testing.expect(globMatch("", ""));
     try std.testing.expect(!globMatch("", "x"));
+}
+
+test "isGitRemoteOpToken lifts exactly the PR lifecycle verbs" {
+    try std.testing.expect(isGitRemoteOpToken("push"));
+    try std.testing.expect(isGitRemoteOpToken("merge"));
+    try std.testing.expect(isGitRemoteOpToken("checkout"));
+    try std.testing.expect(!isGitRemoteOpToken("reset"));
+    try std.testing.expect(!isGitRemoteOpToken("rebase"));
+    try std.testing.expect(!isGitRemoteOpToken("fetch"));
+    try std.testing.expect(!isGitRemoteOpToken("-f"));
+}
+
+test "patternNamesCmd matches only the first command token" {
+    try std.testing.expect(patternNamesCmd("gh pr create*", "gh"));
+    try std.testing.expect(patternNamesCmd("git push*", "git"));
+    try std.testing.expect(!patternNamesCmd("gh pr create*", "git"));
+    try std.testing.expect(!patternNamesCmd("gh pr create*", "ghh"));
+    // A globbed command token cannot name a command, so it never makes it strict.
+    try std.testing.expect(!patternNamesCmd("gh* pr", "gh"));
+}
+
+test "execPolicyFor: a pattern makes a command strict, matching argv is granted" {
+    var sb = Sandbox{
+        .gpa = undefined,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = undefined,
+        .exec_pattern_allow = &.{ "gh pr create*", "gh pr merge*" },
+    };
+    var join: [4096]u8 = undefined;
+    const gh_create = [_][]const u8{ "gh", "pr", "create", "12", "--base", "main" };
+    var p = execPolicyFor(&sb, &gh_create, &join);
+    try std.testing.expect(p.governed);
+    try std.testing.expect(p.allowed);
+    const gh_merge = [_][]const u8{ "gh", "pr", "merge", "12" };
+    p = execPolicyFor(&sb, &gh_merge, &join);
+    try std.testing.expect(p.governed);
+    try std.testing.expect(p.allowed);
+    // A gh invocation outside the whitelist is governed but not allowed.
+    const gh_issue = [_][]const u8{ "gh", "issue", "create", "foo" };
+    p = execPolicyFor(&sb, &gh_issue, &join);
+    try std.testing.expect(p.governed);
+    try std.testing.expect(!p.allowed);
+    // A command with no pattern (git) is not governed at all.
+    const git_status = [_][]const u8{ "git", "status" };
+    p = execPolicyFor(&sb, &git_status, &join);
+    try std.testing.expect(!p.governed);
+    try std.testing.expect(!p.allowed);
+}
+
+test "execPolicyFor: no patterns leaves everything ungoverned" {
+    var sb = Sandbox{
+        .gpa = undefined,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = undefined,
+    };
+    var join: [4096]u8 = undefined;
+    const gh = [_][]const u8{ "gh", "pr", "create" };
+    const p = execPolicyFor(&sb, &gh, &join);
+    try std.testing.expect(!p.governed);
+    try std.testing.expect(!p.allowed);
 }
 
 test "ckFsStat uses safeJoin policy" {
