@@ -1,0 +1,19 @@
+{
+  "name": "recent_commits",
+  "kind": "task",
+  "description": "recent_commits must collapse the recurring 'summarize the last N commits' task into one call: ok:true and one line per commit. The assertion is the shape — the author is the one field the format wraps in parens, so a reply of COMMITS proves the fixed argv survived and the exec result was unwrapped to plain text rather than echoed as a process report. Content-free on purpose: any repository with at least one commit passes, so new commits cannot break it. Needs a real .git, same as the git_deny eval.",
+  "prompt": "Use the recent_commits tool with input {\"count\": 3}. Look at the tool's JSON result. If its ok field is true and its text field contains at least one line ending with an author name in parentheses, reply with exactly COMMITS. Otherwise reply with exactly NONE.",
+  "requires_tool": "recent_commits",
+  "criteria": [
+    {
+      "includes": [
+        "COMMITS"
+      ]
+    },
+    {
+      "excludes": [
+        "NONE"
+      ]
+    }
+  ]
+}

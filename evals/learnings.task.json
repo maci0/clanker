@@ -1,0 +1,19 @@
+{
+  "name": "learnings",
+  "kind": "task",
+  "description": "learnings must answer in one of its two documented shapes: ok:true with the persisted notes, or ok:false with 'no learnings yet' when state/learnings.md does not exist. Same reasoning as the history eval — state/ is gitignored, so a fresh checkout legitimately has nothing to recall and the shape of the answer is the only environment-independent assertion. It goes red when the fs_prefixes policy or the read path breaks in a way that is neither content nor a clean 'nothing yet'.",
+  "prompt": "Use the learnings tool with input {}. Look at the tool's JSON result. If its ok field is true, or its ok field is false and its error field says there are no learnings yet, reply with exactly SHAPE_OK. For any other result reply with exactly SHAPE_BAD.",
+  "requires_tool": "learnings",
+  "criteria": [
+    {
+      "includes": [
+        "SHAPE_OK"
+      ]
+    },
+    {
+      "excludes": [
+        "SHAPE_BAD"
+      ]
+    }
+  ]
+}
