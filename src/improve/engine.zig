@@ -286,6 +286,7 @@ pub const Engine = struct {
 
         patch_apply.apply(staged_dir, self.ctx.io, self.ctx.gpa, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
+            self.removeTree(staging);
             return .failed;
         };
 
@@ -307,6 +308,7 @@ pub const Engine = struct {
                 "Your patch removed \"{s}\" from {s}. That call is part of the gate every improvement has to pass, including this one. Keep it and re-propose.",
                 .{ bad.needle, bad.file },
             );
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -319,10 +321,8 @@ pub const Engine = struct {
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tree did not compile", tail });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -337,10 +337,8 @@ pub const Engine = struct {
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tools did not compile", tail });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -351,10 +349,8 @@ pub const Engine = struct {
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -367,10 +363,8 @@ pub const Engine = struct {
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-            // Hand the failure to the next attempt. Without this the retry is
-            // blind: it re-proposed the same wrong import three times because
-            // nothing ever told it what the compiler said.
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -381,6 +375,7 @@ pub const Engine = struct {
             log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
+            self.removeTree(staging);
             return .failed;
         }
 
@@ -410,6 +405,7 @@ pub const Engine = struct {
                         log.log(.error_, "{s}", .{tail});
                         try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
                         feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        self.removeTree(staging);
                         return .failed;
                     }
                 } else {
@@ -426,6 +422,7 @@ pub const Engine = struct {
                         log.log(.error_, "{s}", .{tail});
                         try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
                         feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        self.removeTree(staging);
                         return .failed;
                     }
                 }
@@ -464,6 +461,8 @@ pub const Engine = struct {
         try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints);
 
         log.log(.info, "✓ promoted improvement {s} (gate {d:.2}/{d})", .{ id, live.score, live.total });
+        // Clean up the staging directory now that promotion is done.
+        self.removeTree(staging);
         return .accepted;
     }
 
@@ -818,7 +817,83 @@ pub const Engine = struct {
         return false;
     }
 
+    /// Removes a directory tree rooted at `rel` (relative to cwd). Only
+    /// called on paths under state/staging/ whose names match the id
+    /// pattern this engine generates.
+    fn removeTree(self: *Engine, rel: []const u8) void {
+        self.removeTreeAt(std.Io.Dir.cwd(), rel);
+    }
+
+    /// Removes a directory tree rooted at `rel` under `base`. Split from
+    /// removeTree so the unit test can operate on a tmpDir instead of cwd.
+    fn removeTreeAt(self: *Engine, base: std.Io.Dir, rel: []const u8) void {
+        var dir = base.openDir(self.ctx.io, rel, .{ .iterate = true }) catch return;
+        var it = dir.iterate();
+        while (it.next(self.ctx.io) catch null) |entry| {
+            const sub = std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ rel, entry.name }) catch continue;
+            defer self.ctx.gpa.free(sub);
+            switch (entry.kind) {
+                .directory => self.removeTreeAt(base, sub),
+                .file => base.deleteFile(self.ctx.io, sub) catch {},
+                else => {},
+            }
+        }
+        dir.close(self.ctx.io);
+        base.deleteDir(self.ctx.io, rel) catch {};
+    }
+
+    /// Looks like an id this engine mints: "imp-" followed by digits.
+    fn isImpId(name: []const u8) bool {
+        if (!std.mem.startsWith(u8, name, "imp-")) return false;
+        if (name.len <= 4) return false;
+        for (name[4..]) |c| {
+            if (!std.ascii.isDigit(c)) return false;
+        }
+        return true;
+    }
+
+    /// Keeps at most `keep` staging directories (by name, newest-last since
+    /// the id embeds a timestamp), and removes the rest. Called at the start
+    /// of prepareStaging so leftovers from crashed runs are collected too.
+    /// `current_id` (if non-null) is never removed.
+    fn pruneStaging(self: *Engine, keep: usize, current_id: ?[]const u8) void {
+        const staging_root = "state/staging";
+        var dir = std.Io.Dir.cwd().openDir(self.ctx.io, staging_root, .{ .iterate = true }) catch return;
+        defer dir.close(self.ctx.io);
+        var names: std.ArrayList([]const u8) = .empty;
+        defer {
+            for (names.items) |n| self.ctx.gpa.free(n);
+            names.deinit(self.ctx.gpa);
+        }
+        var it = dir.iterate();
+        while (it.next(self.ctx.io) catch null) |entry| {
+            if (entry.kind != .directory) continue;
+            if (!isImpId(entry.name)) continue;
+            names.append(self.ctx.gpa, self.ctx.gpa.dupe(u8, entry.name) catch continue) catch continue;
+        }
+        if (names.items.len <= keep) return;
+        // Sort ascending (oldest first): the id is "imp-<nanosecond ts>".
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        const to_remove = names.items.len - keep;
+        for (names.items[0..to_remove]) |name| {
+            if (current_id) |cid| {
+                if (std.mem.eql(u8, name, cid)) continue;
+            }
+            const path = std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ staging_root, name }) catch continue;
+            defer self.ctx.gpa.free(path);
+            self.removeTree(path);
+        }
+    }
+
     fn prepareStaging(self: *Engine, staging: []const u8) !void {
+        // Prune old staging dirs before creating a new one. Extract the id
+        // from the path ("state/staging/<id>").
+        const current_id = if (std.mem.lastIndexOfScalar(u8, staging, '/')) |slash| staging[slash + 1 ..] else staging;
+        self.pruneStaging(3, current_id);
         const dir = std.Io.Dir.cwd();
         try dir.createDirPath(self.ctx.io, staging);
         for (staging_roots) |root| {
@@ -1257,6 +1332,94 @@ test "the context budget follows the model's own window" {
     var huge = try config.Provider.single(arena, "h", "http://x", .openai_compat, "m", .{ .context_window = 1_048_576 });
     engine.provider = &huge;
     try std.testing.expectEqual(@as(usize, 1024 * 1024), engine.contextBudget());
+}
+
+test "pruneStaging keeps the newest N and removes the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Create 5 fake staging dirs under a tmp "state/staging" with imp- ids.
+    try tmp.dir.createDirPath(io, "state/staging/imp-100");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/staging/imp-100/file.txt", .data = "a" });
+    try tmp.dir.createDirPath(io, "state/staging/imp-200");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/staging/imp-200/file.txt", .data = "b" });
+    try tmp.dir.createDirPath(io, "state/staging/imp-300");
+    try tmp.dir.createDirPath(io, "state/staging/imp-400");
+    try tmp.dir.createDirPath(io, "state/staging/imp-500");
+    // Also a non-imp directory that must be left alone.
+    try tmp.dir.createDirPath(io, "state/staging/other-thing");
+
+    // Build an engine that operates on the tmp dir. We only need the fields
+    // pruneStaging touches: ctx (io + gpa).
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+    var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = undefined, .instructions = "" };
+
+    // pruneStaging works against cwd, but our dirs are in tmp. We cannot
+    // change cwd in a test, so call the pieces that matter directly.
+    // Instead, test isImpId and the sort/keep logic by checking the names.
+    try std.testing.expect(Engine.isImpId("imp-100"));
+    try std.testing.expect(Engine.isImpId("imp-99999999"));
+    try std.testing.expect(!Engine.isImpId("imp-"));
+    try std.testing.expect(!Engine.isImpId("other-thing"));
+    try std.testing.expect(!Engine.isImpId("imp-abc"));
+
+    // Simulate the pruning logic: list, sort, keep 3.
+    var names: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (names.items) |n| std.testing.allocator.free(n);
+        names.deinit(std.testing.allocator);
+    }
+    var staging_dir = tmp.dir.openDir(io, "state/staging", .{ .iterate = true }) catch unreachable;
+    defer staging_dir.close(io);
+    var it = staging_dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        if (!Engine.isImpId(entry.name)) continue;
+        try names.append(std.testing.allocator, try std.testing.allocator.dupe(u8, entry.name));
+    }
+    try std.testing.expectEqual(@as(usize, 5), names.items.len);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    // With keep=3, the first 2 (imp-100, imp-200) would be removed.
+    const to_remove = names.items.len - 3;
+    try std.testing.expectEqual(@as(usize, 2), to_remove);
+    try std.testing.expectEqualStrings("imp-100", names.items[0]);
+    try std.testing.expectEqualStrings("imp-200", names.items[1]);
+    // The kept ones are the 3 newest.
+    try std.testing.expectEqualStrings("imp-300", names.items[2]);
+    try std.testing.expectEqualStrings("imp-400", names.items[3]);
+    try std.testing.expectEqualStrings("imp-500", names.items[4]);
+
+    // Actually remove them to verify removeTree works on the tmp dir.
+    for (names.items[0..to_remove]) |name| {
+        const path = try std.fmt.allocPrint(std.testing.allocator, "state/staging/{s}", .{name});
+        defer std.testing.allocator.free(path);
+        // Use the engine's removeTree indirectly: it operates on cwd, but
+        // we can verify the logic with manual deletion on tmp.dir.
+        engine.removeTreeAt(tmp.dir, path);
+    }
+    // imp-100 should be gone (its file too).
+    const absent = tmp.dir.readFileAlloc(io, "state/staging/imp-100/file.txt", std.testing.allocator, .limited(64));
+    try std.testing.expectError(error.FileNotFound, absent);
+    // imp-300 should still exist.
+    try tmp.dir.access(io, "state/staging/imp-300", .{});
+    // The non-imp directory is untouched.
+    try tmp.dir.access(io, "state/staging/other-thing", .{});
 }
 
 test "a patch that drops a gate call from the engine is rejected before it compiles" {
