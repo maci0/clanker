@@ -460,6 +460,10 @@ pub const Engine = struct {
         try collectCandidates(self, "tools/manifests", keywords.items, &cands);
         try collectCandidates(self, "src", keywords.items, &cands);
         try collectCandidates(self, "tests", keywords.items, &cands);
+        // The suite a proposal is graded against. Add-only, but invisible means
+        // the model re-proposes cases that already exist and the whole
+        // iteration is refused.
+        try collectCandidates(self, "evals", keywords.items, &cands);
         for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {
             try collectFile(self, f, keywords.items, &cands);
         }
