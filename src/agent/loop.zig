@@ -424,16 +424,7 @@ pub const Agent = struct {
                 }
             }
 
-            if (resp.usage) |u| {
-                self.stats.total_prompt_tokens += u.prompt_tokens;
-                self.stats.total_completion_tokens += u.completion_tokens;
-                self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
-                self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
-                self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
-                const active = self.provider.activeModel();
-                if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
-                if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
-            }
+            if (resp.usage) |u| self.recordUsage(u);
 
             try messages.append(self.arena, resp.message);
 
@@ -958,6 +949,19 @@ pub const Agent = struct {
         return self.arena.dupe(u8, buf.items) catch null;
     }
 
+    /// Folds one response's token usage into `self.stats`, including cost if
+    /// the active model has per-token pricing configured.
+    fn recordUsage(self: *Agent, u: types.Usage) void {
+        self.stats.total_prompt_tokens += u.prompt_tokens;
+        self.stats.total_completion_tokens += u.completion_tokens;
+        self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+        self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
+        self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
+        const active = self.provider.activeModel();
+        if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
+        if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+    }
+
     /// Produces a concise summary of a slice of conversation messages by
     /// asking the LLM to distill them. Returns an arena-owned string prefixed
     /// with "[conversation summary]" so downstream code knows it is synthetic.
@@ -1010,16 +1014,7 @@ pub const Agent = struct {
         const content = resp.message.content orelse return error.EmptyResponse;
         if (content.len == 0) return error.EmptyResponse;
         // Track the summarization cost.
-        if (resp.usage) |u| {
-            self.stats.total_prompt_tokens += u.prompt_tokens;
-            self.stats.total_completion_tokens += u.completion_tokens;
-            self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
-            self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
-            self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
-            const active = self.provider.activeModel();
-            if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
-            if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
-        }
+        if (resp.usage) |u| self.recordUsage(u);
         log.log(.info, "compaction summary: {d} messages -> {d} byte summary", .{ msgs.len, content.len });
         return try std.fmt.allocPrint(
             self.arena,
