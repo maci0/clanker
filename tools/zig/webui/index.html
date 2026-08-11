@@ -365,6 +365,29 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   </div>
 </div>
 
+<!-- A styled stand-in for window.prompt(), used for renaming a conversation
+     and for choosing its workspace. The workspace case backs the input with
+     a datalist of the names that already exist, so picking one is a matter
+     of arrow keys rather than retyping it exactly and risking a near-miss
+     that quietly forks a new workspace. -->
+<div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
+  <div class="overlay-box">
+    <form id="text-prompt-form" class="goal-form">
+      <div class="run-detail-head">
+        <span class="run-detail-title" id="text-prompt-title">Rename</span>
+      </div>
+      <label for="text-prompt-input" id="text-prompt-label">Value</label>
+      <input type="text" id="text-prompt-input" autocomplete="off" list="text-prompt-options" maxlength="200">
+      <datalist id="text-prompt-options"></datalist>
+      <p class="meta" id="text-prompt-hint"></p>
+      <div class="goal-actions">
+        <button type="submit" class="secondary" id="text-prompt-save">Save</button>
+        <button type="button" class="secondary" id="text-prompt-cancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Vendored (not CDN-loaded): d3-dag for the run graph layout below, highlight.js
      for code-block syntax coloring. Served from /webui/vendor/ by the native HTTP
      server (src/cli.zig), not the WASM-templated page itself, since that WASM

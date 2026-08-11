@@ -96,7 +96,15 @@ var el = {
   turnFilter: document.getElementById("turn-filter"),
   turnFilterCount: document.getElementById("turn-filter-count"),
   scrollBottom: document.getElementById("scroll-bottom"),
-  sessionExportJson: document.getElementById("session-export-json")
+  sessionExportJson: document.getElementById("session-export-json"),
+  textPrompt: document.getElementById("text-prompt"),
+  textPromptForm: document.getElementById("text-prompt-form"),
+  textPromptTitle: document.getElementById("text-prompt-title"),
+  textPromptLabel: document.getElementById("text-prompt-label"),
+  textPromptInput: document.getElementById("text-prompt-input"),
+  textPromptOptions: document.getElementById("text-prompt-options"),
+  textPromptHint: document.getElementById("text-prompt-hint"),
+  textPromptCancel: document.getElementById("text-prompt-cancel")
 };
 
 /* ---------- components ----------
@@ -740,24 +748,28 @@ el.sessionMove.addEventListener("click", function () {
     return;
   }
   var existing = workspacesOf(knownSessions).filter(function (w) { return w !== ""; });
-  var hint = existing.length ? "Existing: " + existing.join(", ") : "This will be the first workspace.";
-  var next = window.prompt("Move to which workspace? Leave empty for the default.\n" + hint, meta.workspace || "");
-  if (next === null) return;
-  el.sessionMove.disabled = true;
-  fetch("/api/sessions/" + encodeURIComponent(sessionId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspace: next.trim() })
-  })
-    .then(readJson)
-    .then(function () {
-      el.sessionStatus.textContent = next.trim()
-        ? "Moved to " + next.trim() + "."
-        : "Moved to the default workspace.";
-      return loadSessions();
+  var hint = existing.length ? "Pick an existing one or type a new name. Leave empty for the default." : "Leave empty for the default. This will be the first workspace.";
+  textPrompt({
+    title: "Move to workspace", label: "Workspace", value: meta.workspace || "",
+    hint: hint, suggestions: existing
+  }).then(function (next) {
+    if (next === null) return;
+    el.sessionMove.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace: next.trim() })
     })
-    .catch(function (err) { el.sessionStatus.textContent = "Move failed: " + err.message; })
-    .then(function () { el.sessionMove.disabled = false; });
+      .then(readJson)
+      .then(function () {
+        el.sessionStatus.textContent = next.trim()
+          ? "Moved to " + next.trim() + "."
+          : "Moved to the default workspace.";
+        return loadSessions();
+      })
+      .catch(function (err) { el.sessionStatus.textContent = "Move failed: " + err.message; })
+      .then(function () { el.sessionMove.disabled = false; });
+  });
 });
 
 /* A conversation's title is otherwise the first 60 characters of whatever
@@ -807,24 +819,25 @@ el.sessionRename.addEventListener("click", function () {
     el.sessionStatus.textContent = "This conversation has no saved turns yet.";
     return;
   }
-  var next = window.prompt("Rename this conversation", meta.title || "");
-  if (next === null) return;
-  next = next.trim();
-  if (!next) {
-    el.sessionStatus.textContent = "A conversation needs a title.";
-    return;
-  }
-  el.sessionRename.disabled = true;
-  fetch("/api/sessions/" + encodeURIComponent(sessionId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: next })
-  }).then(readJson).then(function () {
-    el.sessionStatus.textContent = "Renamed to " + next + ".";
-    return loadSessions();
-  }).catch(function (err) {
-    el.sessionStatus.textContent = "Could not rename: " + err.message;
-  }).finally(function () { el.sessionRename.disabled = false; });
+  textPrompt({ title: "Rename conversation", label: "Title", value: meta.title || "" }).then(function (next) {
+    if (next === null) return;
+    next = next.trim();
+    if (!next) {
+      el.sessionStatus.textContent = "A conversation needs a title.";
+      return;
+    }
+    el.sessionRename.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: next })
+    }).then(readJson).then(function () {
+      el.sessionStatus.textContent = "Renamed to " + next + ".";
+      return loadSessions();
+    }).catch(function (err) {
+      el.sessionStatus.textContent = "Could not rename: " + err.message;
+    }).finally(function () { el.sessionRename.disabled = false; });
+  });
 });
 
 el.sessionDelete.addEventListener("click", function () {
@@ -4911,6 +4924,43 @@ function closeOverlay(node) {
   lastFocus = null;
 }
 
+/* A styled replacement for window.prompt(): resolves to the entered text, or
+   null if cancelled or dismissed. opts.suggestions backs the input with a
+   datalist so a value that already exists (a workspace name, say) can be
+   picked rather than retyped, which is the part window.prompt could not do. */
+var textPromptResolve = null;
+function textPrompt(opts) {
+  opts = opts || {};
+  el.textPromptTitle.textContent = opts.title || "Enter a value";
+  el.textPromptLabel.textContent = opts.label || "Value";
+  el.textPromptInput.value = opts.value || "";
+  el.textPromptHint.textContent = opts.hint || "";
+  el.textPromptOptions.textContent = "";
+  (opts.suggestions || []).forEach(function (s) {
+    var o = document.createElement("option");
+    o.value = s;
+    el.textPromptOptions.appendChild(o);
+  });
+  openOverlay(el.textPrompt, el.textPromptInput);
+  el.textPromptInput.select();
+  return new Promise(function (resolve) { textPromptResolve = resolve; });
+}
+function finishTextPrompt(value) {
+  if (el.textPrompt.hidden) return;
+  closeOverlay(el.textPrompt);
+  var resolve = textPromptResolve;
+  textPromptResolve = null;
+  if (resolve) resolve(value);
+}
+el.textPromptForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  finishTextPrompt(el.textPromptInput.value);
+});
+el.textPromptCancel.addEventListener("click", function () { finishTextPrompt(null); });
+el.textPrompt.addEventListener("mousedown", function (e) {
+  if (e.target === el.textPrompt) finishTextPrompt(null);
+});
+
 var SHORTCUTS = [
   ["Ctrl/⌘ + K", "Jump to a view, conversation, run, tool or action"],
   ["?", "This list"],
@@ -5055,6 +5105,7 @@ el.paletteInput.addEventListener("keydown", function (e) {
 
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape") {
+    if (!el.textPrompt.hidden) { finishTextPrompt(null); e.preventDefault(); return; }
     if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }
     if (el.rail.getAttribute("data-open") === "true") { setRailOpen(false); el.railToggle.focus(); e.preventDefault(); return; }
     if (!el.help.hidden) { closeOverlay(el.help); e.preventDefault(); return; }
