@@ -1,0 +1,22 @@
+{
+  "name": "base64",
+  "description": "Encode or decode base64, RFC 4648 standard alphabet (C). WHEN TO USE: a payload needs to travel through a text-only channel, or an existing base64 blob needs reading. Input: {\"text\": \"...\", \"mode\": \"encode\"|\"decode\"} (mode defaults to encode; bare text may be passed unwrapped for encode).",
+  "wasm": "tools/bin/base64.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      },
+      "mode": {
+        "type": "string",
+        "description": "encode or decode. Defaults to encode."
+      }
+    },
+    "required": [
+      "text"
+    ]
+  },
+  "network_allow": [],
+  "category": "code"
+}
