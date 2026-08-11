@@ -566,6 +566,58 @@ test "removedDeclGate catches a deleted function still referenced" {
     try std.testing.expect(ok.ok);
 }
 
+/// Rejects proposals where the `old` text matches more than one location in
+/// the target file. An ambiguous match means the patch would replace the first
+/// occurrence, which may not be the one the LLM intended — a silent corruption
+/// that passes every other gate because the file is still valid Zig.
+pub fn ambiguousMatchGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, files: []const []const u8, old_texts: []const []const u8) !GateResult {
+    if (files.len != old_texts.len) return .{ .ok = false, .label = "ambiguous-match", .detail = "mismatched file/old-text count" };
+    for (files, old_texts) |f, old| {
+        if (old.len == 0) continue; // append-mode, no match needed
+        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch continue;
+        defer gpa.free(content);
+        // Count occurrences of old in content.
+        var count: usize = 0;
+        var offset: usize = 0;
+        while (offset < content.len) {
+            const found = std.mem.indexOfPos(u8, content, offset, old) orelse break;
+            count += 1;
+            if (count > 1) return .{ .ok = false, .label = "ambiguous-match", .detail = f };
+            offset = found + 1;
+        }
+    }
+    return .{ .ok = true, .label = "ambiguous-match" };
+}
+
+test "ambiguousMatchGate rejects old text that matches twice" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.zig", .data = "const x = 1;\nconst y = 2;\nconst x = 1;\n" });
+
+    // old text appears twice: fail
+    const bad = try ambiguousMatchGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"});
+    try std.testing.expect(!bad.ok);
+    try std.testing.expectEqualStrings("ambiguous-match", bad.label);
+
+    // old text appears once: pass
+    const ok = try ambiguousMatchGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const y = 2;"});
+    try std.testing.expect(ok.ok);
+
+    // append-mode (empty old): pass
+    const append = try ambiguousMatchGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{""});
+    try std.testing.expect(append.ok);
+
+    // missing file: pass (matchGate handles that)
+    const missing = try ambiguousMatchGate(io, gpa, tmp.dir, &.{"nope.zig"}, &.{"x"});
+    try std.testing.expect(missing.ok);
+}
+
 /// Rejects proposals that introduce `std.debug.print` calls in non-test
 /// production .zig files. These are debugging leftovers that should never
 /// ship; the project uses `std.log` or `log.log` for runtime diagnostics.
