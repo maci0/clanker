@@ -73,8 +73,11 @@ agent-facing tools pin their op in the descriptor's `config`; `board_subtask`
 and `board_depend` instead take `op` as a request field (one tool, several
 sub-ops each) since a subtask/dependency action needs more than a fixed verb.
 The internal multiplexed `board` entry point always names the op in the
-request. Aliases (`subtask`/`subtask_id`, `on`/`depends_on`, `run`/`run_id`)
-are accepted so old callers keep working.
+request. Aliases (`subtask`/`subtask_id`, `on`/`depends_on`, `run`/`run_id`,
+and `who`/`assignee` on create and update) are accepted so old callers keep
+working. `create`/`board_add` takes `assignee` too, so a card can be put on
+someone the moment it exists; the assignment folds as if stamped by the add
+itself, and a later `assign` or `claim` outranks it by the usual rule.
 
 **Validation lives in the guest.** Title 1–512 chars, bounded body, known
 column, priority in {low, normal, high}, existing card id, no
@@ -96,12 +99,10 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Known issues
 
-- Resolved: `board_add`'s manifest advertised a dead `assignee` field (no
-  `Req` field backed it; creation cannot assign, only `update` can), and
-  `board_update`'s manifest named its assign field `assignee` instead of the
-  `who` field `board.zig` actually reads — both silently no-op'd under
-  `ignore_unknown_fields`. Fixed by removing `assignee` from `board_add` and
-  renaming it to `who` on `board_update`.
+- Resolved: `board_add` / `board_update` used to advertise an `assignee` field
+  that nothing read (`ignore_unknown_fields` silently dropped it). Both now
+  honour `assignee` (and `who` as an alias): create stamps an initial
+  assignment folded with the add itself; update reassigns or clears.
 - Resolved: `board_move`'s `position` field was a no-op (no ordering concept
   exists in `cards.zig` or `board.zig`'s `move` handling). Removed from the
   manifest; see Open questions for card ordering as future work.

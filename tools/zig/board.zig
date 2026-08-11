@@ -46,6 +46,10 @@ const Req = struct {
     priority: ?[]const u8 = null,
     deadline: ?i64 = null,
     who: ?[]const u8 = null,
+    /// Manifested name for the assign field (web UI and board_update schema).
+    /// Alias of `who`; either reassigns, and on create either stamps an initial
+    /// assignment folded as if the add itself assigned.
+    assignee: ?[]const u8 = null,
     text: ?[]const u8 = null,
     subtask: ?[]const u8 = null,
     subtask_id: ?[]const u8 = null,
@@ -291,6 +295,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (req.priority) |p| {
             if (!cards.validPriority(p)) return lib.fail(out, "priority must be low, normal or high");
         }
+        // Manifest calls it `assignee`; empty means none. `who` is kept as an
+        // alias so older callers that already sent it on create still work.
+        const assignee: ?[]const u8 = blk: {
+            const raw = req.assignee orelse req.who;
+            break :blk if (raw) |a| (if (a.len > 0) a else null) else null;
+        };
         _ = apply(alloc, room, .{
             .action = "add",
             .title = title,
@@ -298,6 +308,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .column = req.column,
             .priority = req.priority,
             .deadline = req.deadline,
+            .who = assignee,
         }) catch return lib.fail(out, "could not post the card to the room");
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
@@ -334,7 +345,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .column = req.column,
             .priority = req.priority,
             .deadline = req.deadline,
-            .who = req.who,
+            // `who` is the manifest field; `assignee` is what the web UI sends.
+            // Either reassigns, and "" clears.
+            .who = req.who orelse req.assignee,
         };
     } else if (std.mem.eql(u8, op, "move")) blk: {
         const col = req.column orelse return lib.fail(out, "which column?");

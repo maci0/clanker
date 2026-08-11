@@ -444,6 +444,76 @@ test "board wasm tool folds a room log longer than one history page completely" 
     }
 }
 
+test "board wasm tool assigns at creation, and update's assignee reassigns" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"board"};
+    cfg.chatrooms.max_history = 100;
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/board.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // Each op is its own descriptor config, so each step is its own module,
+    // sharing the room's log through the same state dir.
+    const Step = struct {
+        fn run(io_: std.Io, cfg_: *config_mod.Config, env: *std.process.Environ.Map, dir: std.Io.Dir, wasm_: []const u8, config_json: []const u8, args: []const u8) ![]u8 {
+            var sb = host.Sandbox{
+                .gpa = std.testing.allocator,
+                .io = io_,
+                .root_dir = "/tmp/ck-sandbox-test",
+                .network_allow = &.{},
+                .environ_map = env,
+                .cfg = cfg_,
+                .state_dir = "",
+                .state_base_dir = dir,
+                .config_json = config_json,
+            };
+            const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
+            defer mod.deinit();
+            return mod.executeTool(args);
+        }
+    };
+
+    // A bare card first, so the later update has something unassigned to hit.
+    const first = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"bare\"}");
+    defer std.testing.allocator.free(first);
+    try std.testing.expect(std.mem.indexOf(u8, first, "\"ok\":true") != null);
+
+    // board_add's manifested `assignee` puts the card on someone at creation.
+    const second = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"taken\",\"assignee\":\"beta\"}");
+    defer std.testing.allocator.free(second);
+    try std.testing.expect(std.mem.indexOf(u8, second, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second, "\"assignee\":\"beta\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second, "\"assigned_by\":\"test-clanker\"") != null);
+
+    // The bare card is the only one in the first reply; its id leads the entry.
+    const lead = "\"cards\":[{\"id\":\"";
+    const start = (std.mem.indexOf(u8, first, lead) orelse return error.TestUnexpectedResult) + lead.len;
+    const end = std.mem.indexOfScalarPos(u8, first, start, '"') orelse return error.TestUnexpectedResult;
+    const card_id = first[start..end];
+
+    // board_update's manifested `assignee` reassigns (it used to be silently
+    // dropped by ignore_unknown_fields when only `who` was wired).
+    const upd = try std.fmt.allocPrint(std.testing.allocator, "{{\"id\":\"{s}\",\"assignee\":\"gamma\"}}", .{card_id});
+    defer std.testing.allocator.free(upd);
+    const third = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"update\"}", upd);
+    defer std.testing.allocator.free(third);
+    try std.testing.expect(std.mem.indexOf(u8, third, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, third, "\"assignee\":\"gamma\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, third, "\"assignee\":\"beta\"") != null); // the other card kept its owner
+}
+
 test "chat wasm tool routes roomless todo ops to the private list" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
