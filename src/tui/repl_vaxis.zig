@@ -249,6 +249,8 @@ const Model = struct {
     /// after every completed turn; null only when the sessions module is off
     /// and no `--session` was given.
     session_id: ?[]const u8 = null,
+    /// Unix seconds when this conversation was first created — preserved
+    /// across resume so a continued session keeps its original birth date.
     session_created: i64 = 0,
     /// First task of the conversation, trimmed — the line `clanker sessions`
     /// shows. Kept from a loaded session; set once on the first submit.
@@ -1122,17 +1124,20 @@ fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
     return if (out) |o| o else text;
 }
 
-/// The `repl` command's flags, resolved by the caller's argv parse. A copy of
-/// the relevant `cli.Options` fields rather than the type itself: cli.zig
-/// already imports this file, and the REPL needs nothing else from it.
-pub const Opts = struct {
+/// The subset of `cli.Options` the REPL honors. `clanker repl` declared
+/// `--provider`/`--model`/`--session` in its usage spec but never received
+/// them (docs/ROADMAP.md "flag gap"): cli.zig's dispatch passed only `init`.
+/// Passing this narrow struct instead of all of `cli.Options` keeps the
+/// REPL from importing all of cli.zig (which would pull the whole CLI into
+/// this module) while making every declared flag real.
+pub const ReplOptions = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     session: ?[]const u8 = null,
     continue_last: bool = false,
 };
 
-pub fn cmdReplVaxis(init: std.process.Init, opts: Opts) !void {
+pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
@@ -1155,6 +1160,9 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: Opts) !void {
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
+    // `--provider`/`--model` pick the starting provider/model; `--model
+    // <provider>/<model>` picks both at once, resolved by the same
+    // Config.resolveProvider rule `clanker run` uses.
     const provider = try cfg.resolveProvider(opts.provider, opts.model);
     const ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 

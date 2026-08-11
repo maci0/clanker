@@ -273,6 +273,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
         <label for="goal-criterion">Done when</label>
         <input type="text" id="goal-criterion" placeholder="How you will know it is met" maxlength="2000" autocomplete="off" required>
+        <label for="goal-max-iterations">Max iterations</label>
+        <input type="number" id="goal-max-iterations" placeholder="blank = global default" min="1" max="1000" autocomplete="off">
         <button type="submit" class="secondary" id="goal-add">Add goal</button>
       </form>
       <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>

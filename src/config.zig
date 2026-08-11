@@ -132,6 +132,22 @@ pub const Agent = struct {
     sandbox_root: []const u8 = ".",
     /// Commit promoted improvements with git (git_commit_after_improve).
     git_commit: bool = true,
+    /// Whether the `git` tool may run the PR-lifecycle verbs it otherwise
+    /// cannot: `push`, `merge`, and `checkout`. Scoped to the command being
+    /// `git` in ck_exec, so no other tool inherits the widening; the rest of
+    /// the deny list (`reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, ...)
+    /// still applies to git and to everything else. Default false = today's
+    /// hardcoded denies.
+    git_remote_ops: bool = false,
+    /// Whole-command-line glob patterns a tool may run through ck_exec, e.g.
+    /// "gh pr create*" or "gh pr merge*". When a pattern names a command,
+    /// that command becomes strict: only an argv that matches one of its
+    /// patterns runs, and the match also overrides the deny tokens for the
+    /// args it grants ("gh pr merge" legitimately contains "merge"). Commands
+    /// with no pattern stay under the deny-list check, so a pattern for `gh`
+    /// does not widen `git` or anything else. `*` matches any run of
+    /// characters, including across spaces and empty.
+    exec_pattern_allow: []const []const u8 = &.{},
     seed: u64 = 0,
     /// How long a serve-side ask_user question waits for the browser before
     /// giving up (seconds). The wait holds one of the server's connection
@@ -173,6 +189,8 @@ pub const AgentFields = struct {
     state_dir: bool = false,
     sandbox_root: bool = false,
     git_commit: bool = false,
+    git_remote_ops: bool = false,
+    exec_pattern_allow: bool = false,
     seed: bool = false,
     ask_timeout_seconds: bool = false,
     confirm_writes: bool = false,
@@ -676,7 +694,6 @@ pub const Config = struct {
     };
 
     fn parseAgent(arena: std.mem.Allocator, v: json.Value) !ParsedAgent {
-        _ = arena;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.AgentNotObject,
@@ -689,7 +706,8 @@ pub const Config = struct {
             "hot_tools",           "tools_dir",               "skills_dir",
             "system_prompt_file",  "learnings_file",          "global_instructions_file",
             "state_dir",           "sandbox_root",            "git_commit",
-            "seed",                "ask_timeout_seconds",     "confirm_writes",
+            "git_remote_ops",      "exec_pattern_allow",      "seed",
+            "ask_timeout_seconds", "confirm_writes",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
@@ -746,6 +764,27 @@ pub const Config = struct {
             };
             f.git_commit = true;
         }
+        if (obj.get("git_remote_ops")) |k| {
+            a.git_remote_ops = switch (k) {
+                .bool => |b| b,
+                else => a.git_remote_ops,
+            };
+            f.git_remote_ops = true;
+        }
+        if (obj.get("exec_pattern_allow")) |k| {
+            const arr = switch (k) {
+                .array => |ar| ar,
+                else => return error.ExecPatternAllowNotArray,
+            };
+            var patterns: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| {
+                const pat = try jsonStr(item, "exec_pattern_allow[]");
+                if (pat.len == 0) return error.ExecPatternAllowEmpty;
+                try patterns.append(arena, pat);
+            }
+            a.exec_pattern_allow = try patterns.toOwnedSlice(arena);
+            f.exec_pattern_allow = true;
+        }
         if (obj.get("tool_catalog")) |k| {
             a.tool_catalog = switch (k) {
                 .bool => |b| b,
@@ -790,6 +829,8 @@ pub const Config = struct {
         if (fields.state_dir) dst.state_dir = src.state_dir;
         if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
         if (fields.git_commit) dst.git_commit = src.git_commit;
+        if (fields.git_remote_ops) dst.git_remote_ops = src.git_remote_ops;
+        if (fields.exec_pattern_allow) dst.exec_pattern_allow = src.exec_pattern_allow;
         if (fields.seed) dst.seed = src.seed;
         if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
@@ -1243,6 +1284,44 @@ test "partial local agent keeps base tools_dir" {
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+}
+
+test "agent.git_remote_ops and exec_pattern_allow parse from config" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"git_remote_ops":true,"exec_pattern_allow":["gh pr create*","gh pr merge*"]}}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    try std.testing.expect(cfg.agent.git_remote_ops);
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.exec_pattern_allow.len);
+    try std.testing.expectEqualStrings("gh pr create*", cfg.agent.exec_pattern_allow[0]);
+    try std.testing.expectEqualStrings("gh pr merge*", cfg.agent.exec_pattern_allow[1]);
+
+    // Defaults stay false / empty when the keys are absent.
+    var arena2 = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena2.deinit();
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try tmp2.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}}}
+        ,
+    });
+    const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.json", "config.local.json");
+    try std.testing.expect(!cfg2.agent.git_remote_ops);
+    try std.testing.expectEqual(@as(usize, 0), cfg2.agent.exec_pattern_allow.len);
 }
 
 test "a vertex_anthropic provider missing project/location is rejected at load" {
