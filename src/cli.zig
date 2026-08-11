@@ -611,7 +611,12 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .stats => try cmdStats(init),
         .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
-        .repl => try repl_vaxis.cmdReplVaxis(init),
+        .repl => try repl_vaxis.cmdReplVaxis(init, .{
+            .provider = opts.provider,
+            .model = opts.model,
+            .session = opts.session,
+            .continue_last = opts.continue_last,
+        }),
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),

@@ -39,6 +39,7 @@ const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
 const agent_loop = @import("../agent/loop.zig");
 const Agent = agent_loop.Agent;
+const session = @import("../agent/session.zig");
 const log = @import("../util/log.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
@@ -239,6 +240,13 @@ const Model = struct {
     reg: registry.Registry,
     tool_defs: []const types.ToolDef,
     messages: std.ArrayList(types.Message) = .empty,
+    /// Active saved-conversation id (from `--session` or `--continue`), or
+    /// null for a fresh in-memory session that is not written back. Set
+    /// before the app runs; drives both the resume load and the save-on-quit.
+    session_id: ?[]const u8 = null,
+    /// Unix seconds when this conversation was first created — preserved
+    /// across resume so a continued session keeps its original birth date.
+    session_created: i64 = 0,
 
     lines: std.ArrayList(Line) = .empty,
     text_field: vxfw.TextField,
@@ -1070,7 +1078,20 @@ fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
     return if (out) |o| o else text;
 }
 
-pub fn cmdReplVaxis(init: std.process.Init) !void {
+/// The subset of `cli.Options` the REPL honors. `clanker repl` declared
+/// `--provider`/`--model`/`--session` in its usage spec but never received
+/// them (docs/ROADMAP.md "flag gap"): cli.zig's dispatch passed only `init`.
+/// Passing this narrow struct instead of all of `cli.Options` keeps the
+/// REPL from importing all of cli.zig (which would pull the whole CLI into
+/// this module) while making every declared flag real.
+pub const ReplOptions = struct {
+    provider: ?[]const u8 = null,
+    model: ?[]const u8 = null,
+    session: ?[]const u8 = null,
+    continue_last: bool = false,
+};
+
+pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
@@ -1093,7 +1114,26 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
-    const provider = (try cfg.provider(null)).*;
+    // `--provider`/`--model` pick the starting provider/model; `--model
+    // <provider>/<model>` picks both at once. cli.zig's `resolveProvider`
+    // does this for `run`; the slash-split rule is small and stable, so
+    // replicate it here rather than importing all of cli.zig.
+    var want_provider = opts.provider;
+    var want_model = opts.model;
+    if (want_provider == null) {
+        if (want_model) |m| {
+            if (std.mem.indexOfScalar(u8, m, '/')) |slash| {
+                const head = m[0..slash];
+                const tail = m[slash + 1 ..];
+                if (head.len > 0 and tail.len > 0 and cfg.providers.getPtr(head) != null) {
+                    want_provider = head;
+                    want_model = tail;
+                }
+            }
+        }
+    }
+    var provider = (try cfg.provider(want_provider)).*;
+    if (want_model) |m| provider.default_model = m;
     const ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var buffer: [1024]u8 = undefined;
