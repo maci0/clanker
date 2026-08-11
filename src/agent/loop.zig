@@ -2323,13 +2323,24 @@ const ToolWorker = struct {
             // search_code was refused ripgrep for as long as it ran in
             // parallel with anything.
             .exec_allow = self.tool.exec_allow,
+            .git_remote_ops = self.cfg.agent.git_remote_ops,
+            .exec_pattern_allow = self.cfg.agent.exec_pattern_allow,
             .env_allow = self.tool.env_allow,
             .environ_map = self.ctx.environ_map,
             .seed = self.cfg.agent.seed,
             .subagent_runner = self.subagent_runner,
             .cfg = self.cfg,
             .state_dir = self.cfg.agent.state_dir,
-            .config_json = self.tool.config_json,
+            // An exec-capable tool sees the harness's exec policy in its own
+            // `config`, the same injection host.sandboxFor applies on the
+            // sequential path. Without it the git/gh guests read an empty
+            // config on the parallel path and reported "no exec_pattern_allow
+            // patterns are configured" even though the config had them — the
+            // two execution paths disagreed about the same tool's settings.
+            .config_json = if (self.tool.exec_allow.len > 0)
+                try host.execPolicyConfig(arena_state.allocator(), self.tool.config_json, self.cfg)
+            else
+                self.tool.config_json,
             .fuel = self.tool.fuel,
         };
 
