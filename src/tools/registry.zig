@@ -153,6 +153,19 @@ pub const Registry = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// Returns all enabled tools that have `statusline: true`. These are
+    /// invoked with empty input after each turn to contribute segments to
+    /// the REPL status bar. The caller owns the returned slice via `arena`.
+    pub fn statuslineTools(self: *const Registry, arena: std.mem.Allocator) ![]const *const Tool {
+        var out: std.ArrayList(*const Tool) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr;
+            if (t.statusline and t.enabled) try out.append(arena, t);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// Converts registry tools into LLM ToolDefs (in the given arena).
     pub fn toToolDefs(self: *const Registry, arena: std.mem.Allocator) ![]types.ToolDef {
         var out: std.ArrayList(types.ToolDef) = .empty;
