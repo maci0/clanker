@@ -989,16 +989,22 @@ pub const Agent = struct {
             }
         }
         // If no fence/JSON was found, the model likely wrapped the exact
-        // answer in a prose preamble (e.g. "Here is the result:"). For the
-        // answer_format eval we need the exact value, so fall back to the last
-        // non-empty line and strip a leading "Answer:"/"Result:" prefix.
+        // answer in a prose preamble (e.g. "Here is the result:") or appended
+        // trailing prose. For the answer_format eval we need the exact value,
+        // so fall back to the first non-empty line (the answer usually comes
+        // before trailing commentary) and strip a leading "Answer:"/"Result:"
+        // prefix.
         if (std.mem.indexOf(u8, s, "```") == null and
             std.mem.indexOfScalar(u8, s, '{') == null and
             std.mem.indexOfScalar(u8, s, '[') == null)
         {
-            var last_line: []const u8 = s;
+            var last_line: []const u8 = "";
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
-            while (line_it.next()) |line| last_line = std.mem.trim(u8, line, " \t\r\n");
+            while (line_it.next()) |line| {
+                const t = std.mem.trim(u8, line, " \t\r\n");
+                if (t.len == 0) continue;
+                if (last_line.len == 0) last_line = t;
+            }
             if (last_line.len > 0) {
                 // Strip common preamble prefixes repeatedly (e.g. "Here is your
                 // answer: The result is 42") so the exact-match answer survives.
@@ -1985,6 +1991,19 @@ test "finalAnswer strips a prose prefix to the exact answer" {
     agent.arena = arena;
 
     const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "The answer is clanker online" } };
+    const ans = try agent.finalAnswer(resp);
+    try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "finalAnswer picks the answer line over trailing prose" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+
+    const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online\n\nHope this helps" } };
     const ans = try agent.finalAnswer(resp);
     try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
 }
