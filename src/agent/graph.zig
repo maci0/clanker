@@ -157,3 +157,15 @@ test "repeated steps collapse, and a step revisited later marks the loop" {
     try g.add(gpa, .{ .kind = .tool, .iteration = 2, .label = "read_file" });
     try std.testing.expectEqual(@as(u32, 0), g.nodes.items[g.nodes.items.len - 1].loop_to);
 }
+
+test "consecutive final nodes are never collapsed" {
+    const gpa = std.testing.allocator;
+    var g = Graph{ .run_id = "run-final", .task = "t", .provider = "p", .started_at = 0 };
+    defer g.deinit(gpa);
+
+    try g.add(gpa, .{ .kind = .final, .iteration = 1, .label = "final" });
+    try g.add(gpa, .{ .kind = .final, .iteration = 2, .label = "final" });
+    try std.testing.expectEqual(@as(usize, 2), g.nodes.items.len);
+    try std.testing.expectEqual(@as(u32, 1), g.nodes.items[0].repeats);
+    try std.testing.expectEqual(@as(u32, 1), g.nodes.items[1].repeats);
+}
