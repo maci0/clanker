@@ -151,7 +151,10 @@ pub fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
 fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
     if (cfg_value != .object) return null;
     const v = cfg_value.object.get(key) orelse return null;
-    return if (v == .integer and v.integer > 0) @intCast(v.integer) else null;
+    // Reject out-of-u32-range values instead of panicking in @intCast (a
+    // plugin's tool.json is not trusted input).
+    if (v == .integer and v.integer > 0 and v.integer <= std.math.maxInt(u32)) return @intCast(v.integer);
+    return null;
 }
 
 /// The single place a tool's sandbox policy is assembled from its descriptor.
@@ -2635,6 +2638,10 @@ test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-type
     const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
     try std.testing.expect(pluginStr(bad, "provider") == null);
     try std.testing.expect(pluginU32(bad, "max_tokens") == null);
+
+    // A value beyond u32 range must be ignored, not panic @intCast.
+    const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"max_tokens\":9000000000}", .{});
+    try std.testing.expect(pluginU32(huge, "max_tokens") == null);
 }
 
 test "a tool cannot read an environment variable it was not allowed" {
