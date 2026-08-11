@@ -76,7 +76,7 @@ Constraints that future work must preserve:
 
 - **The web UI is one self-contained file.** `tools/zig/webui/index.html` is
   embedded at comptime into a WASM tool and returned JSON-encoded through
-  `lib.zig`'s shared output buffer (`out_cap`, currently 256 KiB). A
+  `lib.zig`'s shared output buffer (`out_cap`, currently 2 MiB). A
   build-time check in `tools/zig/webui.zig` fails the build if the encoded page
   exceeds it. There is no bundler and no build step for the page.
 - **The page works offline and reaches no third party.** A strict CSP
@@ -84,8 +84,8 @@ Constraints that future work must preserve:
   it. Third-party JS is vendored and served from the same origin, never a CDN.
 - **No sockets.** The HTTP server closes every connection after one response,
   so live updates are polling, not WebSocket or SSE-to-the-browser.
-- **Tool guest buffers are small.** Scratch and host arena are 64 KiB each, so
-  anything larger than that is handled natively rather than through a tool.
+- **Tool guest buffers are small.** Scratch is 64 KiB and host arena is 1 MiB,
+  so anything larger than that is handled natively rather than through a tool.
 - **Zig 0.16 APIs only**, targeting `x86_64-linux-musl`. No new third-party
   dependencies.
 - **Providers are configurable**, keyed by env var, never stored in config.

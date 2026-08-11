@@ -878,6 +878,20 @@ fn execAllowed(allow: []const []const u8, cmd: []const u8) bool {
     return false;
 }
 
+/// Maps the guest's wire-format method code to a std.http.Method, or null for
+/// any code the ck_http_fetch ABI does not define.
+fn httpMethodFromCode(method: u32) ?std.http.Method {
+    return switch (method) {
+        0 => .GET,
+        1 => .POST,
+        2 => .PUT,
+        3 => .DELETE,
+        4 => .PATCH,
+        5 => .HEAD,
+        else => null,
+    };
+}
+
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
     const uri = std.Uri.parse(url) catch return Err.invalid;
     const hostname = switch (uri.host orelse return Err.invalid) {
@@ -911,15 +925,7 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
     defer h.sandbox.gpa.free(resp_buf);
     var w: std.Io.Writer = .fixed(resp_buf);
 
-    const req_method: std.http.Method = switch (method) {
-        0 => .GET,
-        1 => .POST,
-        2 => .PUT,
-        3 => .DELETE,
-        4 => .PATCH,
-        5 => .HEAD,
-        else => return Err.invalid,
-    };
+    const req_method = httpMethodFromCode(method) orelse return Err.invalid;
     const has_body = req_method == .POST or req_method == .PUT or req_method == .PATCH;
     const result = http.fetch(.{
         .location = .{ .url = url },
@@ -2344,24 +2350,16 @@ test "ckFsDelete uses safeJoin policy" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
 }
 
-test "httpImpl rejects unknown method codes" {
-    // Method codes 6+ should map to Err.invalid.
-    // We can't call httpImpl directly without a full Host, but we verify the
-    // method switch logic by checking the enum values are exhaustive.
-    const valid_methods = [_]u32{ 0, 1, 2, 3, 4, 5 };
-    for (valid_methods) |m| {
-        const method: std.http.Method = switch (m) {
-            0 => .GET,
-            1 => .POST,
-            2 => .PUT,
-            3 => .DELETE,
-            4 => .PATCH,
-            5 => .HEAD,
-            else => unreachable,
-        };
-        // Just verify the mapping doesn't crash
-        _ = method;
-    }
+test "httpMethodFromCode maps known codes and rejects unknown ones" {
+    try std.testing.expectEqual(std.http.Method.GET, httpMethodFromCode(0).?);
+    try std.testing.expectEqual(std.http.Method.POST, httpMethodFromCode(1).?);
+    try std.testing.expectEqual(std.http.Method.PUT, httpMethodFromCode(2).?);
+    try std.testing.expectEqual(std.http.Method.DELETE, httpMethodFromCode(3).?);
+    try std.testing.expectEqual(std.http.Method.PATCH, httpMethodFromCode(4).?);
+    try std.testing.expectEqual(std.http.Method.HEAD, httpMethodFromCode(5).?);
+
+    try std.testing.expectEqual(@as(?std.http.Method, null), httpMethodFromCode(6));
+    try std.testing.expectEqual(@as(?std.http.Method, null), httpMethodFromCode(999));
 }
 
 test "ckFsWriteRange uses safeJoin policy" {
