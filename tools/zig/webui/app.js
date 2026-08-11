@@ -10,6 +10,7 @@ import { makeLineSplitter as makeLineSplitterMod } from "./core/stream.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMod, doneColumn as doneColumnMod, blockers as blockersMod, dueState as dueStateMod } from "./lib/board.js";
+import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -4497,40 +4498,10 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
 
 /* ---------- overlays: command palette and shortcut sheet ---------- */
 
-var lastFocus = null;
-
-function openOverlay(node, toFocus) {
-  lastFocus = document.activeElement;
-  node.hidden = false;
-  if (toFocus) toFocus.focus();
-}
-
-function closeOverlay(node) {
-  node.hidden = true;
-  if (lastFocus && lastFocus.focus) lastFocus.focus();
-  lastFocus = null;
-}
-
-/* aria-modal="true" claims the rest of the page is unreachable while a dialog
-   is open, but nothing enforced that: Tab could walk off the last button in
-   the box and land on rail/header controls sitting under the scrim. This
-   wraps Tab back to the other end of the dialog instead. */
-function focusableIn(node) {
-  return Array.prototype.slice
-    .call(node.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
-    .filter(function (n) { return n.getClientRects().length > 0; });
-}
-function trapOverlayTab(e, node) {
-  var items = focusableIn(node);
-  if (!items.length) { e.preventDefault(); return; }
-  var first = items[0], last = items[items.length - 1];
-  var atEdge = e.shiftKey ? (document.activeElement === first || !node.contains(document.activeElement))
-    : (document.activeElement === last || !node.contains(document.activeElement));
-  if (atEdge) {
-    e.preventDefault();
-    (e.shiftKey ? last : first).focus();
-  }
-}
+var openOverlay = overlayOpen;
+var closeOverlay = overlayClose;
+var focusableIn = overlayFocusableIn;
+var trapOverlayTab = overlayTrapTab;
 
 /* A styled replacement for window.prompt(): resolves to the entered text, or
    null if cancelled or dismissed. opts.suggestions backs the input with a
