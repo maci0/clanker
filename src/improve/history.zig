@@ -738,6 +738,45 @@ pub const History = struct {
             }
             try buf.appendSlice(arena, "\n");
         }
+        // Score regressions: attempts that actively made things worse.
+        // These are the strongest signal to avoid an approach entirely.
+        var has_regression = false;
+        for (entries[start..]) |e| {
+            if (!std.mem.eql(u8, e.status, "rejected") and !std.mem.eql(u8, e.status, "failed")) continue;
+            if (e.score_before != null and e.score_after != null) {
+                if (e.score_after.? < e.score_before.?) {
+                    has_regression = true;
+                    break;
+                }
+            }
+        }
+        if (has_regression) {
+            try buf.appendSlice(arena, "\n⚠ WARNING: Some recent attempts caused score REGRESSIONS (score went down). These approaches actively broke things:\n");
+            for (entries[start..]) |e| {
+                if (!std.mem.eql(u8, e.status, "rejected") and !std.mem.eql(u8, e.status, "failed")) continue;
+                const sb = e.score_before orelse continue;
+                const sa = e.score_after orelse continue;
+                if (sa >= sb) continue;
+                try buf.appendSlice(arena, "- ");
+                try buf.appendSlice(arena, e.id);
+                try buf.appendSlice(arena, ": ");
+                try buf.appendSlice(arena, firstLine(e.summary, 120));
+                var rbuf2: [64]u8 = undefined;
+                var rw2: std.Io.Writer = .fixed(&rbuf2);
+                rw2.print(" (score {d:.2} -> {d:.2})", .{ sb, sa }) catch {};
+                try buf.appendSlice(arena, rbuf2[0..rw2.end]);
+                if (e.files.len > 0) {
+                    try buf.appendSlice(arena, " files: ");
+                    for (e.files, 0..) |file, fi| {
+                        if (fi > 0) try buf.appendSlice(arena, ", ");
+                        try buf.appendSlice(arena, file);
+                    }
+                }
+                try buf.appendSlice(arena, "\n");
+            }
+            try buf.appendSlice(arena, "Do NOT retry these approaches or similar changes to these files.\n");
+        }
+
         // Trailing rejection streak: how many consecutive non-accepted
         // attempts end the window. A long streak is the signal to try a
         // fundamentally different approach, not a variation of the last one.
@@ -1017,6 +1056,40 @@ test "trailingRejectionStreak counts consecutive non-accepted entries at the tai
     // The summary must mention the streak.
     const summary = try hist.recentSummary(arena, 10);
     try std.testing.expect(std.mem.indexOf(u8, summary, "consecutive attempts were rejected") != null);
+}
+
+test "recentSummary warns about score regressions" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // A rejection with a score regression (score went down).
+    try hist.append("reg-1", .rejected, "i", "broke something", &.{"src/a.zig"}, 0.8, 0.5, "test failed", &.{});
+    // A rejection without regression (score unchanged).
+    try hist.append("reg-2", .rejected, "i", "no change", &.{"src/b.zig"}, 0.8, 0.8, "gate failed", &.{});
+
+    const summary = try hist.recentSummary(arena, 10);
+    // The regression warning must appear.
+    try std.testing.expect(std.mem.indexOf(u8, summary, "REGRESSIONS") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "reg-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "broke something") != null);
+    // The non-regressing rejection should NOT appear in the regression section.
+    // (it appears elsewhere in the summary but not under the regression warning)
+    try std.testing.expect(std.mem.indexOf(u8, summary, "Do NOT retry") != null);
 }
 
 test "sameRegionRejected catches variations of the same failing edit" {
