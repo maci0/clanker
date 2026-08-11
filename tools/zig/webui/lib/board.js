@@ -45,4 +45,27 @@ export function boardActionLine(raw) {
   }
 }
 
-if (typeof window !== "undefined") window.ckBoard = { BOARD_COLUMNS: BOARD_COLUMNS, boardActionLine: boardActionLine };
+export function doneColumn(board) {
+  return board.columns.length ? board.columns[board.columns.length - 1].id : "done";
+}
+
+export function blockers(card, board, cardByIdFn) {
+  var lookup = cardByIdFn || function (id) {
+    for (var i = 0; i < board.cards.length; i++) if (board.cards[i].id === id) return board.cards[i];
+    return null;
+  };
+  return (card.depends_on || []).filter(function (id) {
+    var dep = lookup(id);
+    return dep && dep.column !== doneColumn(board);
+  });
+}
+
+export function dueState(card) {
+  if (!card.deadline) return "";
+  var left = card.deadline - Math.floor(Date.now() / 1000);
+  if (left < 0) return "late";
+  if (left < 2 * 24 * 60 * 60) return "soon";
+  return "ok";
+}
+
+if (typeof window !== "undefined") window.ckBoard = { BOARD_COLUMNS: BOARD_COLUMNS, boardActionLine: boardActionLine, doneColumn: doneColumn, blockers: blockers, dueState: dueState };

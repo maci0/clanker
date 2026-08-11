@@ -1406,6 +1406,7 @@ mark {
 .goal-form label { color: var(--fg); font-family: var(--mono); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.02em; }
 .goal-form input { flex: 1 1 16rem; min-width: 0; }
 .goal-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+.goal-actions:empty { display: none; margin: 0; }
 /* The per-run budget box sits on the same rule as its Work on this button. */
 .goal-run-controls { display: flex; align-items: center; gap: var(--space-3); }
 .goal-run-controls input { flex: 0 0 9rem; min-width: 0; font-variant-numeric: tabular-nums; }
@@ -1832,6 +1833,8 @@ h2#session-title {
   .fleet-card { flex-direction: column; align-items: flex-start; }
   .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }
   .fleet-child-group, .fleet-children { gap: var(--space-1); }
+  #view-board .board { gap: var(--space-3); }
+  #view-board .board-col { min-width: 10rem; }
 }
 @media (max-width: 40rem) {
   .fleet-children, .fleet-child-group, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }

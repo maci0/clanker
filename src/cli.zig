@@ -2563,7 +2563,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or
             std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
@@ -2608,8 +2608,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-                std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or
-                std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+                std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or
+                std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
                 std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
                 std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {
@@ -3685,6 +3685,7 @@ fn handleWebuiAsset(
     const is_css = std.mem.endsWith(u8, target, ".css");
     const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
+    const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_stream = std.mem.endsWith(u8, target, "stream.js");
     const is_theme = std.mem.endsWith(u8, target, "theme.js");
     const is_markdown = std.mem.endsWith(u8, target, "markdown.js");
@@ -3693,8 +3694,9 @@ fn handleWebuiAsset(
     const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
     const is_utils = std.mem.endsWith(u8, target, "utils.js");
     const is_icons = std.mem.endsWith(u8, target, "icons.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else &gzip_js;
+    const is_ui = std.mem.endsWith(u8, target, "ui.js");
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -3706,6 +3708,7 @@ fn handleWebuiAsset(
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
     if (ifNoneMatchHits(headers_raw, etag)) {
+        request_status = 304;
         var hbuf: [256]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{etag}) catch return;
         rawhttp.writeAllFd(stream.socket.handle, hdr);
@@ -3715,6 +3718,7 @@ fn handleWebuiAsset(
     // largest cost of a first draw; compressed it is a fifth of that.
     const gzipped = if (accepts_gzip) gzipCached(gpa, gz, body) else null;
     const out = gzipped orelse body;
+    request_status = 200;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding, etag }) catch return;
@@ -5266,6 +5270,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
     if (ifNoneMatchHits(headers_raw, etag)) {
+        request_status = 304;
         var hbuf: [256]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{etag}) catch return;
         rawhttp.writeAllFd(stream.socket.handle, hdr);
@@ -5273,6 +5278,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     }
     const gzipped = if (accepts_gzip) gzipCached(gpa, &gzip_page, body) else null;
     const out = gzipped orelse body;
+    request_status = 200;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{ out.len, encoding, etag, webui_csp }) catch return;
@@ -5331,9 +5337,11 @@ var render_markdown: RenderCache = .{};
 var render_graph: RenderCache = .{};
 var render_board: RenderCache = .{};
 var render_fleet: RenderCache = .{};
+var render_chat: RenderCache = .{};
 var render_stream: RenderCache = .{};
 var render_utils: RenderCache = .{};
 var render_icons: RenderCache = .{};
+var render_ui: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
@@ -5345,9 +5353,11 @@ var gzip_markdown: GzipCache = .{};
 var gzip_graph: GzipCache = .{};
 var gzip_board: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
+var gzip_chat: GzipCache = .{};
 var gzip_stream: GzipCache = .{};
 var gzip_utils: GzipCache = .{};
 var gzip_icons: GzipCache = .{};
+var gzip_ui: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
@@ -5435,6 +5445,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
     if (ifNoneMatchHits(headers_raw, etag)) {
+        request_status = 304;
         var hbuf: [256]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nConnection: close\r\n\r\n", .{etag}) catch return;
         rawhttp.writeAllFd(stream.socket.handle, hdr);
@@ -5443,6 +5454,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     var hbuf: [4096]u8 = undefined;
     const gzipped = if (accepts_gzip) gzipCached(gpa, cache, body) else null;
     const out = gzipped orelse body;
+    request_status = 200;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding, etag }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
@@ -5491,18 +5503,39 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
 fn acceptsGzip(headers_raw: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
-        if (!std.ascii.startsWithIgnoreCase(line, "accept-encoding:")) continue;
-        var values = std.mem.tokenizeAny(u8, line["accept-encoding:".len..], " ,;");
-        while (values.next()) |v| {
-            if (std.ascii.eqlIgnoreCase(v, "gzip")) return true;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        if (!std.ascii.eqlIgnoreCase(line[0..colon], "accept-encoding")) continue;
+        var codings = std.mem.splitScalar(u8, line[colon + 1 ..], ',');
+        while (codings.next()) |coding_raw| {
+            var parts = std.mem.splitScalar(u8, coding_raw, ';');
+            const coding = std.mem.trim(u8, parts.next() orelse continue, " \t");
+            if (!std.ascii.eqlIgnoreCase(coding, "gzip")) continue;
+            while (parts.next()) |parameter_raw| {
+                const parameter = std.mem.trim(u8, parameter_raw, " \t");
+                const equals = std.mem.indexOfScalar(u8, parameter, '=') orelse continue;
+                const name = std.mem.trim(u8, parameter[0..equals], " \t");
+                const value = std.mem.trim(u8, parameter[equals + 1 ..], " \t");
+                if (std.ascii.eqlIgnoreCase(name, "q") and isZeroQuality(value)) break;
+            } else return true;
         }
     }
     return false;
 }
 
+fn isZeroQuality(value: []const u8) bool {
+    if (value.len == 0 or value[0] != '0') return false;
+    if (value.len == 1) return true;
+    if (value[1] != '.') return false;
+    for (value[2..]) |c| if (c != '0') return false;
+    return true;
+}
+
 test "acceptsGzip only matches the header's own line" {
     try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: gzip, deflate\r\n"));
     try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\naccept-encoding:gzip\r\n"));
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, gzip;q=0.5\r\n"));
+    try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: gzip;q=0\r\n"));
+    try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, gzip; q=0.000\r\n"));
     try std.testing.expect(!acceptsGzip("GET /gzip.js HTTP/1.1\r\nHost: x\r\n"));
     try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, zstd\r\n"));
     try std.testing.expect(!acceptsGzip(""));
@@ -5534,6 +5567,26 @@ test "ifNoneMatchHits matches only its own header line and exact value" {
     try std.testing.expect(!ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"abc\"\r\n", "\"def\""));
     try std.testing.expect(!ifNoneMatchHits("GET /x HTTP/1.1\r\nHost: If-None-Match: \"def\"\r\n", "\"def\""));
     try std.testing.expect(!ifNoneMatchHits("", "\"def\""));
+}
+
+test "fuzz: header parsing never panics on bytes straight off the socket" {
+    // headers_raw here is attacker-controlled the same way rawhttp.zig's
+    // framing input is: it comes from the raw bytes of an unauthenticated
+    // connection to the 127.0.0.1 listener, before any validation. These
+    // functions all slice on colons/commas/semicolons found in that input, the
+    // same category of bug that overflowed rawhttp's Content-Length check.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const headers_raw = buf[0..len];
+            _ = headerValue(headers_raw, "origin");
+            _ = crossOriginRequest(headers_raw, 4173);
+            _ = acceptsGzip(headers_raw);
+            _ = ifNoneMatchHits(headers_raw, "\"abc\"");
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
 }
 
 test "compactMessages drops oldest non-system messages over token budget" {

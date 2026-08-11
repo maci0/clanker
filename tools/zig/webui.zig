@@ -23,8 +23,10 @@ const script = @embedFile("webui/app.js");
 const van_boot = @embedFile("webui/van-boot.js");
 const fleet = @embedFile("webui/features/fleet.js");
 const icons = @embedFile("webui/core/icons.js");
+const ui = @embedFile("webui/core/ui.js");
 const utils = @embedFile("webui/core/utils.js");
 const vendor = @embedFile("webui/core/vendor.js");
+const chat = @embedFile("webui/core/chat.js");
 const stream = @embedFile("webui/core/stream.js");
 const theme = @embedFile("webui/core/theme.js");
 const markdown = @embedFile("webui/lib/markdown.js");
@@ -53,7 +55,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, van_boot, fleet, icons, utils, vendor, stream, theme, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/icons.js", "core/utils.js", "core/vendor.js", "core/stream.js", "core/theme.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, van_boot, fleet, icons, ui, utils, vendor, chat, stream, theme, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/stream.js", "core/theme.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -76,7 +78,9 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/van-boot.js")) return .{ .body = van_boot, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/utils.js")) return .{ .body = utils, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/icons.js")) return .{ .body = icons, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/ui.js")) return .{ .body = ui, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/vendor.js")) return .{ .body = vendor, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/chat.js")) return .{ .body = chat, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/stream.js")) return .{ .body = stream, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/theme.js")) return .{ .body = theme, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/markdown.js")) return .{ .body = markdown, .content_type = "text/javascript; charset=utf-8" };

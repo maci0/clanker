@@ -1754,38 +1754,11 @@ el.runsRefresh.addEventListener("click", function () {
   loadRuns().finally(function () { el.runsRefresh.disabled = false; });
 });
 
-// ---- chat: shared rooms and direct messages between clankers -----------
-
-/* A direct message is a room, not a second mechanism: both sides derive the
-   same name from the two instance names sorted, so `dm:a|b` is the same
-   channel whichever end opens it. That means DMs inherit the whole existing
-   room pipeline — history, subscription, the agent's inbox — for free. */
-function dmRoom(a, b) {
-  return "dm:" + [dmSafeName(a), dmSafeName(b)].sort().join("|");
-}
-
-/* `|` separates the two halves of the room name, so a name containing one
-   would split into three parts and make each side read the wrong partner
-   out of it. Instance names are free-form config, so this is reachable. */
-function dmSafeName(name) {
-  return String(name).replace(/\|/g, "-");
-}
-
-/* Whichever half is not this instance. Written as "the part that isn't me"
-   rather than an index so a malformed room name degrades to showing
-   something plausible instead of `undefined`. */
-function dmPartner(room) {
-  var parts = room.slice("dm:".length).split("|");
-  var mine = dmSafeName(instanceName);
-  for (var i = 0; i < parts.length; i++) {
-    if (parts[i] !== mine) return parts[i];
-  }
-  return parts[parts.length - 1] || room;
-}
-
-function isDm(room) {
-  return room.indexOf("dm:") === 0;
-}
+/* DM/chat helpers live in core/chat.js (bridged as window.ckChat). */
+var dmRoom = window.ckChat.dmRoom;
+var dmSafeName = window.ckChat.dmSafeName;
+var dmPartner = window.ckChat.dmPartner;
+var isDm = window.ckChat.isDm;
 
 var instanceName = "";
 var knownPeers = [];
@@ -1967,25 +1940,9 @@ function rememberChatId(id) {
   }
 }
 
-/* A stable emoji per instance, so a busy room is scannable by shape before
-   you read a single name. Derived from the name rather than assigned, so
-   every clanker independently agrees on who is who with no shared state and
-   no registry — the same reasoning as the DM room name. Collisions are
-   possible with enough peers; the name is still right there next to it. */
-var CLANKER_MARKS = [
-  "🐙", "🦊", "🦉", "🐢", "🦋", "🐝", "🦔", "🦦",
-  "🦭", "🐬", "🦅", "🦩", "🐸", "🦎", "🐿️", "🦡",
-  "🪼", "🦑", "🐳", "🦌", "🐺", "🦂", "🕷️", "🦜"
-];
-
-function clankerMark(name) {
-  var h = 5381;
-  for (var i = 0; i < name.length; i++) {
-    // djb2, kept in 32-bit range so the result does not drift with length.
-    h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
-  }
-  return CLANKER_MARKS[h % CLANKER_MARKS.length];
-}
+/* CLANKER_MARKS/clankerMark live in core/chat.js (bridged as window.ckChat). */
+var CLANKER_MARKS = window.ckChat.CLANKER_MARKS;
+var clankerMark = window.ckChat.clankerMark;
 
 function buildChatMessage(m) {
   var wrap = document.createElement("div");
@@ -2025,6 +1982,9 @@ function buildChatMessage(m) {
 /* Board helpers live in lib/board.js (bridged as window.ckBoard). */
 var BOARD_COLUMNS = window.ckBoard.BOARD_COLUMNS;
 var boardActionLine = window.ckBoard.boardActionLine;
+var doneColumn = function () { return window.ckBoard.doneColumn(board); };
+var blockers = function (card) { return window.ckBoard.blockers(card, board, cardById); };
+var dueState = window.ckBoard.dueState;
 
 /* formatChatTime lives in core/utils.js (bridged as window.ckUtil.formatChatTime). */
 var formatChatTime = window.ckUtil.formatChatTime;
@@ -3766,27 +3726,7 @@ function cardById(id) {
   return null;
 }
 
-/* A card is blocked while anything it depends on has not reached the last
-   column. Said on the card, because "why can I not start this" is the
-   question a board exists to answer. */
-function doneColumn() {
-  return board.columns.length ? board.columns[board.columns.length - 1].id : "done";
-}
-
-function blockers(card) {
-  return (card.depends_on || []).filter(function (id) {
-    var dep = cardById(id);
-    return dep && dep.column !== doneColumn();
-  });
-}
-
-function dueState(card) {
-  if (!card.deadline) return "";
-  var left = card.deadline - Math.floor(Date.now() / 1000);
-  if (left < 0) return "late";
-  if (left < 2 * 24 * 60 * 60) return "soon";
-  return "ok";
-}
+/* doneColumn/blockers/dueState live in lib/board.js (bridged as window.ckBoard). */
 
 /* fmtDeadline lives in core/utils.js (bridged). */
 var fmtDeadline = window.ckUtil.fmtDeadline;
