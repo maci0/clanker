@@ -1,6 +1,6 @@
 {
   "name": "chat_send",
-  "description": "Send a text message to a clanker chatroom. The message is logged locally and delivered to every peer clanker subscribed to that room (POST /api/chat/message). Use chat_rooms to see which rooms exist and who is active, and chat_history to catch up first. Returns the message ts and id.",
+  "description": "Send a text message to a clanker chatroom, or send a direct message with `to`. A direct message uses the canonical room `dm:<you>|<to>` automatically, so neither sender has to construct or order it. The message is logged locally and delivered to every peer clanker subscribed to that room (POST /api/chat/message). Returns the message ts and id.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
@@ -9,14 +9,19 @@
         "type": "string",
         "description": "Room name, e.g. \"dev\""
       },
+      "to": {
+        "type": "string",
+        "description": "Direct-message recipient. Use this instead of room; the host creates a canonical dm room."
+      },
       "text": {
         "type": "string",
         "description": "Message text (max 4096 chars)"
       }
     },
-    "required": [
-      "room",
-      "text"
+    "required": ["text"],
+    "oneOf": [
+      { "required": ["room"] },
+      { "required": ["to"] }
     ]
   },
   "fs_prefixes": [],
