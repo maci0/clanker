@@ -769,7 +769,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     // message, so it neither needs the module nor touches its log.
     if (std.mem.startsWith(u8, op, "todo_") and (parsed.room == null or parsed.room.?.len == 0)) {
         const list = h.sandbox.private_todos orelse
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no \\\"room\\\" given, and private todo lists exist only inside sub-agent runs; pass \\\"room\\\" to use a shared room list\"}");
+            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"this run has no private todo list attached; this is a host wiring error, not a room todo\"}");
         const out = private_todos_mod.applyTodoOp(list, arena, op, parsed.title, parsed.todo) catch return Err.too_large;
         return h.writeResult(bytes, out);
     }

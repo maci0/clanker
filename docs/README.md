@@ -338,7 +338,7 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the two handled in-process, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`.
+A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the in-process quit commands, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`. A bare `exit` or `quit` also leaves the REPL.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -349,7 +349,7 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
 | `/status` | `cmd_status` | Show instance and peers |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
-| `/quit`, `/exit`, `/q`, `exit` | in-process | Leave the REPL |
+| `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
 
 ### `/graph`
 
@@ -372,10 +372,12 @@ iter 2
 
 | Command | Description |
 |---------|-------------|
+| `help` | Print usage; `--help` / `-h` anywhere does the same |
+| `version` | Print the version; `--version` anywhere does the same |
 | `init` | Create `config.local.json` and `state/` |
 | `providers check [name]` | Verify provider connectivity |
 | `run "<task>"` | Run the agent on a task |
-| `repl` | Start an interactive REPL with streaming |
+| `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
@@ -389,7 +391,12 @@ iter 2
 | `goal` | Design and persist a structured goal |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
-| `serve` | Start the HTTP server |
+| `chat send <room> "<text>"` | Send a message to a chatroom |
+| `chat history <room> [after]` | Read a chatroom's history (newest first) |
+| `chat rooms` | List chatrooms and this instance's subscriptions |
+| `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
+| `stats` | Token usage per provider/model |
+| `serve [--port N]` | HTTP server + web UI (default port 17921) |
 
 ## Configuration
 
@@ -465,6 +472,7 @@ Fields:
   - `max_total_tokens`: total token budget across the run.
   - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
   - `tools_dir`, `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: paths the agent reads/writes at runtime.
+  - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. That content is inserted as a **Global operator instructions** section in the system prompt, distinct from project-root `AGENTS.md` (project conventions). Missing or empty files are skipped.
   - `sandbox_root`: base directory for file operations in tools.
   - `git_commit`: commit promoted improvements with git (default true).
   - `seed`: sampling seed.

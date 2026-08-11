@@ -165,6 +165,42 @@
   --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
 }
 
+/* Catppuccin Mocha (https://github.com/catppuccin/catppuccin), mapped onto
+   this page's own token names rather than renaming everything after the
+   palette. Values are from catppuccin/palette's palette.json; the roles come
+   from its style guide: base for the main surface, mantle behind it, surface0
+   for raised panels, overlay0 for borders, text and subtext0 for prose, mauve
+   as the accent, green/yellow/red for held/limit/failed.
+
+   Offered alongside the mascot palette rather than replacing it: this is a
+   fourth choice on the theme toggle, so nothing that reads well today stops
+   doing so. */
+:root[data-theme="mocha"] {
+  --paper: #1e1e2e;
+  --bg: #181825;
+  --surface: var(--paper);
+  --surface-2: #313244;
+  --border: #6c7086;
+  --rule: #45475a;
+  --fg: #cdd6f4;
+  --fg-muted: #a6adc8;
+  --accent: #cba6f7;
+  --accent-dim: #cba6f726;
+  --accent-text: #cba6f7;
+  --on-accent: #1e1e2e;
+  --ok: #a6e3a1;
+  --ok-fill: #a6e3a1;
+  --violet: #f5c2e7;
+  --violet-text: #f5c2e7;
+  --danger: #f38ba8;
+  --on-danger: #1e1e2e;
+  --scrim: rgba(17, 17, 27, 0.72);
+  --warn: #f9e2af;
+  --warn-text: #f9e2af;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
+  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {

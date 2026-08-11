@@ -1,6 +1,7 @@
-//! libvaxis-backed REPL (docs/ROADMAP.md migration). Reachable via
-//! `clanker repl-vaxis`, separate from the hand-rolled `clanker repl`
-//! (src/tui/*) while this is proven out.
+//! libvaxis-backed REPL (docs/ROADMAP.md migration). This is `clanker repl`,
+//! the default REPL; the hand-rolled src/tui REPL was removed once this
+//! proved out (the `repl-vaxis` spelling is kept as a compatibility alias in
+//! cli.zig).
 //!
 //! Architecture: a single root `vxfw.Widget` ("Model") drives everything.
 //! `vxfw.App.run` already handles SIGWINCH (`.winsize` events resize and
@@ -16,7 +17,8 @@
 //! the old REPL.
 //!
 //! Deliberately not yet built (documented gaps, not oversights): slash
-//! command palette/tab-complete (the exit aliases are handled directly),
+//! command palette/tab-complete (only a fixed set of quit commands is
+//! handled),
 //! inline ask_user/approval prompts (falls back to the same "nobody
 //! attached" default a headless run gets), manual scroll-back (the
 //! transcript always shows its tail), and the left-bar tool-card styling
@@ -127,6 +129,15 @@ const Line = struct {
     fence_lang: ?[]const u8 = null,
 };
 
+/// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "mono",
+/// "default"). An env var rather than a flag because the REPL is also reached
+/// through `clanker` with no arguments, and a theme is a property of the
+/// terminal you are sitting at rather than of one invocation.
+fn themeName(environ_map: *const std.process.Environ.Map) ?[]const u8 {
+    const v = environ_map.get("CLANKER_THEME") orelse return null;
+    return if (v.len > 0) v else null;
+}
+
 const Model = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -229,7 +240,7 @@ const Model = struct {
         // input handler: App.run returns on that flag and its caller's defer
         // then restores the alternate screen, raw input, mouse mode, and
         // bracketed paste before the shell regains the terminal.
-        if (isExitCommand(task)) {
+        if (isQuitCommand(task)) {
             ctx.quit = true;
             return;
         }
@@ -349,7 +360,7 @@ const Model = struct {
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /exit, exit, or Ctrl-C to exit", .{
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /quit /exit /q exit quit \xc2\xb7 Ctrl-C to exit", .{
             self.provider.name,
             self.provider.activeModelName(),
             activity,
@@ -373,11 +384,13 @@ const Model = struct {
         const start = tailStart(self.lines.items, avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
-        const fence_on = blk: {
-            const t = theme_mod.select(null, self.ctx.environ_map);
-            break :blk t.reset.len > 0;
-        };
-        var syn_style = syntax.Style.fromTheme(&theme_mod.Theme.default);
+        // One theme decides both. The style was built from Theme.default
+        // regardless of what select() returned, so NO_COLOR (and any chosen
+        // theme) reached the fence check and then got ignored by the
+        // highlighter that actually draws the colours.
+        const active = theme_mod.select(themeName(self.ctx.environ_map), self.ctx.environ_map);
+        const fence_on = active.reset.len > 0;
+        var syn_style = syntax.Style.fromTheme(&active);
         var i: usize = start;
         while (i < self.lines.items.len and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
@@ -385,15 +398,15 @@ const Model = struct {
                 var state = syntax.State.init(lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
                 syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs) catch {
-                    writeRow(surface, row, l.text, dim);
-                    row += 1;
+                    writeWrapped(surface, &row, bottom, max.width, l.text, dim);
                     continue;
                 };
-                writeSegments(ctx, surface, row, segs.items);
+                writeWrappedSegments(ctx, surface, &row, bottom, max.width, segs.items);
             } else {
-                writeRow(surface, row, l.text, if (l.dim) dim else .{});
+                // Completed lines wrap like the live stream does; writeRow
+                // would clip a long turn's reply to a single terminal row.
+                writeWrapped(surface, &row, bottom, max.width, l.text, if (l.dim) dim else .{});
             }
-            row += 1;
         }
         if (streaming and row < bottom and stream_snapshot.len > 0) {
             self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
@@ -420,17 +433,6 @@ const Model = struct {
     }
 };
 
-/// Exit is a local REPL action, never a task for the agent. Trim whitespace
-/// so pasting a command with a trailing newline has the same result as typing
-/// it, while deliberately keeping the recognized spellings exact.
-fn isExitCommand(input: []const u8) bool {
-    const command = std.mem.trim(u8, input, " \t\r\n");
-    return std.mem.eql(u8, command, "/quit") or
-        std.mem.eql(u8, command, "/exit") or
-        std.mem.eql(u8, command, "/q") or
-        std.mem.eql(u8, command, "exit");
-}
-
 /// How many trailing entries of `lines` to start from so the transcript
 /// shows its tail, not its head, once history exceeds the visible height.
 /// A rough heuristic (one line of history per visible row) — long entries
@@ -453,21 +455,38 @@ fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Styl
     }
 }
 
-/// Writes styled segments onto `row` with grapheme-accurate widths,
-/// stopping at the surface edge. Segment text borrows the caller's buffer.
-fn writeSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: u16, segs: []const vaxis.Segment) void {
+/// Writes styled segments with grapheme-accurate widths, wrapping at the
+/// surface edge and stopping at `bottom`. Segment text borrows the caller's
+/// buffer.
+fn writeWrappedSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, segs: []const vaxis.Segment) void {
     var col: u16 = 0;
     for (segs) |seg| {
         var it = ctx.graphemeIterator(seg.text);
         while (it.next()) |g| {
+            if (row.* >= bottom) return;
             const bytes = g.bytes(seg.text);
+            if (std.mem.eql(u8, bytes, "\n")) {
+                row.* += 1;
+                col = 0;
+                continue;
+            }
             if (std.mem.eql(u8, bytes, "\t")) {
-                col += 8 - col % 8;
+                const tab_width = 8 - col % 8;
+                if (col + tab_width > width) {
+                    row.* += 1;
+                    col = 0;
+                    if (row.* >= bottom) return;
+                }
+                col += tab_width;
                 continue;
             }
             const w: u16 = @intCast(@min(ctx.stringWidth(bytes), 2));
-            if (col + w > surface.size.width) return;
-            if (w > 0) surface.writeCell(col, row, .{ .char = .{ .grapheme = bytes, .width = @intCast(w) }, .style = seg.style });
+            if (col + w > width) {
+                row.* += 1;
+                col = 0;
+                if (row.* >= bottom) return;
+            }
+            if (w > 0) surface.writeCell(col, row.*, .{ .char = .{ .grapheme = bytes, .width = @intCast(w) }, .style = seg.style });
             col += w;
         }
     }
@@ -475,21 +494,25 @@ fn writeSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: u16, segs: [
 
 /// Writes `text` wrapped at `width`, advancing `*row` a line at a time,
 /// stopping at `bottom`. Simple hard-wrap (no word-break) — good enough for
-/// a live streaming tail; MdStream-quality wrapping is follow-up work.
+/// a live streaming tail and for completed turns (which must not be clipped
+/// to a single row); MdStream-quality wrapping is follow-up work.
 fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style) void {
     var col: u16 = 0;
-    var i: usize = 0;
-    while (i < text.len and row.* < bottom) {
-        const c = text[i];
-        if (c == '\n' or col >= width) {
+    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (it.nextCodepointSlice()) |cp| {
+        if (row.* >= bottom) break;
+        if (std.mem.eql(u8, cp, "\n")) {
             row.* += 1;
             col = 0;
-            i += 1;
             continue;
         }
-        if (row.* < bottom) surface.writeCell(col, row.*, .{ .char = .{ .grapheme = text[i .. i + 1], .width = 1 }, .style = style });
+        if (col >= width) {
+            row.* += 1;
+            col = 0;
+            if (row.* >= bottom) break;
+        }
+        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
         col += 1;
-        i += 1;
     }
 }
 
@@ -558,6 +581,34 @@ fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw
     return out.toOwnedSlice(alloc);
 }
 
+/// The commands that leave the REPL rather than being submitted to the
+/// agent. `clanker repl` is a shell: /quit, /exit, /q and a bare exit/quit
+/// all end the session; anything else is a task. The legacy REPL handled the
+/// same set in-process; this matches it.
+fn isQuitCommand(task: []const u8) bool {
+    const t = std.mem.trim(u8, task, " \t");
+    return std.mem.eql(u8, t, "/quit") or
+        std.mem.eql(u8, t, "/exit") or
+        std.mem.eql(u8, t, "/q") or
+        std.mem.eql(u8, t, "exit") or
+        std.mem.eql(u8, t, "quit");
+}
+
+test "isQuitCommand recognizes the REPL quit set" {
+    try std.testing.expect(isQuitCommand("/quit"));
+    try std.testing.expect(isQuitCommand("/exit"));
+    try std.testing.expect(isQuitCommand("/q"));
+    try std.testing.expect(isQuitCommand("exit"));
+    try std.testing.expect(isQuitCommand("quit"));
+    try std.testing.expect(isQuitCommand("  /q  "));
+    // A leading slash distinguishes a command from the same word as a task;
+    // a bare word that is not a quit command is a task.
+    try std.testing.expect(!isQuitCommand("/quitnow"));
+    try std.testing.expect(!isQuitCommand("exit handling is next"));
+    try std.testing.expect(!isQuitCommand(""));
+    try std.testing.expect(!isQuitCommand("please exit"));
+}
+
 pub fn cmdReplVaxis(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -596,16 +647,4 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
     defer model.text_field.deinit();
 
     try app.run(model.widget(), .{});
-}
-
-test "vaxis REPL recognizes every documented exit command" {
-    for ([_][]const u8{ "/quit", "/exit", "/q", "exit", "  /exit\r\n" }) |command| {
-        try std.testing.expect(isExitCommand(command));
-    }
-}
-
-test "vaxis REPL does not turn ordinary tasks into exits" {
-    for ([_][]const u8{ "", "/", "quit", "exit now", "/exits", "EXIT" }) |task| {
-        try std.testing.expect(!isExitCommand(task));
-    }
 }

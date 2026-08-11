@@ -137,9 +137,10 @@ pub const Agent = struct {
     /// The graph run id of the run in flight, handed to tool sandboxes so
     /// ck_subagent can tell the nested run who spawned it.
     current_run_id: []const u8 = "",
-    /// This run's private todo list, wired by subagent.runNested and null for
-    /// top-level agents. Handed to every tool sandbox so todo_* calls that
-    /// name no "room" reach it (see src/agent/private_todos.zig).
+    /// This run's private todo list. `run` creates one for a top-level run;
+    /// subagent.runNested attaches its own before calling `run`. Handed to
+    /// every tool sandbox so todo_* calls that name no "room" reach it (see
+    /// src/agent/private_todos.zig).
     private_todos: ?*private_todos.List = null,
     /// A nested run's channel to the agent that spawned it, wired by
     /// subagent.runNested and null for top-level agents. Handed to every tool
@@ -207,6 +208,8 @@ pub const Agent = struct {
         }
 
         log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
+        const home = ctx.environ_map.get("HOME") orelse "";
+        const global_path = (try system_prompt.resolveGlobalInstructionsPath(arena, home, cfg.agent.global_instructions_file)) orelse "";
         const base_prompt = try system_prompt.build(arena, ctx.io, .{
             .system_prompt_file = cfg.agent.system_prompt_file,
             .skills_dir = cfg.agent.skills_dir,
@@ -215,6 +218,7 @@ pub const Agent = struct {
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
             .catalog = catalog,
+            .global_instructions_file = global_path,
         }, defs);
         const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
@@ -251,6 +255,8 @@ pub const Agent = struct {
     }
 
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
+        const home = self.ctx.environ_map.get("HOME") orelse "";
+        const global_path = (system_prompt.resolveGlobalInstructionsPath(self.arena, home, self.cfg.agent.global_instructions_file) catch null) orelse "";
         const base_prompt = system_prompt.build(self.arena, self.ctx.io, .{
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
@@ -259,6 +265,7 @@ pub const Agent = struct {
             .instance_id = self.instance_id,
             .peers = self.peer_names,
             .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
+            .global_instructions_file = global_path,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
@@ -280,6 +287,17 @@ pub const Agent = struct {
     }
 
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
+        // A top-level run needs the same private scratch checklist as a nested
+        // run. Keep an injected sub-agent list intact, but create a fresh
+        // arena-owned list when there is none and detach it at the end so a
+        // later REPL turn never sees this turn's work.
+        const inherited_private_todos = self.private_todos;
+        if (self.private_todos == null) {
+            const todos = try self.arena.create(private_todos.List);
+            todos.* = .{ .alloc = self.arena };
+            self.private_todos = todos;
+        }
+        defer self.private_todos = inherited_private_todos;
         // Each run() call is self-contained: `stats` counts only this run's
         // tokens, so per-run logging, autolearn records, and the defer that
         // folds `stats` into `session_stats` are all correct. Without this

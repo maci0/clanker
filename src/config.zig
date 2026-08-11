@@ -122,6 +122,10 @@ pub const Agent = struct {
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
+    /// Device-global operator instructions file. Empty (default) means
+    /// `$HOME/.agents/AGENTS.md` when HOME is set; missing/empty files are
+    /// skipped at prompt build time. Project-root `AGENTS.md` stays separate.
+    global_instructions_file: []const u8 = "",
     /// Directory (relative to the process cwd) holding harness state:
     /// chatroom logs, run records, cursors.
     state_dir: []const u8 = "state",
@@ -614,9 +618,9 @@ pub const Config = struct {
             "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
             "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
             "hot_tools",           "tools_dir",               "skills_dir",
-            "system_prompt_file",  "learnings_file",          "state_dir",
-            "sandbox_root",        "git_commit",              "seed",
-            "ask_timeout_seconds", "confirm_writes",
+            "system_prompt_file",  "learnings_file",          "global_instructions_file",
+            "state_dir",           "sandbox_root",            "git_commit",
+            "seed",                "ask_timeout_seconds",     "confirm_writes",
         }, "agent");
         if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
         if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
@@ -627,6 +631,7 @@ pub const Config = struct {
         if (obj.get("skills_dir")) |k| a.skills_dir = try jsonStr(k, "skills_dir");
         if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");
         if (obj.get("learnings_file")) |k| a.learnings_file = try jsonStr(k, "learnings_file");
+        if (obj.get("global_instructions_file")) |k| a.global_instructions_file = try jsonStr(k, "global_instructions_file");
         if (obj.get("state_dir")) |k| a.state_dir = try jsonStr(k, "state_dir");
         if (obj.get("sandbox_root")) |k| a.sandbox_root = try jsonStr(k, "sandbox_root");
         if (obj.get("git_commit")) |k| a.git_commit = switch (k) {
@@ -786,6 +791,34 @@ pub const Config = struct {
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
+
+test "agent.global_instructions_file parses and defaults empty" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{
+        \\  "default_provider": "ollama",
+        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
+        \\  "agent": { "global_instructions_file": "/home/op/.agents/AGENTS.md" }
+        \\}
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.json", "config.local.json");
+    try std.testing.expectEqualStrings("/home/op/.agents/AGENTS.md", cfg.agent.global_instructions_file);
+    try std.testing.expectEqualStrings("", (Agent{}).global_instructions_file);
+}
 
 test "config load and merge" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
