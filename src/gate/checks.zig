@@ -187,6 +187,22 @@ test "astCheckGate short-circuits when there are no .zig files" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+test "astCheckGate fails on a syntax error with a precise diagnostic" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x = ;\n" });
+    var result = try astCheckGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("zig ast-check", result.label);
+}
+
 /// Convenience: auto-format changed files, then run the fmt check.
 /// Returns the fmt gate result; if formatting itself fails, returns that
 /// failure instead. This is the single call an improve pipeline makes
