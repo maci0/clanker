@@ -60,6 +60,11 @@ pub const Agent = struct {
     revealed: std.StringArrayHashMapUnmanaged(void) = .empty,
     /// False when every schema is sent every time (config.agent.tool_catalog).
     catalog_mode: bool = false,
+    /// Set from outside the run (the REPL's SIGINT handler) to ask this run to
+    /// stop. Checked between iterations, which is the only place stopping is
+    /// safe: a tool is already running by then, and a half-written state file
+    /// is worse than a turn that takes another few seconds to notice.
+    stop_flag: ?*std.atomic.Value(bool) = null,
     max_iterations: u32,
     /// The system prompt (arena-owned), rebuilt when skills change.
     system_prompt_text: []const u8,
@@ -209,6 +214,13 @@ pub const Agent = struct {
     /// (autolearn, manual edits) since the last run. Updates the cached
     /// `system_prompt_text` and, when a conversation already has a leading
     /// system message, replaces it in-place.
+    /// Whether someone asked this run to stop, consuming the request so the
+    /// next turn starts clean: a Ctrl-C that arrives as a turn is finishing
+    /// must not cancel the turn after it.
+    fn stopRequested(self: *Agent) bool {
+        return takeStopRequest(self.stop_flag);
+    }
+
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
         const base_prompt = system_prompt.build(self.arena, self.ctx.io, .{
             .system_prompt_file = self.cfg.agent.system_prompt_file,
@@ -381,6 +393,17 @@ pub const Agent = struct {
         var call_counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
         defer call_counts.deinit(self.ctx.gpa);
         while (iteration < self.max_iterations) : (iteration += 1) {
+            if (self.stopRequested()) {
+                log.log(.info, "run stopped at iteration {d}", .{iteration + 1});
+                try g.add(self.ctx.gpa, .{
+                    .kind = .final,
+                    .iteration = iteration,
+                    .label = "stopped",
+                    .output = "",
+                    .ok = false,
+                });
+                return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
+            }
             try self.maybeCompactMessages(messages);
 
             // Log estimated prompt tokens before each LLM call for visibility
@@ -2190,6 +2213,26 @@ fn isNumericString(s: []const u8) bool {
         }
     }
     return saw_digit;
+}
+
+/// Reads a pending stop request and clears it in one atomic step, so the
+/// request applies to exactly one run. A Ctrl-C that lands while a turn is
+/// already finishing must not cancel the turn the user types next.
+fn takeStopRequest(flag: ?*std.atomic.Value(bool)) bool {
+    const f = flag orelse return false;
+    return f.swap(false, .acquire);
+}
+
+test takeStopRequest {
+    try std.testing.expect(!takeStopRequest(null));
+
+    var flag: std.atomic.Value(bool) = .init(false);
+    try std.testing.expect(!takeStopRequest(&flag));
+
+    flag.store(true, .release);
+    try std.testing.expect(takeStopRequest(&flag));
+    // Consumed: the next run starts clean rather than stopping immediately.
+    try std.testing.expect(!takeStopRequest(&flag));
 }
 
 test "isNumericString accepts ints, negatives, and single-dot floats only" {

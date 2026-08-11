@@ -942,6 +942,12 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     const interactive = (stdin_file.isTty(io) catch false) and (stdout_file.isTty(io) catch false);
     if (interactive) {
         term.installResizeHandler();
+        // A turn runs with the terminal back in cooked mode, where Ctrl-C is a
+        // real SIGINT: without this it killed clanker outright and took the
+        // unsaved turn with it. The agent loop reads the same flag and stops
+        // between iterations.
+        term.installInterruptHandler();
+        a.stop_flag = &term.interrupt_pending;
         loadReplHistory(io, gpa, &editor);
         refreshStatusline(io, gpa, arena, &cfg, init.environ_map, &reg);
         repl_palette = tui_palette.index(arena, &reg) catch &.{};
@@ -3983,7 +3989,6 @@ fn handleBoard(
     const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, out, " \t\r\n"), "{\"ok\":false")) 400 else 200;
     respond(stream, status, if (status == 200) "OK" else "Bad Request", out);
 }
-
 
 const goals_path = "state/goals.json";
 

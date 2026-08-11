@@ -71,6 +71,37 @@ pub fn installResizeHandler() void {
     std.posix.sigaction(.WINCH, &act, null);
 }
 
+/// Set (from the signal handler) when a SIGINT arrives while a turn is
+/// running. The REPL puts the terminal in raw mode with ISIG off, so at the
+/// prompt Ctrl-C is an ordinary keystroke the line editor sees; a turn runs
+/// with the terminal restored, and there Ctrl-C is a real signal. Without a
+/// handler that signal kills clanker mid-run, which is what made a long turn
+/// unstoppable except by losing the session.
+///
+/// Same async-signal-safety rule as the resize flag: the handler's whole body
+/// is one store, and the agent loop polls it between iterations.
+pub var interrupt_pending: std.atomic.Value(bool) = .init(false);
+
+fn onSigInt(sig: std.posix.SIG) callconv(.c) void {
+    _ = sig;
+    interrupt_pending.store(true, .release);
+}
+
+var interrupt_handler_installed = false;
+
+/// Makes Ctrl-C during a turn set `interrupt_pending` instead of killing the
+/// process. Idempotent, like the resize handler.
+pub fn installInterruptHandler() void {
+    if (interrupt_handler_installed) return;
+    interrupt_handler_installed = true;
+    const act: std.posix.Sigaction = .{
+        .handler = .{ .handler = onSigInt },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    std.posix.sigaction(.INT, &act, null);
+}
+
 pub const Size = struct { rows: u16, cols: u16 };
 
 /// Current terminal size in rows/cols, or null if `fd` isn't a terminal (or
