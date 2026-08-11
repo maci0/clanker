@@ -214,8 +214,6 @@ function renderDMs(container, chatData) {
   dmRooms.forEach(function (r) {
     var card = el("div", "tool-row fleet-card fleet-dm-card");
     card.setAttribute("role", "listitem");
-    card.setAttribute("aria-label", "Open DM " + r.room);
-    card.tabIndex = 0;
     var left = el("div", "fleet-card__main");
     var titleRow = el("div", "fleet-dm-title-row");
     var badge = el("span", "tool-tag fleet-dm-badge", "DM");
@@ -242,11 +240,9 @@ function renderDMs(container, chatData) {
     var actions = el("div", "fleet-actions toolbar-actions");
     var btn = el("button", "secondary", "Open");
     btn.type = "button";
+    btn.setAttribute("aria-label", "Open DM " + dmNames(r.room));
     btn.addEventListener("click", function () { navToRooms(r.room); });
     actions.appendChild(btn);
-    card.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navToRooms(r.room); }
-    });
     card.addEventListener("click", function (e) {
       if (e.target.closest && e.target.closest("button")) return;
       navToRooms(r.room);
@@ -292,19 +288,12 @@ function renderRuns(container, detailNode, runs) {
     }).catch(function () {});
   }
 
-  function fleetCardKeyHandler(e, id) {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openRun(id); }
-  }
-
   container.setAttribute("role", "list");
   grouped.roots.forEach(function (root) {
     var children = grouped.childrenOf[root.run_id] || [];
     var hasKids = !!children.length;
     var card = el("div", "tool-row fleet-card " + (hasKids ? "fleet-card--parent" : "fleet-card--plain"));
-    card.tabIndex = 0;
     card.setAttribute("role", "listitem");
-    card.setAttribute("aria-label", "Open run " + root.run_id);
-    card.addEventListener("keydown", function (e) { fleetCardKeyHandler(e, root.run_id); });
     card.addEventListener("click", function (e) {
       if (e.target.closest && e.target.closest("button")) return;
       openRun(root.run_id);
@@ -322,6 +311,7 @@ function renderRuns(container, detailNode, runs) {
     var actions = el("div", "fleet-actions toolbar-actions");
     var btn = el("button", "secondary", "Open");
     btn.type = "button";
+    btn.setAttribute("aria-label", "Open run " + root.run_id);
     btn.addEventListener("click", function () { openRun(root.run_id); });
     actions.appendChild(btn);
     if (hasKids) {
@@ -342,10 +332,7 @@ function renderRuns(container, detailNode, runs) {
       sub.setAttribute("role", "list");
       children.forEach(function (child) {
         var row = el("div", "tool-row fleet-card fleet-child");
-        row.tabIndex = 0;
         row.setAttribute("role", "listitem");
-        row.setAttribute("aria-label", "Open run " + child.run_id);
-        row.addEventListener("keydown", function (e) { fleetCardKeyHandler(e, child.run_id); });
         row.addEventListener("click", function (e) {
           if (e.target.closest && e.target.closest("button")) return;
           openRun(child.run_id);
@@ -356,6 +343,7 @@ function renderRuns(container, detailNode, runs) {
         var a2 = el("div", "fleet-actions toolbar-actions");
         var b2 = el("button", "secondary", "Open");
         b2.type = "button";
+        b2.setAttribute("aria-label", "Open run " + child.run_id);
         b2.addEventListener("click", function () { openRun(child.run_id); });
         a2.appendChild(b2);
         row.appendChild(l2);
@@ -392,10 +380,6 @@ function renderRuns(container, detailNode, runs) {
         container.appendChild(note);
         extra.forEach(function (sid) {
           var row2 = el("div", "tool-row fleet-card fleet-extra-row");
-          row2.tabIndex = 0;
-          row2.setAttribute("role", "button");
-          row2.setAttribute("aria-label", "Open run " + sid);
-          row2.addEventListener("keydown", function (e) { fleetCardKeyHandler(e, sid); });
           row2.addEventListener("click", function (e) {
             if (e.target.closest && e.target.closest("button")) return;
             openRun(sid);
@@ -404,6 +388,7 @@ function renderRuns(container, detailNode, runs) {
           var a = el("div", "toolbar-actions");
           var b = el("button", "secondary", "Open");
           b.type = "button";
+          b.setAttribute("aria-label", "Open run " + sid);
           b.addEventListener("click", function () { openRun(sid); });
           a.appendChild(b);
           row2.appendChild(a);

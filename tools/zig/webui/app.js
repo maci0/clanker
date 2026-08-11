@@ -3123,7 +3123,13 @@ function showToast(text) {
   // is progress, and progress does not need to shout.
   if (/fail|error|could not|refus|denied|no such/i.test(text)) node.setAttribute("data-kind", "bad");
   node.textContent = text;
+  node.setAttribute("aria-label", text + ". Press Enter, Space, or Escape to dismiss.");
   node.addEventListener("click", function () { node.remove(); });
+  node.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " " && event.key !== "Escape") return;
+    event.preventDefault();
+    node.remove();
+  });
   // A 5s timer is too short to read a long message, so hovering or focusing
   // it (mouse or keyboard) holds it on screen; it resumes counting down once
   // you look away, rather than vanishing mid-read.

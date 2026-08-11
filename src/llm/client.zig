@@ -38,6 +38,14 @@ pub const Ctx = struct {
 const resp_cap = 8 << 20;
 const max_attempts = 3;
 
+/// Appends provider-controlled bytes without allowing a malformed response to
+/// grow a process-owned buffer indefinitely. The caller chooses whether the
+/// limit applies to a complete body or to one protocol frame.
+fn appendResponseBytes(list: *std.ArrayList(u8), gpa: std.mem.Allocator, bytes: []const u8, limit: usize) !void {
+    if (bytes.len > limit -| list.items.len) return error.ResponseTooLarge;
+    try list.appendSlice(gpa, bytes);
+}
+
 /// Prefix on Anthropic OAuth access tokens (`sk-ant-oat01-…`), as minted by
 /// `ant auth login`. Matched without the version digits so a later `oat02`
 /// is still recognised.
@@ -396,7 +404,10 @@ pub fn chatStream(
         while (true) {
             const n = reader.readSliceShort(&ebuf) catch break;
             if (n == 0) break;
-            err_body.appendSlice(ctx.gpa, ebuf[0..n]) catch break;
+            appendResponseBytes(&err_body, ctx.gpa, ebuf[0..n], resp_cap) catch |err| switch (err) {
+                error.ResponseTooLarge => return err,
+                else => break,
+            };
         }
         err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(response.head.status), err_body.items });
         return error.ApiError;
@@ -458,9 +469,9 @@ pub fn chatStream(
             // a complete last frame in the buffer; dropping it loses that
             // frame's stop_reason and output-token count.
             if (sse.items.len == 0) break;
-            try sse.appendSlice(ctx.gpa, "\n\n");
+            try appendResponseBytes(&sse, ctx.gpa, "\n\n", resp_cap);
             at_eof = true;
-        } else try sse.appendSlice(ctx.gpa, buf[0..n]);
+        } else try appendResponseBytes(&sse, ctx.gpa, buf[0..n], resp_cap);
         // Process complete frames (data: ... blank line). `frame` is a view
         // into sse.items, so handle it fully before the buffer is shifted.
         while (std.mem.indexOf(u8, sse.items, "\n\n")) |frame_end| {
@@ -799,6 +810,18 @@ fn endpointUrl(gpa: std.mem.Allocator, provider: *const config.Provider, streami
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "provider response buffers reject bytes beyond their limit" {
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(std.testing.allocator);
+
+    try appendResponseBytes(&list, std.testing.allocator, "1234", 5);
+    try std.testing.expectError(
+        error.ResponseTooLarge,
+        appendResponseBytes(&list, std.testing.allocator, "56", 5),
+    );
+    try std.testing.expectEqualStrings("1234", list.items);
+}
 
 test "endpoint url building" {
     const mock = config.Provider{ .name = "m", .base_url = "https://api.deepseek.com/", .default_model = "x" };
