@@ -16,6 +16,8 @@
 const std = @import("std");
 const config_mod = @import("../config.zig");
 const log = @import("../util/log.zig");
+const atomic_write = @import("../util/atomic_write.zig");
+const filelock = @import("../util/filelock.zig");
 const build_options = @import("build_options");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
@@ -278,7 +280,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     try out_list.appendSlice(gpa, line);
     try out_list.append(gpa, '\n');
     try trimLog(gpa, arena, &out_list, cfg.chatrooms.max_history);
-    try base.writeFile(io, .{ .sub_path = path, .data = out_list.items });
+    try atomic_write.writeFile(io, base, path, out_list.items);
 }
 
 /// Keeps only the last `max` lines of the JSONL log.
@@ -397,8 +399,11 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
 /// can rejoin a config-default room); `on=false` leaves (adds to
 /// "unsubscribed" so it overrides a config-default subscription).
 pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, on: bool) !void {
-    _ = gpa;
     if (state_dir.len > 0) try base.createDirPath(io, state_dir);
+    // Subscription changes are read-modify-write operations. Serialize them
+    // so concurrent join/leave requests cannot silently discard each other.
+    var guard = filelock.acquire(io, base, if (state_dir.len > 0) state_dir else ".", "chatrooms-sub", gpa);
+    defer guard.release();
     const path = try subPath(arena, state_dir, sub_path);
     var rooms: std.ArrayList([]const u8) = .empty;
     var unsub: std.ArrayList([]const u8) = .empty;
@@ -456,7 +461,7 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     for (unsub.items) |r| try s.write(r);
     try s.endArray();
     try s.endObject();
-    try base.writeFile(io, .{ .sub_path = path, .data = buf[0..w.end] });
+    try atomic_write.writeFile(io, base, path, buf[0..w.end]);
     log.log(.info, "chat: subscribed to '{s}' = {any}", .{ room, on });
 }
 
@@ -515,7 +520,7 @@ pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_d
     s.write(Cursor{ .id = msg.id, .ts = msg.ts }) catch return;
     w.writeByte('\n') catch return;
     const body = buf[0..w.end];
-    base.writeFile(io, .{ .sub_path = path, .data = body }) catch return;
+    atomic_write.writeFile(io, base, path, body) catch return;
 }
 
 // ------------------------------------------------------------------ helpers --

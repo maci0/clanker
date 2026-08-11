@@ -136,29 +136,28 @@ var el = {
    van.tags builds real DOM nodes and sets text as text, so nothing here can
    introduce markup from data. */
 
-/* Bind/skeletons/turn-phase live in core/ui.js (bridged on window.ckUi). */
-var T = (window.ckUi && window.ckUi.T) ? window.ckUi.T : van.tags;
-var bind = window.ckUi ? window.ckUi.bind : function(node, state, render){ if(!window.van||!window.van.derive) return; window.van.derive(function(){ var v=state.val; node.textContent=""; var b=render(v); if(b==null) return; if(Array.isArray(b)) b.forEach(function(n){ if(n) window.van.add(node,n); }); else window.van.add(node,b); }); };
-var skeletonRows = window.ckUi ? window.ckUi.skeletonRows : function(c,n){ if(!c) return; c.textContent=""; c.setAttribute("aria-busy","true"); for(var i=0;i<n;i++){ var row=document.createElement("div"); row.className="skeleton"; c.appendChild(row); var r=document.createElement("div"); r.className="skeleton-row"; for(var j=0;j<3;j++){ var bar=document.createElement("div"); bar.className="skeleton-bar"; r.appendChild(bar);} c.appendChild(r);} };
-var setTurnPhase = window.ckUi ? window.ckUi.setTurnPhase : function(turn,phase){ if(!turn||!turn.root||!turn.root.setAttribute) return; if(!turn.root.isConnected) return; var cur=turn.root.getAttribute("data-phase"); if(phase){ if(cur===phase) return; turn.root.setAttribute("data-phase",phase);} else { if(cur===null) return; turn.root.removeAttribute("data-phase");} };
+/* Bind/skeletons/turn-phase live in core/ui.js (bridged on window.ckUi).
+   Module scripts execute in document order before this deferred classic
+   script, so the bridge is already present — no inline fallback needed. */
+var T = window.ckUi.T;
+var bind = window.ckUi.bind;
+var skeletonRows = window.ckUi.skeletonRows;
+var setTurnPhase = window.ckUi.setTurnPhase;
 
-/* Icons live in core/icons.js (module, bridged on window.ckIcons). Kept
-   locally only until this file also becomes a module. */
-var ICON_PATHS = window.ckIcons ? window.ckIcons.ICON_PATHS : {};
-var icon = window.ckIcons ? window.ckIcons.icon : function(){ return document.createElement("span"); };
+/* Icons live in core/icons.js (module, bridged on window.ckIcons). */
+var ICON_PATHS = window.ckIcons.ICON_PATHS;
+var icon = window.ckIcons.icon;
 
 /* UI vocabulary lives in core/ui.js (bridged on window.ckUi.UI). */
-var UI = window.ckUi ? window.ckUi.UI : null;
+var UI = window.ckUi.UI;
 
-
-/* Vendored loader + clipboard live in core/vendor.js (bridged). Kept as
-   locals until this file becomes a module itself. */
-var vendorLoads = window.vendorLoads || {};
-var loadVendor = window.loadVendor || function(){ return Promise.resolve(); };
+/* Vendored loader + clipboard live in core/vendor.js (bridged). */
+var vendorLoads = window.vendorLoads;
+var loadVendor = window.loadVendor;
 var loadD3 = window.loadD3;
 var loadHljs = window.loadHljs;
 var registerToml = window.registerToml;
-var reducedMotion = window.reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)");
+var reducedMotion = window.reducedMotion;
 var copyText = window.copyText;
 
 var busy = false;
@@ -179,9 +178,9 @@ function renderSessionChip() {
 }
 
 /* THEMES/loadTheme/applyTheme live in core/theme.js (bridged). */
-var THEMES = (window.THEMES || (window.ckTheme && window.ckTheme.THEMES)) || ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day"];
-var loadTheme = (window.ckTheme && window.ckTheme.loadTheme) || function(){ var t=null; try{ t=window.localStorage.getItem("clanker.theme"); }catch(e){} return THEMES.indexOf(t)===-1?"system":t; };
-var applyTheme = (window.ckTheme && window.ckTheme.applyTheme) || function(theme){ if(theme==="system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", theme); if(el && el.themeToggle) el.themeToggle.textContent="theme: "+theme; };
+var THEMES = window.ckTheme.THEMES;
+var loadTheme = window.ckTheme.loadTheme;
+var applyTheme = window.ckTheme.applyTheme;
 
 var theme = loadTheme();
 applyTheme(theme);
