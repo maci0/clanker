@@ -316,7 +316,7 @@ pub fn sandboxFor(
 /// extra keys are inert to a tool that does not read `config`. The JSON is
 /// built by hand because it is small and controlled, and avoids relying on
 /// std.json.Stringify's serialization of a nested string slice.
-fn execPolicyConfig(
+pub fn execPolicyConfig(
     arena: std.mem.Allocator,
     tool_config: []const u8,
     cfg: *const config_mod.Config,
@@ -364,6 +364,40 @@ fn appendNetworkAllow(
 
 fn isResearchTool(name: []const u8) bool {
     return std.mem.eql(u8, name, "fetch_web") or std.mem.eql(u8, name, "web_search");
+}
+
+test "execPolicyConfig injects git_remote_ops and exec_pattern_allow for exec tools" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config_mod.Config{};
+    cfg.agent.git_remote_ops = true;
+    cfg.agent.exec_pattern_allow = &.{ "gh pr create*", "gh pr merge*" };
+    const out = try execPolicyConfig(arena, "", &cfg);
+    try std.testing.expectEqualStrings(
+        "{\"git_remote_ops\":true,\"exec_pattern_allow\":[\"gh pr create*\",\"gh pr merge*\"]}",
+        out,
+    );
+
+    // A pattern containing a quote is escaped so the injected JSON stays valid
+    // and the guest's parser cannot be handed malformed config.
+    var cfg2 = config_mod.Config{};
+    cfg2.agent.git_remote_ops = false;
+    cfg2.agent.exec_pattern_allow = &.{"gh pr comment \"merge\" *"};
+    const out2 = try execPolicyConfig(arena, "", &cfg2);
+    try std.testing.expectEqualStrings(
+        "{\"git_remote_ops\":false,\"exec_pattern_allow\":[\"gh pr comment \\\"merge\\\" *\"]}",
+        out2,
+    );
+
+    // No patterns yields an empty array, which the guest reads as ungoverned.
+    const cfg3 = config_mod.Config{};
+    const out3 = try execPolicyConfig(arena, "", &cfg3);
+    try std.testing.expectEqualStrings(
+        "{\"git_remote_ops\":false,\"exec_pattern_allow\":[]}",
+        out3,
+    );
 }
 
 test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
