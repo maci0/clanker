@@ -1710,7 +1710,12 @@ fn toolJson(
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
     const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
-        log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+        if (err == error.UnknownTool) {
+            // Descriptor missing from tools_dir — not a missing .wasm rebuild.
+            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
+        } else {
+            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+        }
         return error.ToolWasmMissing;
     };
     defer mod.deinit();
@@ -3129,6 +3134,31 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     }
 }
 
+/// JSON `{"error":...}` body when the webui *descriptor* is absent from the
+/// tools registry (wrong/empty `tools_dir`, zero manifests). Distinct from a
+/// missing guest `.wasm`, which still wants `zig build tools`.
+fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dir: []const u8) ![]const u8 {
+    const detail = try std.fmt.allocPrint(
+        allocator,
+        "webui tool not found in registry (tools_dir={s}). Check agent.tools_dir points at the *.tool.json manifests directory.",
+        .{tools_dir},
+    );
+    defer allocator.free(detail);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("error");
+    try s.write(detail);
+    try s.endObject();
+    return try out.toOwnedSlice();
+}
+
+/// JSON body when the webui descriptor exists but its wasm module cannot be read.
+fn webuiMissingWasmError() []const u8 {
+    return "{\"error\":\"webui wasm missing (run zig build tools)\"}";
+}
+
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
 /// resulting HTML page.
 /// Renders one of the page's files through the webui tool. Returns the body,
@@ -3149,12 +3179,16 @@ fn renderWebui(
         return null;
     };
     const tool = reg.get("webui") orelse {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found (run zig build tools)\"}");
+        const body = webuiMissingRegistryError(arena, cfg.agent.tools_dir) catch {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found in registry\"}");
+            return null;
+        };
+        respond(stream, 500, "Internal Server Error", body);
         return null;
     };
     const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm read failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui wasm missing (run zig build tools)\"}");
+        respond(stream, 500, "Internal Server Error", webuiMissingWasmError());
         return null;
     };
     defer gpa.free(wasm_bytes);
@@ -5353,4 +5387,28 @@ test "renderModelSnippet emits valid, pasteable JSON with no trailing comma" {
     try std.testing.expectEqual(@as(i64, 1048576), entry.object.get("context_window").?.integer);
     try std.testing.expectEqual(@as(i64, 131072), entry.object.get("max_tokens").?.integer);
     try std.testing.expectEqualStrings("Kimi K3", entry.object.get("display").?.string);
+}
+
+test "webui registry-miss error names tools_dir and does not sole-blame zig build tools" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Drive the real helper renderWebui uses for the HTTP error body when
+    // reg.get("webui") is null — not a reimplementation of the string.
+    const body = try webuiMissingRegistryError(arena, "tools/no-such-manifests");
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    const err_msg = parsed.object.get("error").?.string;
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "tools/no-such-manifests") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "registry") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "tools_dir") != null);
+    // Sole-blaming guest rebuilds is the bug this test locks out.
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "zig build tools") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") == null);
+}
+
+test "webui wasm-miss error still points at zig build tools" {
+    const body = webuiMissingWasmError();
+    try std.testing.expect(std.mem.indexOf(u8, body, "wasm") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") != null);
 }
