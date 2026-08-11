@@ -9,6 +9,11 @@
       "includes": [
         "YES"
       ]
+    },
+    {
+      "excludes": [
+        "NO"
+      ]
     }
   ]
 }
