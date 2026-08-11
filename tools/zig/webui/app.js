@@ -129,6 +129,62 @@ function bind(node, state, render) {
   });
 }
 
+/* ---------- icons ----------
+
+   Drawn, not typed. A star glyph and a multiplication sign were standing in
+   for an icon system, which means they inherited the text face's weight and
+   could not share a stroke with anything. These are one 24-grid, one 1.75
+   stroke, square cap, and they take their colour from the text around them. */
+
+var ICON_PATHS = {
+  // A survey marker: the pin that says this layer matters.
+  pin: ["M12 3.5v9", "M7.5 12.5h9l-1.5 3h-6z", "M12 15.5v5"],
+  // Struck through: remove this entry.
+  strike: ["M5.5 5.5l13 13", "M18.5 5.5l-13 13"],
+  // A rule and tick: the depth column itself.
+  log: ["M6 4v16", "M6 8h5", "M6 13h8", "M6 18h4"],
+  // Loupe over the sheet.
+  find: ["M11 4.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z", "M16 16l3.5 3.5"],
+  // A sample vial: one recorded run.
+  sample: ["M9.5 3.5h5", "M10.5 3.5v6L7 19a1.5 1.5 0 001.4 2h7.2a1.5 1.5 0 001.4-2l-3.5-9.5v-6"],
+  // Two sheets: a copy.
+  copy: ["M8.5 8.5h10v11h-10z", "M5.5 15.5v-11h10"],
+  // A gate that held.
+  held: ["M5 12.5l4.5 4.5L19 7.5"],
+  // Deposited: an arrow settling onto the rule.
+  deposit: ["M12 4v12", "M7.5 11.5L12 16l4.5-4.5", "M5 20h14"],
+  // Disclosure, pointing at what it opens.
+  chevron: ["M9 6l6 6-6 6"],
+  // A question, drawn rather than typed.
+  help: ["M9 9a3 3 0 114 2.8c-.8.4-1 1-1 1.7v.5", "M12 17.5v.01"]
+};
+
+function icon(name, size) {
+  var paths = ICON_PATHS[name];
+  if (!paths) return document.createElement("span");
+  var ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size || 16));
+  svg.setAttribute("height", String(size || 16));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.75");
+  svg.setAttribute("stroke-linecap", "square");
+  svg.setAttribute("stroke-linejoin", "miter");
+  // Decorative in every use here: each icon sits beside or inside a control
+  // that already carries its own accessible name.
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add("icon");
+  paths.forEach(function (d) {
+    var path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
 var UI = {
   /* A button in the sheet's vocabulary. `kind` is "primary" for the one
      action a view exists for, "danger" for one that destroys, absent for the
@@ -772,6 +828,14 @@ function createTurn(task) {
   turn.className = "turn";
 
   // The stratum's index, set in the margin against the depth rule.
+  // The layer's lithology band, drawn in the gutter beside the depth rule.
+  // Kind is set as the turn resolves: model-only until a tool runs, failed if
+  // it did not hold.
+  var band = document.createElement("span");
+  band.className = "turn-band hatch-model";
+  band.setAttribute("aria-hidden", "true");
+  turn.appendChild(band);
+
   var depth = document.createElement("span");
   depth.className = "turn-depth";
   depth.textContent = String(el.transcript.querySelectorAll(".turn").length + 1);
@@ -1152,6 +1216,8 @@ function buildCodeBlock(lang, code) {
 }
 
 function addToolEvent(turn, names) {
+  var band = turn.root.querySelector(".turn-band");
+  if (band) band.className = "turn-band hatch-tool";
   var row = document.createElement("div");
   row.className = "event-tool";
   var spin = document.createElement("span");
@@ -1186,6 +1252,21 @@ function settleLastToolEvent(turn, ms) {
 
 function renderStats(turn, stats, task) {
   turn.foot.textContent = "";
+
+  /* Did this layer hold? A turn that produced an answer held; one that was
+     stopped, errored or ended early did not, and the band is hatched to match
+     so the column shows it without being read. */
+  var failed = turn.answer.querySelector(".failed") !== null ||
+    turn.answer.textContent.indexOf("[stopped]") !== -1 ||
+    turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
+  var band = turn.root.querySelector(".turn-band");
+  if (failed && band) band.className = "turn-band hatch-fail";
+  var held = document.createElement("span");
+  held.className = "turn-held";
+  held.setAttribute("data-held", String(!failed));
+  held.appendChild(icon(failed ? "strike" : "held", 14));
+  held.appendChild(document.createTextNode(failed ? "did not hold" : "held"));
+  turn.foot.appendChild(held);
   var parts = [];
   if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
     parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
@@ -1337,7 +1418,7 @@ function renderAttachments() {
     wrap.appendChild(thumb);
     var rm = document.createElement("button");
     rm.type = "button";
-    rm.textContent = "×";
+    rm.appendChild(icon("strike", 14));
     rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
     rm.addEventListener("click", function () {
       pendingImages.splice(i, 1);
@@ -3388,6 +3469,7 @@ function syncScrollButton() {
   el.scrollBottom.hidden = nearBottom() || !el.transcript.querySelector(".turn");
 }
 
+van.add(el.scrollBottom, icon("deposit", 14));
 el.scrollBottom.addEventListener("click", function () {
   window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
   el.task.focus();
@@ -3432,58 +3514,6 @@ SUGGESTIONS.forEach(function (text) {
 
 
 
-
-/* ---------- icons ----------
-
-   Drawn, not typed. A star glyph and a multiplication sign were standing in
-   for an icon system, which means they inherited the text face's weight and
-   could not share a stroke with anything. These are one 24-grid, one 1.75
-   stroke, square cap, and they take their colour from the text around them. */
-
-var ICON_PATHS = {
-  // A survey marker: the pin that says this layer matters.
-  pin: ["M12 3.5v9", "M7.5 12.5h9l-1.5 3h-6z", "M12 15.5v5"],
-  // Struck through: remove this entry.
-  strike: ["M5.5 5.5l13 13", "M18.5 5.5l-13 13"],
-  // A rule and tick: the depth column itself.
-  log: ["M6 4v16", "M6 8h5", "M6 13h8", "M6 18h4"],
-  // Loupe over the sheet.
-  find: ["M11 4.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z", "M16 16l3.5 3.5"],
-  // A sample vial: one recorded run.
-  sample: ["M9.5 3.5h5", "M10.5 3.5v6L7 19a1.5 1.5 0 001.4 2h7.2a1.5 1.5 0 001.4-2l-3.5-9.5v-6"],
-  // Two sheets: a copy.
-  copy: ["M8.5 8.5h10v11h-10z", "M5.5 15.5v-11h10"],
-  // A gate that held.
-  held: ["M5 12.5l4.5 4.5L19 7.5"],
-  // Deposited: an arrow settling onto the rule.
-  deposit: ["M12 4v12", "M7.5 11.5L12 16l4.5-4.5", "M5 20h14"]
-};
-
-function icon(name, size) {
-  var paths = ICON_PATHS[name];
-  if (!paths) return document.createElement("span");
-  var ns = "http://www.w3.org/2000/svg";
-  var svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", String(size || 16));
-  svg.setAttribute("height", String(size || 16));
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.75");
-  svg.setAttribute("stroke-linecap", "square");
-  svg.setAttribute("stroke-linejoin", "miter");
-  // Decorative in every use here: each icon sits beside or inside a control
-  // that already carries its own accessible name.
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  svg.classList.add("icon");
-  paths.forEach(function (d) {
-    var path = document.createElementNS(ns, "path");
-    path.setAttribute("d", d);
-    svg.appendChild(path);
-  });
-  return svg;
-}
 
 /* ---------- status, said out loud and shown ---------- */
 
@@ -4814,6 +4844,7 @@ SHORTCUTS.forEach(function (pair) {
   el.shortcuts.appendChild(dd);
 });
 
+van.add(el.helpOpen, icon("help", 15));
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
