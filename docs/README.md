@@ -105,9 +105,9 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 
 `clanker mcp` starts a Model Context Protocol server over stdio (JSON-RPC). It exposes the tool registry to MCP clients.
 
-### Peers (`src/peers/notify.zig`)
+### Peers (`tools/zig/peers.zig`)
 
-`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL.
+`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL. Both CLI commands dispatch into the sandboxed `peers` WASM tool (`src/cli.zig`'s `cmdNotify`/`cmdPhonebook`) rather than a native HTTP client, so peer traffic is gated by that tool's `network_from_config` allowlist like any model-initiated call.
 
 ### Token usage stats (`src/stats/tokens.zig`)
 

@@ -13,6 +13,10 @@ pub const Session = struct {
     messages: []const types.Message,
     created: i64,
     updated: i64,
+    /// Which workspace this conversation belongs to. A folder, not a tag: a
+    /// conversation is in exactly one, and "" means the default one, so a
+    /// session written before workspaces existed needs no migration.
+    workspace: []const u8 = "",
 };
 
 const store_dir = "state/sessions";
@@ -36,6 +40,10 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     try s.write(session.created);
     try s.objectField("updated");
     try s.write(session.updated);
+    if (session.workspace.len > 0) {
+        try s.objectField("workspace");
+        try s.write(session.workspace);
+    }
     try s.objectField("messages");
     try s.beginArray();
     for (session.messages) |m| {
@@ -96,6 +104,7 @@ const StoredSession = struct {
     title: []const u8,
     created: i64,
     updated: i64,
+    workspace: []const u8 = "",
     messages: []const StoredMessage = &.{},
 };
 
@@ -126,6 +135,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         .title = stored.title,
         .created = stored.created,
         .updated = stored.updated,
+        .workspace = stored.workspace,
         .messages = try messages.toOwnedSlice(arena),
     };
 }
@@ -150,6 +160,7 @@ pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     try saveSession(io, gpa, arena, base, .{
         .id = new_id,
         .title = try std.fmt.allocPrint(arena, "fork of {s}", .{s.title}),
+        .workspace = s.workspace,
         .messages = s.messages,
         .created = now,
         .updated = now,
@@ -166,6 +177,7 @@ pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocato
     try saveSession(io, gpa, arena, base, .{
         .id = s.id,
         .title = title,
+        .workspace = s.workspace,
         .messages = s.messages,
         .created = s.created,
         .updated = s.updated,
@@ -179,6 +191,7 @@ pub const SessionMeta = struct {
     title: []const u8 = "",
     created: i64 = 0,
     updated: i64 = 0,
+    workspace: []const u8 = "",
     messages: usize = 0,
     /// Total byte length of the transcript's message content (plus tool-call
     /// arguments). Compaction thresholds are in bytes, so a picker can show
@@ -216,6 +229,7 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
             .title = stored.title,
             .created = stored.created,
             .updated = stored.updated,
+            .workspace = stored.workspace,
             .messages = stored.messages.len,
             .bytes = bytes,
         }) catch continue;
@@ -373,4 +387,55 @@ test "listSessions reports the byte weight of each conversation" {
     defer tmp2.cleanup();
     const empty = try listSessions(io, arena, tmp2.dir);
     try std.testing.expectEqual(@as(usize, 0), empty.len);
+}
+
+/// Moves a conversation to a workspace. "" is the default one.
+pub fn setWorkspace(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    base: std.Io.Dir,
+    id: []const u8,
+    workspace: []const u8,
+) !void {
+    var s = try loadSession(io, gpa, arena, base, id);
+    s.workspace = workspace;
+    try saveSession(io, gpa, arena, base, s);
+}
+
+test "a workspace survives a save and load" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir: std.Io.Dir = .{ .handle = tmp.dir.fd };
+
+    try saveSession(io, allocator, arena, dir, .{
+        .id = "ws-test",
+        .title = "In a folder",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+        .workspace = "research",
+    });
+    const back = try loadSession(io, allocator, arena, dir, "ws-test");
+    try std.testing.expectEqualStrings("research", back.workspace);
+
+    // The default workspace is absence, so a session without one round-trips
+    // to the empty string rather than to a literal name.
+    try saveSession(io, allocator, arena, dir, .{
+        .id = "ws-none",
+        .title = "Loose",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+    });
+    const loose = try loadSession(io, allocator, arena, dir, "ws-none");
+    try std.testing.expectEqualStrings("", loose.workspace);
 }
