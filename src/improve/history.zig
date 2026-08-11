@@ -171,7 +171,11 @@ pub const History = struct {
             defer self.gpa.free(dst);
             self.base.createDirPath(self.io, dirName(dst)) catch {};
             copyFile(self.io, self.gpa, self.base, f, dst) catch |err| {
-                log.log(.warn, "snapshot of '{s}' failed: {s}", .{ f, @errorName(err) });
+                // A new file has no previous version to snapshot; that is not
+                // a failure and should not hide real snapshot problems.
+                if (err != error.FileNotFound) {
+                    log.log(.warn, "snapshot of '{s}' failed: {s}", .{ f, @errorName(err) });
+                }
             };
         }
     }
@@ -382,6 +386,40 @@ test "an edit already accepted is recognised, a different one is not" {
     const refused = History.changeFingerprint("src/a.zig", "x", "y");
     try hist.append("imp-2", .rejected, "i", "s", &.{"src/a.zig"}, 0.0, 0.0, "", &.{refused});
     try std.testing.expect(!try hist.alreadyAccepted(arena, &.{refused}));
+}
+
+test "snapshot silently skips a file that does not exist yet" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Write one file that exists; leave the other absent (a new file the
+    // proposal would create).
+    tmp.dir.createDirPath(io, "src") catch {};
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/existing.zig", .data = "existing content" });
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // snapshot must succeed without error even though src/new_file.zig does
+    // not exist; existing.zig must be copied.
+    try hist.snapshot("snap-1", &.{ "src/existing.zig", "src/new_file.zig" });
+
+    // The existing file was snapshotted.
+    const snapped = try tmp.dir.readFileAlloc(io, "state/history/snap-1/src/existing.zig", gpa, .limited(1 << 16));
+    defer gpa.free(snapped);
+    try std.testing.expectEqualStrings("existing content", snapped);
+
+    // The new file was not snapshotted (no file created for it).
+    const absent = tmp.dir.readFileAlloc(io, "state/history/snap-1/src/new_file.zig", gpa, .limited(1 << 16));
+    try std.testing.expectError(error.FileNotFound, absent);
 }
 
 test "append keeps every prior improvement" {
