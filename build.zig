@@ -62,6 +62,23 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // Logic that lives in a tool rather than in src/ still needs its tests run.
+    // `zig build test` compiled only src/main.zig, so every `test` block under
+    // tools/zig/ was dead: it built for wasm32-freestanding, where nothing runs
+    // it, and no host target ever saw it. Only tools that import nothing from
+    // the guest ABI can be tested this way — a module pulling in lib.zig
+    // declares `extern "env"` functions the host test binary cannot link — so
+    // the pure ones are listed rather than globbed, which is also what keeps
+    // "is this testable" an explicit property of a file.
+    for ([_][]const u8{"cards"}) |stem| {
+        const mod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
+            .target = test_target,
+            .optimize = optimize,
+        });
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod })).step);
+    }
     // The sandbox tests load zig-out/tools/*.wasm, which is build output and
     // therefore absent from a fresh checkout: `zig build test` failed there
     // with FileNotFound on a tool nobody had built yet. The improvement engine

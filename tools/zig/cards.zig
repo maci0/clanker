@@ -1,5 +1,8 @@
 //! Shared work items ("cards") across chatrooms: the one model for work that
-//! more than one clanker can see. This file was src/peers/todos.zig, which held
+//! more than one clanker can see. Pure: it folds a room's messages into cards
+//! and encodes the actions that change them, and it touches neither the host
+//! nor the filesystem, so tools/zig/board.zig runs it inside the sandbox while
+//! `zig build test` runs its tests on the host. This file was src/peers/todos.zig, which held
 //! a title, a claim and a closed flag; the Kanban board held the same work item
 //! again with columns, subtasks, dependencies, a log and a cost, in its own
 //! file. Two stores for one concept, and the web UI showed both panels side by
@@ -50,7 +53,17 @@
 //!          "completion_tokens":0,"cost":0.0,"run":"<run id>"}
 
 const std = @import("std");
-const chatrooms = @import("chatrooms.zig");
+
+/// One message from a room's log. Mirrors src/peers/chatrooms.zig's Message;
+/// declared here so the fold depends on nothing but std and can be tested on
+/// the host target rather than only inside a wasm sandbox.
+pub const Message = struct {
+    room: []const u8 = "",
+    from: []const u8,
+    text: []const u8,
+    ts: i64,
+    id: []const u8,
+};
 
 /// Message-text prefix marking a card action. Kept human-readable so the
 /// actions still make sense in plain chat_history output.
@@ -259,7 +272,7 @@ const State = struct {
 /// replica's log order still applies; combined with the per-field winner rules
 /// the result is independent of message order. Arena-owned, oldest-created
 /// first.
-pub fn derive(arena: std.mem.Allocator, msgs: []const chatrooms.Message) ![]Card {
+pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
     var by_id: std.StringArrayHashMapUnmanaged(State) = .empty;
 
     for (msgs) |m| {
@@ -458,12 +471,6 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const chatrooms.Message) ![]Card
     return out;
 }
 
-/// Reads the room's full log and derives its cards. Arena-owned.
-pub fn load(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8) ![]Card {
-    const msgs = try chatrooms.readHistory(base, io, gpa, arena, state_dir, room, 0, std.math.maxInt(usize));
-    return derive(arena, msgs);
-}
-
 pub fn get(cards: []Card, id: []const u8) ?*Card {
     for (cards) |*c| {
         if (std.mem.eql(u8, c.id, id)) return c;
@@ -487,7 +494,7 @@ pub fn blockedBy(cards: []Card, card: *const Card, arena: std.mem.Allocator) ![]
 
 const t_alloc = std.testing.allocator;
 
-fn msg(id: []const u8, from: []const u8, ts: i64, text: []const u8) chatrooms.Message {
+fn msg(id: []const u8, from: []const u8, ts: i64, text: []const u8) Message {
     return .{ .room = "dev", .from = from, .text = text, .ts = ts, .id = id };
 }
 
@@ -499,7 +506,7 @@ test "add + claim + close round-trip" {
     const add = try encodeAdd(arena, "ship the \"thing\"");
     const claim = try encodeClaim(arena, "m1");
     const close = try encodeClose(arena, "m1");
-    const msgs = [_]chatrooms.Message{
+    const msgs = [_]Message{
         msg("m1", "alpha", 100, add),
         msg("m2", "beta", 101, claim),
         msg("m3", "beta", 102, close),
@@ -526,8 +533,8 @@ test "concurrent claims resolve to the same winner in either log order" {
     const a = msg("m2-a", "alpha", 200, claim);
     const b = msg("m2-b", "beta", 200, claim);
 
-    const order1 = [_]chatrooms.Message{ msg("m1", "x", 100, add), a, b };
-    const order2 = [_]chatrooms.Message{ msg("m1", "x", 100, add), b, a };
+    const order1 = [_]Message{ msg("m1", "x", 100, add), a, b };
+    const order2 = [_]Message{ msg("m1", "x", 100, add), b, a };
     const t1 = try derive(arena, &order1);
     const t2 = try derive(arena, &order2);
     try std.testing.expectEqualStrings("alpha", t1[0].assignee);
@@ -542,7 +549,7 @@ test "claim delivered before its add still applies" {
 
     const add = try encodeAdd(arena, "task");
     const claim = try encodeClaim(arena, "m1");
-    const msgs = [_]chatrooms.Message{
+    const msgs = [_]Message{
         msg("m2", "beta", 101, claim), // fan-out beat the add to this replica
         msg("m1", "alpha", 100, add),
     };
@@ -561,13 +568,14 @@ test "a close and a later move converge on the move, in either order" {
     const add = try encodeAdd(arena, "task");
     const close = try encodeClose(arena, "m1");
     const back = try encode(arena, .{ .action = "move", .todo = "m1", .column = "doing" });
-    const order_a = [_]chatrooms.Message{ msg("m1", "x", 100, add), msg("m2", "alpha", 200, close), msg("m3", "beta", 300, back) };
-    const order_b = [_]chatrooms.Message{ msg("m1", "x", 100, add), msg("m3", "beta", 300, back), msg("m2", "alpha", 200, close) };
+    const order_a = [_]Message{ msg("m1", "x", 100, add), msg("m2", "alpha", 200, close), msg("m3", "beta", 300, back) };
+    const order_b = [_]Message{ msg("m1", "x", 100, add), msg("m3", "beta", 300, back), msg("m2", "alpha", 200, close) };
     const ca = try derive(arena, &order_a);
     const cb = try derive(arena, &order_b);
     try std.testing.expectEqualStrings("doing", ca[0].column);
     try std.testing.expectEqualStrings("doing", cb[0].column);
-    try std.testing.expectEqualStrings("claimed", cb[0].status());
+    // Nobody claimed it, and leaving done put it back to being unowned work.
+    try std.testing.expectEqualStrings("open", cb[0].status());
 }
 
 test "edits converge on the latest writer whatever the arrival order" {
@@ -578,8 +586,8 @@ test "edits converge on the latest writer whatever the arrival order" {
     const add = try encodeAdd(arena, "first");
     const e1 = try encode(arena, .{ .action = "update", .todo = "m1", .title = "second", .priority = "low" });
     const e2 = try encode(arena, .{ .action = "update", .todo = "m1", .title = "third" });
-    const order_a = [_]chatrooms.Message{ msg("m1", "x", 100, add), msg("m2", "a", 200, e1), msg("m3", "b", 300, e2) };
-    const order_b = [_]chatrooms.Message{ msg("m3", "b", 300, e2), msg("m2", "a", 200, e1), msg("m1", "x", 100, add) };
+    const order_a = [_]Message{ msg("m1", "x", 100, add), msg("m2", "a", 200, e1), msg("m3", "b", 300, e2) };
+    const order_b = [_]Message{ msg("m3", "b", 300, e2), msg("m2", "a", 200, e1), msg("m1", "x", 100, add) };
     const ca = try derive(arena, &order_a);
     const cb = try derive(arena, &order_b);
     try std.testing.expectEqualStrings("third", ca[0].title);
@@ -593,7 +601,7 @@ test "subtasks, dependencies and cost fold" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const msgs = [_]chatrooms.Message{
+    const msgs = [_]Message{
         msg("m1", "x", 100, try encodeAdd(arena, "parent")),
         msg("m2", "x", 101, try encodeAdd(arena, "blocker")),
         msg("s1", "x", 102, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .text = "write it" })),
@@ -626,7 +634,7 @@ test "usage cannot be made to wrap or go negative" {
     const arena = arena_state.allocator();
 
     const big = std.math.maxInt(u64);
-    const msgs = [_]chatrooms.Message{
+    const msgs = [_]Message{
         msg("m1", "x", 100, try encodeAdd(arena, "task")),
         msg("u1", "x", 101, try encode(arena, .{ .action = "usage", .todo = "m1", .prompt_tokens = big })),
         msg("u2", "x", 102, try encode(arena, .{ .action = "usage", .todo = "m1", .prompt_tokens = big })),
@@ -642,7 +650,7 @@ test "an action naming a card that does not exist is ignored" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const msgs = [_]chatrooms.Message{
+    const msgs = [_]Message{
         msg("m1", "x", 100, try encode(arena, .{ .action = "move", .todo = "nope", .column = "doing" })),
         msg("m2", "x", 101, try encode(arena, .{ .action = "add", .title = "real" })),
         msg("m3", "x", 102, try encode(arena, .{ .action = "move", .todo = "m2", .column = "nonsense" })),
@@ -662,7 +670,7 @@ test "fuzz: no message text makes the fold panic" {
             const arena = arena_state.allocator();
             var buf: [2048]u8 = undefined;
             const len = smith.slice(&buf);
-            const msgs = [_]chatrooms.Message{
+            const msgs = [_]Message{
                 msg("m1", "x", 100, try encodeAdd(arena, "task")),
                 msg("m2", "y", 101, buf[0..len]),
             };
