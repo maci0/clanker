@@ -1,6 +1,7 @@
 //! Entry point: process setup, config/dotenv bootstrap, then hand off to cli.run.
 
 const std = @import("std");
+const vaxis = @import("vaxis");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
@@ -8,6 +9,21 @@ const autolearn = @import("agent/autolearn.zig");
 const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const config = @import("config.zig");
+
+// `clanker repl` (src/tui2/repl_vaxis.zig) puts the terminal in raw mode with
+// an alt-screen buffer. Without this, a panic there leaves the terminal
+// broken (raw mode, alt-screen, mouse tracking all still on) with the panic
+// message invisible inside the alt-screen that never gets popped, so the
+// operator sees a hung, garbled terminal instead of the crash. This resets
+// terminal state first, then falls through to the normal panic handler.
+// (vaxis.Panic itself targets an older 3-arg std.builtin panic ABI than this
+// Zig version's 2-arg one, so it can't be used directly here.)
+pub const panic = std.debug.FullPanic(handlePanic);
+
+fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
+    vaxis.recover();
+    std.debug.defaultPanic(msg, ret_addr);
+}
 
 // Zig 0.16 only runs test blocks in the root file; reference every module
 // containing tests so `zig build test` picks them all up.

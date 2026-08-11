@@ -966,7 +966,7 @@ fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id:
     };
     const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
     return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\n", .{
-        provider_id, model_id, @as(i64, @trunc(ctx)),   @as(i64, @trunc(out_limit)),
+        provider_id, model_id, @as(i64, @trunc(ctx)),          @as(i64, @trunc(out_limit)),
         cost_in,     cost_out, if (reasoning) "yes" else "no",
     });
 }
@@ -3466,6 +3466,14 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
             if (m.value_ptr.top_p) |t| {
                 s.objectField("top_p") catch return;
                 s.write(t) catch return;
+            }
+            if (m.value_ptr.cost_per_1m_input) |c| {
+                s.objectField("cost_per_1m_input") catch return;
+                s.write(c) catch return;
+            }
+            if (m.value_ptr.cost_per_1m_output) |c| {
+                s.objectField("cost_per_1m_output") catch return;
+                s.write(c) catch return;
             }
             s.endObject() catch return;
         }

@@ -4,7 +4,7 @@
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   display: block;
-  max-width: 100%;
+  max-width: none;
   margin: var(--space-4) 0;
   border: 1px solid var(--rule);
   border-radius: var(--radius);

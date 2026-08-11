@@ -87,8 +87,7 @@ task; `clanker --help` prints usage.
 | `help` / `--help` | Print usage |
 | `version` / `--version` | Print the version |
 | `init` | Create `config.local.json` + `state/` |
-| `providers check [name]` | Verify provider connectivity |
-| `providers models [name]` | List a provider's models |
+| `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, or query the models.dev catalog |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
 | `sessions` | List saved sessions |
@@ -110,5 +109,8 @@ task; `clanker --help` prints usage.
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
 | `autolearn` | Aggregate usage into roadmap items |
+| `setup` | Guided first run: check config, keys and tools |
+| `doctor` | Diagnose config, credentials and build outputs |
+| `janitor [--yes]` | Sweep up what old runs left behind (also `clanker prune`) |
 
 For full documentation, see [docs/README.md](docs/README.md).

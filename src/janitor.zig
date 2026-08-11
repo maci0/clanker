@@ -1,4 +1,4 @@
-//! `clanker prune`: the janitor. Sweeps up what the harness leaves behind.
+//! `clanker janitor` (aka `clanker prune`): sweeps up what the harness leaves behind.
 //!
 //! Three kinds of litter, all of them real rather than hypothetical:
 //!
@@ -178,8 +178,17 @@ const quips = [_][]const u8{
     "Is nothing. Small job.",
     "I am only cleaner.",
     "Excuse me. One moment.",
-    "Is my job, hehe.",
-    "Okay. Floor good now.",
+    "Hold my mop.",
+    "You train? I clean. Same thing.",
+    "Nobody clean this. Okay. I clean this.",
+    "Is heavy? For you maybe.",
+    "I do not lift. I tidy.",
+    "Half gigabyte. Is like warm up.",
+    "First mop. Then we talk.",
+    "Do not worry. I am professional.",
+    "Somebody drop 300 megabyte. I say nothing.",
+    "Is fine. Floor is my gym.",
+    "Okay. Finish. Where is next mess.",
 };
 
 fn quip(n: usize) []const u8 {

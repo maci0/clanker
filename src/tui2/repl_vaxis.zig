@@ -16,13 +16,14 @@
 //! event-driven, same principle as this session's KeyReader poll() fix in
 //! the old REPL.
 //!
-//! Deliberately not yet built (documented gaps, not oversights): slash
-//! command palette/tab-complete (only a fixed set of quit commands is
-//! handled),
-//! inline ask_user/approval prompts (falls back to the same "nobody
-//! attached" default a headless run gets), manual scroll-back (the
-//! transcript always shows its tail), and the left-bar tool-card styling
-//! from the old transcript.zig (tool calls render as plain dim lines here).
+//! Deliberately not yet built (documented gaps, not oversights): a general
+//! slash-command palette/tab-complete (only quit and `/model` are handled —
+//! `/model` opens a fuzzy provider/model picker, `handlePickerKey`, styled
+//! like Kimi Code's), inline ask_user/approval prompts (falls back to the
+//! same "nobody attached" default a headless run gets), manual scroll-back
+//! (the transcript always shows its tail), and the left-bar tool-card
+//! styling from the old transcript.zig (tool calls render as plain dim
+//! lines here).
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -129,6 +130,91 @@ const Line = struct {
     fence_lang: ?[]const u8 = null,
 };
 
+/// One entry in the `/model` picker: a provider/model pair flattened out of
+/// `Config.providers` so the picker can filter and sort without walking the
+/// nested map on every keystroke.
+const ModelCandidate = struct {
+    provider: []const u8,
+    model: []const u8,
+    display: []const u8,
+    context_window: u32,
+    cost_in: ?f64,
+    cost_out: ?f64,
+};
+
+/// Flattens every configured provider's models into one list, in config
+/// order (providers, then models within a provider), which is what makes the
+/// picker's unfiltered list read as grouped-by-provider without a separate
+/// sort pass.
+fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]const ModelCandidate {
+    var out: std.ArrayList(ModelCandidate) = .empty;
+    var pit = cfg.providers.iterator();
+    while (pit.next()) |pentry| {
+        var mit = pentry.value_ptr.models.iterator();
+        while (mit.next()) |mentry| {
+            try out.append(arena, .{
+                .provider = pentry.key_ptr.*,
+                .model = mentry.key_ptr.*,
+                .display = mentry.value_ptr.display orelse mentry.key_ptr.*,
+                .context_window = mentry.value_ptr.context_window,
+                .cost_in = mentry.value_ptr.cost_per_1m_input,
+                .cost_out = mentry.value_ptr.cost_per_1m_output,
+            });
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// Case-insensitive subsequence match ("kc3" finds "kimi-k3"): the same
+/// forgiving-order fuzzy match the web UI's command palette and saved-prompt
+/// list already use (`fuzzyMatch` in `tools/zig/webui/app.js`), so `/model`
+/// behaves like the picker it is modeled on rather than inventing a second
+/// notion of "fuzzy" for the terminal.
+fn fuzzyMatch(query: []const u8, haystack: []const u8) bool {
+    if (query.len == 0) return true;
+    var qi: usize = 0;
+    for (haystack) |c| {
+        if (qi >= query.len) break;
+        if (std.ascii.toLower(c) == std.ascii.toLower(query[qi])) qi += 1;
+    }
+    return qi == query.len;
+}
+
+test "fuzzyMatch is a case-insensitive subsequence match" {
+    try std.testing.expect(fuzzyMatch("", "kimi-k3"));
+    try std.testing.expect(fuzzyMatch("kk3", "kimi-k3"));
+    try std.testing.expect(fuzzyMatch("K3", "kimi-k3"));
+    try std.testing.expect(fuzzyMatch("moon k3", "moonshot k3-code"));
+    try std.testing.expect(!fuzzyMatch("xyz", "kimi-k3"));
+    try std.testing.expect(!fuzzyMatch("3k", "kimi-k3")); // order matters
+}
+
+test "buildModelCandidates flattens providers in config order, one entry per model" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "kimi-k3", try config.Provider.single(arena, "kimi-k3", "https://api.moonshot.ai/v1", .openai_compat, "kimi-k3", .{
+        .context_window = 1048576,
+        .cost_per_1m_input = 3,
+        .cost_per_1m_output = 15,
+        .display = "moonshotai/kimi-k3",
+    }));
+    try cfg.providers.put(arena, "deepseek", try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-chat", .{
+        .context_window = 65536,
+    }));
+
+    const cands = try buildModelCandidates(arena, &cfg);
+    try std.testing.expectEqual(@as(usize, 2), cands.len);
+    try std.testing.expectEqualStrings("kimi-k3", cands[0].provider);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", cands[0].display); // display overrides the bare model id
+    try std.testing.expectEqual(@as(?f64, 3), cands[0].cost_in);
+    try std.testing.expectEqualStrings("deepseek", cands[1].provider);
+    try std.testing.expectEqualStrings("deepseek-chat", cands[1].display); // no display set: falls back to the model id
+    try std.testing.expectEqual(@as(?f64, null), cands[1].cost_in);
+}
+
 /// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "latte",
 /// "frappe", "macchiato", "tokyonight", "storm", "day", "mono", "default").
 /// An env var rather than a flag because the REPL is also reached
@@ -191,6 +277,15 @@ const Model = struct {
     /// answer on a delay, some never answer). A second paste shortcut while
     /// pending re-sends the request, which is harmless.
     awaiting_clipboard: bool = false,
+
+    /// Every configured provider/model, flattened once at startup (config
+    /// does not change mid-session). `/model` opens `picker_open`, and while
+    /// it's true every key press is routed to `handlePickerKey` instead of
+    /// the normal input handling below — a small modal, not a second widget.
+    model_candidates: []const ModelCandidate = &.{},
+    picker_open: bool = false,
+    picker_query: std.ArrayList(u8) = .empty,
+    picker_selected: usize = 0,
 
     fn widget(self: *Model) vxfw.Widget {
         return .{
@@ -259,6 +354,14 @@ const Model = struct {
             return;
         }
 
+        // "/model" alone opens the picker on the full list; "/model kimi"
+        // seeds it with a starting query, so a remembered partial name is
+        // one Enter away instead of a blank list to type into again.
+        if (std.mem.eql(u8, task, "/model") or std.mem.startsWith(u8, task, "/model ")) {
+            self.openModelPicker(if (task.len > 6) std.mem.trim(u8, task[6..], " ") else "");
+            return;
+        }
+
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
@@ -278,6 +381,91 @@ const Model = struct {
         try ctx.tick(50, self.widget());
     }
 
+    fn openModelPicker(self: *Model, seed_query: []const u8) void {
+        self.picker_open = true;
+        self.picker_query.clearRetainingCapacity();
+        self.picker_query.appendSlice(self.arena, seed_query) catch {};
+        self.picker_selected = 0;
+    }
+
+    fn closeModelPicker(self: *Model) void {
+        self.picker_open = false;
+        self.picker_query.clearRetainingCapacity();
+    }
+
+    /// Candidates whose "provider display" matches the current query, in
+    /// `model_candidates` order (config order, so unfiltered is grouped by
+    /// provider). Filters into `self.arena` on every keystroke rather than
+    /// caching: the candidate list itself is small (one provider's worth of
+    /// models, times however many providers are configured — tens, not
+    /// thousands), so re-scanning it is cheaper than the bookkeeping to
+    /// avoid doing so.
+    fn filteredCandidates(self: *Model) []const ModelCandidate {
+        var out: std.ArrayList(ModelCandidate) = .empty;
+        for (self.model_candidates) |c| {
+            var buf: [192]u8 = undefined;
+            const haystack = std.fmt.bufPrint(&buf, "{s} {s}", .{ c.provider, c.display }) catch c.display;
+            if (fuzzyMatch(self.picker_query.items, haystack)) out.append(self.arena, c) catch break;
+        }
+        return out.items;
+    }
+
+    /// Switches the active provider/model for the *next* turn onward — the
+    /// conversation (`self.messages`) is untouched, so the switch lands
+    /// mid-session exactly like `--model` does at startup, just later.
+    fn applyModelSelection(self: *Model, cand: ModelCandidate) void {
+        if (self.cfg.provider(cand.provider)) |p| {
+            var np = p.*;
+            np.default_model = cand.model;
+            self.provider = np;
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "[model: {s}/{s}]", .{ cand.provider, cand.model }) catch "[model switched]",
+                .dim = true,
+            }) catch {};
+        } else |_| {
+            // Can't happen: cand.provider always came from cfg.providers in
+            // buildModelCandidates, but a config reload mid-session (not
+            // currently possible) would make this reachable, so fail quiet
+            // rather than unreachable().
+            self.lines.append(self.arena, .{ .text = "[model: provider no longer configured]", .dim = true }) catch {};
+        }
+    }
+
+    fn handlePickerKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
+        if (key.matches(vaxis.Key.escape, .{})) {
+            self.closeModelPicker();
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.enter, .{})) {
+            const matches = self.filteredCandidates();
+            if (matches.len > 0) self.applyModelSelection(matches[@min(self.picker_selected, matches.len - 1)]);
+            self.closeModelPicker();
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.up, .{})) {
+            if (self.picker_selected > 0) self.picker_selected -= 1;
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.down, .{})) {
+            const n = self.filteredCandidates().len;
+            if (n > 0 and self.picker_selected + 1 < n) self.picker_selected += 1;
+            return ctx.consumeAndRedraw();
+        }
+        if (key.matches(vaxis.Key.backspace, .{})) {
+            if (self.picker_query.items.len > 0) {
+                _ = self.picker_query.pop();
+                self.picker_selected = 0;
+            }
+            return ctx.consumeAndRedraw();
+        }
+        if (key.text) |t| {
+            try self.picker_query.appendSlice(self.arena, t);
+            self.picker_selected = 0;
+            return ctx.consumeAndRedraw();
+        }
+        return ctx.consumeAndRedraw();
+    }
+
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         const self: *Model = @ptrCast(@alignCast(ptr));
         switch (event) {
@@ -293,6 +481,9 @@ const Model = struct {
                 ctx.redraw = true;
             },
             .key_press => |key| {
+                // The picker is modal: every key goes to it, none of the
+                // clipboard/history/quit shortcuts below apply while it's open.
+                if (self.picker_open) return self.handlePickerKey(ctx, key);
                 // Terminal convention: Ctrl+Shift+C copies the current
                 // selection (mouse-drag, same path as a drag release),
                 // falling back to the whole input line. Plain Ctrl+C keeps
@@ -570,10 +761,49 @@ const Model = struct {
         }
 
         if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
+        if (self.picker_open) self.drawModelPicker(surface, rule_style, tool_style);
         self.last_surface = surface;
 
         surface.children = children;
         return surface;
+    }
+
+    /// Draws the `/model` picker as a modal box over the tail of the
+    /// transcript, just above the input — same left-bar box style as the
+    /// input itself (`drawBox`), so it reads as part of this REPL rather
+    /// than a bolted-on popup.
+    fn drawModelPicker(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, sel_style: vaxis.Style) void {
+        const matches = self.filteredCandidates();
+        const max_rows: u16 = 8;
+        const rows_shown: u16 = @intCast(@min(matches.len, max_rows));
+        const h: u16 = rows_shown + 3; // top border + query line + rows + bottom border
+        if (surface.size.width < 8) return;
+        const y = self.transcript_bottom -| h;
+        drawBox(surface, 0, y, surface.size.width, h, rule_style);
+
+        var qbuf: [256]u8 = undefined;
+        const qline = std.fmt.bufPrint(&qbuf, "/model {s}\xe2\x96\x8f", .{self.picker_query.items}) catch "/model";
+        writeRow(surface, y + 1, qline, .{ .bold = true });
+
+        if (matches.len == 0) {
+            writeRow(surface, y + 2, "  no matching provider/model", .{ .dim = true });
+            return;
+        }
+        const sel = @min(self.picker_selected, matches.len - 1);
+        var row: u16 = y + 2;
+        for (matches[0..rows_shown], 0..) |cand, i| {
+            var lbuf: [256]u8 = undefined;
+            const marker: []const u8 = if (i == sel) "\xe2\x80\xba " else "  ";
+            const line = if (cand.cost_in != null or cand.cost_out != null)
+                std.fmt.bufPrint(&lbuf, "{s}{s}/{s}  {d} ctx  ${d}/${d} per 1M", .{
+                    marker,                cand.provider,          cand.display, cand.context_window,
+                    cand.cost_in orelse 0, cand.cost_out orelse 0,
+                }) catch continue
+            else
+                std.fmt.bufPrint(&lbuf, "{s}{s}/{s}  {d} ctx", .{ marker, cand.provider, cand.display, cand.context_window }) catch continue;
+            writeRow(surface, row, line, if (i == sel) sel_style else .{});
+            row += 1;
+        }
     }
 
     /// Renders the live streaming buffer as plain wrapped text. The buffer
@@ -818,6 +1048,7 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
         .tool_defs = tool_defs,
         .text_field = vxfw.TextField.init(gpa),
     };
+    model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     defer model.text_field.deinit();
 
     try app.run(model.widget(), .{});

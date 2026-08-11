@@ -90,6 +90,8 @@ var el = {
   transcriptEmpty: document.getElementById("transcript-empty"),
   suggestions: document.getElementById("suggestions"),
   modelSelect: document.getElementById("model-select"),
+  modelSearch: document.getElementById("model-search"),
+  modelList: document.getElementById("model-list"),
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
   enterSends: document.getElementById("enter-sends"),
@@ -3611,6 +3613,15 @@ function setTabCount(view, n) {
    composer had neither, so every run through the page used the default. */
 var providerCache = [];
 
+/* The hidden <select> stays the single source of truth for "what did the
+   user pick" (runOptions(), localStorage, the change listener below all
+   already read it) — the visible fuzzy search box is a second view onto the
+   same value, not a replacement for it, which is why loadProviders() still
+   builds every <option> exactly as before. modelIndex is the flat list the
+   search box filters; it carries the pricing/context metadata the plain
+   <select> never showed. */
+var modelIndex = [];
+
 function loadProviders() {
   return fetch("/api/providers")
     .then(readJson)
@@ -3619,15 +3630,25 @@ function loadProviders() {
       // Usage may have rendered before this arrived; its labels come from here.
       if (allUsage.length) renderUsage(null);
       el.modelSelect.textContent = "";
+      modelIndex = [];
       (d.providers || []).forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
         (prov.models || []).forEach(function (m) {
+          var value = prov.name + " " + m.name;
+          var label = m.display || m.name;
+          var meta = [];
+          if (m.context_window) meta.push(fmtInt(m.context_window) + " ctx");
+          if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
+            meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
+                       " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
+          }
           var opt = document.createElement("option");
-          opt.value = prov.name + " " + m.name;
-          opt.textContent = (m.display || m.name) + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+          opt.value = value;
+          opt.textContent = label + (meta.length ? "  .  " + meta.join("  .  ") : "");
           if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
           group.appendChild(opt);
+          modelIndex.push({ value: value, provider: prov.name, model: m.name, label: label, meta: meta.join("  ·  ") });
         });
         el.modelSelect.appendChild(group);
       });
@@ -3636,6 +3657,7 @@ function loadProviders() {
       if (saved && el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
         el.modelSelect.value = saved;
       }
+      syncModelSearchLabel();
     })
     .catch(function () {
       // Providers are informational: a failure here must not stop a run,
@@ -3644,12 +3666,119 @@ function loadProviders() {
       opt.value = "";
       opt.textContent = "config default";
       el.modelSelect.appendChild(opt);
+      syncModelSearchLabel();
     });
 }
 
 el.modelSelect.addEventListener("change", function () {
   try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
   renderContextMeter();
+  syncModelSearchLabel();
+});
+
+/* Mirrors the hidden select's current choice into the visible search box's
+   label, the way a closed <select> shows its chosen option. */
+function syncModelSearchLabel() {
+  var entry = null;
+  for (var i = 0; i < modelIndex.length; i++) {
+    if (modelIndex[i].value === el.modelSelect.value) { entry = modelIndex[i]; break; }
+  }
+  el.modelSearch.value = entry ? entry.provider + " / " + entry.label : "";
+}
+
+var modelListIndex = 0;
+
+function renderModelList() {
+  var q = el.modelSearch.value.trim().toLowerCase();
+  var matches = modelIndex.filter(function (e) { return fuzzyMatch(q, e.provider + " " + e.label); });
+  el.modelList.textContent = "";
+  if (!matches.length) { hideModelList(); return; }
+  if (modelListIndex >= matches.length) modelListIndex = 0;
+  var lastProvider = null;
+  matches.forEach(function (entry, i) {
+    if (entry.provider !== lastProvider) {
+      lastProvider = entry.provider;
+      var header = document.createElement("li");
+      header.className = "palette-kind-header";
+      header.textContent = entry.provider;
+      header.setAttribute("role", "presentation");
+      el.modelList.appendChild(header);
+    }
+    var li = document.createElement("li");
+    li.className = "palette-item";
+    li.id = "model-item-" + i;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === modelListIndex));
+    var label = document.createElement("span");
+    label.className = "palette-label";
+    label.textContent = entry.label;
+    li.appendChild(label);
+    if (entry.meta) {
+      var meta = document.createElement("span");
+      meta.className = "model-meta";
+      meta.textContent = entry.meta;
+      li.appendChild(meta);
+    }
+    li.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      selectModel(entry);
+    });
+    el.modelList.appendChild(li);
+  });
+  el.modelList.hidden = false;
+  el.modelSearch.setAttribute("aria-expanded", "true");
+  el.modelSearch.setAttribute("aria-activedescendant", "model-item-" + modelListIndex);
+  el.modelList.setAttribute("data-count", String(matches.length));
+  return matches;
+}
+
+function hideModelList() {
+  el.modelList.hidden = true;
+  el.modelList.textContent = "";
+  el.modelSearch.setAttribute("aria-expanded", "false");
+  el.modelSearch.removeAttribute("aria-activedescendant");
+}
+
+function selectModel(entry) {
+  el.modelSelect.value = entry.value;
+  // The <select> already owns persistence + the context meter; firing its
+  // own listener keeps this one source of truth instead of duplicating it.
+  el.modelSelect.dispatchEvent(new Event("change"));
+  hideModelList();
+  el.modelSearch.blur();
+}
+
+el.modelSearch.addEventListener("focus", function () {
+  el.modelSearch.select();
+  renderModelList();
+});
+el.modelSearch.addEventListener("input", function () { modelListIndex = 0; renderModelList(); });
+el.modelSearch.addEventListener("blur", function () {
+  window.setTimeout(function () { hideModelList(); syncModelSearchLabel(); }, 120);
+});
+el.modelSearch.addEventListener("keydown", function (e) {
+  if (el.modelList.hidden) return;
+  var items = el.modelList.querySelectorAll(".palette-item");
+  if (!items.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    modelListIndex = (modelListIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    renderModelList();
+    return;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hideModelList();
+    syncModelSearchLabel();
+    el.modelSearch.blur();
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    var matches = renderModelList() || [];
+    if (matches[modelListIndex]) selectModel(matches[modelListIndex]);
+    return;
+  }
 });
 
 /* Everything the composer adds to a run, in one place, so the submit handler

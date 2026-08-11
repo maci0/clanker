@@ -143,8 +143,14 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                 role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
-        <label for="model-select">Model</label>
-        <select id="model-select" title="Which provider and model runs this task"></select>
+        <label for="model-search">Model</label>
+        <div class="model-picker">
+          <input type="text" id="model-search" class="model-search" placeholder="config default" autocomplete="off"
+                 role="combobox" aria-controls="model-list" aria-autocomplete="list" aria-expanded="false"
+                 title="Which provider and model runs this task — type to fuzzy-search">
+          <ul class="palette-list model-list" id="model-list" role="listbox" aria-label="Provider and model" hidden></ul>
+        </div>
+        <select id="model-select" hidden aria-hidden="true" tabindex="-1"></select>
         <details class="more" id="params">
           <summary>Options</summary>
           <div class="more-actions params-grid">

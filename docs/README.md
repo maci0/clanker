@@ -375,7 +375,7 @@ iter 2
 | `help` | Print usage; `--help` / `-h` anywhere does the same |
 | `version` | Print the version; `--version` anywhere does the same |
 | `init` | Create `config.local.json` and `state/` |
-| `providers check [name]` | Verify provider connectivity |
+| `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, search the models.dev catalog, or print catalog specs for configured models |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
@@ -397,6 +397,9 @@ iter 2
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `stats` | Token usage per provider/model |
 | `serve [--port N]` | HTTP server + web UI (default port 17921) |
+| `setup` | Guided first run: check config, keys and tools |
+| `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
+| `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
 
 ## Configuration
 
@@ -528,6 +531,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/plugins` | GET, POST | List plugins, or toggle one on/off |
 | `/api/plugins/config` | POST | Update a plugin's `config` object |
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |
+| `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
