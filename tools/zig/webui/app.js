@@ -3633,14 +3633,24 @@ function showToast(text) {
   if (!text) return;
   var node = document.createElement("p");
   node.className = "toast";
+  node.tabIndex = 0;
   // The word "failed" is the one distinction worth colour: everything else
   // is progress, and progress does not need to shout.
   if (/fail|error|could not|refus|denied|no such/i.test(text)) node.setAttribute("data-kind", "bad");
   node.textContent = text;
   node.addEventListener("click", function () { node.remove(); });
+  // A 5s timer is too short to read a long message, so hovering or focusing
+  // it (mouse or keyboard) holds it on screen; it resumes counting down once
+  // you look away, rather than vanishing mid-read.
+  var timer;
+  function schedule() { timer = window.setTimeout(function () { node.remove(); }, 5000); }
+  node.addEventListener("mouseenter", function () { window.clearTimeout(timer); });
+  node.addEventListener("mouseleave", schedule);
+  node.addEventListener("focusin", function () { window.clearTimeout(timer); });
+  node.addEventListener("focusout", schedule);
   toasts.appendChild(node);
   while (toasts.children.length > 3) toasts.removeChild(toasts.firstChild);
-  window.setTimeout(function () { node.remove(); }, 5000);
+  schedule();
 }
 
 if (window.MutationObserver) {
