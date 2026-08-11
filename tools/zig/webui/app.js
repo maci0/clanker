@@ -12,6 +12,7 @@ import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSu
 import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMod, doneColumn as doneColumnMod, blockers as blockersMod, dueState as dueStateMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark } from "./core/search.js";
+import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel } from "./core/composer.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -3317,14 +3318,9 @@ el.goalForm.addEventListener("submit", function (e) {
 /* Every one of these UIs has a prompt library, and the reason is the same:
    the tasks worth repeating are long, and retyping them is where the habit
    of using the tool dies. */
-function loadPrompts() {
-  try { return JSON.parse(window.localStorage.getItem("clanker.prompts") || "[]"); } catch (e) { return []; }
-}
+var loadPrompts = compLoadPrompts;
+var savePrompts = function () { compSavePrompts(prompts); };
 var prompts = loadPrompts();
-
-function savePrompts() {
-  try { window.localStorage.setItem("clanker.prompts", JSON.stringify(prompts)); } catch (e) {}
-}
 
 el.promptSave.addEventListener("click", function () {
   var text = el.task.value.trim();
@@ -3343,10 +3339,7 @@ el.promptSave.addEventListener("click", function () {
 
 var promptIndex = 0;
 
-function promptQuery() {
-  var v = el.task.value;
-  return v.charAt(0) === "/" ? v.slice(1).toLowerCase() : null;
-}
+function promptQuery() { return compPromptQuery(el.task.value); }
 
 function renderPromptList() {
   var q = promptQuery();
@@ -3438,36 +3431,14 @@ el.task.addEventListener("keydown", function (e) {
 /* Grows with what is being written, up to a third of the viewport, then
    scrolls: a five-line task in a two-line box is a scroll bar you have to
    fight while composing. */
-function autoGrow() {
-  el.task.style.height = "auto";
-  var cap = Math.round(window.innerHeight / 3);
-  el.task.style.height = Math.min(el.task.scrollHeight, cap) + "px";
-}
+function autoGrow() { compAutoGrow(el.task); }
 el.task.addEventListener("input", autoGrow);
 window.addEventListener("resize", autoGrow);
 
 /* Compaction is driven by transcript bytes against the model's context, and
    both numbers already exist; nothing was showing the ratio. */
 function renderContextMeter() {
-  var meta = currentSessionMeta();
-  if (!meta || typeof meta.bytes !== "number" || !meta.bytes) {
-    el.contextMeter.textContent = "";
-    return;
-  }
-  var pair = (el.modelSelect.value || "").split(" ");
-  var window_ = 0;
-  (providerCache || []).forEach(function (prov) {
-    if (prov.name !== pair[0]) return;
-    (prov.models || []).forEach(function (m) { if (m.name === pair[1]) window_ = m.context_window || 0; });
-  });
-  if (!window_) {
-    el.contextMeter.textContent = fmtBytes(meta.bytes) + " of history";
-    return;
-  }
-  // Four bytes to the token is the same rough conversion the improve loop
-  // budgets with; it is a gauge, not an accountant.
-  var pct = Math.round((meta.bytes / 4) / window_ * 100);
-  el.contextMeter.textContent = fmtBytes(meta.bytes) + " · about " + pct + "% of context";
+  el.contextMeter.textContent = compContextLabel(currentSessionMeta(), providerCache, el.modelSelect.value, fmtBytes);
 }
 
 /* ---------- conversation utilities ---------- */
