@@ -378,6 +378,7 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         break :blk msgs;
     };
     var err_detail: ?[]const u8 = null;
+    const llm_start_ns = std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds;
     const resp = client.chat(access.ctx, arena, .{
         .provider = provider,
         .messages = messages,
@@ -389,6 +390,8 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const content = resp.message.content orelse "";
     // Approximate token usage: 4 bytes per token (rough heuristic).
     const est_tokens: u64 = @intCast(@min(content.len / 4, std.math.maxInt(u32)));
+    const llm_ms = @divTrunc(std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds - llm_start_ns, std.time.ns_per_ms);
+    log.log(.info, "[llm] ✓ ck_llm … {d}ms (~{d} est. tokens)", .{ llm_ms, est_tokens });
     if (h.sandbox.session_token_budget > 0) {
         if (h.sandbox.used_session_tokens + est_tokens > h.sandbox.session_token_budget) {
             log.log(.warn, "[llm] session token budget exceeded", .{});
@@ -1522,6 +1525,8 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         }
     }
 
+    log.log(.info, "[exec] → {s}", .{cmd});
+    const exec_start_ns = std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds;
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
         .cwd = .{ .dir = exec_dir },
@@ -1535,6 +1540,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         .exited => |c| c,
         else => 1,
     };
+    const exec_ms = @divTrunc(std.Io.Timestamp.now(h.sandbox.io, .real).nanoseconds - exec_start_ns, std.time.ns_per_ms);
+    if (code == 0) {
+        log.log(.info, "[exec] ✓ {s} … {d}ms", .{ cmd, exec_ms });
+    } else {
+        log.log(.info, "[exec] ✗ {s} … {d}ms — exit code {d}", .{ cmd, exec_ms, code });
+    }
 
     const wbuf = h.sandbox.gpa.alloc(u8, 96 * 1024) catch return Err.too_large;
     defer h.sandbox.gpa.free(wbuf);
