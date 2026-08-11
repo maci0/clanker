@@ -955,7 +955,7 @@ mark {
 .suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
 .toasts {
-  position: fixed; right: var(--space-5); top: var(--space-5); z-index: 30;
+  position: fixed; right: var(--space-5); top: calc(var(--space-5) + 3.5rem); z-index: 30;
   display: flex; flex-direction: column; gap: var(--space-2);
   align-items: flex-end; pointer-events: none;
 }
