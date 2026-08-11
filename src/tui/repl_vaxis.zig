@@ -512,7 +512,7 @@ const Model = struct {
             break :blk t;
         };
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
-        session.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
+        session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
             .id = id,
             .title = title,
             .messages = transcript.items,
@@ -1232,8 +1232,8 @@ fn validSessionId(id: []const u8) bool {
 /// Returns null when there are none, so a first `--continue` starts a fresh
 /// session rather than failing at someone who has not made one yet.
 fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    const metas = session.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
-    var best: ?session.SessionMeta = null;
+    const metas = session_mod.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
+    var best: ?session_mod.SessionMeta = null;
     for (metas) |m| {
         if (best == null or m.updated > best.?.updated) best = m;
     }
@@ -1367,18 +1367,18 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // path fragment under state/sessions/, so it is validated before either
     // load or save.
     model.session_created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var session_id = opts.session;
-    if (session_id == null and opts.continue_last) session_id = latestSessionId(io, arena);
-    if (session_id) |sid| {
+    var exit_session_id = opts.session;
+    if (exit_session_id == null and opts.continue_last) exit_session_id = latestSessionId(io, arena);
+    if (exit_session_id) |sid| {
         if (!validSessionId(sid)) {
             log.log(.warn, "repl: ignoring invalid --session id '{s}'", .{sid});
-            session_id = null;
+            exit_session_id = null;
         }
     }
-    model.session_id = session_id;
+    model.session_id = exit_session_id;
     if (cfg.modules.sessions) {
-        if (session_id) |sid| {
-            const loaded = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+        if (exit_session_id) |sid| {
+            const loaded = session_mod.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
                 error.FileNotFound => null,
                 else => blk: {
                     log.log(.warn, "repl: could not load session '{s}': {s}", .{ sid, @errorName(err) });
