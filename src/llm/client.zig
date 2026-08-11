@@ -24,6 +24,60 @@ pub const Ctx = struct {
 const resp_cap = 8 << 20;
 const max_attempts = 3;
 
+/// Prefix on Anthropic OAuth access tokens (`sk-ant-oat01-…`), as minted by
+/// `ant auth login`. Matched without the version digits so a later `oat02`
+/// is still recognised.
+const oauth_token_prefix = "sk-ant-oat";
+const oauth_beta = "oauth-2025-04-20";
+
+/// An OAuth access token is not an API key: `/v1/messages` rejects it on
+/// `x-api-key`. It authenticates as `Authorization: Bearer` and additionally
+/// requires the oauth beta header.
+fn isOauthToken(key: []const u8) bool {
+    return std.mem.startsWith(u8, key, oauth_token_prefix);
+}
+
+/// Applies the provider's auth headers, returning how many `extra` slots were
+/// filled. `bearer` is the api key already wrapped as `Bearer <key>`.
+fn applyAuthHeaders(
+    ctx: *Ctx,
+    provider: *const config.Provider,
+    bearer: ?[]const u8,
+    headers: *std.http.Client.Request.Headers,
+    extra: *[2]std.http.Header,
+) usize {
+    var extra_len: usize = 0;
+    switch (provider.kind) {
+        .openai_compat => {
+            if (bearer) |b| headers.authorization = .{ .override = b };
+        },
+        .anthropic => {
+            const key: ?[]const u8 = if (provider.api_key_env) |env_name|
+                ctx.environ_map.get(env_name)
+            else
+                null;
+            if (key) |k| {
+                if (isOauthToken(k)) {
+                    if (bearer) |b| headers.authorization = .{ .override = b };
+                    extra[extra_len] = .{ .name = "anthropic-beta", .value = oauth_beta };
+                    extra_len += 1;
+                } else {
+                    extra[extra_len] = .{ .name = "x-api-key", .value = k };
+                    extra_len += 1;
+                }
+            }
+            extra[extra_len] = .{ .name = "anthropic-version", .value = "2023-06-01" };
+            extra_len += 1;
+        },
+        // Vertex authenticates with a GCP OAuth bearer token, and carries the
+        // anthropic version in the body rather than a header.
+        .vertex_anthropic => {
+            if (bearer) |b| headers.authorization = .{ .override = b };
+        },
+    }
+    return extra_len;
+}
+
 const FetchOutcome = struct {
     status: std.http.Status,
     /// Response body (gpa-owned).
@@ -213,28 +267,7 @@ fn doFetch(
     };
 
     var extra: [2]std.http.Header = undefined;
-    var extra_len: usize = 0;
-
-    switch (provider.kind) {
-        .openai_compat => {
-            if (bearer) |b| headers.authorization = .{ .override = b };
-        },
-        .anthropic => {
-            if (provider.api_key_env) |env_name| {
-                if (ctx.environ_map.get(env_name)) |k| {
-                    extra[extra_len] = .{ .name = "x-api-key", .value = k };
-                    extra_len += 1;
-                }
-            }
-            extra[extra_len] = .{ .name = "anthropic-version", .value = "2023-06-01" };
-            extra_len += 1;
-        },
-        // Vertex authenticates with a GCP OAuth bearer token, and carries the
-        // anthropic version in the body rather than a header.
-        .vertex_anthropic => {
-            if (bearer) |b| headers.authorization = .{ .override = b };
-        },
-    }
+    const extra_len = applyAuthHeaders(ctx, provider, bearer, &headers, &extra);
 
     const result = client.fetch(.{
         .location = .{ .url = url },
@@ -321,27 +354,7 @@ pub fn chatStream(
         .user_agent = .{ .override = "clanker/0.1.0" },
     };
     var extra: [2]std.http.Header = undefined;
-    var extra_len: usize = 0;
-    switch (provider.kind) {
-        .openai_compat => {
-            if (bearer) |b| headers.authorization = .{ .override = b };
-        },
-        .anthropic => {
-            if (provider.api_key_env) |env_name| {
-                if (ctx.environ_map.get(env_name)) |k| {
-                    extra[extra_len] = .{ .name = "x-api-key", .value = k };
-                    extra_len += 1;
-                }
-            }
-            extra[extra_len] = .{ .name = "anthropic-version", .value = "2023-06-01" };
-            extra_len += 1;
-        },
-        // Vertex authenticates with a GCP OAuth bearer token, and carries the
-        // anthropic version in the body rather than a header.
-        .vertex_anthropic => {
-            if (bearer) |b| headers.authorization = .{ .override = b };
-        },
-    }
+    const extra_len = applyAuthHeaders(ctx, provider, bearer, &headers, &extra);
 
     const uri = std.Uri.parse(url) catch return error.InvalidUrl;
     var req = try client.request(.POST, uri, .{
@@ -1110,4 +1123,77 @@ test "session usage accumulates and renders the built-in status segment" {
     try su.writeSegment(&w, &provider);
     const line = w.buffered();
     try std.testing.expectEqualStrings("mock/model-x · ↑1500 ↓75 tok · $0.0000 · cache 16%", line);
+}
+
+/// Drives one `chat` call against the anthropic mock and returns the request
+/// headers it saw, so a test can assert on how the key was presented.
+fn capturedAnthropicHeaders(gpa: std.mem.Allocator, key: []const u8, out: []u8) ![]const u8 {
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, gpa, .anthropic_text);
+    defer mock.stop();
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MOCK_ANTHROPIC_KEY", key);
+
+    const base_url = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{mock.port});
+    defer gpa.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(gpa);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "anthropic-mock", base_url, .anthropic, "claude-sonnet-5", .{
+        .context_window = 1_000_000,
+        .max_tokens = 1024,
+    });
+    provider.api_key_env = "MOCK_ANTHROPIC_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = gpa, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+    _ = try chat(&ctx, arena_state.allocator(), .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail);
+
+    const captured = mock.lastCaptured() orelse return error.NothingCaptured;
+    if (captured.headers_raw.len > out.len) return error.HeadersTooLong;
+    @memcpy(out[0..captured.headers_raw.len], captured.headers_raw);
+    return out[0..captured.headers_raw.len];
+}
+
+test "anthropic api key goes on x-api-key" {
+    var buf: [8192]u8 = undefined;
+    const headers = try capturedAnthropicHeaders(std.testing.allocator, "sk-ant-api03-secret", &buf);
+
+    try std.testing.expect(std.mem.indexOf(u8, headers, "x-api-key: sk-ant-api03-secret") != null);
+    try std.testing.expect(std.mem.indexOf(u8, headers, "anthropic-version: 2023-06-01") != null);
+    // The oauth beta must not be announced for a plain API key.
+    try std.testing.expect(std.mem.indexOf(u8, headers, oauth_beta) == null);
+    // std.http.Client writes its built-in header names lowercase.
+    try std.testing.expect(std.mem.indexOf(u8, headers, "authorization:") == null);
+}
+
+test "anthropic oauth token goes on Authorization with the oauth beta" {
+    // `/v1/messages` rejects an `sk-ant-oat…` token presented on x-api-key, so
+    // it has to switch to bearer auth plus the beta header.
+    var buf: [8192]u8 = undefined;
+    const headers = try capturedAnthropicHeaders(std.testing.allocator, "sk-ant-oat01-secret", &buf);
+
+    try std.testing.expect(std.mem.indexOf(u8, headers, "authorization: Bearer sk-ant-oat01-secret") != null);
+    try std.testing.expect(std.mem.indexOf(u8, headers, "anthropic-beta: " ++ oauth_beta) != null);
+    try std.testing.expect(std.mem.indexOf(u8, headers, "anthropic-version: 2023-06-01") != null);
+    // The token must not also be sent as an API key; the API rejects both at once.
+    try std.testing.expect(std.mem.indexOf(u8, headers, "x-api-key") == null);
+}
+
+test "oauth token prefix matching is version-agnostic" {
+    try std.testing.expect(isOauthToken("sk-ant-oat01-abc"));
+    try std.testing.expect(isOauthToken("sk-ant-oat02-abc"));
+    try std.testing.expect(!isOauthToken("sk-ant-api03-abc"));
+    try std.testing.expect(!isOauthToken(""));
 }
