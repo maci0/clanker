@@ -149,10 +149,15 @@ pub const Loop = struct {
             for (proposal.changes) |ch| {
                 const staged = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging_path, ch.file });
                 defer gpa.free(staged);
-                const content = std.Io.Dir.cwd().readFileAlloc(io, staged, gpa, .limited(1 << 20)) catch continue;
+                const content = std.Io.Dir.cwd().readFileAlloc(io, staged, gpa, .limited(1 << 20)) catch |err| {
+                    log.log(.error_, "autoresearch: new best for {s} not applied, staged copy unreadable: {s}", .{ ch.file, @errorName(err) });
+                    continue;
+                };
                 defer gpa.free(content);
                 if (std.mem.lastIndexOfScalar(u8, ch.file, '/')) |slash| std.Io.Dir.cwd().createDirPath(io, ch.file[0..slash]) catch {};
-                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ch.file, .data = content }) catch {};
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ch.file, .data = content }) catch |err| {
+                    log.log(.error_, "autoresearch: new best for {s} not written back: {s}", .{ ch.file, @errorName(err) });
+                };
             }
             const best_path = try std.fmt.allocPrint(gpa, "{s}/best", .{run_dir_path});
             defer gpa.free(best_path);

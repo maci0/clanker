@@ -258,7 +258,9 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // this adds no unbounded state.
     if (msg.id.len > 0) {
         var existing_msgs: std.ArrayList(Message) = .empty;
-        parseLog(arena, existing, &existing_msgs) catch {};
+        parseLog(arena, existing, &existing_msgs) catch |err| {
+            log.log(.warn, "[chat] could not parse {s} ({s}); duplicate delivery would not be caught", .{ path, @errorName(err) });
+        };
         for (existing_msgs.items) |m| {
             if (std.mem.eql(u8, m.id, msg.id)) {
                 log.log(.debug, "[chat] duplicate message id '{s}' ignored", .{msg.id});
