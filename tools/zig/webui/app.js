@@ -2435,6 +2435,10 @@ if (window.MutationObserver) {
    text and its own status. Starting a second goal while the first streams is
    therefore accepted; only a second run of the *same* goal is refused. */
 var goalRuns = {};  // goal id -> { controller, status, text }
+/* Board cards started as goals: goal id -> card id. Set when "Work as goal"
+   turns a card into a goal, so the goal card can move its board card through
+   the board columns as the goal progresses (done when marked done). */
+var goalCardLinks = {};
 
 function goalRunStatusLabel(status) {
   if (status === "running") return "running…";
@@ -2621,6 +2625,7 @@ function workCardAsGoal(c) {
         }
       }
       if (!created) return;
+      goalCardLinks[created.id] = c.id;
       postBoard({ op: "move", id: c.id, column: "doing" }, null);
       runGoal(created, {
         onDone: function (status) {
@@ -2641,12 +2646,29 @@ function postGoal(payload, status) {
     .then(function (d) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
+      // A goal marked done (and only that) carries its board card over to the
+      // board's done column: the card was moved to doing when the goal started
+      // and review when it finished, so closing the goal closes the loop. This
+      // is a front-end concern — the goal id -> card id link lives in this
+      // browser (see goalCardLinks), not in state/goals.json.
+      if (payload && payload.status === "done" && payload.id) {
+        moveGoalCardToColumn(payload.id, "done");
+      }
       return d;
     })
     .catch(function (err) {
       el.goalsStatus.textContent = "Goal failed: " + err.message;
       return null;
     });
+}
+
+/* Moves the board card linked to a goal (if any) into `column`. The link is
+   recorded when the card is started as a goal; without one this is a no-op, so
+   marking a hand-typed goal done never disturbs the board. */
+function moveGoalCardToColumn(goalId, column) {
+  var cardId = goalCardLinks[goalId];
+  if (!cardId) return;
+  postBoard({ op: "move", id: cardId, column: column }, null);
 }
 
 el.goalForm.addEventListener("submit", function (e) {
