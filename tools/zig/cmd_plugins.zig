@@ -56,6 +56,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const plugins = readPlugins(alloc) catch |err| return lib.fail(out, @errorName(err));
 
     if (args.len == 0) return listJson(out, alloc, plugins);
+    // The REPL wants a rendered table; the web UI wants the same facts as data
+    // so it can draw a row per plugin with a working toggle. Same reader, two
+    // renderings, rather than the UI re-parsing a text table.
+    if (std.mem.eql(u8, args, "json")) return listStructured(out, alloc, plugins);
 
     const sep = std.mem.indexOfScalar(u8, args, ' ') orelse
         return lib.fail(out, "usage: /plugins [on|off <name>]");
@@ -182,6 +186,48 @@ fn listJson(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !v
     }
     try text.appendSlice(alloc, "\n/plugins off <name> to disable, /plugins on <name> to enable. Core tools back the REPL and HTTP routes and stay on; transforms rewrite other tools' input or output.\n");
     try writeText(out, text.items);
+}
+
+/// The same facts `listJson` renders as a table, as data:
+/// `{"plugins":[{name, description, core, enabled, llm, transform}]}`.
+///
+/// Serialized into the envelope's `text` field rather than emitted at the top
+/// level, because `toolText` in the harness extracts exactly that field and
+/// hands it back as the HTTP body. cmd_graph's json mode does the same.
+fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !void {
+    var doc: std.Io.Writer.Allocating = .init(alloc);
+    var s = std.json.Stringify{ .writer = &doc.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("plugins");
+    try s.beginArray();
+    for (plugins) |p| {
+        try s.beginObject();
+        try s.objectField("name");
+        try s.write(p.name);
+        try s.objectField("description");
+        try s.write(p.description);
+        try s.objectField("core");
+        try s.write(p.core);
+        try s.objectField("enabled");
+        try s.write(p.enabled);
+        try s.objectField("llm");
+        try s.write(p.llm);
+        if (p.transform) |tr| {
+            try s.objectField("transform");
+            try s.beginObject();
+            try s.objectField("phase");
+            try s.write(tr.phase);
+            try s.objectField("order");
+            try s.write(tr.order);
+            try s.endObject();
+        }
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    return lib.okText(out, doc.written());
 }
 
 fn textJson(out: *lib.Out, alloc: std.mem.Allocator, prefix: []const u8, name: []const u8) !void {

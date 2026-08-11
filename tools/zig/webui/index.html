@@ -422,6 +422,60 @@
     border: 1px solid var(--border); border-radius: var(--radius);
   }
 
+  /* ---- usage: what the model calls actually cost ----
+     A dense table rather than tiles: these are readings to compare across
+     providers, and a number you can line up beats a number in a box. */
+  .usage { width: 100%; border-collapse: collapse; margin-top: 1rem; font-family: var(--mono); font-size: var(--step-0); }
+  .usage th {
+    text-align: left; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--fg-muted); padding: 0.4rem 0.7rem 0.4rem 0; border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  .usage td { padding: 0.4rem 0.7rem 0.4rem 0; border-bottom: 1px solid var(--rule); color: var(--fg); }
+  .usage .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .usage .model { color: var(--accent); }
+  .usage tfoot td { font-weight: 700; border-bottom: 0; border-top: 1px solid var(--border); }
+  .usage-wrap { overflow-x: auto; }
+  .usage-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); margin-top: 1rem; }
+
+  /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
+  .tool-row {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.7rem;
+    padding: 0.45rem 0; border-bottom: 1px solid var(--rule);
+  }
+  .tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; }
+  .tool-desc {
+    flex: 1 1 18rem; font-family: var(--mono); font-size: var(--step-0);
+    color: var(--fg-muted); overflow-wrap: anywhere;
+  }
+  .tool-tag {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0 0.5rem;
+  }
+  /* 32px rather than the 44px the composer uses: the same exception the code
+     block's Copy button already makes, for a control that repeats down a list
+     of 45 rows. Still clears the 24px minimum. */
+  .tool-toggle {
+    min-height: 32px; padding: 0.15rem 0.7rem; font-size: var(--step-0); font-weight: 600;
+    font-family: var(--mono); border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted);
+  }
+  .tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
+  .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
+
+  /* ---- goals: what the agent is steering toward ---- */
+  .goal {
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    padding: 0.75rem 0.9rem; margin-top: 0.75rem;
+  }
+  .goal-objective { font-family: var(--mono); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
+  .goal-meta {
+    display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; margin-top: 0.4rem;
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  }
+  .goal[data-status="active"] .goal-status { color: var(--ok); }
+  .goal-field { margin-top: 0.35rem; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .goal-field b { color: var(--fg); font-weight: 700; }
+
   dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
   dt { font-size: var(--step-0); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); }
   dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
@@ -541,6 +595,37 @@
 
   <section>
     <div class="section-head">
+      <h2>Usage</h2>
+      <button type="button" class="secondary" id="usage-refresh">Refresh</button>
+    </div>
+    <div id="usage"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Goals</h2>
+      <button type="button" class="secondary" id="goals-refresh">Refresh</button>
+    </div>
+    <div id="goals"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Tools</h2>
+      <button type="button" class="secondary" id="tools-refresh">Refresh</button>
+    </div>
+    <div class="runs">
+      <div class="run-picker">
+        <label for="tool-filter">Filter tools</label>
+        <input type="search" id="tool-filter" placeholder="Filter by name or description…" autocomplete="off">
+      </div>
+      <div id="tools"></div>
+      <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Status</h2>
       <button type="button" class="secondary" id="refresh">Refresh</button>
     </div>
@@ -591,6 +676,14 @@ document.addEventListener("DOMContentLoaded", function () {
     chatSend: document.getElementById("chat-send"),
     chatRefresh: document.getElementById("chat-refresh"),
     chatStatus: document.getElementById("chat-status"),
+    goals: document.getElementById("goals"),
+    goalsRefresh: document.getElementById("goals-refresh"),
+    usage: document.getElementById("usage"),
+    usageRefresh: document.getElementById("usage-refresh"),
+    tools: document.getElementById("tools"),
+    toolFilter: document.getElementById("tool-filter"),
+    toolsRefresh: document.getElementById("tools-refresh"),
+    toolsStatus: document.getElementById("tools-status"),
     runSelect: document.getElementById("run-select"),
     runGraph: document.getElementById("run-graph"),
     runDetail: document.getElementById("run-detail")
@@ -2263,6 +2356,343 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 
+  // ---- usage: what the model calls have cost -----------------------------
+
+  function fmtInt(n) {
+    return (typeof n === "number" ? n : 0).toLocaleString();
+  }
+
+  /* Cost is the reading people actually come here for, so it gets four
+     decimals rather than a rounded currency format: a single run is often
+     worth less than a cent, and rounding it to $0.00 would say nothing. */
+  function fmtCost(n) {
+    return "$" + (typeof n === "number" ? n : 0).toFixed(4);
+  }
+
+  function renderUsage(rows) {
+    el.usage.textContent = "";
+    if (!rows.length) {
+      var none = document.createElement("p");
+      none.className = "usage-empty";
+      none.textContent = "No completions recorded yet. Run a task and the totals appear here.";
+      el.usage.appendChild(none);
+      return;
+    }
+    var wrap = document.createElement("div");
+    wrap.className = "usage-wrap";
+    var table = document.createElement("table");
+    table.className = "usage";
+
+    var head = document.createElement("thead");
+    var hrow = document.createElement("tr");
+    [["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"], ["Completion", "num"],
+     ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]].forEach(function (h) {
+      var th = document.createElement("th");
+      th.textContent = h[0];
+      if (h[1]) th.className = h[1];
+      hrow.appendChild(th);
+    });
+    head.appendChild(hrow);
+    table.appendChild(head);
+
+    var body = document.createElement("tbody");
+    var totals = { calls: 0, prompt: 0, completion: 0, cost: 0 };
+    rows.forEach(function (r) {
+      totals.calls += r.calls || 0;
+      totals.prompt += r.prompt_tokens || 0;
+      totals.completion += r.completion_tokens || 0;
+      totals.cost += r.cost || 0;
+
+      var tr = document.createElement("tr");
+      var name = document.createElement("td");
+      // provider and model are often the same string; showing it twice is noise.
+      name.textContent = r.provider === r.model ? r.provider : r.provider + " / ";
+      if (r.provider !== r.model) {
+        var m = document.createElement("span");
+        m.className = "model";
+        m.textContent = r.model;
+        name.appendChild(m);
+      }
+      tr.appendChild(name);
+      [fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
+       (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)]
+        .forEach(function (v) {
+          var td = document.createElement("td");
+          td.className = "num";
+          td.textContent = v;
+          tr.appendChild(td);
+        });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+
+    var foot = document.createElement("tfoot");
+    var frow = document.createElement("tr");
+    [rows.length + (rows.length === 1 ? " model" : " models"), fmtInt(totals.calls),
+     fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
+      .forEach(function (v, i) {
+        var td = document.createElement("td");
+        if (i > 0) td.className = "num";
+        td.textContent = v;
+        frow.appendChild(td);
+      });
+    foot.appendChild(frow);
+    table.appendChild(foot);
+
+    wrap.appendChild(table);
+    el.usage.appendChild(wrap);
+  }
+
+  function loadUsage() {
+    return fetch("/api/stats")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) { renderUsage(data.stats || []); })
+      .catch(function (err) {
+        el.usage.textContent = "";
+        var p = document.createElement("p");
+        p.className = "usage-empty";
+        p.textContent = "Could not load usage: " + err.message;
+        el.usage.appendChild(p);
+      });
+  }
+
+  // ---- goals: what runs are being steered toward -------------------------
+
+  function renderGoals(goals) {
+    el.goals.textContent = "";
+    if (!goals.length) {
+      var none = document.createElement("p");
+      none.className = "usage-empty";
+      none.textContent = "No goals set. `clanker goal \"<intent>\"` records one.";
+      el.goals.appendChild(none);
+      return;
+    }
+    // Newest first: the goal most recently set is the one steering runs now.
+    goals.slice().sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); }).forEach(function (g) {
+      var card = document.createElement("div");
+      card.className = "goal";
+      card.dataset.status = g.status || "";
+
+      var obj = document.createElement("div");
+      obj.className = "goal-objective";
+      obj.textContent = g.objective || "(no objective recorded)";
+      card.appendChild(obj);
+
+      var meta = document.createElement("div");
+      meta.className = "goal-meta";
+      var status = document.createElement("span");
+      status.className = "goal-status";
+      status.textContent = g.status || "unknown";
+      meta.appendChild(status);
+      if (g.id) {
+        var id = document.createElement("span");
+        id.textContent = "id " + String(g.id).slice(0, 10);
+        meta.appendChild(id);
+      }
+      card.appendChild(meta);
+
+      // Only the fields that were actually filled in: an empty criterion is a
+      // real state of a goal, and printing an empty label would imply
+      // otherwise.
+      var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
+        ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]].filter(function (p) { return !!p[1]; });
+
+      if (fields.length) {
+        // A well-specified goal runs to several paragraphs, and there are
+        // usually a handful of them. Expanded by default they push everything
+        // below this section off the page, so the objective and status stay
+        // visible and the specification is one click away — same disclosure
+        // the node-output tree uses.
+        var details = document.createElement("details");
+        details.className = "json-node";
+        var summary = document.createElement("summary");
+        summary.textContent = fields.length + (fields.length === 1 ? " detail" : " details");
+        details.appendChild(summary);
+        var bodyEl = document.createElement("div");
+        bodyEl.className = "json-children";
+        fields.forEach(function (pair) {
+          var row = document.createElement("div");
+          row.className = "goal-field";
+          var label = document.createElement("b");
+          label.textContent = pair[0] + ": ";
+          row.appendChild(label);
+          row.appendChild(document.createTextNode(pair[1]));
+          bodyEl.appendChild(row);
+        });
+        details.appendChild(bodyEl);
+        card.appendChild(details);
+      }
+
+      el.goals.appendChild(card);
+    });
+  }
+
+  function loadGoals() {
+    return fetch("/api/goals")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) { renderGoals(data.goals || []); })
+      .catch(function (err) {
+        el.goals.textContent = "";
+        var p = document.createElement("p");
+        p.className = "usage-empty";
+        p.textContent = "Could not load goals: " + err.message;
+        el.goals.appendChild(p);
+      });
+  }
+
+  // ---- tools: every WASM plugin, and a switch for the optional ones ------
+
+  var allTools = [];
+
+  function renderTools(filterText) {
+    var q = (filterText || "").trim().toLowerCase();
+    var matches = !q ? allTools : allTools.filter(function (t) {
+      return t.name.toLowerCase().indexOf(q) !== -1 ||
+        (t.description || "").toLowerCase().indexOf(q) !== -1;
+    });
+    el.tools.textContent = "";
+    if (!matches.length) {
+      var none = document.createElement("p");
+      none.className = "usage-empty";
+      none.textContent = q ? "No tools match “" + filterText.trim() + "”." : "No tools registered.";
+      el.tools.appendChild(none);
+      return;
+    }
+    matches.forEach(function (t) { el.tools.appendChild(buildToolRow(t)); });
+  }
+
+  function buildToolRow(t) {
+    var row = document.createElement("div");
+    row.className = "tool-row";
+
+    var name = document.createElement("span");
+    name.className = "tool-name";
+    name.textContent = t.name;
+    row.appendChild(name);
+
+    // Core tools back the REPL and the HTTP routes, so the harness refuses to
+    // switch them off. Showing a dead button would invite the click anyway.
+    if (t.core) {
+      var tag = document.createElement("span");
+      tag.className = "tool-tag";
+      tag.textContent = "core";
+      row.appendChild(tag);
+    } else {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tool-toggle";
+      btn.dataset.on = String(!!t.enabled);
+      btn.textContent = t.enabled ? "on" : "off";
+      btn.setAttribute("aria-pressed", String(!!t.enabled));
+      btn.setAttribute("aria-label", (t.enabled ? "Disable " : "Enable ") + t.name);
+      btn.addEventListener("click", function () { toggleTool(t, btn); });
+      row.appendChild(btn);
+    }
+
+    if (t.transform) {
+      var tr = document.createElement("span");
+      tr.className = "tool-tag";
+      tr.textContent = "transform " + t.transform.phase;
+      row.appendChild(tr);
+    }
+    if (t.llm) {
+      var llm = document.createElement("span");
+      llm.className = "tool-tag";
+      llm.textContent = "llm";
+      row.appendChild(llm);
+    }
+
+    var desc = document.createElement("span");
+    desc.className = "tool-desc";
+    // Descriptions are written for the model and run long; the first sentence
+    // is what a person scanning the list needs.
+    var text = (t.description || "").trim();
+    var stop = text.indexOf(". ");
+    desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : text.slice(0, 160);
+    desc.title = text;
+    row.appendChild(desc);
+
+    return row;
+  }
+
+  function toggleTool(t, btn) {
+    var want = !t.enabled;
+    btn.disabled = true;
+    fetch("/api/plugins", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: t.name, on: want })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.text();
+    }).then(function (reply) {
+      t.enabled = want;
+      btn.dataset.on = String(want);
+      btn.textContent = want ? "on" : "off";
+      btn.setAttribute("aria-pressed", String(want));
+      btn.setAttribute("aria-label", (want ? "Disable " : "Enable ") + t.name);
+      // The harness answers in words ("enabled: git", "core tool, cannot be
+      // switched off: …"); it is the authority on what happened, so it is
+      // what gets announced.
+      el.toolsStatus.textContent = String(reply).trim();
+    }).catch(function (err) {
+      el.toolsStatus.textContent = "Could not switch " + t.name + ": " + err.message;
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  }
+
+  function loadTools() {
+    return fetch("/api/plugins")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        allTools = data.plugins || [];
+        renderTools(el.toolFilter.value);
+      })
+      .catch(function (err) {
+        el.tools.textContent = "";
+        var p = document.createElement("p");
+        p.className = "usage-empty";
+        p.textContent = "Could not load tools: " + err.message;
+        el.tools.appendChild(p);
+        el.toolsStatus.textContent = p.textContent;
+      });
+  }
+
+  var toolFilterTimer = null;
+  el.toolFilter.addEventListener("input", function () {
+    if (toolFilterTimer) window.clearTimeout(toolFilterTimer);
+    toolFilterTimer = window.setTimeout(function () {
+      renderTools(el.toolFilter.value);
+      var shown = el.tools.querySelectorAll(".tool-row").length;
+      el.toolsStatus.textContent = el.toolFilter.value.trim()
+        ? shown + (shown === 1 ? " tool matches." : " tools match.")
+        : "";
+    }, 120);
+  });
+
+  el.goalsRefresh.addEventListener("click", function () {
+    el.goalsRefresh.disabled = true;
+    loadGoals().finally(function () { el.goalsRefresh.disabled = false; });
+  });
+  el.usageRefresh.addEventListener("click", function () {
+    el.usageRefresh.disabled = true;
+    loadUsage().finally(function () { el.usageRefresh.disabled = false; });
+  });
+  el.toolsRefresh.addEventListener("click", function () {
+    el.toolsRefresh.disabled = true;
+    loadTools().finally(function () { el.toolsRefresh.disabled = false; });
+  });
+
   renderSessionChip();
   renderSessionOptions([]);
   setBusy(false);
@@ -2273,6 +2703,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   loadSessions();
   loadRuns();
+  loadGoals();
+  loadUsage();
+  loadTools();
 });
 </script>
 </body>

@@ -2184,7 +2184,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
     std.Io.Dir.cwd().createDirPath(io, "state/staging") catch {};
 
-    log.log(.debug, "improve.max_context_bytes = {d}", .{cfg.improve.max_context_bytes});
+    if (cfg.improve.max_context_bytes) |n| log.log(.debug, "improve.max_context_bytes = {d} (config override)", .{n});
     var eng = improve.Engine{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg, .hist = undefined, .instructions = undefined };
     try eng.run(.{
         .instructions = opts.task orelse return error.MissingTask,
@@ -2565,6 +2565,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/send");
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/subscribe");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
+        const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_goals = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/goals");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
@@ -2607,6 +2609,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleChatSubscribe(io, gpa, cfg, body, stream);
         } else if (is_stats) {
             handleStats(io, gpa, cfg, stream);
+        } else if (is_plugins) {
+            handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
+        } else if (is_goals) {
+            handleGoals(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
@@ -3369,6 +3375,93 @@ fn sessionJSON(arena: std.mem.Allocator, s_in: session.Session) ![]const u8 {
     try s.endArray();
     try s.endObject();
     return out.written();
+}
+
+/// `GET /api/plugins` lists every WASM tool with its on/off state;
+/// `POST /api/plugins {"name":…,"on":bool}` switches an optional one. Both go
+/// through the cmd_plugins tool, which already owns reading the descriptors and
+/// writing `state/plugins.json`, so the HTTP surface and `/plugins` in the REPL
+/// can never disagree about what is enabled.
+fn handlePlugins(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    method: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var args: []const u8 = "json";
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(PluginToggleBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        const name = req.name orelse {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
+            return;
+        };
+        // The name becomes a word in the tool's argument string, so anything
+        // with whitespace in it would silently become a different command.
+        if (name.len == 0 or name.len > 64 or std.mem.indexOfAny(u8, name, " \t\r\n") != null) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
+            return;
+        }
+        args = std.fmt.allocPrint(arena, "{s} {s}", .{ if (req.on) "on" else "off", name }) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    }
+
+    const out = toolText(io, gpa, arena, cfg, environ_map, "cmd_plugins", args) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"plugin read failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", out);
+}
+
+const PluginToggleBody = struct {
+    name: ?[]const u8 = null,
+    on: bool = true,
+};
+
+/// `GET /api/goals` — the structured goals that steer runs, straight from
+/// `state/goals.json`. Read natively rather than through the goal tool, which
+/// only writes: it appends a new goal and has no read mode.
+fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    if (!cfg.modules.goal) {
+        respond(stream, 404, "Not Found", "{\"error\":\"goal module disabled\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch {
+        // No file yet is the ordinary state on a fresh checkout, not an error.
+        respond(stream, 200, "OK", "{\"ok\":true,\"goals\":[]}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"goals\":") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    // Passed through verbatim: it is already the array this endpoint returns,
+    // and re-encoding it would only add a way for the two to drift.
+    out.writer.writeAll(std.mem.trim(u8, raw, " \t\r\n")) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    out.writer.writeAll("}") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    respond(stream, 200, "OK", out.written());
 }
 
 /// Instance + configured peers, consumed by the web UI status panel.
