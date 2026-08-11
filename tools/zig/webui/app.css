@@ -475,6 +475,11 @@ label {
   font-size: var(--step--1); font-weight: 700;
   letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--fg-muted); margin-bottom: 0.4rem;
+}
+#view-chat > label,
+#view-chat > section > label,
+#view-chat .composer label,
+#view-chat .filter-row label {
   position: relative; background: var(--paper);
   padding-right: var(--space-2); width: fit-content;
 }
