@@ -27,5 +27,58 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
     const raw = lib.exec("zig", argv.items) catch |err| return lib.fail(out, @errorName(err));
-    try out.writeAll(raw);
+
+    // Parse the exec result to build a structured response with ok/error.
+    const exec_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch {
+        // Cannot parse exec output; pass through as-is.
+        return out.writeAll(raw);
+    };
+    if (exec_parsed != .object) return out.writeAll(raw);
+    const exec_obj = exec_parsed.object;
+
+    const code: i64 = if (exec_obj.get("code")) |c| switch (c) {
+        .integer => |i| i,
+        else => 1,
+    } else 1;
+    const ok = code == 0;
+
+    const stdout_str = if (exec_obj.get("stdout")) |sv| switch (sv) {
+        .string => |s| s,
+        else => "",
+    } else "";
+    const stderr_str = if (exec_obj.get("stderr")) |sv| switch (sv) {
+        .string => |s| s,
+        else => "",
+    } else "";
+
+    const tail_cap: usize = 6 * 1024;
+    const summary_cap: usize = 2 * 1024;
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(ok);
+    try s.objectField("code");
+    try s.print("{d}", .{code});
+    if (ok) {
+        // On success, include a short tail of stdout so the agent sees which tests ran.
+        try s.objectField("output");
+        if (stdout_str.len > summary_cap) {
+            try s.write(stdout_str[stdout_str.len - summary_cap ..]);
+        } else {
+            try s.write(stdout_str);
+        }
+    } else {
+        // On failure, keep the tail of stderr where the actual error message lives.
+        try s.objectField("error_tail");
+        const detail = if (stderr_str.len > 0) stderr_str else stdout_str;
+        if (detail.len > tail_cap) {
+            try s.write(detail[detail.len - tail_cap ..]);
+        } else {
+            try s.write(detail);
+        }
+    }
+    try s.endObject();
+    lib.commit(out, &w);
 }
