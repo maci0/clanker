@@ -2807,7 +2807,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_webui_plugin_asset) {
             handleWebuiPluginAsset(io, gpa, target, stream);
         } else if (is_logs) {
-            handleLogs(io, gpa, target, stream);
+            handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/run")) {
