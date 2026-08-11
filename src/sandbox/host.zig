@@ -2059,3 +2059,25 @@ test "a \".\" prefix authorizes the whole sandbox root" {
     narrow.fs_prefixes = &.{"state/"};
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&narrow, "src/main.zig"));
 }
+
+test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-typed fields" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"kimi\",\"model\":\"m1\",\"max_tokens\":512}", .{});
+    try std.testing.expectEqualStrings("kimi", pluginStr(v, "provider").?);
+    try std.testing.expectEqualStrings("m1", pluginStr(v, "model").?);
+    try std.testing.expect(pluginStr(v, "missing") == null);
+    try std.testing.expectEqual(@as(?u32, 512), pluginU32(v, "max_tokens"));
+
+    // Non-object values yield null for every key.
+    const arr = try std.json.parseFromSliceLeaky(std.json.Value, arena, "[1,2]", .{});
+    try std.testing.expect(pluginStr(arr, "provider") == null);
+    try std.testing.expect(pluginU32(arr, "max_tokens") == null);
+
+    // Empty strings and non-positive integers are treated as unset.
+    const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
+    try std.testing.expect(pluginStr(bad, "provider") == null);
+    try std.testing.expect(pluginU32(bad, "max_tokens") == null);
+}
