@@ -1,5 +1,7 @@
 //! Tool ABI helpers: packing (pointer, length) pairs into u64 and back.
 
+const std = @import("std");
+
 pub fn packPtrLen(ptr: u32, len: u32) u64 {
     return (@as(u64, ptr) << 32) | len;
 }
@@ -22,5 +24,3 @@ test "pack/unpack round trip" {
     try std.testing.expectEqual(@as(u32, 0x12345678), r.ptr);
     try std.testing.expectEqual(@as(u32, 0x9ABCDEF0), r.len);
 }
-
-const std = @import("std");
