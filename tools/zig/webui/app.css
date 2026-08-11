@@ -261,7 +261,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: 
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
 .tab-count { color: var(--fg-muted); font-weight: 400; margin-left: 0.4rem; }
-.rail-tab[aria-selected="true"] .tab-count { color: var(--accent); }
+.rail-tab[aria-selected="true"] .tab-count { color: var(--accent-text); }
 .view[hidden] { display: none; }
 .view:focus { outline: none; }
 /* The first section inside a view has nothing above it to be separated from. */
@@ -535,6 +535,7 @@ select, #run-filter {
   border: 1px solid var(--border); border-radius: var(--radius);
 }
 #run-filter, #tool-filter, #turn-filter { flex: 1 1 24rem; min-width: 14rem; max-width: 34rem; }
+#board-room, #card-column { max-width: 14rem; }
 /* The two that genuinely span their row: the model picker names a long model
    string, and the run picker is the only control on its line. */
 #model, #run-picker { flex: 1 1 16rem; min-width: 12rem; }
@@ -1153,7 +1154,7 @@ h2#session-title {
   overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start;
 }
 .board-col {
-  flex: 0 0 15rem; display: flex; flex-direction: column;
+  flex: 1 1 0; min-width: 11.5rem; display: flex; flex-direction: column;
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface); max-height: 32rem;
 }
@@ -1167,7 +1168,11 @@ h2#session-title {
 .board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 /* Over the limit is said, not enforced: see the endpoint's reasoning. */
 .board-col-count[data-over="true"] { color: var(--warn-text); }
-.board-cards { list-style: none; margin: 0; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); overflow-y: auto; }
+.board-cards {
+  list-style: none; margin: 0; padding: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-3);
+  overflow-y: auto; min-height: 4.5rem;
+}
 .card {
   text-align: left; width: 100%; cursor: pointer;
   padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius);
