@@ -3,6 +3,11 @@
 import { clip } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
 
+var _navShowView = null;
+export function setNavShowView(fn) { _navShowView = typeof fn === "function" ? fn : null; }
+var _openRun = null;
+export function setOpenRun(fn) { _openRun = typeof fn === "function" ? fn : null; }
+
 function byId(id) { return document.getElementById(id); }
 
 var SUB_RE = /\[subagent run:\s*(sub-\d+)\]/g;
@@ -156,7 +161,8 @@ function isDmRoom(room) { return typeof room === "string" && room.indexOf("dm:")
 function dmNames(room) { return isDmRoom(room) ? room.slice(3).split("|").join(" \u2194 ") : room; }
 function navToRooms(room) {
   try {
-    if (typeof window.showView === "function") window.showView("rooms");
+    if (_navShowView) _navShowView("rooms");
+    else if (typeof window.showView === "function") window.showView("rooms");
     else if (window.clankerApp && typeof window.clankerApp.showView === "function") window.clankerApp.showView("rooms");
     else window.location.hash = "#rooms";
   } catch (_) { window.location.hash = "#rooms"; }
@@ -263,6 +269,7 @@ function renderRuns(container, detailNode, runs) {
   var grouped = groupRuns(runs);
 
   function openRun(id) {
+    if (_openRun) { try { _openRun(id); return; } catch (_) {} }
     if (typeof window.openRun === "function") {
       try { window.openRun(id); return; } catch (_) {}
     }

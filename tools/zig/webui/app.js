@@ -10,6 +10,7 @@ import { makeLineSplitter as makeLineSplitterMod } from "./core/stream.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMod, doneColumn as doneColumnMod, blockers as blockersMod, dueState as dueStateMod } from "./lib/board.js";
+import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
@@ -2573,11 +2574,7 @@ var viewLoaded = {};
 var viewLoaders = {
   runs: loadRuns,
   fleet: function () {
-    // fleet.js is a self-contained module; call its initializer if present so hash nav works without duplicating fetch logic.
-    if (window.clankerFleet && typeof window.clankerFleet.refresh === "function") return window.clankerFleet.refresh();
-    var node = document.getElementById("fleet-status");
-    if (node) node.textContent = "";
-    return null;
+    return refreshFleet();
   },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
@@ -4777,6 +4774,8 @@ if (needsPluginsNow) {
   });
 }
 
+setNavShowView(showView);
+setOpenRun(openRun);
 afterFirstDraw(function () {
   loadStatus();
   loadProviders();
