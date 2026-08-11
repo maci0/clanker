@@ -174,13 +174,6 @@
   /* ---- transcript: a running list of turns, chat-style ---- */
   .transcript { display: flex; flex-direction: column; gap: var(--space-6); margin-top: var(--space-6); }
   .transcript:empty { display: none; }
-  /* Delete used to be the loudest element on the page: a solid red fill beside
-     two quiet buttons, pulling the eye to the one action you rarely want. It
-     now reads as the others do and only turns red once you are on it. */
-  .secondary.danger { color: var(--danger); }
-  .secondary.danger:hover, .secondary.danger:focus-visible {
-    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
-  }
   .turn { border: 1px solid var(--rule); border-radius: var(--radius-lg); overflow: hidden; }
   .turn-you {
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
@@ -337,6 +330,14 @@
     border: 1px solid var(--border);
   }
   button.danger { background: var(--danger); color: var(--on-danger); }
+  /* Delete used to be the loudest element on the page: a solid red fill beside
+     two quiet buttons, pulling the eye to the one action you rarely want. It
+     reads as the others do until you are on it. Declared after button.danger,
+     which it overrides for exactly this pairing. */
+  button.secondary.danger { background: var(--surface); color: var(--danger); border-color: var(--border); }
+  button.secondary.danger:hover, button.secondary.danger:focus-visible {
+    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
+  }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -735,6 +736,89 @@
   }
   .suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
+  .prompt-list {
+    margin-top: var(--space-2); max-height: 14rem;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: var(--space-2);
+  }
+  .prompt-list[hidden] { display: none; }
+  .rail-pin {
+    flex: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0);
+    padding: 0 var(--space-2); min-height: 32px;
+  }
+  .rail-pin[aria-pressed="true"] { color: var(--accent); }
+  .rail-row { display: flex; align-items: center; gap: var(--space-1); }
+  .rail-row .rail-item { flex: 1; min-width: 0; }
+  /* A scrim only exists on narrow screens, where the rail floats over the page
+     and there is otherwise nothing to click to dismiss it. */
+  .rail-scrim { display: none; }
+  @media (max-width: 60rem) {
+    .rail-scrim[data-open="true"] {
+      display: block; position: fixed; inset: 0; z-index: 14;
+      background: color-mix(in srgb, var(--bg) 60%, transparent);
+    }
+  }
+
+  .shell { display: flex; align-items: flex-start; }
+  .rail {
+    flex: none; width: 17rem; align-self: stretch;
+    position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--rule); background: var(--surface);
+    padding: var(--space-4);
+  }
+  .rail-head { display: flex; flex-direction: column; gap: var(--space-3); }
+  .rail-new {
+    min-height: 32px; padding: 0 var(--space-4);
+    border: 1px solid var(--accent); border-radius: var(--radius);
+    background: transparent; color: var(--accent);
+    font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
+  }
+  .rail-new:hover { background: var(--accent); color: var(--on-accent); }
+  .rail input[type="search"] { width: 100%; box-sizing: border-box; }
+  .rail-list { margin-top: var(--space-4); display: flex; flex-direction: column; gap: 1px; }
+  .rail-group {
+    margin: var(--space-4) 0 var(--space-2);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .rail-group:first-child { margin-top: 0; }
+  .rail-item {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0);
+  }
+  .rail-item:hover { background: var(--surface-2); }
+  .rail-item[aria-selected="true"] {
+    background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); color: var(--fg);
+  }
+  .rail-item-title {
+    display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .rail-item-meta { display: block; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .rail-empty { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .session-title {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch;
+  }
+  #rail-toggle { display: none; }
+
+  /* Under 60rem the rail would take a third of the screen, so it becomes a
+     panel you open, and the header button that opens it appears. */
+  @media (max-width: 60rem) {
+    .rail {
+      position: fixed; inset: 0 auto 0 0; z-index: 15; width: min(20rem, 85vw);
+      transform: translateX(-100%); transition: transform 160ms ease;
+      box-shadow: 0 0 3rem color-mix(in srgb, var(--bg) 70%, transparent);
+      max-height: none;
+    }
+    .rail[data-open="true"] { transform: none; }
+    #rail-toggle { display: inline-flex; }
+  }
+  @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
+
   /* Rendered markdown. Sized against the mono body it sits in: headings step
      up rather than shout, and every block keeps the reading measure. */
   .turn-answer.md { white-space: normal; }
@@ -807,11 +891,26 @@
   <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
   <span class="spacer"></span>
   <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
+  <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Conversations</button>
   <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
   <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
   <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
   <button type="button" class="chip-btn" id="new-chat">New chat</button>
 </header>
+
+<div class="shell">
+<!-- The conversation list is a place, not a dropdown: every conversation is
+     visible at once, grouped by when it was last touched, the way an editor
+     shows a file tree. The picker it replaces could only show one row. -->
+<div class="rail-scrim" id="rail-scrim" data-open="false"></div>
+<aside class="rail" id="rail" aria-label="Conversations">
+  <div class="rail-head">
+    <button type="button" class="rail-new" id="rail-new">New chat</button>
+    <label class="sr-only" for="session-filter">Filter conversations</label>
+    <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+  </div>
+  <div class="rail-list" id="rail-list" role="listbox" aria-label="Conversations"></div>
+</aside>
 
 <main id="main" tabindex="-1">
 <nav class="tabs" role="tablist" aria-label="Sections">
@@ -831,10 +930,7 @@
          one the composer below continues. Sits above the transcript because it
          names what the transcript is showing. -->
     <div class="run-picker" id="session-picker">
-      <label for="session-select">Conversation</label>
-      <select id="session-select"></select>
-      <label for="session-filter">Find</label>
-      <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+      <span class="session-title" id="session-title">…</span>
       <div class="session-actions">
         <button type="button" class="secondary" id="session-fork">Fork</button>
         <button type="button" class="secondary" id="session-rename">Rename</button>
@@ -849,6 +945,7 @@
             <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export .md</button>
             <button type="button" class="secondary" id="session-export-json" title="Download this conversation as JSON">Export .json</button>
             <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
+            <button type="button" class="secondary" id="prompt-save" title="Save what is in the composer as a reusable prompt">Save prompt</button>
           </div>
         </details>
       </div>
@@ -873,7 +970,8 @@
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
-      <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
+      <textarea id="task" name="task" placeholder="Summarize the provider config…  (type / for saved prompts)" required rows="3"></textarea>
+      <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
         <label for="model-select">Model</label>
         <select id="model-select" title="Which provider and model runs this task"></select>
@@ -893,6 +991,7 @@
       </div>
       <div class="toolbar">
         <span class="meta" id="hint"></span>
+        <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <div class="toolbar-actions">
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
@@ -1030,6 +1129,7 @@
     </section>
   </div>
 </main>
+</div>
 
 <!-- Overlays live outside main so the tab order reaches them last and a screen
      reader is not told they are part of the current view. -->
@@ -1083,7 +1183,15 @@ document.addEventListener("DOMContentLoaded", function () {
     runsRefresh: document.getElementById("runs-refresh"),
     runFilter: document.getElementById("run-filter"),
     runStatus: document.getElementById("run-status"),
-    sessionSelect: document.getElementById("session-select"),
+    rail: document.getElementById("rail"),
+    railList: document.getElementById("rail-list"),
+    railNew: document.getElementById("rail-new"),
+    railToggle: document.getElementById("rail-toggle"),
+    sessionTitle: document.getElementById("session-title"),
+    railScrim: document.getElementById("rail-scrim"),
+    promptList: document.getElementById("prompt-list"),
+    promptSave: document.getElementById("prompt-save"),
+    contextMeter: document.getElementById("context-meter"),
     sessionStatus: document.getElementById("session-status"),
     sessionFork: document.getElementById("session-fork"),
     sessionRename: document.getElementById("session-rename"),
@@ -1315,30 +1423,137 @@ document.addEventListener("DOMContentLoaded", function () {
      it — a brand new chat has no saved file until its first turn completes,
      and dropping it from the list would make the picker disagree with what the
      composer is actually continuing. */
+  /* Conversations group by when they were last touched, because that is how
+     you look for one: "the thing I was doing this morning", not an id. */
+  function recencyGroup(updated) {
+    if (!updated) return "Undated";
+    var day = 24 * 60 * 60;
+    var now = Math.floor(Date.now() / 1000);
+    var age = now - updated;
+    if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return "Today";
+    if (age < 2 * day) return "Yesterday";
+    if (age < 7 * day) return "Previous 7 days";
+    if (age < 30 * day) return "Previous 30 days";
+    return "Older";
+  }
+
+  function railRow(s, title, meta, selected) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "rail-item";
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", String(selected));
+    var t = document.createElement("span");
+    t.className = "rail-item-title";
+    t.textContent = title;
+    var m = document.createElement("span");
+    m.className = "rail-item-meta";
+    m.textContent = meta;
+    b.appendChild(t);
+    b.appendChild(m);
+    if (s) b.addEventListener("click", function () { switchSession(s.id); closeRailOnNarrow(); });
+    return b;
+  }
+
+  /* Pinning lives in this browser rather than on the server: which few
+     conversations you keep to hand is a property of how you are working right
+     now, not of the conversation. */
+  function loadPins() {
+    try { return JSON.parse(window.localStorage.getItem("clanker.pins") || "[]"); } catch (e) { return []; }
+  }
+  var pins = loadPins();
+
+  function isPinned(id) { return pins.indexOf(id) !== -1; }
+
+  function togglePin(id) {
+    var at = pins.indexOf(id);
+    if (at === -1) pins.push(id); else pins.splice(at, 1);
+    try { window.localStorage.setItem("clanker.pins", JSON.stringify(pins)); } catch (e) {}
+    renderSessionOptions(null);
+  }
+
   function renderSessionOptions(sessions) {
     if (sessions) knownSessions = sessions;
-    /* The filter narrows what the picker offers, never what is known: the
-       conversation currently open always stays selectable, or typing would
-       be able to deselect the transcript on screen. */
     var q = el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "";
-    el.sessionSelect.textContent = "";
+    el.railList.textContent = "";
     var seen = false;
-    knownSessions.forEach(function (s) {
-      if (q && s.id !== sessionId && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
-      var opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = sessionLabel(s);
-      el.sessionSelect.appendChild(opt);
-      if (s.id === sessionId) seen = true;
+    var lastGroup = "";
+    var shown = 0;
+    var ordered = knownSessions.slice().sort(function (a, b) {
+      var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return 0;
     });
-    if (!seen) {
-      var pending = document.createElement("option");
-      pending.value = sessionId;
-      pending.textContent = "New conversation  ·  unsaved";
-      el.sessionSelect.insertBefore(pending, el.sessionSelect.firstChild);
+    ordered.forEach(function (s) {
+      if (s.id === sessionId) seen = true;
+      if (q && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
+      var group = isPinned(s.id) ? "Pinned" : recencyGroup(s.updated);
+      if (group !== lastGroup) {
+        var head = document.createElement("p");
+        head.className = "rail-group";
+        head.textContent = group;
+        el.railList.appendChild(head);
+        lastGroup = group;
+      }
+      var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+      var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
+        (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
+      var row = document.createElement("div");
+      row.className = "rail-row";
+      row.appendChild(railRow(s, title, meta, s.id === sessionId));
+      var pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = "rail-pin";
+      pin.textContent = isPinned(s.id) ? "★" : "☆";
+      pin.setAttribute("aria-pressed", String(isPinned(s.id)));
+      pin.setAttribute("aria-label", (isPinned(s.id) ? "Unpin " : "Pin ") + title);
+      pin.addEventListener("click", function () { togglePin(s.id); });
+      row.appendChild(pin);
+      el.railList.appendChild(row);
+      shown += 1;
+    });
+    /* A brand new chat has no file on disk until its first turn completes;
+       without this row the rail would show nothing selected while the
+       composer was plainly pointed at something. */
+    if (!seen && !q) {
+      var pending = railRow(null, "New conversation", "unsaved", true);
+      el.railList.insertBefore(pending, el.railList.firstChild);
     }
-    el.sessionSelect.value = sessionId;
+    if (!shown && q) {
+      var none = document.createElement("p");
+      none.className = "rail-empty";
+      none.textContent = "No conversation matches.";
+      el.railList.appendChild(none);
+    }
+    renderSessionTitle();
   }
+
+  function renderSessionTitle() {
+    var meta = currentSessionMeta();
+    el.sessionTitle.textContent = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
+    renderContextMeter();
+  }
+
+  function setRailOpen(open) {
+    el.rail.setAttribute("data-open", String(open));
+    el.railScrim.setAttribute("data-open", String(open));
+    el.railToggle.setAttribute("aria-expanded", String(open));
+    if (open) el.sessionFilter.focus();
+  }
+
+  function closeRailOnNarrow() {
+    if (window.matchMedia && window.matchMedia("(max-width: 60rem)").matches) setRailOpen(false);
+  }
+
+  el.railToggle.addEventListener("click", function () {
+    setRailOpen(el.rail.getAttribute("data-open") !== "true");
+  });
+  el.railScrim.addEventListener("click", function () { setRailOpen(false); });
+
+  el.railNew.addEventListener("click", function () {
+    el.newChat.click();
+    closeRailOnNarrow();
+  });
 
   /* The transcript is either turns or a line saying there are none; it used to
      be turns or nothing at all, which looked identical to a failed load. */
@@ -1411,13 +1626,14 @@ document.addEventListener("DOMContentLoaded", function () {
       // Refused mid-run, so put the control back on the conversation that is
       // actually still running rather than leaving it pointing at one the
       // composer is not using.
-      el.sessionSelect.value = sessionId;
+      renderSessionOptions(null);
       el.sessionStatus.textContent = "Finish or stop the current run before switching conversation.";
       return;
     }
     sessionId = id;
     try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
     renderSessionChip();
+    renderSessionOptions(null);
     el.transcript.textContent = "";
     el.sessionStatus.textContent = "Loading conversation…";
     fetch("/api/sessions/" + encodeURIComponent(id))
@@ -1440,9 +1656,7 @@ document.addEventListener("DOMContentLoaded", function () {
       });
   }
 
-  el.sessionSelect.addEventListener("change", function () {
-    switchSession(el.sessionSelect.value);
-  });
+
 
   /* A conversation's title is otherwise the first 60 characters of whatever
      task opened it, which makes a picker full of them read like a list of
@@ -1543,7 +1757,8 @@ document.addEventListener("DOMContentLoaded", function () {
     el.newChat.disabled = busy;
     el.task.readOnly = busy;
     el.cancel.hidden = !busy;
-    el.submit.textContent = busy ? "Running…" : "Run (Ctrl+Enter)";
+    if (busy) el.submit.textContent = "Running…";
+    else syncSubmitLabel();
     document.title = busy ? "Running… · clanker" : "clanker";
   }
 
@@ -3865,6 +4080,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
   /* The CLI has --provider and config.json has temperature and top_p; the
      composer had neither, so every run through the page used the default. */
+  var providerCache = [];
+
   function loadProviders() {
     return fetch("/api/providers")
       .then(function (r) {
@@ -3872,6 +4089,7 @@ document.addEventListener("DOMContentLoaded", function () {
         return r.json();
       })
       .then(function (d) {
+        providerCache = d.providers || [];
         el.modelSelect.textContent = "";
         (d.providers || []).forEach(function (prov) {
           var group = document.createElement("optgroup");
@@ -3903,6 +4121,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   el.modelSelect.addEventListener("change", function () {
     try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
+    renderContextMeter();
   });
 
   /* Everything the composer adds to a run, in one place, so the submit handler
@@ -4063,6 +4282,146 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     el.suggestions.appendChild(b);
   });
+
+
+  /* ---------- saved prompts ---------- */
+
+  /* Every one of these UIs has a prompt library, and the reason is the same:
+     the tasks worth repeating are long, and retyping them is where the habit
+     of using the tool dies. */
+  function loadPrompts() {
+    try { return JSON.parse(window.localStorage.getItem("clanker.prompts") || "[]"); } catch (e) { return []; }
+  }
+  var prompts = loadPrompts();
+
+  function savePrompts() {
+    try { window.localStorage.setItem("clanker.prompts", JSON.stringify(prompts)); } catch (e) {}
+  }
+
+  el.promptSave.addEventListener("click", function () {
+    var text = el.task.value.trim();
+    if (!text) {
+      el.sessionStatus.textContent = "Write the prompt in the composer first.";
+      return;
+    }
+    if (prompts.indexOf(text) === -1) prompts.push(text);
+    savePrompts();
+    el.sessionStatus.textContent = "Saved " + prompts.length + (prompts.length === 1 ? " prompt." : " prompts.");
+  });
+
+  var promptIndex = 0;
+
+  function promptQuery() {
+    var v = el.task.value;
+    return v.charAt(0) === "/" ? v.slice(1).toLowerCase() : null;
+  }
+
+  function renderPromptList() {
+    var q = promptQuery();
+    if (q === null || !prompts.length) {
+      el.promptList.hidden = true;
+      el.promptList.textContent = "";
+      return;
+    }
+    var matches = prompts.filter(function (t) { return fuzzyMatch(q, t); });
+    el.promptList.textContent = "";
+    if (!matches.length) {
+      el.promptList.hidden = true;
+      return;
+    }
+    if (promptIndex >= matches.length) promptIndex = 0;
+    matches.forEach(function (text, i) {
+      var li = document.createElement("li");
+      li.className = "palette-item";
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === promptIndex));
+      var label = document.createElement("span");
+      label.className = "palette-label";
+      label.textContent = text;
+      li.appendChild(label);
+      li.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        usePrompt(text);
+      });
+      var drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "rail-pin";
+      drop.textContent = "×";
+      drop.setAttribute("aria-label", "Forget this prompt");
+      drop.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        prompts.splice(prompts.indexOf(text), 1);
+        savePrompts();
+        renderPromptList();
+      });
+      li.appendChild(drop);
+      el.promptList.appendChild(li);
+    });
+    el.promptList.hidden = false;
+    el.promptList.setAttribute("data-count", String(matches.length));
+  }
+
+  function usePrompt(text) {
+    el.task.value = text;
+    el.promptList.hidden = true;
+    el.task.focus();
+    syncControls();
+  }
+
+  el.task.addEventListener("input", renderPromptList);
+  el.task.addEventListener("blur", function () { window.setTimeout(function () { el.promptList.hidden = true; }, 120); });
+  el.task.addEventListener("keydown", function (e) {
+    if (el.promptList.hidden) return;
+    var items = el.promptList.querySelectorAll(".palette-item");
+    if (!items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      renderPromptList();
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+    }
+  });
+
+  /* ---------- composer height and context weight ---------- */
+
+  /* Grows with what is being written, up to a third of the viewport, then
+     scrolls: a five-line task in a two-line box is a scroll bar you have to
+     fight while composing. */
+  function autoGrow() {
+    el.task.style.height = "auto";
+    var cap = Math.round(window.innerHeight / 3);
+    el.task.style.height = Math.min(el.task.scrollHeight, cap) + "px";
+  }
+  el.task.addEventListener("input", autoGrow);
+  window.addEventListener("resize", autoGrow);
+
+  /* Compaction is driven by transcript bytes against the model's context, and
+     both numbers already exist; nothing was showing the ratio. */
+  function renderContextMeter() {
+    var meta = currentSessionMeta();
+    if (!meta || typeof meta.bytes !== "number" || !meta.bytes) {
+      el.contextMeter.textContent = "";
+      return;
+    }
+    var pair = (el.modelSelect.value || "").split(" ");
+    var window_ = 0;
+    (providerCache || []).forEach(function (prov) {
+      if (prov.name !== pair[0]) return;
+      (prov.models || []).forEach(function (m) { if (m.name === pair[1]) window_ = m.context_window || 0; });
+    });
+    if (!window_) {
+      el.contextMeter.textContent = fmtBytes(meta.bytes) + " of history";
+      return;
+    }
+    // Four bytes to the token is the same rough conversion the improve loop
+    // budgets with; it is a gauge, not an accountant.
+    var pct = Math.round((meta.bytes / 4) / window_ * 100);
+    el.contextMeter.textContent = fmtBytes(meta.bytes) + " · about " + pct + "% of context";
+  }
 
   /* ---------- conversation utilities ---------- */
 
@@ -4331,7 +4690,7 @@ document.addEventListener("DOMContentLoaded", function () {
     out.push({ kind: "action", label: "Cycle theme", run: function () { el.themeToggle.click(); } });
     out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { openOverlay(el.help, el.helpClose); } });
     knownSessions.forEach(function (s) {
-      out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); el.sessionSelect.value = s.id; switchSession(s.id); } });
+      out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); switchSession(s.id); } });
     });
     allRuns.forEach(function (r) {
       out.push({ kind: "run", label: runLabel(r), run: function () { showView("runs", false); el.runSelect.value = r.run_id; loadRun(r.run_id); } });
@@ -4435,6 +4794,7 @@ document.addEventListener("DOMContentLoaded", function () {
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
       if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }
+      if (el.rail.getAttribute("data-open") === "true") { setRailOpen(false); el.railToggle.focus(); e.preventDefault(); return; }
       if (!el.help.hidden) { closeOverlay(el.help); e.preventDefault(); return; }
       return;
     }
