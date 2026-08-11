@@ -362,6 +362,11 @@ const Model = struct {
             return;
         }
 
+        if (std.mem.eql(u8, task, "/help") or std.mem.eql(u8, task, "?")) {
+            self.printHelp();
+            return;
+        }
+
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
@@ -379,6 +384,27 @@ const Model = struct {
 
         // Kick off the tick heartbeat that picks up streamed deltas.
         try ctx.tick(50, self.widget());
+    }
+
+    /// The full command set is exactly what `submit` recognizes, so this is
+    /// hand-maintained rather than generated — unlike the deleted REPL's
+    /// `cmd_*` catalog (docs/tui-feature-checklist.md item 4), there is no
+    /// registry here yet to generate it from. Keep in sync by hand until
+    /// there is.
+    fn printHelp(self: *Model) void {
+        const text =
+            \\commands:
+            \\  /help, ?          show this help
+            \\  /model [query]    switch provider/model (fuzzy picker; Enter picks, Esc cancels)
+            \\  /quit, /exit, /q  leave the REPL (bare "exit"/"quit" also work)
+            \\keys:
+            \\  Up/Down           recall previous input
+            \\  Ctrl-C            stop the current turn, or quit when idle
+            \\  Ctrl-Shift-C      copy the selection (or the input line)
+            \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
+        ;
+        var it = std.mem.splitScalar(u8, text, '\n');
+        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
     }
 
     fn openModelPicker(self: *Model, seed_query: []const u8) void {
@@ -705,7 +731,7 @@ const Model = struct {
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /quit /exit /q exit quit \xc2\xb7 Ctrl-C to exit", .{
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
             self.provider.name,
             self.provider.activeModelName(),
             activity,
