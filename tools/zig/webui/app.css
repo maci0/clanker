@@ -201,6 +201,175 @@
   --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
 }
 
+/* Catppuccin Latte, the family's light member: same roles as Mocha above
+   (mauve accent, green/yellow/red for held/limit/failed) over the light
+   base/mantle/surface0 ramp instead of the dark one. */
+:root[data-theme="latte"] {
+  --paper: #eff1f5;
+  --bg: #e6e9ef;
+  --surface: var(--paper);
+  --surface-2: #ccd0da;
+  --border: #9ca0b0;
+  --rule: #bcc0cc;
+  --fg: #4c4f69;
+  --fg-muted: #6c6f85;
+  --accent: #8839ef;
+  --accent-dim: #8839ef1f;
+  --accent-text: #8839ef;
+  --on-accent: #eff1f5;
+  --ok: #40a02b;
+  --ok-fill: #40a02b;
+  --violet: #ea76cb;
+  --violet-text: #ea76cb;
+  --danger: #d20f39;
+  --on-danger: #eff1f5;
+  --scrim: rgba(76, 79, 105, 0.45);
+  --warn: #df8e1d;
+  --warn-text: #df8e1d;
+  --lift: 0 1px 2px rgba(76, 79, 105, 0.10), 0 6px 18px -8px rgba(76, 79, 105, 0.30);
+  --lift-high: 0 2px 4px rgba(76, 79, 105, 0.12), 0 20px 44px -16px rgba(76, 79, 105, 0.40);
+}
+
+/* Catppuccin Frappé, the softer-contrast dark member. */
+:root[data-theme="frappe"] {
+  --paper: #303446;
+  --bg: #292c3c;
+  --surface: var(--paper);
+  --surface-2: #414559;
+  --border: #737994;
+  --rule: #51576d;
+  --fg: #c6d0f5;
+  --fg-muted: #a5adce;
+  --accent: #ca9ee6;
+  --accent-dim: #ca9ee626;
+  --accent-text: #ca9ee6;
+  --on-accent: #303446;
+  --ok: #a6d189;
+  --ok-fill: #a6d189;
+  --violet: #f4b8e4;
+  --violet-text: #f4b8e4;
+  --danger: #e78284;
+  --on-danger: #303446;
+  --scrim: rgba(35, 38, 52, 0.72);
+  --warn: #e5c890;
+  --warn-text: #e5c890;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
+  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+}
+
+/* Catppuccin Macchiato, between Frappé and Mocha in contrast. */
+:root[data-theme="macchiato"] {
+  --paper: #24273a;
+  --bg: #1e2030;
+  --surface: var(--paper);
+  --surface-2: #363a4f;
+  --border: #6e738d;
+  --rule: #494d64;
+  --fg: #cad3f5;
+  --fg-muted: #a5adcb;
+  --accent: #c6a0f6;
+  --accent-dim: #c6a0f626;
+  --accent-text: #c6a0f6;
+  --on-accent: #24273a;
+  --ok: #a6da95;
+  --ok-fill: #a6da95;
+  --violet: #f5bde6;
+  --violet-text: #f5bde6;
+  --danger: #ed8796;
+  --on-danger: #24273a;
+  --scrim: rgba(24, 25, 38, 0.72);
+  --warn: #eed49f;
+  --warn-text: #eed49f;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
+  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+}
+
+/* Tokyo Night (folke/tokyonight.nvim), roles from its own bg/bg_highlight/
+   fg/fg_dark/comment/purple/green/magenta/red/yellow. */
+:root[data-theme="tokyonight"] {
+  --paper: #1a1b26;
+  --bg: #16161e;
+  --surface: var(--paper);
+  --surface-2: #292e42;
+  --border: #545c7e;
+  --rule: #3b4261;
+  --fg: #c0caf5;
+  --fg-muted: #a9b1d6;
+  --accent: #9d7cd8;
+  --accent-dim: #9d7cd826;
+  --accent-text: #9d7cd8;
+  --on-accent: #1a1b26;
+  --ok: #9ece6a;
+  --ok-fill: #9ece6a;
+  --violet: #bb9af7;
+  --violet-text: #bb9af7;
+  --danger: #f7768e;
+  --on-danger: #1a1b26;
+  --scrim: rgba(22, 22, 30, 0.72);
+  --warn: #e0af68;
+  --warn-text: #e0af68;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
+  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+}
+
+/* Tokyo Night Storm: same accents as Night, lighter background — the two
+   only diverge on --paper/--bg, matching tokyonight.nvim upstream where
+   Storm and Night share every foreground colour. */
+:root[data-theme="tokyonight-storm"] {
+  --paper: #24283b;
+  --bg: #1f2335;
+  --surface: var(--paper);
+  --surface-2: #292e42;
+  --border: #545c7e;
+  --rule: #3b4261;
+  --fg: #c0caf5;
+  --fg-muted: #a9b1d6;
+  --accent: #9d7cd8;
+  --accent-dim: #9d7cd826;
+  --accent-text: #9d7cd8;
+  --on-accent: #1a1b26;
+  --ok: #9ece6a;
+  --ok-fill: #9ece6a;
+  --violet: #bb9af7;
+  --violet-text: #bb9af7;
+  --danger: #f7768e;
+  --on-danger: #1a1b26;
+  --scrim: rgba(31, 35, 53, 0.72);
+  --warn: #e0af68;
+  --warn-text: #e0af68;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
+  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+}
+
+/* Tokyo Night Day, the light variant. Every hue is inverted relative to
+   Night upstream, not just lightened, so this does not just reuse Night's
+   values with a swapped background. */
+:root[data-theme="tokyonight-day"] {
+  --paper: #e1e2e7;
+  --bg: #d0d5e3;
+  --surface: var(--paper);
+  --surface-2: #c4c8da;
+  --border: #8990b3;
+  --rule: #a8aecb;
+  --fg: #3760bf;
+  --fg-muted: #6172b0;
+  --accent: #7847bd;
+  --accent-dim: #7847bd1f;
+  --accent-text: #7847bd;
+  --on-accent: #e1e2e7;
+  --ok: #587539;
+  --ok-fill: #587539;
+  --violet: #9854f1;
+  --violet-text: #9854f1;
+  --danger: #f52a65;
+  --on-danger: #e1e2e7;
+  --scrim: rgba(55, 96, 191, 0.35);
+  --warn: #8c6c3e;
+  --warn-text: #8c6c3e;
+  --lift: 0 1px 2px rgba(55, 96, 191, 0.10), 0 6px 18px -8px rgba(55, 96, 191, 0.30);
+  --lift-high: 0 2px 4px rgba(55, 96, 191, 0.12), 0 20px 44px -16px rgba(55, 96, 191, 0.40);
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {

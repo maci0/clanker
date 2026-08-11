@@ -82,15 +82,7 @@ pub fn main(init: std.process.Init) !void {
     defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
     defer vertex_token.deinit(gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
-    // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
-    // (existing real env vars always win). Gated by the modules.dotenv flag.
     const arena = init.arena.allocator();
-    const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch null;
-    if (early_cfg) |c| {
-        if (c.modules.dotenv) dotenv.load(init.io, gpa, init.environ_map);
-    } else {
-        dotenv.load(init.io, gpa, init.environ_map); // no config: still try .env
-    }
 
     var arg_list: std.ArrayList([]const u8) = .empty;
     defer arg_list.deinit(gpa);
@@ -117,6 +109,20 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (opts.verbose) log.setLevel(.debug);
+
+    // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
+    // (existing real env vars always win). Gated by the modules.dotenv flag,
+    // and skipped for --help/--version: neither touches a provider or reads
+    // a key, so there is no reason for either to read config.json/.env off
+    // disk or print the "loaded N key(s)" line ahead of its own output.
+    if (opts.command != .help and opts.command != .version) {
+        const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch null;
+        if (early_cfg) |c| {
+            if (c.modules.dotenv) dotenv.load(init.io, gpa, init.environ_map);
+        } else {
+            dotenv.load(init.io, gpa, init.environ_map); // no config: still try .env
+        }
+    }
     cli.run(init, opts) catch |err| {
         // A command failed after argument parsing succeeded: this is a
         // runtime/general error (exit 1), distinct from the usage errors

@@ -2549,7 +2549,13 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
 
-    const path = "test_wasm_bytes_cache.tmp";
+    // A hardcoded relative path in the repo's cwd was shared across every
+    // run of this test, so two overlapping runs (or a leftover file from a
+    // crashed run) raced on the same file and read back empty or stale
+    // bytes. A per-test temp dir removes the collision.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(arena_state.allocator(), ".zig-cache/tmp/{s}/test_wasm_bytes_cache.tmp", .{tmp.sub_path});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "fake-wasm-bytes" });
     defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
 

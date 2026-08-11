@@ -424,7 +424,15 @@ fn renderUsage(buf: []u8) []const u8 {
         w.print("\n{s}\n", .{g.title()}) catch {};
         for (&specs) |*s| {
             if (s.group != g) continue;
-            w.print("  {s: <34}{s}\n", .{ s.usage, s.blurb }) catch {};
+            // A usage string that fills or overruns the 34-wide column would
+            // otherwise butt straight into the blurb with no separating
+            // space (e.g. "...fill] [name]verify connectivity..."); wrap the
+            // blurb onto its own aligned line instead.
+            if (s.usage.len >= 32) {
+                w.print("  {s}\n  {s: <34}{s}\n", .{ s.usage, "", s.blurb }) catch {};
+            } else {
+                w.print("  {s: <34}{s}\n", .{ s.usage, s.blurb }) catch {};
+            }
         }
     }
     w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};

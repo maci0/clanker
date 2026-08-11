@@ -129,8 +129,9 @@ const Line = struct {
     fence_lang: ?[]const u8 = null,
 };
 
-/// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "mono",
-/// "default"). An env var rather than a flag because the REPL is also reached
+/// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "latte",
+/// "frappe", "macchiato", "tokyonight", "storm", "day", "mono", "default").
+/// An env var rather than a flag because the REPL is also reached
 /// through `clanker` with no arguments, and a theme is a property of the
 /// terminal you are sitting at rather than of one invocation.
 fn themeName(environ_map: *const std.process.Environ.Map) ?[]const u8 {
@@ -309,13 +310,13 @@ const Model = struct {
                 // readline "quote next character" prefix and the TextField
                 // treats it that way.
                 if (key.matches('v', .{ .ctrl = true, .shift = true })) {
-                    try ctx.requestSystemClipboard();
+                    requestSystemClipboard(ctx.io);
                     self.awaiting_clipboard = true;
                     return ctx.consumeEvent();
                 }
                 if (key.matches(vaxis.Key.insert, .{ .shift = true })) {
                     self.in_paste = true;
-                    try ctx.requestSystemClipboard();
+                    requestSystemClipboard(ctx.io);
                     self.awaiting_clipboard = true;
                     return ctx.consumeEvent();
                 }
@@ -415,6 +416,15 @@ const Model = struct {
             },
             .motion => {},
         }
+    }
+
+    /// Asks the terminal for its OSC 52 clipboard contents; the answer (if
+    /// any) arrives later as a `.paste` event. vxfw's `EventContext` only
+    /// exposes a `copy_to_clipboard` command, not a request one, so this
+    /// writes the raw control sequence straight to the tty itself, the same
+    /// bytes `Vaxis.requestSystemClipboard` sends internally.
+    fn requestSystemClipboard(io: std.Io) void {
+        std.Io.File.stdout().writeStreamingAll(io, vaxis.ctlseqs.osc52_clipboard_request) catch {};
     }
 
     /// Ctrl+Shift+C: copy the active mouse-drag selection if there is one

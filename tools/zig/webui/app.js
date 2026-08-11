@@ -365,7 +365,7 @@ function renderSessionChip() {
   el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
 }
 
-var THEMES = ["system", "light", "dark", "mocha"];
+var THEMES = ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day"];
 
 function loadTheme() {
   var t = null;
