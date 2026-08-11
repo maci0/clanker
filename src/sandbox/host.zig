@@ -1393,7 +1393,12 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
     const runner = h.sandbox.subagent_runner orelse return Err.not_found;
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, json_input, .{}) catch return Err.invalid;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_input, .{}) catch return Err.invalid;
     const obj = switch (parsed) {
         .object => |o| o,
         else => return Err.invalid,
