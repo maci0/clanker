@@ -62,6 +62,12 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+    // The sandbox tests load zig-out/tools/*.wasm, which is build output and
+    // therefore absent from a fresh checkout: `zig build test` failed there
+    // with FileNotFound on a tool nobody had built yet. The improvement engine
+    // already runs the tools gate before the test gate for this reason; the
+    // dependency belongs here so the same holds for anyone typing the command
+    // by hand. Declared after tools_step exists, further down.
 
     // ------------------------------------------------------- wasm tool builds
     // `zig build tools` compiles every tools/zig/<name>.zig into a
@@ -116,4 +122,8 @@ pub fn build(b: *std.Build) void {
         });
         tools_step.dependOn(&install.step);
     }
+
+    // Every tool is built before any test runs, for the reason given where the
+    // test step is declared.
+    run_tests.step.dependOn(tools_step);
 }
