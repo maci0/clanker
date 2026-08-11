@@ -213,6 +213,38 @@ test "autoFormatAndCheck short-circuits when there is nothing to format" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// Rejects a proposal that lists the same file path more than once.
+/// Multiple changes to one file risk the second edit's `old` text no longer
+/// matching after the first edit is applied, causing a silent misapply or a
+/// confusing "old text not found" error. Catching it here gives a clear
+/// diagnostic before any file I/O.
+pub fn duplicateFileGate(files: []const []const u8) GateResult {
+    for (files, 0..) |f, i| {
+        for (files[i + 1 ..]) |g| {
+            if (std.mem.eql(u8, f, g)) {
+                return .{ .ok = false, .label = "duplicate-file", .detail = f };
+            }
+        }
+    }
+    return .{ .ok = true, .label = "duplicate-file" };
+}
+
+test "duplicateFileGate rejects repeated files and accepts distinct ones" {
+    const dup = duplicateFileGate(&.{ "src/a.zig", "src/b.zig", "src/a.zig" });
+    try std.testing.expect(!dup.ok);
+    try std.testing.expectEqualStrings("duplicate-file", dup.label);
+    try std.testing.expectEqualStrings("src/a.zig", dup.detail);
+
+    const ok = duplicateFileGate(&.{ "src/a.zig", "src/b.zig", "src/c.zig" });
+    try std.testing.expect(ok.ok);
+
+    const empty = duplicateFileGate(&.{});
+    try std.testing.expect(empty.ok);
+
+    const single = duplicateFileGate(&.{"src/x.zig"});
+    try std.testing.expect(single.ok);
+}
+
 /// Validates that a set of proposed changes are semantically meaningful:
 /// every (old, new) pair must differ, and at least one change must exist.
 /// Returns ok=false with a diagnostic when the proposal is a no-op.
