@@ -668,10 +668,15 @@ pub const Agent = struct {
                         });
                     }
                 }
+                // Cap tool results entering the conversation so a single huge
+                // output cannot dominate the next LLM call's context. Graph,
+                // check-verdict, and multimodal paths above used the uncapped
+                // content; only the message to the model is bounded.
+                const capped = try capToolResult(self.arena, content);
                 try messages.append(self.arena, .{
                     .role = .tool,
                     .tool_call_id = tc.id,
-                    .content = content,
+                    .content = capped,
                 });
                 // Multimodal: attach the image after its tool result so the
                 // assistant(tool_calls) -> tool(result) ordering is preserved.
@@ -2220,6 +2225,25 @@ pub const parallel_tool_stack_floor_bytes: usize = 32 * 1024 * 1024;
 /// the byte-based history compaction in maybeCompactMessages.
 const max_per_turn_tokens: u32 = 32768;
 
+/// Hard cap on a single tool result before it enters the conversation. A huge
+/// result (large file read, verbose search dump) can dominate the context
+/// window and inflate cost on the very next LLM call — before compaction has a
+/// chance to act (and compaction preserves the last 6 messages, so a recent
+/// giant result stays in context regardless). The model sees the first
+/// `max_tool_result_bytes` plus a truncation notice so it can ask for specific
+/// parts (offset, line range) if it needs more.
+const max_tool_result_bytes: usize = 32768;
+
+/// Caps a tool result to `max_tool_result_bytes` with a truncation marker.
+/// Returns the original slice when it fits or is close enough that the marker
+/// would make it larger (defeats the purpose).
+fn capToolResult(arena: std.mem.Allocator, content: []const u8) ![]const u8 {
+    // Upper bound on the marker text (two decimal fields + static prose).
+    const marker_overhead = 200;
+    if (content.len <= max_tool_result_bytes + marker_overhead) return content;
+    return try std.fmt.allocPrint(arena, "{s}\n\n[... result truncated: {d} bytes total, showing first {d}. Ask for specific parts (offset, line range) if you need more. ...]", .{ content[0..max_tool_result_bytes], content.len, max_tool_result_bytes });
+}
+
 const WorkerHandle = struct {
     slot: usize,
     thread: std.Thread,
@@ -2621,6 +2645,32 @@ test "maybeCompactMessages drops the middle, keeps the system prompt and the rec
     try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 1].content.?);
     try std.testing.expect(messages.items[messages.items.len - 2].role == .user);
     try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 2].content.?);
+}
+
+test "capToolResult leaves small results untouched and truncates large ones" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Small result: returned verbatim.
+    const small = "{\"ok\":true,\"result\":\"hi\"}";
+    try std.testing.expectEqualStrings(small, try capToolResult(arena, small));
+
+    // Exactly at the cap: still verbatim (boundary is inclusive).
+    const exact = try arena.alloc(u8, max_tool_result_bytes);
+    @memset(exact, 'x');
+    try std.testing.expectEqualStrings(exact, try capToolResult(arena, exact));
+
+    // Well over the cap + marker overhead: truncated, with the marker and the original size.
+    const big = try arena.alloc(u8, max_tool_result_bytes * 4);
+    @memset(big, 'x');
+    const capped = try capToolResult(arena, big);
+    try std.testing.expect(capped.len > max_tool_result_bytes); // includes marker
+    try std.testing.expect(capped.len < big.len); // but much smaller than original
+    try std.testing.expect(std.mem.indexOf(u8, capped, "truncated") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capped, "Ask for specific parts") != null);
+    // The first max_tool_result_bytes bytes are preserved.
+    try std.testing.expectEqualStrings(big[0..max_tool_result_bytes], capped[0..max_tool_result_bytes]);
 }
 
 test "compactionKeepStart never splits a tool-call exchange" {

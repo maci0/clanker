@@ -32,9 +32,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   logging and dotenv. Peer notify/phonebook and patch application moved to
   the sandboxed `peers` and `patch_apply` WASM tools (`tools/zig/`).
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
-  `cli.zig`, and `config.zig` sit directly in `src/`. A new module with tests
-  must be added to the `comptime` block in `src/main.zig` or its tests never
-  run.
+  `cli.zig`, `config.zig`, and `doctor.zig` sit directly in `src/`. A new
+  module with tests must be added to the `comptime` block in `src/main.zig`
+  or its tests never run.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:

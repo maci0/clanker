@@ -82,7 +82,9 @@ pub const Options = struct {
     /// drop the user into a session, the way every other coding agent does,
     /// not print usage at them.
     command: Command = .repl,
-    /// Sub-command for `providers`: "check" (default) or "models".
+    /// Sub-command for `providers`: "check" (default), "models", "catalog" or
+    /// "fill". `provider` doubles as the catalog search query for "catalog"
+    /// and the provider name for "fill".
     providers_sub: []const u8 = "check",
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
@@ -329,7 +331,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         } else if (pending_sub) |sub| {
             if (std.mem.eql(u8, a, sub)) {
                 pending_sub = null;
-            } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models"))) {
+            } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models") or std.mem.eql(u8, a, "catalog") or std.mem.eql(u8, a, "fill"))) {
                 opts.providers_sub = a;
                 pending_sub = null; // sub consumed; next token is the provider name
             } else if (opts.command == .chat and sub.len == 0 and (std.mem.eql(u8, a, "send") or std.mem.eql(u8, a, "history") or std.mem.eql(u8, a, "rooms") or std.mem.eql(u8, a, "subscribe"))) {
@@ -520,7 +522,7 @@ const specs = [_]Spec{
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
-    .{ .command = .providers_check, .usage = "providers <check|models> [name]", .blurb = "verify provider connectivity, or list models", .group = .inspect },
+    .{ .command = .providers_check, .usage = "providers <check|models|catalog|fill> [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
@@ -742,6 +744,12 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "models")) {
         return cmdProvidersModels(init, opts);
     }
+    if (std.mem.eql(u8, opts.providers_sub, "catalog")) {
+        return cmdProvidersCatalog(init, opts);
+    }
+    if (std.mem.eql(u8, opts.providers_sub, "fill")) {
+        return cmdProvidersFill(init, opts);
+    }
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
@@ -873,6 +881,200 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
             }
         }
     }
+}
+
+/// Public, unauthenticated directory of provider/model specs (context window,
+/// pricing, capabilities) maintained outside this repo. Used so a model's
+/// metadata does not have to be hand-typed into config.json and kept in sync
+/// by hand.
+const models_dev_url = "https://models.dev/api.json";
+
+/// `clanker providers catalog <query>` — search the models.dev directory for
+/// provider or model ids/families containing `query` (case-insensitive) and
+/// print what it knows about each match. Read-only; nothing here touches
+/// config.json.
+fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const query = opts.provider orelse {
+        log.log(.error_, "usage: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
+        return error.MissingCatalogQuery;
+    };
+
+    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
+    if (catalog != .object) return error.CatalogNotObject;
+
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, "provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n");
+    var it = catalog.object.iterator();
+    while (it.next()) |kv| {
+        const provider_id = kv.key_ptr.*;
+        const provider_entry = kv.value_ptr.*;
+        if (provider_entry != .object) continue;
+        const models_v = provider_entry.object.get("models") orelse continue;
+        if (models_v != .object) continue;
+        var mit = models_v.object.iterator();
+        while (mit.next()) |mkv| {
+            const model_id = mkv.key_ptr.*;
+            const family = if (mkv.value_ptr.* == .object) fieldStr(mkv.value_ptr.object, "family") orelse "" else "";
+            if (std.ascii.indexOfIgnoreCase(provider_id, query) == null and
+                std.ascii.indexOfIgnoreCase(model_id, query) == null and
+                std.ascii.indexOfIgnoreCase(family, query) == null) continue;
+            try out.writeStreamingAll(io, try renderCatalogRow(arena, provider_id, model_id, mkv.value_ptr.*));
+        }
+    }
+}
+
+/// One `provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n` line for the
+/// catalog table.
+fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id: []const u8, m: std.json.Value) ![]const u8 {
+    if (m != .object) return std.fmt.allocPrint(arena, "{s}/{s}\t?\t?\t?\t?\t?\n", .{ provider_id, model_id });
+    var ctx: f64 = 0;
+    var out_limit: f64 = 0;
+    if (m.object.get("limit")) |l| if (l == .object) {
+        ctx = jsonNum(l.object, "context") orelse 0;
+        out_limit = jsonNum(l.object, "output") orelse 0;
+    };
+    var cost_in: f64 = 0;
+    var cost_out: f64 = 0;
+    if (m.object.get("cost")) |c| if (c == .object) {
+        cost_in = jsonNum(c.object, "input") orelse 0;
+        cost_out = jsonNum(c.object, "output") orelse 0;
+    };
+    const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
+    return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\n", .{
+        provider_id, model_id, @as(i64, @intFromFloat(ctx)), @as(i64, @intFromFloat(out_limit)),
+        cost_in, cost_out, if (reasoning) "yes" else "no",
+    });
+}
+
+/// `clanker providers fill <name>` — for a provider already declared in
+/// config.json, print each of its configured models' specs as known by the
+/// models.dev catalog, ready to paste into `models.<name>`. Never writes
+/// config.json itself: reformatting the whole file to insert a few fields
+/// risks losing whatever hand structure/comments-adjacent ordering it had,
+/// so the human stays in the loop for the merge.
+fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const provider_name = opts.provider orelse {
+        log.log(.error_, "usage: clanker providers fill <provider>", .{});
+        return error.MissingCatalogQuery;
+    };
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const p = try cfg.provider(provider_name);
+
+    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
+    const cat_provider = findCatalogProvider(catalog, p) orelse {
+        log.log(.warn, "{s}: no models.dev entry matches base_url {s}", .{ provider_name, p.base_url });
+        return;
+    };
+
+    const out = std.Io.File.stdout();
+    var it = p.models.iterator();
+    while (it.next()) |kv| {
+        const model_name = kv.key_ptr.*;
+        const cat_model = findCatalogModel(cat_provider, model_name) orelse {
+            try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "// {s}: no catalog match\n", .{model_name}));
+            continue;
+        };
+        try out.writeStreamingAll(io, try renderModelSnippet(arena, model_name, cat_model));
+    }
+}
+
+/// The models.dev provider entry whose API this clanker provider talks to:
+/// an exact `base_url` match first (most precise), then same host, then (for
+/// providers with no fixed public host, e.g. a local relay) a shared
+/// `api_key_env` name. Ambiguous on env alone — several models.dev entries
+/// can share one vendor's env var name — so it is only the last resort.
+fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.json.Value {
+    if (catalog != .object) return null;
+    const want_base = std.mem.trimEnd(u8, p.base_url, "/");
+    const want_host = config.hostOf(p.base_url);
+    var env_fallback: ?std.json.Value = null;
+    var it = catalog.object.iterator();
+    while (it.next()) |kv| {
+        const entry = kv.value_ptr.*;
+        if (entry != .object) continue;
+        const api = fieldStr(entry.object, "api") orelse "";
+        if (api.len > 0 and std.mem.eql(u8, std.mem.trimEnd(u8, api, "/"), want_base)) return entry;
+        if (want_host) |wh| {
+            if (config.hostOf(api)) |eh| {
+                if (std.mem.eql(u8, eh, wh)) return entry;
+            }
+        }
+        if (env_fallback == null) {
+            if (p.api_key_env) |want_env| {
+                if (entry.object.get("env")) |envs| {
+                    if (envs == .array) {
+                        for (envs.array.items) |e| {
+                            if (e == .string and std.mem.eql(u8, e.string, want_env)) {
+                                env_fallback = entry;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return env_fallback;
+}
+
+/// A catalog provider's model matching `model_name`, trying the exact key
+/// first and then the part after the last `/` — config model names are
+/// sometimes written OpenRouter-style (`moonshotai/kimi-k3`) even against a
+/// vendor's own API, which the catalog keys bare (`kimi-k3`).
+fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std.json.Value {
+    if (provider_entry != .object) return null;
+    const models_v = provider_entry.object.get("models") orelse return null;
+    if (models_v != .object) return null;
+    if (models_v.object.get(model_name)) |m| return m;
+    if (std.mem.lastIndexOfScalar(u8, model_name, '/')) |slash| {
+        return models_v.object.get(model_name[slash + 1 ..]);
+    }
+    return null;
+}
+
+/// A pastable `"<name>": { ... }` block for `models.<provider>.<name>` in
+/// config.json, built from a models.dev model entry.
+fn renderModelSnippet(arena: std.mem.Allocator, name: []const u8, m: std.json.Value) ![]const u8 {
+    if (m != .object) return std.fmt.allocPrint(arena, "// {s}: malformed catalog entry\n", .{name});
+    var fields: std.ArrayList([]const u8) = .empty;
+    if (m.object.get("limit")) |l| if (l == .object) {
+        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"context_window\": {d}", .{@as(i64, @intFromFloat(c))}));
+        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"max_tokens\": {d}", .{@as(i64, @intFromFloat(o))}));
+    };
+    if (m.object.get("cost")) |c| if (c == .object) {
+        if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_input\": {d}", .{v}));
+        if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_output\": {d}", .{v}));
+    };
+    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"display\": \"{s}\"", .{disp}));
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    try w.writer.print("\"{s}\": {{\n", .{name});
+    for (fields.items, 0..) |f, i| {
+        try w.writer.writeAll(f);
+        if (i < fields.items.len - 1) try w.writer.writeAll(",");
+        try w.writer.writeAll("\n");
+    }
+    try w.writer.writeAll("}\n");
+    return w.toOwnedSlice();
+}
+
+/// A JSON number field, accepting the string-encoded numbers some catalog
+/// entries use. Absent or non-numeric reads as `null`, distinct from a
+/// legitimate `0` (which no context window or price ever is in practice).
+fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
+    const v = obj.get(key) orelse return null;
+    return switch (v) {
+        .integer, .float, .number_string, .string => numToF64(v),
+        else => null,
+    };
 }
 
 fn fieldStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
@@ -4968,4 +5170,101 @@ test "sessionListJSON carries each conversation's byte weight" {
     const first = parsed.object.get("sessions").?.array.items[0];
     try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
     try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
+}
+
+// ------------------------------------------------------- providers catalog --
+
+const fake_models_dev_catalog =
+    \\{
+    \\  "moonshotai": {
+    \\    "id": "moonshotai", "name": "Moonshot AI", "api": "https://api.moonshot.ai/v1",
+    \\    "env": ["MOONSHOT_API_KEY"],
+    \\    "models": {
+    \\      "kimi-k3": {
+    \\        "id": "kimi-k3", "name": "Kimi K3", "family": "kimi-k3", "reasoning": true,
+    \\        "limit": {"context": 1048576, "output": 131072},
+    \\        "cost": {"input": 3, "output": 15}
+    \\      }
+    \\    }
+    \\  },
+    \\  "moonshotai-cn": {
+    \\    "id": "moonshotai-cn", "name": "Moonshot AI (China)", "api": "https://api.moonshot.cn/v1",
+    \\    "env": ["MOONSHOT_API_KEY"],
+    \\    "models": { "kimi-k3": { "limit": {"context": 1048576, "output": 131072}, "cost": {"input": 3, "output": 15} } }
+    \\  },
+    \\  "local-relay": {
+    \\    "id": "local-relay", "name": "Local Relay", "api": "http://127.0.0.1:9/v1",
+    \\    "env": ["RELAY_API_KEY"],
+    \\    "models": { "solo": {} }
+    \\  }
+    \\}
+;
+
+test "findCatalogProvider prefers an exact base_url match over a shared env var" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    // Both moonshotai and moonshotai-cn share the MOONSHOT_API_KEY env var;
+    // only the .ai host matches this provider's base_url exactly.
+    const p = try config.Provider.single(arena, "kimi-k3", "https://api.moonshot.ai/v1", .openai_compat, "kimi-k3", .{});
+    var p_env = p;
+    p_env.api_key_env = "MOONSHOT_API_KEY";
+    const found = findCatalogProvider(catalog, &p_env) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Moonshot AI", found.object.get("name").?.string);
+}
+
+test "findCatalogProvider falls back to the env var when no host matches" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    var p = try config.Provider.single(arena, "relay", "http://10.0.0.5:8000/v1", .openai_compat, "solo", .{});
+    p.api_key_env = "RELAY_API_KEY";
+    const found = findCatalogProvider(catalog, &p) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Local Relay", found.object.get("name").?.string);
+}
+
+test "findCatalogProvider returns null with neither a host nor an env match" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const p = try config.Provider.single(arena, "mystery", "https://example.test/v1", .openai_compat, "m", .{});
+    try std.testing.expect(findCatalogProvider(catalog, &p) == null);
+}
+
+test "findCatalogModel tries the bare id when the config name carries an OpenRouter-style prefix" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const provider_entry = catalog.object.get("moonshotai").?;
+    try std.testing.expect(findCatalogModel(provider_entry, "kimi-k3") != null);
+    try std.testing.expect(findCatalogModel(provider_entry, "moonshotai/kimi-k3") != null);
+    try std.testing.expect(findCatalogModel(provider_entry, "no-such-model") == null);
+}
+
+test "renderModelSnippet emits valid, pasteable JSON with no trailing comma" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const model = catalog.object.get("moonshotai").?.object.get("models").?.object.get("kimi-k3").?;
+    const snippet = try renderModelSnippet(arena, "kimi-k3", model);
+
+    // The point of the test: a naive "one field per line, always trailing
+    // comma" writer produces `..."display": "Kimi K3",\n}`, which is not
+    // valid JSON and fails to paste back into config.json.
+    const wrapped = try std.fmt.allocPrint(arena, "{{{s}}}", .{snippet});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, wrapped, .{});
+    const entry = parsed.object.get("kimi-k3").?;
+    try std.testing.expectEqual(@as(i64, 1048576), entry.object.get("context_window").?.integer);
+    try std.testing.expectEqual(@as(i64, 131072), entry.object.get("max_tokens").?.integer);
+    try std.testing.expectEqualStrings("Kimi K3", entry.object.get("display").?.string);
 }

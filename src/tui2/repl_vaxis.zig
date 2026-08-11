@@ -322,6 +322,7 @@ const Model = struct {
                 if (!self.has_selection) return;
                 const surface = self.last_surface orelse return;
                 const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch return;
+                defer ctx.alloc.free(text);
                 try ctx.copyToClipboard(text);
                 ctx.redraw = true;
             },
@@ -577,6 +578,7 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
         .tool_defs = tool_defs,
         .text_field = vxfw.TextField.init(gpa),
     };
+    defer model.text_field.deinit();
 
     try app.run(model.widget(), .{});
 }
