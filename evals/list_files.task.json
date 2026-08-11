@@ -1,0 +1,14 @@
+{
+  "name": "list_files",
+  "kind": "task",
+  "description": "list_files must descend when asked. Recursion was broken from the day the tool was added and every gate stayed green: the host marks directories with a trailing slash, the tool asked the host about each name with the slash still attached, and a path ending in a slash is refused, so nothing was ever a directory. It hid because the names kept their slashes into the output, and a recursive listing looked exactly like a correct one-level listing. The assertion is a file that only a descent can reach, so a repeat fails here rather than in a hand probe months later.",
+  "prompt": "Use the list_files tool on path \"src\" with recursive set to true and suffix \".zig\". src/agent/loop.zig lives one directory down, so only a recursive listing reaches it. Answer with only YES if the returned entries include src/agent/loop.zig, otherwise NO.",
+  "requires_tool": "list_files",
+  "criteria": [
+    {
+      "includes": [
+        "YES"
+      ]
+    }
+  ]
+}
