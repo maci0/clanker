@@ -521,10 +521,11 @@ bind(el.railList, railState, function (s) {
     var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
     return pa === pb ? 0 : pb - pa;
   });
-  var seen = false;
+  var seen = ordered.some(function (item) { return item.id === s.current; });
   var shown = 0;
 
-  workspacesOf(ordered).forEach(function (ws) {
+  var wsList = workspacesOf(ordered);
+  wsList.forEach(function (ws) {
     var inWorkspace = ordered.filter(function (item) {
       if ((item.workspace || "") !== ws) return false;
       return !s.filter || sessionLabel(item).toLowerCase().indexOf(s.filter) !== -1;
@@ -534,7 +535,7 @@ bind(el.railList, railState, function (s) {
     if (!inWorkspace.length) return;
 
     // The default folder needs no name when it is the only one there is.
-    var onlyDefault = ws === "" && workspacesOf(ordered).length === 1;
+    var onlyDefault = ws === "" && wsList.length === 1;
     if (!onlyDefault) {
       out.push(T.li({ class: "rail-workspace", role: "presentation" },
         ws === "" ? "Conversations" : ws,
@@ -543,7 +544,6 @@ bind(el.railList, railState, function (s) {
 
     var lastGroup = "";
     inWorkspace.forEach(function (item) {
-      if (item.id === s.current) seen = true;
       var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
       if (group !== lastGroup) {
         out.push(T.li({ class: "rail-group", role: "presentation" }, group));
@@ -556,7 +556,6 @@ bind(el.railList, railState, function (s) {
     });
   });
 
-  ordered.forEach(function (item) { if (item.id === s.current) seen = true; });
   /* A brand new chat has no file on disk until its first turn completes;
      without this row the rail shows nothing selected while the composer is
      plainly pointed at something. */
@@ -1945,7 +1944,7 @@ function graphSummaryText(built) {
 function toDagInput(built) {
   var data = [];
   var parents = [];
-  built.stages.forEach(function (stage, si) {
+  built.stages.forEach(function (stage) {
     var llmId = "n" + data.length;
     data.push({ id: llmId, parentIds: parents, kind: "llm", node: stage.llm, iteration: stage.iteration });
     if (stage.tools.length) {

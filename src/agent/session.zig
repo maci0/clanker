@@ -414,9 +414,8 @@ test "a workspace survives a save and load" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const dir: std.Io.Dir = .{ .handle = tmp.dir.fd };
 
-    try saveSession(io, allocator, arena, dir, .{
+    try saveSession(io, allocator, arena, tmp.dir, .{
         .id = "ws-test",
         .title = "In a folder",
         .messages = &.{},
@@ -424,18 +423,18 @@ test "a workspace survives a save and load" {
         .updated = 2,
         .workspace = "research",
     });
-    const back = try loadSession(io, allocator, arena, dir, "ws-test");
+    const back = try loadSession(io, allocator, arena, tmp.dir, "ws-test");
     try std.testing.expectEqualStrings("research", back.workspace);
 
     // The default workspace is absence, so a session without one round-trips
     // to the empty string rather than to a literal name.
-    try saveSession(io, allocator, arena, dir, .{
+    try saveSession(io, allocator, arena, tmp.dir, .{
         .id = "ws-none",
         .title = "Loose",
         .messages = &.{},
         .created = 1,
         .updated = 2,
     });
-    const loose = try loadSession(io, allocator, arena, dir, "ws-none");
+    const loose = try loadSession(io, allocator, arena, tmp.dir, "ws-none");
     try std.testing.expectEqualStrings("", loose.workspace);
 }
