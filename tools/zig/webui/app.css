@@ -315,15 +315,6 @@ main { flex: 1; width: 100%; max-width: 84rem; margin: 0 auto; padding: var(--sp
   border-left: 1px solid var(--rule);
 }
 
-/* The stratum's own band, hatched by what the layer is made of. Drawn in the
-   gutter beside the depth rule so the column reads as a logged core. */
-
-/* The key, shown once, without which hatching is texture rather than
-   lithology. */
-/* The key. Set in the text face like the prose it is, and laid out so no item
-   can orphan: below 30rem it stacks rather than wrapping mid-row. */
-@media (max-width: 30rem) {
-    }
 .turn-events:empty { display: none; margin: 0; }
 .event-tool {
   font-family: var(--mono); font-size: var(--step-0); color: var(--accent);

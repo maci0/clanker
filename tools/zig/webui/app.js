@@ -1304,8 +1304,7 @@ function renderStats(turn, stats, task) {
   turn.foot.textContent = "";
 
   /* Did this layer hold? A turn that produced an answer held; one that was
-     stopped, errored or ended early did not, and the band is hatched to match
-     so the column shows it without being read. */
+     stopped, errored or ended early did not. */
   var failed = turn.answer.querySelector(".failed") !== null ||
     turn.answer.textContent.indexOf("[stopped]") !== -1 ||
     turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
