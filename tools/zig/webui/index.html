@@ -164,6 +164,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
+          <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
+            <input type="checkbox" id="plan-mode">
+            <span>Plan</span>
+          </label>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>

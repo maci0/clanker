@@ -938,6 +938,18 @@ button:active:not(:disabled) { transform: scale(0.97); }
   display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer;
   min-width: 0; min-height: 32px;
 }
+/* Plan mode: the composer toggle sits beside Run, and the turn it produced
+   carries a badge so a proposal is never mistaken for something that ran. */
+.plan-toggle {
+  color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0);
+  margin-right: var(--space-2);
+}
+.plan-badge {
+  font-family: var(--mono); font-size: var(--step--1);
+  padding: 0.05rem 0.4rem; margin-left: var(--space-2);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  color: var(--accent); white-space: nowrap;
+}
 input[type="checkbox"] {
   flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
   accent-color: var(--accent);
