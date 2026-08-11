@@ -584,7 +584,7 @@ pub const Agent = struct {
                 if (self.cfg.modules.autolearn) {
                     if (std.mem.startsWith(u8, content, "{\"ok\":false")) {
                         const kind: []const u8 = if (std.mem.indexOf(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
-                        autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, kind, tc.name, "");
+                        autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, kind, tc.name, errorDetail(self.arena, content));
                     }
                     // Always record the tool invocation (success or failure)
                     // so the autolearn aggregation can rank tool usage.
@@ -2228,6 +2228,41 @@ test argsPreview {
     // A multi-byte code point straddling the cap is dropped whole.
     const emoji = ("y" ** 399) ++ "\u{1F600}";
     try std.testing.expectEqualStrings("y" ** 399, argsPreview(emoji));
+}
+
+/// The error message out of a failed tool result ({"ok":false,"error":"..."}),
+/// for the autolearn log's tool_error events. Without it the aggregated
+/// roadmap item reads "Fix 'git' tool errors (1 failure(s), last: )" — a
+/// count with no clue what actually failed. Truncation backs up to a UTF-8
+/// boundary for the same reason as [[argsPreview]].
+fn errorDetail(arena: std.mem.Allocator, content: []const u8) []const u8 {
+    const cap = 200;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, content, .{ .ignore_unknown_fields = true }) catch return "";
+    if (parsed != .object) return "";
+    const e = parsed.object.get("error") orelse return "";
+    if (e != .string) return "";
+    const s = e.string;
+    if (s.len <= cap) return s;
+    var end: usize = cap;
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
+test errorDetail {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectEqualStrings(
+        "git exited 128: not a git repository",
+        errorDetail(arena, "{\"ok\":false,\"error\":\"git exited 128: not a git repository\"}"),
+    );
+    // No error field, non-object, and non-JSON results all degrade to empty.
+    try std.testing.expectEqualStrings("", errorDetail(arena, "{\"ok\":false}"));
+    try std.testing.expectEqualStrings("", errorDetail(arena, "[1,2]"));
+    try std.testing.expectEqualStrings("", errorDetail(arena, "not json"));
+    // Long messages are capped without splitting a code point.
+    const long = "{\"ok\":false,\"error\":\"" ++ ("z" ** 199) ++ "\u{1F600}\"}";
+    try std.testing.expectEqualStrings("z" ** 199, errorDetail(arena, long));
 }
 
 fn stripTrailingPunctForExact(s: []const u8) []const u8 {
