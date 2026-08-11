@@ -232,6 +232,8 @@ pub const Config = struct {
     chatrooms_present: bool = false,
     instance_present: bool = false,
     default_provider_present: bool = false,
+    peers_present: bool = false,
+    notify_present: bool = false,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
         const want = name orelse self.default_provider;
@@ -304,9 +306,11 @@ pub const Config = struct {
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
+            cfg.peers_present = true;
         }
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
+            cfg.notify_present = true;
         }
         if (obj.get("chatrooms")) |v| {
             cfg.chatrooms = try parseChatrooms(arena, v);
@@ -557,12 +561,12 @@ pub const Config = struct {
         // them; otherwise the local defaults would clobber the global file.
         if (src.agent_present) dst.agent = src.agent;
         if (src.improve_present) dst.improve = src.improve;
-        dst.peers = src.peers;
+        if (src.peers_present) dst.peers = src.peers;
         // Only override the instance when the local file actually named one:
         // a bare config.local.json must not replace a stable name with a
         // pid-based default on every restart.
         if (src.instance_present) dst.instance = src.instance;
-        dst.notify = src.notify;
+        if (src.notify_present) dst.notify = src.notify;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.modules_present) dst.modules = src.modules;
     }
