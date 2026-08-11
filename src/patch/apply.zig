@@ -36,7 +36,7 @@ pub fn apply(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, changes: []co
             try out.appendSlice(gpa, c.new);
         } else {
             const idx = std.mem.indexOf(u8, current, c.old) orelse {
-                log.log(.error_, "old text not found in '{s}'", .{c.file});
+                log.log(.error_, "old text not found in '{s}' ({d} bytes): \"{s}\" — first 200 chars of current content: \"{s}\"", .{ c.file, c.old.len, c.old[0..@min(c.old.len, 200)], current[0..@min(current.len, 200)] });
                 return error.OldTextNotFound;
             };
             try out.appendSlice(gpa, current[0..idx]);
