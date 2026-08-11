@@ -3734,15 +3734,19 @@ const WebuiPluginPost = struct {
     enabled: ?bool = null,
 };
 
-/// A plugin directory name reaches the filesystem, so it is restricted to the
-/// shape a directory here is allowed to have. Traversal is refused, not
-/// sanitised, the way session ids are.
-fn validPluginName(name: []const u8) bool {
-    if (name.len == 0 or name.len > 64) return false;
-    for (name) |c| {
+/// Shared shape check for filesystem-facing identifiers (plugin names,
+/// session ids): non-empty, bounded, and limited to characters that cannot
+/// traverse a path. Traversal is refused outright, not sanitised.
+fn isSlug(s: []const u8) bool {
+    if (s.len == 0 or s.len > 64) return false;
+    for (s) |c| {
         if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
     }
     return true;
+}
+
+fn validPluginName(name: []const u8) bool {
+    return isSlug(name);
 }
 
 test validPluginName {
@@ -4293,11 +4297,7 @@ fn handleSessions(
 /// `sess-<base36>` fallback. Anything with a separator or a dot is refused
 /// before it can be used to walk out of `state/sessions/`.
 fn validSessionId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
+    return isSlug(id);
 }
 
 test "validSessionId refuses path traversal" {
