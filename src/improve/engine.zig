@@ -821,7 +821,24 @@ pub const Engine = struct {
     /// called on paths under state/staging/ whose names match the id
     /// pattern this engine generates.
     fn removeTree(self: *Engine, rel: []const u8) void {
+        // A recursive delete that takes a path is one wrong argument away from
+        // eating the working tree. Only ever a staging directory of this
+        // engine's own making: "state/staging/imp-<digits>", nothing above it,
+        // nothing beside it, no traversal.
+        if (!isStagingDirPath(rel)) {
+            log.log(.warn, "refusing to remove '{s}': not a staging directory", .{rel});
+            return;
+        }
         self.removeTreeAt(std.Io.Dir.cwd(), rel);
+    }
+
+    /// Exactly `state/staging/imp-<digits>` and nothing else.
+    fn isStagingDirPath(rel: []const u8) bool {
+        const prefix = "state/staging/";
+        if (!std.mem.startsWith(u8, rel, prefix)) return false;
+        const name = rel[prefix.len..];
+        if (std.mem.indexOfScalar(u8, name, '/') != null) return false;
+        return isImpId(name);
     }
 
     /// Removes a directory tree rooted at `rel` under `base`. Split from
@@ -1470,4 +1487,18 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     // rest of the tree is a verbatim copy where these already hold.
     const elsewhere = [_]proposal_mod.Change{.{ .file = "src/cli.zig", .old = "", .new = "" }};
     try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
+}
+
+test "the staging remover refuses any path that is not a staging directory" {
+    // removeTree deletes a tree recursively. The only thing standing between
+    // that and the working tree is this predicate.
+    try std.testing.expect(Engine.isStagingDirPath("state/staging/imp-1786415790081955962"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/imp-123/src"));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/../.."));
+    try std.testing.expect(!Engine.isStagingDirPath("state/staging/notanid"));
+    try std.testing.expect(!Engine.isStagingDirPath("src"));
+    try std.testing.expect(!Engine.isStagingDirPath("/"));
+    try std.testing.expect(!Engine.isStagingDirPath(""));
 }
