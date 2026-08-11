@@ -17,13 +17,16 @@
 //! the old REPL.
 //!
 //! Deliberately not yet built (documented gaps, not oversights): a general
-//! slash-command palette/tab-complete (only quit and `/model` are handled —
-//! `/model` opens a fuzzy provider/model picker, `handlePickerKey`, styled
-//! like Kimi Code's), inline ask_user/approval prompts (falls back to the
-//! same "nobody attached" default a headless run gets), manual scroll-back
-//! (the transcript always shows its tail), and the left-bar tool-card
-//! styling from the old transcript.zig (tool calls render as plain dim
-//! lines here).
+//! slash-command palette/tab-complete (only quit, `/model`, and `/help` are
+//! handled by name in `submit` — `/model` opens a fuzzy provider/model
+//! picker, `handlePickerKey`, styled like Kimi Code's; `/help`/`?` prints
+//! `printHelp`'s hand-maintained command list, not a generated one), inline
+//! ask_user/approval prompts (falls back to the same "nobody attached"
+//! default a headless run gets), manual scroll-back (the transcript always
+//! shows its tail), and the left-bar tool-card styling from the old
+//! transcript.zig (tool calls render as plain dim lines here). Full list,
+//! with what a fix looks like for each: docs/ROADMAP.md's "vaxis REPL
+//! parity" entry under Planned.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -38,7 +41,7 @@ const agent_loop = @import("../agent/loop.zig");
 const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
 const syntax = @import("syntax.zig");
-const theme_mod = @import("../tui/theme.zig");
+const theme_mod = @import("theme.zig");
 
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered

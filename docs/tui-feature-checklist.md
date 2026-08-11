@@ -3,7 +3,7 @@
 **This describes an implementation that no longer exists.** `src/tui/*`'s
 input, region, statusbar, palette, approval and term modules, `cmdRepl`, the
 pty `tui-test` suite and `util/lineedit.zig` were deleted when the REPL moved
-to libvaxis (`src/tui2/repl_vaxis.zig`). Only `transcript.zig`, `theme.zig`,
+to libvaxis (`src/tui/repl_vaxis.zig`). Only `transcript.zig`, `theme.zig`,
 `syntax.zig` and `width.zig` survive, because `clanker run` and the vaxis REPL
 render through them.
 

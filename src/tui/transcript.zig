@@ -15,7 +15,7 @@ const std = @import("std");
 const types = @import("../llm/types.zig");
 const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
-const syntax = @import("../tui2/syntax.zig");
+const syntax = @import("syntax.zig");
 pub const Theme = theme_mod.Theme;
 
 // -------------------------------------------------------- control stripping --

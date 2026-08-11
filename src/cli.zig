@@ -21,10 +21,10 @@ const host = @import("sandbox/host.zig");
 const rawhttp = @import("util/rawhttp.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
-// exclusive to the REPL that's now src/tui2/repl_vaxis.zig, and was
+// exclusive to the REPL that's now src/tui/repl_vaxis.zig, and was
 // removed with it.
 const tui_transcript = @import("tui/transcript.zig");
-const repl_vaxis = @import("tui2/repl_vaxis.zig");
+const repl_vaxis = @import("tui/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const doctor_mod = @import("doctor.zig");
@@ -69,7 +69,7 @@ pub const Command = enum {
     stats,
     phonebook,
     serve,
-    /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui2/repl_vaxis.zig`.
+    /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui/repl_vaxis.zig`.
     repl,
     graph,
     gate,
@@ -2343,7 +2343,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_webui_plugins) {
             handleWebuiPlugins(io, gpa, method, body, stream);
         } else if (is_webui_plugin_asset) {
-            handleWebuiPluginAsset(io, gpa, target, stream);
+            handleWebuiPluginAsset(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
@@ -3665,7 +3665,7 @@ fn handleWebuiPlugins(
 /// embedded: a plugin can be dropped in without rebuilding clanker, which is
 /// the point of it being a plugin. Only an enabled plugin's assets are served,
 /// so turning one off actually stops its code reaching the browser.
-fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -3701,10 +3701,20 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
         respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
         return;
     };
+    // Re-read from disk on every request (see the comment above), so there is
+    // nothing stable to key a compression cache on. Compressed fresh each
+    // time instead, same as respondCompressible, and skipped below a
+    // packet's worth where gzip's overhead would outweigh the saving. sprites.png
+    // is already compressed, so gzipping it again would only cost CPU.
+    const is_image = std.mem.eql(u8, content_type, "image/png");
+    const worth_it = accepts_gzip and !is_image and bytes.len >= 1024;
+    const gzipped = if (worth_it) gzipAlloc(arena, bytes, .default) else null;
+    const out = gzipped orelse bytes;
+    const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, bytes.len }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, bytes);
+    rawhttp.writeAllFd(stream.socket.handle, out);
 }
 
 /// `GET /api/janitor` — how much litter is lying around, so the office view can

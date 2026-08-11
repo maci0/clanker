@@ -20,7 +20,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
-const theme_mod = @import("../tui/theme.zig");
+const theme_mod = @import("theme.zig");
 
 /// Token categories. Deliberately few: six colors are plenty to read by,
 /// and every category maps to exactly one ANSI/vaxis style.

@@ -173,5 +173,5 @@ pub fn build(b: *std.Build) void {
     run_tests.step.dependOn(tools_step);
     // The pty-driven `tui-test` step (src/tui/testing/) drove the old
     // hand-rolled REPL (src/tui/*) over a real pty; removed with it when
-    // the REPL migrated to libvaxis (src/tui2/repl_vaxis.zig).
+    // the REPL migrated to libvaxis (src/tui/repl_vaxis.zig).
 }

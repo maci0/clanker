@@ -327,7 +327,7 @@ pub const Theme = struct {
     list_num: []const u8 = "",
     fence: []const u8 = "",
 
-    /// Fenced-code token colours, read by tui2/syntax.zig. Named here so a
+    /// Fenced-code token colours, read by tui/syntax.zig. Named here so a
     /// theme owns its whole palette rather than the highlighter hardcoding
     /// half of it.
     syn_keyword: []const u8 = "",

@@ -10,7 +10,7 @@ const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const config = @import("config.zig");
 
-// `clanker repl` (src/tui2/repl_vaxis.zig) puts the terminal in raw mode with
+// `clanker repl` (src/tui/repl_vaxis.zig) puts the terminal in raw mode with
 // an alt-screen buffer. Without this, a panic there leaves the terminal
 // broken (raw mode, alt-screen, mouse tracking all still on) with the panic
 // message invisible inside the alt-screen that never gets popped, so the
@@ -60,8 +60,8 @@ comptime {
     _ = @import("tui/width.zig");
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
-    _ = @import("tui2/syntax.zig");
-    _ = @import("tui2/repl_vaxis.zig");
+    _ = @import("tui/syntax.zig");
+    _ = @import("tui/repl_vaxis.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
     _ = @import("janitor.zig");
