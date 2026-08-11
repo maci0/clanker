@@ -57,12 +57,12 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - No `innerHTML` assignments in fleet/vendor/theme; no `style=` in `index.html`; only `/api/*` + `/.well-known/agent.json` same-origin fetches (CSP `connect-src 'self'` intact).
 - Manual proof: before/after screenshots not yet captured (headless run). Fleet reachable at `#fleet`, roster + A2A + DMs + grouped sub-runs navigable, responsive rail/hero + skeletons + phase lamps verified via CSS/JS.
 
-### This turn — lib/markdown + routing (2026-08-12 ~01:48Z)
+### This turn — lib/markdown + lib/graph + routing (2026-08-12 ~01:48Z)
 
-- Added `tools/zig/webui/lib/markdown.js` (~9KB ES module) — `INLINE_RE, isSafeLinkUrl, inlineInto, paragraphInto, tableRow, splitRow, renderMarkdown, prettyJsonIfPossible, highlightInto, buildCodeBlock, finalizeAnswer` (from `app.js:1046-1362`). Imports `loadHljs, copyText` from `core/vendor.js` only; no new globals.
-- `tools/zig/webui.zig` + `src/cli.zig`: embedded `lib/markdown.js`, extended `is_webui` + handler dispatch + `RenderCache/GzipCache` (`render_markdown/gzip_markdown`), comptime `encodedLen` guard extended (9 assets). Fix for earlier miss: `core/vendor.js`/`core/theme.js` and now `lib/markdown.js` were routed through `webui.zig` but `is_webui` in `src/cli.zig` was stale — patched both.
-- `tools/zig/webui/index.html`: inserted `<script type="module" src="/webui/lib/markdown.js">` between `core/theme.js` and `features/fleet.js`; order still `van-boot → van-ui defer → utils → vendor → theme → lib/markdown → fleet → app.js defer`.
-- `tools/zig/webui/core/utils.js` already bridges to `window.ckUtil` (splitRow, prettyJsonIfPossible, isSafeLinkUrl etc.) for classic `app.js` fallback; `lib/markdown.js` is additive — `app.js` still ships its own copy until switched to `import` (keeps risk bounded).
+- Added `tools/zig/webui/lib/markdown.js` (~9KB) + `lib/graph.js` (~8.7KB) — markdown block (`app.js:1046-1362`) and graph layout (`metricsFor, buildStages, graphSummaryText, toDagInput, buildNodeBox, layoutGraph` from `app.js:2016-2370`) now canonical ES modules; each imports only `loadHljs/copyText` or `loadD3` from `core/vendor.js`.
+- `tools/zig/webui.zig` + `src/cli.zig`: embedded both (`render_markdown/render_graph`, `gzip_markdown/gzip_graph`), extended `is_webui` + `handleWebuiAsset` dispatch (now 11 webui routes incl. `lib/graph.js`), comptime guard now 10 assets. Fix: `core/vendor.js`/`core/theme.js` routing was stale — patched.
+- `tools/zig/webui/index.html`: `… → core/theme → lib/markdown → lib/graph → features/fleet → app.js defer` (module+defer document order).
+- `core/utils.js` still bridges `window.ckUtil` for classic `app.js` fallback; `lib/*` are additive until `app.js` switches to `import` — keeps risk bounded.
 
 ## Left / next
 

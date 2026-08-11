@@ -1131,7 +1131,7 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
-    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
     var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
@@ -1175,7 +1175,7 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
     const dir_path = sliceOf(bytes, dir_ptr, dir_len) orelse return Err.invalid;
     const pattern = sliceOf(bytes, pat_ptr, pat_len) orelse return Err.invalid;
     if (pattern.len == 0) return Err.invalid;
-    const full = safeJoin(h.sandbox, dir_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, dir_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
     var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
@@ -1283,7 +1283,7 @@ pub fn ckFsGrep(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
     const dir_path = sliceOf(bytes, dir_ptr, dir_len) orelse return Err.invalid;
     const pattern = sliceOf(bytes, pat_ptr, pat_len) orelse return Err.invalid;
     if (pattern.len == 0) return Err.invalid;
-    const full = safeJoin(h.sandbox, dir_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, dir_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
     var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
@@ -1395,7 +1395,7 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
     if (path.len == 0) return Err.invalid;
-    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
     // statFile answers for a directory too, so its own kind field decides
@@ -1440,9 +1440,9 @@ pub fn ckFsCopy(caller: *zwasm.Caller, src_ptr: u32, src_len: u32, dst_ptr: u32,
 }
 
 fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u8) u32 {
-    const full_src = safeJoin(h.sandbox, src_sub) catch return Err.denied;
+    const full_src = safeJoinSecure(h.sandbox, src_sub) catch return Err.denied;
     defer h.sandbox.gpa.free(full_src);
-    const full_dst = safeJoin(h.sandbox, dst_sub) catch return Err.denied;
+    const full_dst = safeJoinSecure(h.sandbox, dst_sub) catch return Err.denied;
     defer h.sandbox.gpa.free(full_dst);
 
     // Read the source file (up to max_fs_bytes).
@@ -1478,9 +1478,9 @@ pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u3
     const old_path = sliceOf(bytes, old_ptr, old_len) orelse return Err.invalid;
     const new_path = sliceOf(bytes, new_ptr, new_len) orelse return Err.invalid;
     if (old_path.len == 0 or new_path.len == 0) return Err.invalid;
-    const full_old = safeJoin(h.sandbox, old_path) catch return Err.denied;
+    const full_old = safeJoinSecure(h.sandbox, old_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full_old);
-    const full_new = safeJoin(h.sandbox, new_path) catch return Err.denied;
+    const full_new = safeJoinSecure(h.sandbox, new_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full_new);
     std.Io.Dir.cwd().rename(full_old, std.Io.Dir.cwd(), full_new, h.sandbox.io) catch |err| switch (err) {
         error.FileNotFound => return Err.not_found,
@@ -1498,7 +1498,7 @@ pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         break :blk sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
     };
     if (path.len == 0) return Err.invalid;
-    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
     std.Io.Dir.cwd().deleteFile(h.sandbox.io, full) catch |err| switch (err) {
         error.FileNotFound => return Err.not_found,
@@ -1514,7 +1514,7 @@ pub fn ckFsMkdir(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
     if (path.len == 0) return Err.invalid;
-    const full = safeJoin(h.sandbox, path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
     std.Io.Dir.cwd().createDirPath(h.sandbox.io, full) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
@@ -1557,7 +1557,7 @@ pub fn ckFsWriteRange(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, offse
 }
 
 fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
-    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
     const data = std.Io.Dir.cwd().readFileAlloc(h.sandbox.io, full, h.sandbox.gpa, .limited(h.sandbox.max_fs_bytes)) catch |err| switch (err) {
         error.FileNotFound => return Err.not_found,
@@ -1571,7 +1571,7 @@ fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
 fn fsWriteRangeImpl(h: *Host, sub_path: []const u8, data: []const u8, offset: u32) u32 {
     if (data.len == 0) return Err.ok;
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
-    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
     var file = std.Io.Dir.cwd().openFile(h.sandbox.io, full, .{ .mode = .read_write }) catch |err| switch (err) {
@@ -1592,7 +1592,7 @@ fn fsWriteRangeImpl(h: *Host, sub_path: []const u8, data: []const u8, offset: u3
 fn fsReadRangeImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, offset: u32, length: u32) u32 {
     if (length == 0) return h.writeResult(mem_bytes, "");
     const capped_len: usize = @min(@as(usize, length), h.sandbox.max_fs_bytes);
-    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
 
     var file = std.Io.Dir.cwd().openFile(h.sandbox.io, full, .{}) catch |err| switch (err) {
@@ -1634,7 +1634,7 @@ pub fn ckFsWrite(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, data_ptr: 
 
 fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
-    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
     // Open for appending, creating the file if it doesn't exist: one
     // syscall instead of open-fail-then-writeFile (truncate=false never
@@ -1668,7 +1668,7 @@ pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const
 
 fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8) u32 {
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
-    const full = safeJoin(h.sandbox, sub_path) catch return Err.denied;
+    const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
     // Create parent directories first so a tool can scaffold a file in a
     // fresh directory without a separate ck_fs_mkdir round-trip. A failure
@@ -1706,7 +1706,7 @@ pub fn ckFsWriteIf(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, expect_p
 
 fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_hex: []const u8, data: []const u8) u32 {
     if (data.len > sb.max_fs_bytes) return Err.too_large;
-    const full = safeJoin(sb, sub_path) catch return Err.denied;
+    const full = safeJoinSecure(sb, sub_path) catch return Err.denied;
     defer sb.gpa.free(full);
 
     // Lock on a separate file, not on the file being rewritten (a replace
@@ -2182,7 +2182,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     var exec_dir_opened = false;
     if (obj.get("cwd")) |cwd_val| {
         if (cwd_val == .string and cwd_val.string.len > 0) {
-            const full = safeJoin(h.sandbox, cwd_val.string) catch return Err.denied;
+            const full = safeJoinSecure(h.sandbox, cwd_val.string) catch return Err.denied;
             defer h.sandbox.gpa.free(full);
             exec_dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{}) catch return Err.not_found;
             exec_dir_opened = true;
@@ -2497,6 +2497,29 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (!allowed) return error.PathOutsideSandbox;
     }
     return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ std.mem.trimEnd(u8, sb.root_dir, "/"), sub_path });
+}
+
+test "secure filesystem paths refuse symlink escapes" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(io, "allowed", .default_dir);
+    try tmp.dir.createDir(io, "outside", .default_dir);
+    try tmp.dir.symLink(io, "../outside", "allowed/link", .{ .is_directory = true });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root_buf[0..root_len],
+        .network_allow = &.{},
+        .fs_prefixes = &.{"allowed/"},
+        .environ_map = &env,
+    };
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoinSecure(&sb, "allowed/link/secret"));
 }
 
 // ------------------------------------------------------------------- tests --
