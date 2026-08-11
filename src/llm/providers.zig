@@ -256,13 +256,14 @@ const OpenAIResponse = struct {
     @"error": ?OpenAIError = null,
 };
 
-fn parseOpenAI(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
+fn parseOpenAI(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]const u8) !types.ChatResponse {
     const parsed = try json.parseFromSliceLeaky(OpenAIResponse, arena, body, .{ .ignore_unknown_fields = true });
     if (parsed.@"error") |e| {
         // A 200 carrying an error body never reaches the HTTP error path, so
-        // this is the only place the provider's reason is visible — do not
-        // discard it, or a rate limit reads identically to a bad key.
+        // this is the only place the provider's reason is visible: log it AND
+        // hand it to the caller, or a rate limit reads identically to a bad key.
         log.log(.error_, "openai provider error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
+        if (err_detail) |d| d.* = if (e.message) |m| try arena.dupe(u8, m) else e.type;
         return error.ApiError;
     }
     if (parsed.choices.len == 0) return error.EmptyChoices;
@@ -537,12 +538,14 @@ const AnthropicResponse = struct {
     } = null,
 };
 
-fn parseAnthropic(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
+fn parseAnthropic(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]const u8) !types.ChatResponse {
     const parsed = try json.parseFromSliceLeaky(AnthropicResponse, arena, body, .{ .ignore_unknown_fields = true });
     if (parsed.@"error") |e| {
         // A 200 carrying an error body never reaches the HTTP error path, so
-        // this is the only place the reason is visible.
+        // this is the only place the reason is visible: log it AND hand it to
+        // the caller.
         log.log(.error_, "anthropic error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
+        if (err_detail) |d| d.* = if (e.message) |m| try arena.dupe(u8, m) else e.type;
         return error.ApiError;
     }
 
@@ -605,10 +608,10 @@ fn parseAnthropic(arena: std.mem.Allocator, body: []const u8) !types.ChatRespons
 
 // ------------------------------------------------------------------ public --
 
-pub fn parseResponse(arena: std.mem.Allocator, kind: config.ProviderKind, body: []const u8) !types.ChatResponse {
+pub fn parseResponse(arena: std.mem.Allocator, kind: config.ProviderKind, body: []const u8, err_detail: ?*?[]const u8) !types.ChatResponse {
     return switch (kind) {
-        .openai_compat => parseOpenAI(arena, body),
-        .anthropic, .vertex_anthropic => parseAnthropic(arena, body),
+        .openai_compat => parseOpenAI(arena, body, err_detail),
+        .anthropic, .vertex_anthropic => parseAnthropic(arena, body, err_detail),
     };
 }
 
@@ -645,7 +648,7 @@ test "openai response parse with tool call" {
     const body =
         \\{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"calculator","arguments":"{\"a\":2}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}
     ;
-    const resp = try parseOpenAI(arena, body);
+    const resp = try parseOpenAI(arena, body, null);
     try std.testing.expectEqual(types.Role.assistant, resp.message.role);
     try std.testing.expectEqual(@as(usize, 1), resp.message.tool_calls.?.len);
     try std.testing.expectEqualStrings("call_1", resp.message.tool_calls.?[0].id);
@@ -758,7 +761,7 @@ test "anthropic response parse keeps a no-argument tool call and counts cached p
         \\{"type":"tool_use","id":"toolu_2","name":"history","input":{"n":3}}
         \\],"stop_reason":"tool_use","usage":{"input_tokens":40,"output_tokens":35,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}
     ;
-    const resp = try parseAnthropic(arena, body);
+    const resp = try parseAnthropic(arena, body, null);
 
     try std.testing.expectEqualStrings("Checking.", resp.message.content.?);
     const calls = resp.message.tool_calls.?;
@@ -792,7 +795,7 @@ test "a large tool input is not truncated" {
         "{{\"content\":[{{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"write\",\"input\":{{\"text\":\"{s}\"}}}}]}}",
         .{big},
     );
-    const resp = try parseAnthropic(arena, body);
+    const resp = try parseAnthropic(arena, body, null);
 
     const args = resp.message.tool_calls.?[0].arguments;
     const reparsed = try json.parseFromSliceLeaky(json.Value, arena, args, .{});
@@ -846,4 +849,29 @@ test "an assistant turn with empty content emits no text block" {
     // An empty text block is rejected by the API; only the tool_use survives.
     try std.testing.expectEqual(@as(usize, 1), blocks.len);
     try std.testing.expectEqualStrings("tool_use", blocks[0].object.get("type").?.string);
+}
+
+test "an error body in a 200 surfaces the provider's message to the caller" {
+    // The HTTP error path never sees these bodies, so without err_detail the
+    // caller gets a bare error.ApiError and no idea what the provider said.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const openai_body =
+        \\{"error":{"message":"Rate limit reached for requests","type":"rate_limit_error"}}
+    ;
+    var detail: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, parseOpenAI(arena, openai_body, &detail));
+    try std.testing.expectEqualStrings("Rate limit reached for requests", detail.?);
+
+    const anthropic_body =
+        \\{"error":{"message":"model: claude-nope not found","type":"not_found_error"}}
+    ;
+    detail = null;
+    try std.testing.expectError(error.ApiError, parseAnthropic(arena, anthropic_body, &detail));
+    try std.testing.expectEqualStrings("model: claude-nope not found", detail.?);
+
+    // A null out-param (tests, future callers) still parses successfully.
+    try std.testing.expectError(error.ApiError, parseOpenAI(arena, openai_body, null));
 }
