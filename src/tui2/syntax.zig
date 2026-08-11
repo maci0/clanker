@@ -637,13 +637,16 @@ test "python hash comments and builtins highlight" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36mNone\x1b[0m") != null);
 }
 
-test "unterminated string keeps its color on the next line" {
+test "an invalid zig string does not color the next line" {
     const allocator = std.testing.allocator;
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "zig", "const s = \"one\ntwo\";", &style);
     defer allocator.free(out);
-    // The continuation line is entirely string-colored until the quote.
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[32mtwo\";\x1b[0m") != null);
+    // Zig has no newline-spanning quoted strings. The compiler tokenizer is
+    // deliberately line-local for Zig, so an invalid opening quote cannot
+    // colour valid-looking text on the next line as a string.
+    try std.testing.expect(std.mem.indexOf(u8, out, "two") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[32mtwo") == null);
 }
 
 test "block comments span lines" {
