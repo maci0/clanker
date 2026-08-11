@@ -901,6 +901,124 @@ test "assemblyscript calc_ts tool executes" {
     try std.testing.expectEqualStrings("391", out2);
 }
 
+fn loadAsTool(gpa: std.mem.Allocator, io: std.Io, sb: *host.Sandbox, name: []const u8) !*ToolModule {
+    const path = try std.fmt.allocPrint(gpa, "tools/bin/{s}.wasm", .{name});
+    defer gpa.free(path);
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 20));
+    defer gpa.free(wasm);
+    return ToolModule.load(gpa, io, sb, wasm);
+}
+
+test "assemblyscript json_tool validates, pretty-prints and minifies" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadAsTool(std.testing.allocator, io, &sb, "json_tool");
+    defer mod.deinit();
+
+    // The reply is itself a JSON string (the "text" field), so a literal
+    // `"` inside the pretty-printed body comes back as the two bytes `\"`.
+    const pretty = try mod.executeTool("{\"json\": \"{\\\"b\\\":1,\\\"a\\\":[1,2]}\", \"mode\": \"pretty\"}");
+    defer std.testing.allocator.free(pretty);
+    try std.testing.expect(std.mem.indexOf(u8, pretty, "\\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, pretty, "\\\"b\\\": 1") != null);
+
+    const minified = try mod.executeTool("{\"json\": \"{ \\\"a\\\" : 1 }\", \"mode\": \"minify\"}");
+    defer std.testing.allocator.free(minified);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"{\\\"a\\\":1}\"}", minified);
+
+    const invalid = try mod.executeTool("{\"json\": \"{bad}\"}");
+    defer std.testing.allocator.free(invalid);
+    try std.testing.expect(std.mem.indexOf(u8, invalid, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, invalid, "line 1") != null);
+}
+
+test "assemblyscript id_gen produces well-formed uuid4, ulid and short ids" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadAsTool(std.testing.allocator, io, &sb, "id_gen");
+    defer mod.deinit();
+
+    const uuid_out = try mod.executeTool("{\"kind\": \"uuid4\"}");
+    defer std.testing.allocator.free(uuid_out);
+    // {"ok":true,"text":"........-....-4...-[89ab]...-............"}
+    const u_start = std.mem.indexOf(u8, uuid_out, "\"text\":\"").? + 8;
+    const uuid = uuid_out[u_start .. u_start + 36];
+    try std.testing.expectEqual(@as(u8, '-'), uuid[8]);
+    try std.testing.expectEqual(@as(u8, '-'), uuid[13]);
+    try std.testing.expectEqual(@as(u8, '4'), uuid[14]);
+    try std.testing.expectEqual(@as(u8, '-'), uuid[18]);
+    try std.testing.expect(std.mem.indexOfScalar(u8, "89ab", uuid[19]) != null);
+    try std.testing.expectEqual(@as(u8, '-'), uuid[23]);
+
+    // 3 short ids, newline-separated; the wrapper escapes each raw newline
+    // to the two bytes \n, so the reply's byte-count grows by 2 per
+    // separator rather than gaining a raw 0x0A.
+    const short_out = try mod.executeTool("{\"kind\": \"short\", \"length\": 12, \"count\": 3}");
+    defer std.testing.allocator.free(short_out);
+    var esc_newlines: usize = 0;
+    var k: usize = 0;
+    while (k + 1 < short_out.len) : (k += 1) {
+        if (short_out[k] == '\\' and short_out[k + 1] == 'n') esc_newlines += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), esc_newlines);
+
+    const ulid_out = try mod.executeTool("{\"kind\": \"ulid\"}");
+    defer std.testing.allocator.free(ulid_out);
+    const l_start = std.mem.indexOf(u8, ulid_out, "\"text\":\"").? + 8;
+    try std.testing.expectEqual(@as(usize, 26), std.mem.indexOfScalarPos(u8, ulid_out, l_start, '"').? - l_start);
+}
+
+test "assemblyscript text_diff renders a unified diff with hunk headers" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadAsTool(std.testing.allocator, io, &sb, "text_diff");
+    defer mod.deinit();
+
+    const out = try mod.executeTool("{\"a\": \"one\\ntwo\\nthree\\n\", \"b\": \"one\\nTWO\\nthree\\n\", \"context\": 1}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "-two") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "+TWO") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "@@ -1,3 +1,3 @@") != null);
+
+    const same = try mod.executeTool("{\"a\": \"x\\n\", \"b\": \"x\\n\"}");
+    defer std.testing.allocator.free(same);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"text\":\"(identical)\"}", same);
+}
+
+test "assemblyscript csv_json round-trips through both directions" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = "/tmp/ck-sandbox-test", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadAsTool(std.testing.allocator, io, &sb, "csv_json");
+    defer mod.deinit();
+
+    const to_json = try mod.executeTool("{\"csv\": \"name,age\\nAda,36\\n\\\"Grace, Hopper\\\",85\\n\"}");
+    defer std.testing.allocator.free(to_json);
+    try std.testing.expect(std.mem.indexOf(u8, to_json, "\\\"name\\\": \\\"Ada\\\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, to_json, "Grace, Hopper") != null);
+
+    const to_csv = try mod.executeTool("{\"json\": \"[{\\\"a\\\":1,\\\"b\\\":\\\"x,y\\\"},{\\\"a\\\":2}]\"}");
+    defer std.testing.allocator.free(to_csv);
+    try std.testing.expect(std.mem.indexOf(u8, to_csv, "a,b") != null);
+    try std.testing.expect(std.mem.indexOf(u8, to_csv, "x,y") != null);
+    try std.testing.expect(std.mem.indexOf(u8, to_csv, "2,") != null);
+}
+
 test "a tool with a tiny fuel budget runs out of fuel; the default budget answers" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
