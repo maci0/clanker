@@ -28,6 +28,10 @@ pub const Model = struct {
     /// Per-request max output tokens (completion cap).
     max_tokens: u32 = 1024,
     temperature: ?f64 = null,
+    /// Nucleus sampling cutoff. Left null by default and generally best set
+    /// *instead of* temperature rather than alongside it: both narrow the same
+    /// distribution, and Anthropic's API documents adjusting only one.
+    top_p: ?f64 = null,
     /// Keeps reasoning models' chain-of-thought short so `content` stays
     /// populated (e.g. DeepSeek v4: "low" | "medium").
     reasoning_effort: ?[]const u8 = null,
@@ -310,7 +314,7 @@ pub const Config = struct {
             log.log(.error_, "provider '{s}': \"model\" was replaced by \"models\". Use \"models\": {{\"<name>\": {{...}}}} and, with more than one, \"default_model\": \"<name>\"", .{name});
             return error.ProviderLegacyModelFields;
         }
-        for ([_][]const u8{ "max_tokens", "context_window", "temperature", "reasoning_effort" }) |legacy| {
+        for ([_][]const u8{ "max_tokens", "context_window", "temperature", "top_p", "reasoning_effort" }) |legacy| {
             if (obj.get(legacy) != null) {
                 log.log(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into \"models\": {{\"<name>\": {{\"{s}\": ...}}}}", .{ name, legacy, legacy });
                 return error.ProviderLegacyModelFields;
@@ -377,6 +381,7 @@ pub const Config = struct {
         if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
         if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
+        if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
         if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");

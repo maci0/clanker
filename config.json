@@ -20,7 +20,8 @@
           "max_tokens": 16384,
           "reasoning_effort": "medium",
           "cost_per_1m_input": 0.44,
-          "cost_per_1m_output": 0.87
+          "cost_per_1m_output": 0.87,
+          "temperature": 0.2
         }
       }
     },
@@ -30,7 +31,8 @@
       "api_key_env": "OPENAI_API_KEY",
       "models": {
         "gpt-4o-mini": {
-          "context_window": 128000
+          "context_window": 128000,
+          "temperature": 0.2
         }
       }
     },
@@ -39,7 +41,8 @@
       "base_url": "http://192.168.0.211:8000/v1",
       "models": {
         "deepseek-v4-flash": {
-          "context_window": 512000
+          "context_window": 512000,
+          "temperature": 0.2
         }
       }
     },
@@ -48,7 +51,8 @@
       "base_url": "http://127.0.0.1:11434/v1",
       "models": {
         "qwen3.5": {
-          "context_window": 32768
+          "context_window": 32768,
+          "temperature": 0.2
         }
       }
     },
@@ -58,7 +62,8 @@
       "api_key_env": "ANTHROPIC_API_KEY",
       "models": {
         "claude-sonnet-4-20250514": {
-          "context_window": 200000
+          "context_window": 200000,
+          "temperature": 0.2
         }
       }
     },
@@ -69,7 +74,8 @@
       "models": {
         "muse-spark-1.2-contributor": {
           "context_window": 1048576,
-          "max_tokens": 16384
+          "max_tokens": 16384,
+          "temperature": 0.2
         }
       }
     },
@@ -80,7 +86,8 @@
       "models": {
         "meta/muse-spark-1.1": {
           "context_window": 163840,
-          "max_tokens": 8192
+          "max_tokens": 8192,
+          "temperature": 0.2
         }
       }
     },
@@ -95,13 +102,15 @@
           "max_tokens": 16384,
           "reasoning_effort": "high",
           "cost_per_1m_input": 3.0,
-          "cost_per_1m_output": 15.0
+          "cost_per_1m_output": 15.0,
+          "temperature": 0.2
         },
         "kimi-k2.7-code": {
           "context_window": 262144,
           "max_tokens": 16384,
           "cost_per_1m_input": 0.7,
-          "cost_per_1m_output": 3.5
+          "cost_per_1m_output": 3.5,
+          "temperature": 0.2
         }
       }
     }

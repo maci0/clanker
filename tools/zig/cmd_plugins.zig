@@ -29,6 +29,15 @@ const Descriptor = struct {
     transform: ?Transform = null,
     config: std.json.Value = .{ .null = {} },
     config_editable: []const []const u8 = &.{},
+    /// What the tool accepts, and what it is permitted to reach. The schema is
+    /// the closest thing a tool has to a list of actions.
+    input_schema: std.json.Value = .{ .null = {} },
+    network_allow: []const []const u8 = &.{},
+    fs_prefixes: []const []const u8 = &.{},
+    exec_allow: []const []const u8 = &.{},
+    category: []const u8 = "",
+    sequential: bool = false,
+    check: bool = false,
 };
 
 const Plugin = struct {
@@ -42,6 +51,7 @@ const Plugin = struct {
     enabled: bool,
     config: std.json.Value,
     config_editable: []const []const u8,
+    d: Descriptor,
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -147,6 +157,7 @@ fn readPlugins(alloc: std.mem.Allocator) ![]Plugin {
             .enabled = enabled or core,
             .config = effectiveConfig(alloc, d, overrides),
             .config_editable = d.config_editable,
+            .d = d,
         });
     }
     std.mem.sort(Plugin, out.items, {}, lessByName);
@@ -260,6 +271,38 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
                 try s.write(v);
             }
             try s.endObject();
+        }
+        // The detail panel's material: what the tool accepts, and the sandbox
+        // policy it runs under. The policy is the part worth being able to
+        // read without opening a manifest, since it is the answer to "what can
+        // this thing actually reach".
+        if (p.d.input_schema != .null) {
+            try s.objectField("input_schema");
+            try s.write(p.d.input_schema);
+        }
+        if (p.d.network_allow.len > 0) {
+            try s.objectField("network_allow");
+            try s.write(p.d.network_allow);
+        }
+        if (p.d.fs_prefixes.len > 0) {
+            try s.objectField("fs_prefixes");
+            try s.write(p.d.fs_prefixes);
+        }
+        if (p.d.exec_allow.len > 0) {
+            try s.objectField("exec_allow");
+            try s.write(p.d.exec_allow);
+        }
+        if (p.d.category.len > 0) {
+            try s.objectField("category");
+            try s.write(p.d.category);
+        }
+        if (p.d.sequential) {
+            try s.objectField("sequential");
+            try s.write(true);
+        }
+        if (p.d.check) {
+            try s.objectField("check");
+            try s.write(true);
         }
         if (p.transform) |tr| {
             try s.objectField("transform");

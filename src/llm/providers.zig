@@ -17,6 +17,7 @@ pub const RequestParams = struct {
     messages: []const types.Message,
     tools: ?[]const types.ToolDef = null,
     temperature: ?f64 = null,
+    top_p: ?f64 = null,
     max_tokens: ?u32 = null,
     response_format_json: bool = false,
     /// Ask the provider to stream the response (SSE). Consumed by
@@ -169,6 +170,14 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     if (temp) |t| {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
+    }
+    // Only sent when configured. Both knobs narrow the same distribution, so a
+    // model left at its provider default is deliberately left there rather
+    // than given a value this harness invented.
+    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
+    if (nucleus) |tp| {
+        try s.objectField("top_p");
+        try s.print("{d}", .{tp});
     }
     // Clamp the requested output budget to fit the model's context window:
     // never ask for more completion tokens than half the window.
@@ -488,6 +497,14 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
     if (temp) |t| {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
+    }
+    // Only sent when configured. Both knobs narrow the same distribution, so a
+    // model left at its provider default is deliberately left there rather
+    // than given a value this harness invented.
+    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
+    if (nucleus) |tp| {
+        try s.objectField("top_p");
+        try s.print("{d}", .{tp});
     }
     try s.endObject();
 

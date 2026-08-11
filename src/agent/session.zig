@@ -130,6 +130,29 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     };
 }
 
+/// Removes a saved conversation. Its execution graphs stay: they are the
+/// record of runs that really happened, and are addressed by run id rather
+/// than by session.
+pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) !void {
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}.json", .{ store_dir, id });
+    try base.deleteFile(io, path);
+}
+
+/// Retitles a conversation in place, leaving its messages untouched.
+///
+/// Titles are otherwise derived from the first 60 characters of the opening
+/// task, which is why a picker full of them reads like a list of prefixes.
+pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8, title: []const u8) !void {
+    const s = try loadSession(io, gpa, arena, base, id);
+    try saveSession(io, gpa, arena, base, .{
+        .id = s.id,
+        .title = title,
+        .messages = s.messages,
+        .created = s.created,
+        .updated = s.updated,
+    });
+}
+
 /// Enough of a session to list it without reading every message: what a
 /// picker needs to show one row.
 pub const SessionMeta = struct {

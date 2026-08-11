@@ -132,6 +132,32 @@
 
   main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: 1.25rem 1.5rem 2rem; }
 
+  /* ---- tabs: one view at a time ----
+     Everything used to be stacked in one column, so reaching Tools meant
+     scrolling past the whole transcript, the run graph and every room. */
+  .tabs {
+    display: flex; flex-wrap: wrap; gap: 0.35rem;
+    border-bottom: 1px solid var(--rule); margin-bottom: 1.25rem;
+  }
+  .tab {
+    min-height: 44px; padding: 0.4rem 0.9rem;
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    background: transparent; color: var(--fg-muted);
+    border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  /* A count of what is behind the tab, so the numbers are not hidden by the
+     thing that hides everything else. */
+  .tab-count { color: var(--fg-muted); font-weight: 400; margin-left: 0.4rem; }
+  .tab[aria-selected="true"] .tab-count { color: var(--accent); }
+  .view[hidden] { display: none; }
+  .view:focus { outline: none; }
+  /* The first section inside a view has nothing above it to be separated from. */
+  .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+
   /* ---- transcript: a running list of turns, chat-style ---- */
   .transcript { display: flex; flex-direction: column; gap: 1.5rem; }
   .transcript:empty { display: none; }
@@ -287,6 +313,7 @@
      the composer's Task label does — otherwise one wraps above and the other
      lands beside its field. */
   .run-picker label { margin: 0; flex-basis: 100%; }
+  .session-actions { display: flex; gap: 0.5rem; }
   select, #run-filter {
     flex: 1; min-width: 12rem; min-height: 44px; padding: 0.4rem 0.6rem;
     font-family: var(--mono); font-size: var(--step-0);
@@ -408,6 +435,7 @@
   }
   .chat-msg { font-family: var(--mono); font-size: var(--step-0); overflow-wrap: anywhere; }
   .chat-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; margin-bottom: 0.15rem; }
+  .chat-mark { font-size: var(--step-1); line-height: 1; }
   .chat-from { color: var(--accent); font-weight: 700; }
   /* This instance's own messages, so a room reads as a conversation rather
      than a log of indistinguishable lines. */
@@ -460,6 +488,31 @@
     background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted);
   }
   .tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
+  /* The name opens the detail panel, so it is a button that reads as a name. */
+  button.tool-name {
+    min-height: auto; padding: 0; background: none; border: 0; text-align: left;
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+    color: var(--fg); cursor: pointer;
+  }
+  button.tool-name:hover { color: var(--accent); }
+  .tool-detail-desc {
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
+    margin: 0.25rem 0 0.75rem; overflow-wrap: anywhere;
+  }
+  .tool-detail-h {
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
+    margin: 0.75rem 0 0.35rem;
+  }
+  .tool-params {
+    display: grid; grid-template-columns: 10rem 1fr; gap: 0.2rem 1rem; margin: 0;
+    font-family: var(--mono); font-size: var(--step-0);
+  }
+  .tool-params dt { color: var(--fg); font-weight: 700; text-transform: none; letter-spacing: normal; overflow-wrap: anywhere; }
+  .tool-params dd { margin: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .tool-req { color: var(--danger); font-weight: 400; }
+  .tool-none { font-style: italic; }
+  @media (max-width: 40rem) { .tool-params { grid-template-columns: 1fr; } .tool-params dt { margin-top: 0.4rem; } }
   .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
 
   /* A plugin's own settings, shown only when its descriptor opted some in. */
@@ -555,120 +608,140 @@
 </header>
 
 <main id="main" tabindex="-1">
-  <!-- No aria-live here: each turn's answer is its own live region (see
-       createTurn). Nesting one inside the other made a screen reader announce
-       every streamed chunk twice, once per region. -->
-  <!-- Conversations are persisted server-side per session id; this picks which
-       one the composer below continues. Sits above the transcript because it
-       names what the transcript is showing. -->
-  <div class="run-picker" id="session-picker">
-    <label for="session-select">Conversation</label>
-    <select id="session-select"></select>
-    <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button type="button" class="tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
+  <button type="button" class="tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+  <button type="button" class="tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
+  <button type="button" class="tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
+  <button type="button" class="tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
+  <button type="button" class="tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
+</nav>
+  <div class="view" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
+    <!-- No aria-live here: each turn's answer is its own live region (see
+         createTurn). Nesting one inside the other made a screen reader announce
+         every streamed chunk twice, once per region. -->
+    <!-- Conversations are persisted server-side per session id; this picks which
+         one the composer below continues. Sits above the transcript because it
+         names what the transcript is showing. -->
+    <div class="run-picker" id="session-picker">
+      <label for="session-select">Conversation</label>
+      <select id="session-select"></select>
+      <div class="session-actions">
+        <button type="button" class="secondary" id="session-rename">Rename</button>
+        <button type="button" class="secondary danger" id="session-delete">Delete</button>
+      </div>
+      <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="transcript" id="transcript"></div>
+
+    <form id="task-form" class="composer">
+      <label for="task">Task</label>
+      <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
+      <div class="toolbar">
+        <span class="meta" id="hint"></span>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
+          <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
+        </div>
+      </div>
+      <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
+    </form>
+
   </div>
-
-  <div class="transcript" id="transcript"></div>
-
-  <form id="task-form" class="composer">
-    <label for="task">Task</label>
-    <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
-    <div class="toolbar">
-      <span class="meta" id="hint"></span>
-      <div class="toolbar-actions">
-        <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
-        <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
+  <div class="view" id="view-runs" role="tabpanel" aria-labelledby="tab-runs" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Runs</h2>
+        <button type="button" class="secondary" id="runs-refresh">Refresh</button>
       </div>
-    </div>
-    <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
-  </form>
-
-  <section>
-    <div class="section-head">
-      <h2>Runs</h2>
-      <button type="button" class="secondary" id="runs-refresh">Refresh</button>
-    </div>
-    <div class="runs">
-      <div class="run-picker">
-        <label for="run-filter">Filter recorded runs</label>
-        <input type="search" id="run-filter" placeholder="Filter by task or run id…" autocomplete="off">
-        <label for="run-select">Recorded run</label>
-        <select id="run-select"></select>
-        <!-- Everything this section does silently gets announced here: the
-             filter rewrites the option list and swaps the graph with no visible
-             message when it succeeds, and a failed load writes its error into
-             #run-graph, which is a plain group rather than a live region. -->
-        <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
+      <div class="runs">
+        <div class="run-picker">
+          <label for="run-filter">Filter recorded runs</label>
+          <input type="search" id="run-filter" placeholder="Filter by task or run id…" autocomplete="off">
+          <label for="run-select">Recorded run</label>
+          <select id="run-select"></select>
+          <!-- Everything this section does silently gets announced here: the
+               filter rewrites the option list and swaps the graph with no visible
+               message when it succeeds, and a failed load writes its error into
+               #run-graph, which is a plain group rather than a live region. -->
+          <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
+        </div>
+        <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
+        <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
       </div>
-      <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
-      <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Chat</h2>
-      <button type="button" class="secondary" id="chat-refresh">Refresh</button>
-    </div>
-    <div class="runs">
-      <div class="run-picker">
-        <label for="chat-room">Room</label>
-        <!-- Rooms and direct messages are the same underlying channel, so one
-             native select with two groups beats two parallel controls. -->
-        <select id="chat-room"></select>
+    </section>
+  </div>
+  <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Chat</h2>
+        <button type="button" class="secondary" id="chat-refresh">Refresh</button>
       </div>
-      <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite"></div>
-      <form class="chat-composer" id="chat-form">
-        <label class="sr-only" for="chat-text">Message</label>
-        <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
-        <button type="submit" id="chat-send" disabled>Send</button>
-      </form>
-      <p class="sr-only" id="chat-status" role="status" aria-live="polite"></p>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Usage</h2>
-      <button type="button" class="secondary" id="usage-refresh">Refresh</button>
-    </div>
-    <div id="usage"></div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Goals</h2>
-      <button type="button" class="secondary" id="goals-refresh">Refresh</button>
-    </div>
-    <div id="goals"></div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Tools</h2>
-      <button type="button" class="secondary" id="tools-refresh">Refresh</button>
-    </div>
-    <div class="runs">
-      <div class="run-picker">
-        <label for="tool-filter">Filter tools</label>
-        <input type="search" id="tool-filter" placeholder="Filter by name or description…" autocomplete="off">
+      <div class="runs">
+        <div class="run-picker">
+          <label for="chat-room">Room</label>
+          <!-- Rooms and direct messages are the same underlying channel, so one
+               native select with two groups beats two parallel controls. -->
+          <select id="chat-room"></select>
+        </div>
+        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite"></div>
+        <form class="chat-composer" id="chat-form">
+          <label class="sr-only" for="chat-text">Message</label>
+          <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
+          <button type="submit" id="chat-send" disabled>Send</button>
+        </form>
+        <p class="sr-only" id="chat-status" role="status" aria-live="polite"></p>
       </div>
-      <div id="tools"></div>
-      <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
-    </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Status</h2>
-      <button type="button" class="secondary" id="refresh">Refresh</button>
-    </div>
-    <dl role="status" aria-live="polite">
-      <dt>Instance</dt>
-      <dd id="instance">…</dd>
-      <dt>Peers</dt>
-      <dd id="peers">…</dd>
-    </dl>
-  </section>
+    </section>
+  </div>
+  <div class="view" id="view-goals" role="tabpanel" aria-labelledby="tab-goals" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Goals</h2>
+        <button type="button" class="secondary" id="goals-refresh">Refresh</button>
+      </div>
+      <div id="goals"></div>
+    </section>
+  </div>
+  <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Tools</h2>
+        <button type="button" class="secondary" id="tools-refresh">Refresh</button>
+      </div>
+      <div class="runs">
+        <div class="run-picker">
+          <label for="tool-filter">Filter tools</label>
+          <input type="search" id="tool-filter" placeholder="Filter by name or description…" autocomplete="off">
+        </div>
+        <div id="tools"></div>
+        <div id="tool-detail" class="run-detail" role="region" aria-label="Selected tool detail" hidden></div>
+        <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Usage</h2>
+        <button type="button" class="secondary" id="usage-refresh">Refresh</button>
+      </div>
+      <div id="usage"></div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Status</h2>
+        <button type="button" class="secondary" id="refresh">Refresh</button>
+      </div>
+      <dl role="status" aria-live="polite">
+        <dt>Instance</dt>
+        <dd id="instance">…</dd>
+        <dt>Peers</dt>
+        <dd id="peers">…</dd>
+      </dl>
+    </section>
+  </div>
 </main>
 
 <!-- Vendored (not CDN-loaded): d3-dag for the run graph layout below, highlight.js
@@ -702,6 +775,8 @@ document.addEventListener("DOMContentLoaded", function () {
     runStatus: document.getElementById("run-status"),
     sessionSelect: document.getElementById("session-select"),
     sessionStatus: document.getElementById("session-status"),
+    sessionRename: document.getElementById("session-rename"),
+    sessionDelete: document.getElementById("session-delete"),
     chatRoom: document.getElementById("chat-room"),
     chatLog: document.getElementById("chat-log"),
     chatForm: document.getElementById("chat-form"),
@@ -717,6 +792,7 @@ document.addEventListener("DOMContentLoaded", function () {
     toolFilter: document.getElementById("tool-filter"),
     toolsRefresh: document.getElementById("tools-refresh"),
     toolsStatus: document.getElementById("tools-status"),
+    toolDetail: document.getElementById("tool-detail"),
     runSelect: document.getElementById("run-select"),
     runGraph: document.getElementById("run-graph"),
     runDetail: document.getElementById("run-detail")
@@ -998,6 +1074,69 @@ document.addEventListener("DOMContentLoaded", function () {
 
   el.sessionSelect.addEventListener("change", function () {
     switchSession(el.sessionSelect.value);
+  });
+
+  /* A conversation's title is otherwise the first 60 characters of whatever
+     task opened it, which makes a picker full of them read like a list of
+     prefixes. Both actions refuse to touch a conversation that has never been
+     saved, since there is nothing on disk to act on yet. */
+  function currentSessionMeta() {
+    for (var i = 0; i < knownSessions.length; i++) {
+      if (knownSessions[i].id === sessionId) return knownSessions[i];
+    }
+    return null;
+  }
+
+  el.sessionRename.addEventListener("click", function () {
+    var meta = currentSessionMeta();
+    if (!meta) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    var next = window.prompt("Rename this conversation", meta.title || "");
+    if (next === null) return;
+    next = next.trim();
+    if (!next) {
+      el.sessionStatus.textContent = "A conversation needs a title.";
+      return;
+    }
+    el.sessionRename.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: next })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      el.sessionStatus.textContent = "Renamed to " + next + ".";
+      return loadSessions();
+    }).catch(function (err) {
+      el.sessionStatus.textContent = "Could not rename: " + err.message;
+    }).finally(function () { el.sessionRename.disabled = false; });
+  });
+
+  el.sessionDelete.addEventListener("click", function () {
+    var meta = currentSessionMeta();
+    if (!meta) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    // Deleting a transcript cannot be undone from here, so it is confirmed.
+    // The run graphs survive it: they record runs that really happened and are
+    // addressed by run id, not by session.
+    if (!window.confirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.")) return;
+    el.sessionDelete.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        el.sessionStatus.textContent = "Deleted. Started a new conversation.";
+        sessionId = newSessionId();
+        try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+        el.transcript.textContent = "";
+        renderSessionChip();
+        return loadSessions();
+      }).catch(function (err) {
+        el.sessionStatus.textContent = "Could not delete: " + err.message;
+      }).finally(function () { el.sessionDelete.disabled = false; });
   });
 
   function syncControls() {
@@ -2121,7 +2260,9 @@ document.addEventListener("DOMContentLoaded", function () {
   var chatFailing = false;
 
   function chatRoomLabel(r) {
-    return isDm(r.room) ? dmPartner(r.room) : r.room;
+    if (!isDm(r.room)) return "# " + r.room;
+    var who = dmPartner(r.room);
+    return clankerMark(who) + " " + who;
   }
 
   /* Rooms the server knows about, plus a DM entry per configured peer even
@@ -2287,12 +2428,38 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  /* A stable emoji per instance, so a busy room is scannable by shape before
+     you read a single name. Derived from the name rather than assigned, so
+     every clanker independently agrees on who is who with no shared state and
+     no registry — the same reasoning as the DM room name. Collisions are
+     possible with enough peers; the name is still right there next to it. */
+  var CLANKER_MARKS = [
+    "🐙", "🦊", "🦉", "🐢", "🦋", "🐝", "🦔", "🦦",
+    "🦭", "🐬", "🦅", "🦩", "🐸", "🦎", "🐿️", "🦡",
+    "🪼", "🦑", "🐳", "🦌", "🐺", "🦂", "🕷️", "🦜"
+  ];
+
+  function clankerMark(name) {
+    var h = 5381;
+    for (var i = 0; i < name.length; i++) {
+      // djb2, kept in 32-bit range so the result does not drift with length.
+      h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
+    }
+    return CLANKER_MARKS[h % CLANKER_MARKS.length];
+  }
+
   function buildChatMessage(m) {
     var wrap = document.createElement("div");
     wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
 
     var meta = document.createElement("div");
     meta.className = "chat-meta";
+    var mark = document.createElement("span");
+    mark.className = "chat-mark";
+    mark.textContent = clankerMark(m.from || "");
+    // Decorative: the name follows it and says the same thing.
+    mark.setAttribute("aria-hidden", "true");
+    meta.appendChild(mark);
     var from = document.createElement("span");
     from.className = "chat-from";
     from.textContent = m.from;
@@ -2604,9 +2771,12 @@ document.addEventListener("DOMContentLoaded", function () {
     var row = document.createElement("div");
     row.className = "tool-row";
 
-    var name = document.createElement("span");
+    var name = document.createElement("button");
+    name.type = "button";
     name.className = "tool-name";
     name.textContent = t.name;
+    name.setAttribute("aria-label", "Show details for " + t.name);
+    name.addEventListener("click", function () { showToolDetail(t); });
     row.appendChild(name);
 
     // Core tools back the REPL and the HTTP routes, so the harness refuses to
@@ -2748,6 +2918,107 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  /* What a tool accepts and what it is allowed to reach. The sandbox policy is
+     the headline: a descriptor's network, filesystem and exec allowances are
+     the real answer to "what can this thing do", and they were previously only
+     readable by opening the manifest. */
+  function showToolDetail(t) {
+    el.toolDetail.textContent = "";
+    el.toolDetail.hidden = false;
+
+    var head = document.createElement("div");
+    head.className = "run-detail-head";
+    var titleWrap = document.createElement("span");
+    var title = document.createElement("span");
+    title.className = "run-detail-title";
+    title.textContent = t.name;
+    titleWrap.appendChild(title);
+    var meta = document.createElement("span");
+    meta.className = "run-detail-meta";
+    var tags = [];
+    if (t.core) tags.push("core");
+    if (t.category) tags.push(t.category);
+    if (t.llm) tags.push("calls the model");
+    if (t.sequential) tags.push("sequential");
+    if (t.check) tags.push("check");
+    if (t.transform) tags.push("transform " + t.transform.phase + " (order " + t.transform.order + ")");
+    tags.push(t.enabled ? "enabled" : "disabled");
+    meta.textContent = "  " + tags.join("  ·  ");
+    titleWrap.appendChild(meta);
+    head.appendChild(titleWrap);
+
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "secondary run-detail-close";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", function () {
+      el.toolDetail.hidden = true;
+      el.toolDetail.textContent = "";
+    });
+    head.appendChild(closeBtn);
+    el.toolDetail.appendChild(head);
+
+    // Full text, not the first sentence the row shows.
+    var desc = document.createElement("p");
+    desc.className = "tool-detail-desc";
+    desc.textContent = t.description || "(no description)";
+    el.toolDetail.appendChild(desc);
+
+    // Actions: every parameter the tool accepts, with the required ones named.
+    var schema = t.input_schema;
+    var props = schema && schema.properties ? Object.keys(schema.properties) : [];
+    if (props.length) {
+      var required = (schema.required || []);
+      var list = document.createElement("dl");
+      list.className = "tool-params";
+      props.forEach(function (key) {
+        var spec = schema.properties[key] || {};
+        var dt = document.createElement("dt");
+        dt.textContent = key;
+        if (required.indexOf(key) !== -1) {
+          var req = document.createElement("span");
+          req.className = "tool-req";
+          req.textContent = " required";
+          dt.appendChild(req);
+        }
+        list.appendChild(dt);
+        var dd = document.createElement("dd");
+        dd.textContent = (spec.type || "any") + (spec.description ? " — " + spec.description : "");
+        list.appendChild(dd);
+      });
+      el.toolDetail.appendChild(sectionTitle("Accepts"));
+      el.toolDetail.appendChild(list);
+    }
+
+    // Sandbox policy. An empty allowance is a real answer, so it is stated
+    // rather than omitted: "no network" is the thing worth knowing.
+    el.toolDetail.appendChild(sectionTitle("Sandbox"));
+    var policy = document.createElement("dl");
+    policy.className = "tool-params";
+    [["Network", t.network_allow, "no network"],
+     ["Filesystem", t.fs_prefixes, "no filesystem access"],
+     ["Commands", t.exec_allow, "the harness default set"]].forEach(function (row) {
+      var dt = document.createElement("dt");
+      dt.textContent = row[0];
+      policy.appendChild(dt);
+      var dd = document.createElement("dd");
+      dd.textContent = row[1] && row[1].length ? row[1].join(", ") : row[2];
+      if (!(row[1] && row[1].length)) dd.className = "tool-none";
+      policy.appendChild(dd);
+    });
+    el.toolDetail.appendChild(policy);
+
+    scrollTo(el.toolDetail, "nearest");
+    closeBtn.focus();
+  }
+
+  function sectionTitle(text) {
+    var h = document.createElement("h3");
+    h.className = "tool-detail-h";
+    h.textContent = text;
+    return h;
+  }
+
   function toggleTool(t, btn) {
     var want = !t.enabled;
     btn.disabled = true;
@@ -2820,19 +3091,101 @@ document.addEventListener("DOMContentLoaded", function () {
     loadTools().finally(function () { el.toolsRefresh.disabled = false; });
   });
 
+  // ---- views: one section visible at a time -----------------------------
+
+  var VIEWS = ["chat", "runs", "rooms", "goals", "tools", "system"];
+  /* Each view's data is fetched the first time it is opened rather than all of
+     it at load. The page used to fire seven requests before showing anything,
+     several of which execute a WASM tool. */
+  var viewLoaded = {};
+  var viewLoaders = {
+    runs: loadRuns,
+    rooms: function () { return loadStatus().then(loadChatRooms); },
+    goals: loadGoals,
+    tools: loadTools,
+    system: function () { return Promise.all([loadUsage(), loadStatus()]); }
+  };
+
+  function showView(name, focusPanel) {
+    if (VIEWS.indexOf(name) === -1) name = "chat";
+    VIEWS.forEach(function (v) {
+      var tab = document.getElementById("tab-" + v);
+      var panel = document.getElementById("view-" + v);
+      var on = v === name;
+      panel.hidden = !on;
+      tab.setAttribute("aria-selected", String(on));
+      // Roving tabindex: the tablist is one stop, arrows move within it.
+      tab.tabIndex = on ? 0 : -1;
+    });
+    if (window.location.hash !== "#" + name) {
+      try { window.history.replaceState(null, "", "#" + name); } catch (e) {}
+    }
+    if (focusPanel) document.getElementById("view-" + name).focus();
+    if (!viewLoaded[name] && viewLoaders[name]) {
+      viewLoaded[name] = true;
+      viewLoaders[name]();
+    }
+  }
+
+  VIEWS.forEach(function (v, i) {
+    var tab = document.getElementById("tab-" + v);
+    tab.addEventListener("click", function () { showView(v, false); });
+    tab.addEventListener("keydown", function (e) {
+      var step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (step) {
+        e.preventDefault();
+        var next = VIEWS[(i + step + VIEWS.length) % VIEWS.length];
+        showView(next, false);
+        document.getElementById("tab-" + next).focus();
+        return;
+      }
+      if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        var edge = e.key === "Home" ? VIEWS[0] : VIEWS[VIEWS.length - 1];
+        showView(edge, false);
+        document.getElementById("tab-" + edge).focus();
+      }
+    });
+  });
+
+  window.addEventListener("hashchange", function () {
+    showView(window.location.hash.replace("#", ""), false);
+  });
+
+  /* A digit jumps straight to a view, but never while someone is typing into
+     the composer or a filter. */
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    var n = parseInt(e.key, 10);
+    if (n >= 1 && n <= VIEWS.length) {
+      showView(VIEWS[n - 1], false);
+      document.getElementById("tab-" + VIEWS[n - 1]).focus();
+    }
+  });
+
+  function setTabCount(view, n) {
+    var tab = document.getElementById("tab-" + view);
+    var el0 = tab.querySelector(".tab-count");
+    if (!el0) {
+      el0 = document.createElement("span");
+      el0.className = "tab-count";
+      tab.appendChild(el0);
+    }
+    el0.textContent = n ? String(n) : "";
+  }
+
   renderSessionChip();
   renderSessionOptions([]);
   setBusy(false);
-  loadStatus().then(function () {
-    // Rooms need the instance name to tell this clanker's messages from a
-    // peer's and to derive DM room names, so they wait for status.
-    loadChatRooms();
-  });
+  // Status is cheap and gives the header its identity chips, so it loads
+  // regardless of which view opened. Rooms wait for it because they need the
+  // instance name to tell this clanker's messages from a peer's.
+  loadStatus();
+  // Only the opening view's data is fetched now; the rest load when opened.
+  showView(window.location.hash.replace("#", ""), false);
   loadSessions();
-  loadRuns();
-  loadGoals();
-  loadUsage();
-  loadTools();
 });
 </script>
 </body>

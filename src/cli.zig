@@ -2710,8 +2710,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleStatus(cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/sessions")) {
-            handleSessions(io, gpa, cfg, target, stream);
+        } else if (std.mem.startsWith(u8, target, "/api/sessions") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
+        {
+            handleSessions(io, gpa, cfg, method, target, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
@@ -3372,7 +3374,9 @@ fn handleSessions(
     io: std.Io,
     gpa: std.mem.Allocator,
     cfg: *const config.Config,
+    method: []const u8,
     target: []const u8,
+    body: []const u8,
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.sessions) {
@@ -3390,15 +3394,39 @@ fn handleSessions(
             respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
             return;
         }
+        if (std.mem.eql(u8, method, "DELETE")) {
+            session.deleteSession(io, arena, std.Io.Dir.cwd(), id) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            respond(stream, 200, "OK", "{\"ok\":true}");
+            return;
+        }
+        if (std.mem.eql(u8, method, "POST")) {
+            const req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+                return;
+            };
+            const title = req.title orelse {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title\"}");
+                return;
+            };
+            session.renameSession(io, gpa, arena, std.Io.Dir.cwd(), id, title) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            respond(stream, 200, "OK", "{\"ok\":true}");
+            return;
+        }
         const s = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id) catch {
             respond(stream, 404, "Not Found", "{\"error\":\"no such session\"}");
             return;
         };
-        const body = sessionJSON(arena, s) catch {
+        const one = sessionJSON(arena, s) catch {
             respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
             return;
         };
-        respond(stream, 200, "OK", body);
+        respond(stream, 200, "OK", one);
         return;
     }
     if (rest.len != 0) {
@@ -3410,11 +3438,11 @@ fn handleSessions(
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session list failed\"}");
         return;
     };
-    const body = sessionListJSON(arena, list) catch {
+    const listing = sessionListJSON(arena, list) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
         return;
     };
-    respond(stream, 200, "OK", body);
+    respond(stream, 200, "OK", listing);
 }
 
 /// Session ids reach the filesystem as a path fragment, so they are restricted
@@ -3546,6 +3574,10 @@ fn handlePlugins(
     };
     respond(stream, 200, "OK", out);
 }
+
+const SessionPatchBody = struct {
+    title: ?[]const u8 = null,
+};
 
 const PluginToggleBody = struct {
     name: ?[]const u8 = null,
