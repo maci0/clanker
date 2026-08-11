@@ -219,6 +219,7 @@ pub const Agent = struct {
             .peers = peer_names.items,
             .catalog = catalog,
             .global_instructions_file = global_path,
+            .home = home,
         }, defs);
         const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
@@ -266,6 +267,7 @@ pub const Agent = struct {
             .peers = self.peer_names,
             .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
             .global_instructions_file = global_path,
+            .home = home,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;

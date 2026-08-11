@@ -39,7 +39,7 @@ clanker loads **[config.json](config.json)** (committed example) and merges **`c
 | `chatrooms` | Default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag |
 | `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`) |
 
-Agent instructions are layered: device-wide `$HOME/.agents/AGENTS.md`, shared repository `AGENTS.md`, then ignored project-local `.agents/AGENTS.md`. Put personal, checkout-specific additions such as a Git workflow in the last file; it supplements the shared conventions rather than replacing them.
+Agent instructions are layered: device-wide `$HOME/.agents/AGENTS.md`, shared repository `AGENTS.md`, then ignored project-local `.agents/AGENTS.md`. Put personal, checkout-specific additions such as a Git workflow in the last file; it supplements the shared conventions rather than replacing them. Instruction files also support Claude-style `@path` imports (missing files soft-skip), so a shared root `AGENTS.md` can contain `@.agents/AGENTS.md` for tools that only read the root file.
 
 Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropic models via Google Vertex AI; requires `project` + `location`, and either `api_key_env` or `service_account_file`). See the full field list and HTTP/CLI reference in [docs/README.md](docs/README.md#configuration).
 

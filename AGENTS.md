@@ -97,3 +97,10 @@ Every promoted change must pass: `zig build`, `zig build test`,
 `zig build tools`, `zig fmt --check` (auto-formatted), and the source lint.
 Promoted changes are committed as `clanker: <summary> [imp-<id>]`. Run the
 whole gate manually with `clanker gate`.
+
+## Local operator rules (optional)
+
+Checkout-private additions (gitignored). Missing file is a soft skip for tools
+that expand `@path` imports (clanker, Claude Code, etc.).
+
+@.agents/AGENTS.md

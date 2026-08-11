@@ -4,9 +4,19 @@
 //! Also folds in device-global operator instructions (default
 //! `$HOME/.agents/AGENTS.md`), project-root `AGENTS.md`, and project-local
 //! `.agents/AGENTS.md` as distinct sections.
+//!
+//! Instruction markdown supports Claude-style `@path` imports: relative paths
+//! resolve against the file that contains the `@`, `~/` expands against HOME,
+//! missing imports are a soft skip, recursion is capped, and code spans /
+//! fenced blocks are left alone.
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
+
+/// Per-file read cap for instruction layers and each `@` import hop.
+const max_instruction_file_bytes: usize = 64 * 1024;
+/// Claude-compatible hop limit for nested `@` imports.
+const max_import_depth: usize = 4;
 
 pub const PromptParts = struct {
     system_prompt_file: []const u8,
@@ -33,6 +43,8 @@ pub const PromptParts = struct {
     /// from the shared project conventions so a developer can keep personal
     /// workflow instructions out of the repository.
     local_instructions_file: []const u8 = ".agents/AGENTS.md",
+    /// HOME for `~/…` import resolution. Empty disables tilde expansion.
+    home: []const u8 = "",
 };
 
 /// Prefixed to the Skills and Learnings sections, both of which the agent
@@ -64,6 +76,191 @@ pub fn resolveGlobalInstructionsPath(
     return try std.fmt.allocPrint(arena, "{s}/.agents/AGENTS.md", .{home});
 }
 
+/// Tracks paths already expanded as `@` imports so layered sections are not
+/// duplicated when root `AGENTS.md` imports the same local file clanker also
+/// loads as its third instruction layer.
+const ImportState = struct {
+    home: []const u8,
+    /// Absolute-ish resolved paths (as joined strings) currently on the stack.
+    stack: std.ArrayList([]const u8) = .empty,
+    /// Paths whose content was already inlined via an import hop.
+    loaded: std.ArrayList([]const u8) = .empty,
+
+    fn contains(list: []const []const u8, path: []const u8) bool {
+        for (list) |p| {
+            if (std.mem.eql(u8, p, path)) return true;
+        }
+        return false;
+    }
+
+    fn alreadyLoaded(self: *const ImportState, path: []const u8) bool {
+        return contains(self.loaded.items, path);
+    }
+
+    fn markLoaded(self: *ImportState, arena: std.mem.Allocator, path: []const u8) !void {
+        if (self.alreadyLoaded(path)) return;
+        try self.loaded.append(arena, try arena.dupe(u8, path));
+    }
+};
+
+fn parentDir(path: []const u8) []const u8 {
+    return std.fs.path.dirname(path) orelse ".";
+}
+
+/// True when `@` at `idx` can start an import (not mid-token like `user@host`).
+fn isImportBoundary(text: []const u8, idx: usize) bool {
+    if (idx == 0) return true;
+    return switch (text[idx - 1]) {
+        ' ', '\t', '\n', '\r', '(', '[', '{', '<', '"', '\'', '*', '_', ':', '=', '|', '>', ',', ';' => true,
+        else => false,
+    };
+}
+
+/// Length of a path token after `@`. Stops at whitespace and markdown delimiters.
+fn importPathLen(after_at: []const u8) usize {
+    var i: usize = 0;
+    while (i < after_at.len) : (i += 1) {
+        const c = after_at[i];
+        if (c <= 0x20) break;
+        switch (c) {
+            '`', '"', '\'', '(', ')', '[', ']', '{', '}', '<', '>', ',', ';', '!', '?' => break,
+            else => {},
+        }
+    }
+    return i;
+}
+
+fn resolveImportPath(
+    arena: std.mem.Allocator,
+    parent_file: []const u8,
+    import_path: []const u8,
+    home: []const u8,
+) ![]const u8 {
+    if (import_path.len == 0) return import_path;
+    if (std.mem.startsWith(u8, import_path, "~/")) {
+        if (home.len == 0) return import_path;
+        return try std.fmt.allocPrint(arena, "{s}/{s}", .{ home, import_path[2..] });
+    }
+    if (std.fs.path.isAbsolute(import_path)) return import_path;
+    const dir = parentDir(parent_file);
+    if (std.mem.eql(u8, dir, ".")) return try arena.dupe(u8, import_path);
+    return try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, import_path });
+}
+
+/// Explicit set so mutual recursion between loadExpanded / expandImports does
+/// not form an inferred-error-set dependency cycle.
+const ImportError = std.mem.Allocator.Error;
+
+/// Reads `path` and expands nested `@` imports. Missing file → null (soft skip).
+fn loadExpanded(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+    depth: usize,
+    state: *ImportState,
+) ImportError!?[]const u8 {
+    if (depth > max_import_depth) return null;
+    if (ImportState.contains(state.stack.items, path)) return null;
+
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_instruction_file_bytes)) catch return null;
+    try state.stack.append(arena, path);
+    defer _ = state.stack.pop();
+    try state.markLoaded(arena, path);
+
+    return try expandImports(arena, io, raw, path, depth, state);
+}
+
+/// Expands Claude-style `@path` imports in markdown. Skips fenced code blocks
+/// and `` `inline code` `` spans. Missing imports are removed (soft skip).
+fn expandImports(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    content: []const u8,
+    parent_file: []const u8,
+    depth: usize,
+    state: *ImportState,
+) ImportError![]const u8 {
+    if (std.mem.indexOfScalar(u8, content, '@') == null) return content;
+
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    var in_fence = false;
+    var in_code_span = false;
+
+    while (i < content.len) {
+        // Fenced code block: line that is only ```… toggles fence mode.
+        if (!in_code_span and content[i] == '`' and i + 2 < content.len and
+            content[i + 1] == '`' and content[i + 2] == '`')
+        {
+            const line_start = if (i == 0) true else content[i - 1] == '\n';
+            if (line_start) {
+                const fence_end = std.mem.indexOfScalarPos(u8, content, i, '\n') orelse content.len;
+                try out.appendSlice(arena, content[i..fence_end]);
+                i = fence_end;
+                in_fence = !in_fence;
+                continue;
+            }
+        }
+
+        if (!in_fence and content[i] == '`') {
+            try out.append(arena, '`');
+            i += 1;
+            in_code_span = !in_code_span;
+            continue;
+        }
+
+        if (!in_fence and !in_code_span and content[i] == '@' and isImportBoundary(content, i)) {
+            const after = content[i + 1 ..];
+            const plen = importPathLen(after);
+            if (plen > 0) {
+                const ipath = after[0..plen];
+                // Path-shaped refs (`@foo/bar`, `@file.md`, `@~/x`) always
+                // count as imports: missing → soft skip (drop the @ref). Bare
+                // tokens (`@README`) expand only when the file exists so that
+                // incidental `@mentions` stay in the text.
+                const path_shaped = std.mem.indexOfScalar(u8, ipath, '/') != null or
+                    std.mem.indexOfScalar(u8, ipath, '.') != null or
+                    std.mem.startsWith(u8, ipath, "~");
+                const resolved = try resolveImportPath(arena, parent_file, ipath, state.home);
+                if (try loadExpanded(arena, io, resolved, depth + 1, state)) |imported| {
+                    if (std.mem.trim(u8, imported, " \t\r\n").len > 0) {
+                        try out.appendSlice(arena, imported);
+                    }
+                    i += 1 + plen;
+                    continue;
+                }
+                if (path_shaped) {
+                    i += 1 + plen;
+                    continue;
+                }
+                // Bare missing token: leave `@name` as ordinary text.
+            }
+        }
+
+        try out.append(arena, content[i]);
+        i += 1;
+    }
+
+    return try out.toOwnedSlice(arena);
+}
+
+/// Load an instruction layer, expand imports, soft-skip missing/empty.
+fn loadInstructionLayer(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+    state: *ImportState,
+) !?[]const u8 {
+    if (path.len == 0) return null;
+    // If a previous layer already inlined this path via `@`, skip the section
+    // so root AGENTS.md can `@.agents/AGENTS.md` without duplicating the
+    // dedicated local layer.
+    if (state.alreadyLoaded(path)) return null;
+    const expanded = try loadExpanded(arena, io, path, 0, state) orelse return null;
+    if (std.mem.trim(u8, expanded, " \t\r\n").len == 0) return null;
+    return expanded;
+}
+
 /// Builds the system prompt into `arena`-owned memory. Returns the prompt text.
 pub fn build(
     arena: std.mem.Allocator,
@@ -72,6 +269,7 @@ pub fn build(
     tool_defs: []const types.ToolDef,
 ) ![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
+    var imports = ImportState{ .home = parts.home };
 
     // Base instructions.
     const base = std.Io.Dir.cwd().readFileAlloc(io, parts.system_prompt_file, arena, .limited(1 << 20)) catch |err| switch (err) {
@@ -107,37 +305,28 @@ pub fn build(
     // Device-global operator instructions (default ~/.agents/AGENTS.md).
     // Distinct from project AGENTS.md so operator-wide prefs and project
     // conventions can coexist.
-    if (parts.global_instructions_file.len > 0) {
-        const global_md = std.Io.Dir.cwd().readFileAlloc(io, parts.global_instructions_file, arena, .limited(64 * 1024)) catch null;
-        if (global_md) |content| {
-            if (std.mem.trim(u8, content, " \t\r\n").len > 0) {
-                try buf.appendSlice(arena, "## Global operator instructions (~/.agents/AGENTS.md)\n\n");
-                try buf.appendSlice(arena, content);
-                try buf.appendSlice(arena, "\n\n");
-            }
-        }
+    if (try loadInstructionLayer(arena, io, parts.global_instructions_file, &imports)) |content| {
+        try buf.appendSlice(arena, "## Global operator instructions (~/.agents/AGENTS.md)\n\n");
+        try buf.appendSlice(arena, content);
+        try buf.appendSlice(arena, "\n\n");
     }
 
-    // Project conventions (AGENTS.md).
-    const agents_md = std.Io.Dir.cwd().readFileAlloc(io, parts.project_agents_file, arena, .limited(64 * 1024)) catch null;
-    if (agents_md) |content| {
-        if (content.len > 0) {
-            try buf.appendSlice(arena, "## Project conventions (AGENTS.md)\n\n");
-            try buf.appendSlice(arena, content);
-            try buf.appendSlice(arena, "\n\n");
-        }
+    // Project conventions (AGENTS.md). Supports `@path` imports so a shared
+    // root file can pull in gitignored local rules when present.
+    if (try loadInstructionLayer(arena, io, parts.project_agents_file, &imports)) |content| {
+        try buf.appendSlice(arena, "## Project conventions (AGENTS.md)\n\n");
+        try buf.appendSlice(arena, content);
+        try buf.appendSlice(arena, "\n\n");
     }
 
     // Project-local operator additions (.agents/AGENTS.md). This gitignored
     // file lets a developer add checkout-specific workflow rules without
-    // replacing the repository's shared AGENTS.md.
-    const local_md = std.Io.Dir.cwd().readFileAlloc(io, parts.local_instructions_file, arena, .limited(64 * 1024)) catch null;
-    if (local_md) |content| {
-        if (std.mem.trim(u8, content, " \t\r\n").len > 0) {
-            try buf.appendSlice(arena, "## Project-local operator instructions (.agents/AGENTS.md)\n\n");
-            try buf.appendSlice(arena, content);
-            try buf.appendSlice(arena, "\n\n");
-        }
+    // replacing the repository's shared AGENTS.md. Skipped when already
+    // inlined via an `@` import from a broader layer.
+    if (try loadInstructionLayer(arena, io, parts.local_instructions_file, &imports)) |content| {
+        try buf.appendSlice(arena, "## Project-local operator instructions (.agents/AGENTS.md)\n\n");
+        try buf.appendSlice(arena, content);
+        try buf.appendSlice(arena, "\n\n");
     }
 
     // Skills (agent-editable markdown files in skills_dir).
@@ -401,4 +590,158 @@ test "build omits unavailable or empty instruction layers; project still include
     try std.testing.expect(std.mem.indexOf(u8, p_none, heading) == null);
     try std.testing.expect(std.mem.indexOf(u8, p_none, local_heading) == null);
     try std.testing.expect(std.mem.indexOf(u8, p_none, "PROJECT_ONLY_MARKER") != null);
+}
+
+test "build expands @imports in AGENTS.md; missing import soft-skips" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "SYSTEM.md", .data = "BASE" });
+    try tmp.dir.createDirPath(io, "skills");
+    try tmp.dir.createDirPath(io, "nested");
+    try tmp.dir.writeFile(io, .{ .sub_path = "nested/rules.md", .data = "IMPORTED_RULES_MARKER" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "project-agents.md",
+        .data =
+        \\Shared conventions.
+        \\@nested/rules.md
+        \\@nested/does-not-exist.md
+        \\After imports.
+        ,
+    });
+
+    const base_path = try tmpRel(std.testing.allocator, &tmp, "SYSTEM.md");
+    defer std.testing.allocator.free(base_path);
+    const project_path = try tmpRel(std.testing.allocator, &tmp, "project-agents.md");
+    defer std.testing.allocator.free(project_path);
+    const skills_path = try tmpRel(std.testing.allocator, &tmp, "skills");
+    defer std.testing.allocator.free(skills_path);
+    const learnings_path = try tmpRel(std.testing.allocator, &tmp, "no-learnings.md");
+    defer std.testing.allocator.free(learnings_path);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const prompt = try build(arena, io, .{
+        .system_prompt_file = base_path,
+        .skills_dir = skills_path,
+        .learnings_file = learnings_path,
+        .project_agents_file = project_path,
+        .local_instructions_file = "",
+    }, &.{});
+
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "Shared conventions.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "IMPORTED_RULES_MARKER") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "After imports.") != null);
+    // Missing import dropped, not left as a dangling @path.
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "@nested/does-not-exist.md") == null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "does-not-exist") == null);
+}
+
+test "build: project @import of local file skips dedicated local section" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "SYSTEM.md", .data = "BASE" });
+    try tmp.dir.createDirPath(io, "skills");
+    try tmp.dir.createDirPath(io, ".agents");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".agents/AGENTS.md", .data = "LOCAL_ONCE_MARKER" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "project-agents.md",
+        .data = "Project body.\n@.agents/AGENTS.md\n",
+    });
+
+    const base_path = try tmpRel(std.testing.allocator, &tmp, "SYSTEM.md");
+    defer std.testing.allocator.free(base_path);
+    const project_path = try tmpRel(std.testing.allocator, &tmp, "project-agents.md");
+    defer std.testing.allocator.free(project_path);
+    // Same relative path string the project file uses in its @ import, so the
+    // loaded-path set matches the dedicated local layer path.
+    const local_path = try tmpRel(std.testing.allocator, &tmp, ".agents/AGENTS.md");
+    defer std.testing.allocator.free(local_path);
+    const skills_path = try tmpRel(std.testing.allocator, &tmp, "skills");
+    defer std.testing.allocator.free(skills_path);
+    const learnings_path = try tmpRel(std.testing.allocator, &tmp, "no-learnings.md");
+    defer std.testing.allocator.free(learnings_path);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const prompt = try build(arena, io, .{
+        .system_prompt_file = base_path,
+        .skills_dir = skills_path,
+        .learnings_file = learnings_path,
+        .project_agents_file = project_path,
+        .local_instructions_file = local_path,
+    }, &.{});
+
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "LOCAL_ONCE_MARKER") != null);
+    // Exactly once — not project import + dedicated local section.
+    var count: usize = 0;
+    var rest = prompt;
+    while (std.mem.indexOf(u8, rest, "LOCAL_ONCE_MARKER")) |pos| {
+        count += 1;
+        rest = rest[pos + 1 ..];
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project-local operator instructions") == null);
+}
+
+test "expandImports leaves @path inside code spans and fences alone" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "secret.md", .data = "SHOULD_NOT_APPEAR" });
+    const parent = try tmpRel(std.testing.allocator, &tmp, "parent.md");
+    defer std.testing.allocator.free(parent);
+    try tmp.dir.writeFile(io, .{ .sub_path = "parent.md", .data = "ok" });
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var state = ImportState{ .home = "" };
+
+    const md =
+        \\Use `@secret.md` literally.
+        \\```
+        \\@secret.md
+        \\```
+        \\Done.
+    ;
+    const out = try expandImports(arena, io, md, parent, 0, &state);
+    try std.testing.expect(std.mem.indexOf(u8, out, "SHOULD_NOT_APPEAR") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "`@secret.md`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Done.") != null);
+}
+
+test "resolveImportPath: relative, absolute, tilde" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rel = try resolveImportPath(arena, "docs/AGENTS.md", "extra.md", "/home/u");
+    try std.testing.expectEqualStrings("docs/extra.md", rel);
+
+    const root_rel = try resolveImportPath(arena, "AGENTS.md", ".agents/AGENTS.md", "/home/u");
+    try std.testing.expectEqualStrings(".agents/AGENTS.md", root_rel);
+
+    const abs = try resolveImportPath(arena, "AGENTS.md", "/etc/motd", "/home/u");
+    try std.testing.expectEqualStrings("/etc/motd", abs);
+
+    const home = try resolveImportPath(arena, "AGENTS.md", "~/rules.md", "/home/u");
+    try std.testing.expectEqualStrings("/home/u/rules.md", home);
 }
