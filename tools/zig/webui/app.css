@@ -317,12 +317,14 @@ main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: 
 /* What was asked, set as the log entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
 .turn-you {
-  font-family: var(--sans); font-size: var(--step-1); color: var(--fg);
-  padding: 0 0 var(--space-3) 0;
+  font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
+  padding: 0 0 var(--space-3) var(--space-3);
+  border-left: 2px solid var(--rule);
+  margin: 0 0 var(--space-4);
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-width: var(--measure);
 }
-.turn-author { color: var(--fg-muted); font-weight: 700; }
+.turn-author { color: var(--fg); font-weight: 700; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
 .turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
@@ -807,6 +809,7 @@ button.tool-name:hover { color: var(--accent); }
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface-2);
   padding: 0.75rem 0.9rem; margin-top: 0.75rem;
+  max-width: calc(var(--measure) + 1.8rem + 2px);
 }
 .goal-objective { max-width: var(--measure); font-family: var(--sans); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
 .goal-meta {
