@@ -2579,6 +2579,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_goals = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/goals");
+        const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
@@ -2621,6 +2622,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleChatSubscribe(io, gpa, cfg, body, stream);
         } else if (is_stats) {
             handleStats(io, gpa, cfg, stream);
+        } else if (is_plugin_config) {
+            handlePluginConfig(io, gpa, cfg, body, stream);
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_goals) {
@@ -3440,6 +3443,98 @@ const PluginToggleBody = struct {
     name: ?[]const u8 = null,
     on: bool = true,
 };
+
+/// `POST /api/plugins/config {"name":…,"config":{…}}` — change a plugin's
+/// tunable settings.
+///
+/// Written to `state/plugin_config.json` rather than the descriptor: the
+/// manifest is committed project configuration and the improve loop rewrites
+/// it, so a machine-local preference does not belong there. The registry
+/// layers this file over the descriptor at load, and drops any key the
+/// descriptor did not list in `config_editable`, so a tool's structural
+/// settings cannot be reached from here. This endpoint refuses them outright
+/// too, rather than accepting a write it knows will be ignored.
+fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    if (parsed != .object) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    }
+    const name = switch (parsed.object.get("name") orelse std.json.Value{ .null = {} }) {
+        .string => |s| s,
+        else => {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
+            return;
+        },
+    };
+    const wanted = switch (parsed.object.get("config") orelse std.json.Value{ .null = {} }) {
+        .object => |o| o,
+        else => {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"config must be an object\"}");
+            return;
+        },
+    };
+
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"registry unavailable\"}");
+        return;
+    };
+    const tool = reg.get(name) orelse {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such tool\"}");
+        return;
+    };
+    var it = wanted.iterator();
+    while (it.next()) |entry| {
+        if (!tool.configKeyEditable(entry.key_ptr.*)) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"that setting is not editable\"}");
+            return;
+        }
+    }
+
+    // Read-modify-write of the whole file: other plugins' overrides live here
+    // too and must survive an edit to this one.
+    var store: std.json.Value = .{ .object = .{} };
+    if (std.Io.Dir.cwd().readFileAlloc(io, registry.plugin_config_state_path, arena, .limited(256 * 1024)) catch null) |raw| {
+        if (std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch null) |existing| {
+            if (existing == .object) store = existing;
+        }
+    }
+    var merged: std.json.ObjectMap = .empty;
+    if (store.object.get(name)) |prev| {
+        if (prev == .object) merged = prev.object.clone(arena) catch .empty;
+    }
+    var set = wanted.iterator();
+    while (set.next()) |entry| {
+        merged.put(arena, entry.key_ptr.*, entry.value_ptr.*) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    }
+    var out_store = store.object.clone(arena) catch store.object;
+    out_store.put(arena, name, .{ .object = merged }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+
+    var doc: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &doc.writer, .options = .{} };
+    s.write(std.json.Value{ .object = out_store }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    atomic_write.writeFile(io, std.Io.Dir.cwd(), registry.plugin_config_state_path, doc.written()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not save\"}");
+        return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
 
 /// `GET /api/goals` — the structured goals that steer runs, straight from
 /// `state/goals.json`. Read natively rather than through the goal tool, which

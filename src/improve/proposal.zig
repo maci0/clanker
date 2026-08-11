@@ -20,11 +20,17 @@ pub const Proposal = struct {
 
 /// Prefixes a file path must match to be part of the modifiable surface.
 /// Deliberately excludes the evaluation machinery so a single improvement pass
-/// cannot weaken its own gate: `evals/` by being absent from this list,
-/// `src/evals/`, `src/improve/`, and `src/tools/builder.zig` by the denials in
-/// `validatePath` (they sit inside the allowed `src/` prefix).
+/// cannot weaken its own gate: `src/evals/`, `src/improve/`, and
+/// `src/tools/builder.zig` are denied in `validatePath` (they sit inside the
+/// allowed `src/` prefix).
+///
+/// `evals/` is allowed but append-only (see `isAppendOnly`): a pass may add a
+/// new eval, never touch one that exists. Shutting the directory entirely kept
+/// the gate honest and also meant the fitness function could never grow, which
+/// is a ceiling on how good self-improvement can get.
 pub const allowed_prefixes = [_][]const u8{
     "src/",
+    "evals/",
     "tools/",
     "skills/",
     "tests/",
@@ -36,9 +42,19 @@ pub const allowed_prefixes = [_][]const u8{
     "config.json",
 };
 
+/// Paths that may be created but never modified or deleted. The eval suite is
+/// the gate a proposal has to pass, so letting a pass rewrite it would let it
+/// grade its own work; letting it add to it only ever raises the bar.
+pub fn isAppendOnly(path: []const u8) bool {
+    return std.mem.startsWith(u8, path, "evals/");
+}
+
 pub fn validatePath(path: []const u8) bool {
     for (allowed_prefixes) |p| {
         if (std.mem.startsWith(u8, path, p)) {
+            // An eval is a task descriptor and nothing else; the runner loads
+            // every *.task.json in the directory and would choke on the rest.
+            if (std.mem.startsWith(u8, path, "evals/") and !std.mem.endsWith(u8, path, ".task.json")) return false;
             // Fine-grained denials within allowed prefixes.
             if (std.mem.startsWith(u8, path, "src/evals/")) return false;
             if (std.mem.startsWith(u8, path, "src/improve/")) return false;
@@ -72,7 +88,16 @@ fn stripMarkdownFence(raw: []const u8) []const u8 {
     return s;
 }
 
-pub fn parseProposal(arena: std.mem.Allocator, raw: []const u8, max_changes: usize, max_change_bytes: usize) !Proposal {
+/// `rejected` receives the offending path when the error is PathNotAllowed, so
+/// the caller can tell the model which file it may not touch. Without it every
+/// retry re-proposed the same path and the run burned all its attempts.
+pub fn parseProposal(
+    arena: std.mem.Allocator,
+    raw: []const u8,
+    max_changes: usize,
+    max_change_bytes: usize,
+    rejected: ?*?[]const u8,
+) !Proposal {
     const cleaned = stripMarkdownFence(raw);
     const v = try json.parseFromSliceLeaky(json.Value, arena, cleaned, .{ .ignore_unknown_fields = true });
     const obj = switch (v) {
@@ -98,6 +123,7 @@ pub fn parseProposal(arena: std.mem.Allocator, raw: []const u8, max_changes: usi
                 const file = try strField(co, "file");
                 if (!validatePath(file)) {
                     log.log(.warn, "proposal rejected: '{s}' is outside the modifiable surface", .{file});
+                    if (rejected) |r| r.* = file;
                     return error.PathNotAllowed;
                 }
                 // A descriptor or JSON file is mostly quotes, and escaping it
@@ -159,7 +185,9 @@ test "validatePath" {
     try std.testing.expect(!validatePath("src/evals/runner.zig"));
     try std.testing.expect(!validatePath("src/improve/engine.zig"));
     try std.testing.expect(!validatePath("src/tools/builder.zig"));
-    try std.testing.expect(!validatePath("evals/math.task.json"));
+    // Add-only rather than forbidden; the existence check that keeps it
+    // add-only lives in the engine, which can see the tree.
+    try std.testing.expect(validatePath("evals/math.task.json"));
     try std.testing.expect(!validatePath("state/foo"));
     try std.testing.expect(!validatePath("tools/manifests/calculator.wasm"));
     try std.testing.expect(!validatePath("tools/bin/calc_ts.wasm"));
@@ -176,7 +204,7 @@ test "stripMarkdownFence and parse fenced proposal" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const p = try parseProposal(arena, fenced, 40, 32 * 1024);
+    const p = try parseProposal(arena, fenced, 40, 32 * 1024, null);
     try std.testing.expectEqualStrings("s", p.summary);
     try std.testing.expectEqual(@as(usize, 1), p.changes.len);
     try std.testing.expectEqualStrings("skills/SYSTEM.md", p.changes[0].file);
@@ -195,7 +223,7 @@ test "a change may carry its text base64-encoded" {
         \\{"summary":"s","rationale":"r","changes":[
         \\{"file":"tools/manifests/x.tool.json","old_b64":"eyJuYW1lIjogIngifQ==","new_b64":"eyJuYW1lIjogInkifQ=="}]}
     ;
-    const p = try parseProposal(arena, text, 10, 4096);
+    const p = try parseProposal(arena, text, 10, 4096, null);
     try std.testing.expectEqual(@as(usize, 1), p.changes.len);
     try std.testing.expectEqualStrings("{\"name\": \"x\"}", p.changes[0].old);
     try std.testing.expectEqualStrings("{\"name\": \"y\"}", p.changes[0].new);
@@ -205,7 +233,7 @@ test "a change may carry its text base64-encoded" {
         \\{"summary":"s","rationale":"r","changes":[
         \\{"file":"src/cli.zig","old":"a","new_b64":"Yg=="}]}
     ;
-    const m = try parseProposal(arena, mixed, 10, 4096);
+    const m = try parseProposal(arena, mixed, 10, 4096, null);
     try std.testing.expectEqualStrings("a", m.changes[0].old);
     try std.testing.expectEqualStrings("b", m.changes[0].new);
 
@@ -214,5 +242,36 @@ test "a change may carry its text base64-encoded" {
         \\{"summary":"s","rationale":"r","changes":[
         \\{"file":"src/cli.zig","old_b64":"!!!not base64!!!","new":"x"}]}
     ;
-    try std.testing.expectError(error.BadBase64, parseProposal(arena, bad, 10, 4096));
+    try std.testing.expectError(error.BadBase64, parseProposal(arena, bad, 10, 4096, null));
+}
+
+test "the eval suite is add-only: new cases allowed, existing ones off limits" {
+    // The suite is what grades a proposal, so a pass that could rewrite it
+    // would be grading its own work. Adding to it only ever raises the bar.
+    try std.testing.expect(validatePath("evals/read_file_large.task.json"));
+    try std.testing.expect(isAppendOnly("evals/read_file_large.task.json"));
+
+    // Only task descriptors: the runner loads the whole directory.
+    try std.testing.expect(!validatePath("evals/notes.md"));
+    try std.testing.expect(!validatePath("evals/helper.zig"));
+
+    // The machinery behind the suite stays shut, and normal source is not
+    // accidentally append-only.
+    try std.testing.expect(!validatePath("src/evals/scorers.zig"));
+    try std.testing.expect(!validatePath("src/improve/engine.zig"));
+    try std.testing.expect(!isAppendOnly("src/agent/loop.zig"));
+    try std.testing.expect(validatePath("src/agent/loop.zig"));
+}
+
+test "a rejected path is reported back so the retry can move on" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const text =
+        \\{"summary":"s","changes":[{"file":".git/config","old":"a","new":"b"}]}
+    ;
+    var rejected: ?[]const u8 = null;
+    try std.testing.expectError(error.PathNotAllowed, parseProposal(arena, text, 10, 4096, &rejected));
+    try std.testing.expectEqualStrings(".git/config", rejected orelse return error.TestExpectedPath);
 }

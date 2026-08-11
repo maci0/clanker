@@ -41,7 +41,14 @@ pub const Options = struct {
 
 /// Directories/files copied into staging for the compile gate. Must be enough
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
-const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "README.md", "build.zig", "build.zig.zon", "config.json" };
+const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "README.md", "build.zig", "build.zig.zon", "config.json" };
+
+/// Repeated verbatim to the model whenever it writes somewhere it may not, so
+/// the retry has the whole rule and not just the refusal.
+const surface_rules =
+    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/bin/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.json.
+    \\You may CREATE a new evals/<name>.task.json, which adds a case to the suite your work is graded against. You may never modify or delete an eval that already exists.
+;
 
 /// Ordered by dependency: the tools build produces the .wasm artifacts the
 /// sandbox tests load, so it must run before them.
@@ -153,8 +160,22 @@ pub const Engine = struct {
             return .failed;
         }
 
-        const proposal = proposal_mod.parseProposal(self.arena, json_text, opts.max_changes, opts.max_change_bytes) catch |err| {
+        var rejected_path: ?[]const u8 = null;
+        const proposal = proposal_mod.parseProposal(self.arena, json_text, opts.max_changes, opts.max_change_bytes, &rejected_path) catch |err| {
             log.log(.error_, "proposal rejected: {s}", .{@errorName(err)});
+            // A path rejection has nothing to do with JSON escaping, and the
+            // generic advice below sent the model straight back to the same
+            // path on every retry.
+            if (rejected_path) |bad| {
+                feedback = try std.fmt.allocPrint(
+                    self.arena,
+                    "You proposed a change to \"{s}\", which you are not allowed to write.\n" ++
+                        "{s}\n" ++
+                        "Pick a different file, or say no changes are needed.",
+                    .{ bad, surface_rules },
+                );
+                return .failed;
+            }
             log.log(.debug, "proposal text (first 1500): {s}", .{json_text[0..@min(json_text.len, 1500)]});
             // "SyntaxError" alone tells the model nothing it can act on. The
             // usual cause is a file whose own content is full of quotes and
@@ -182,6 +203,26 @@ pub const Engine = struct {
                 log.log(.info, "  would change {s} ({d} bytes)", .{ c.file, c.new.len });
             }
             return .no_change;
+        }
+
+        // The eval suite is the gate this proposal has to pass, so a pass may
+        // add to it but never rewrite it. Checked against the live tree, which
+        // is what "already exists" has to mean.
+        for (proposal.changes) |c| {
+            if (!proposal_mod.isAppendOnly(c.file)) continue;
+            const exists = blk: {
+                std.Io.Dir.cwd().access(self.ctx.io, c.file, .{}) catch break :blk false;
+                break :blk true;
+            };
+            if (exists or c.old.len != 0) {
+                log.log(.warn, "proposal rejected: '{s}' already exists and may only be added to, not rewritten", .{c.file});
+                feedback = try std.fmt.allocPrint(
+                    self.arena,
+                    "You tried to rewrite \"{s}\". Files under evals/ are the gate your own work is measured against: you may create a new one, never change or remove an existing one.\n{s}",
+                    .{ c.file, surface_rules },
+                );
+                return .failed;
+            }
         }
 
         // ---- 4. staging ----
