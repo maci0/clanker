@@ -118,7 +118,7 @@ pub const Agent = struct {
     /// How many of the most-used tools keep their schemas loaded without
     /// being asked for. Measured, not configured: see tools/usage.zig.
     hot_tools: u32 = 10,
-    tools_dir: []const u8 = "tools",
+    tools_dir: []const u8 = "tools/manifests",
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
@@ -796,7 +796,8 @@ pub const Config = struct {
         }
         // Agent is field-merged: a local file that only sets e.g. sandbox_root
         // must not reset tools_dir (and the rest) to Agent{} defaults — that
-        // made every tool disappear when tools_dir fell back to "tools".
+        // made every tool disappear when tools_dir fell back to the struct
+        // default instead of config.json's "tools/manifests".
         if (src.agent_present) applyAgentFields(&dst.agent, src.agent, src.agent_fields);
         // Improve is still whole-section: it is small and rarely partial.
         if (src.improve_present) dst.improve = src.improve;

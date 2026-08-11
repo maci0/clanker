@@ -185,6 +185,14 @@ pub fn build(b: *std.Build) void {
     // subprocesses, so it belongs behind its own, slower step.
     const e2e_options = b.addOptions();
     e2e_options.addOption([]const u8, "clanker_bin", b.pathFromRoot("zig-out/bin/clanker"));
+    // The spawned clanker's cwd is an isolated temp dir (so a test's file
+    // effects never touch the real checkout), but tool descriptors ("wasm":
+    // "zig-out/tools/x.wasm") and Config.load's tools_dir are both resolved
+    // relative to cwd with no override flag — so the harness symlinks the
+    // real zig-out into the temp dir and points tools_dir at the real
+    // manifests directory absolutely, rather than duplicating either.
+    e2e_options.addOption([]const u8, "zig_out_dir", b.pathFromRoot("zig-out"));
+    e2e_options.addOption([]const u8, "tools_manifests_dir", b.pathFromRoot("tools/manifests"));
     const rawhttp_mod = b.createModule(.{
         .root_source_file = b.path("src/util/rawhttp.zig"),
         .target = test_target,
@@ -204,6 +212,7 @@ pub fn build(b: *std.Build) void {
     const e2e_tests = b.addTest(.{ .root_module = e2e_mod });
     const run_e2e = b.addRunArtifact(e2e_tests);
     run_e2e.step.dependOn(b.getInstallStep());
+    run_e2e.step.dependOn(tools_step);
     const e2e_step = b.step("e2e", "Run black-box e2e tests against the built clanker binary + a mock LLM server");
     e2e_step.dependOn(&run_e2e.step);
 }

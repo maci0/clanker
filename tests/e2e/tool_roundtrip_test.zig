@@ -39,6 +39,7 @@ test "clanker run: a tool call round-trips through the real sandbox" {
     const mock = try mock_llm.Server.start(io, gpa, &.{ turn0, turn1, turn2 });
     defer mock.stop();
     try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
 
     var result = try harness.run(gpa, io, tmp.dir, &.{ "run", "list the files in this directory" });
     defer result.deinit(gpa);
@@ -49,7 +50,6 @@ test "clanker run: a tool call round-trips through the real sandbox" {
 
     try std.testing.expectEqual(@as(usize, 3), mock.requestCount());
     const third_request = mock.request(2) orelse return error.MissingThirdRequest;
-    if (std.mem.indexOf(u8, third_request, "hello.txt") == null) std.debug.print("third request: {s}\n", .{third_request});
     try std.testing.expect(std.mem.indexOf(u8, third_request, "\"tool_call_id\":\"call_2\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, third_request, "hello.txt") != null);
 }

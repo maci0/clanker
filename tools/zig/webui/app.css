@@ -468,6 +468,9 @@ main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: 
   background: transparent; color: var(--fg-muted);
   font-family: var(--mono); font-size: var(--step-0);
   letter-spacing: 0.1em; text-transform: uppercase;
+  /* Engraved into the backplane, not mounted on it: the base button's bevel
+     would turn eight quiet channel names into eight raised plates. */
+  box-shadow: none;
 }
 .rail-tab:hover { background: var(--surface-2); color: var(--fg); }
 .rail-tab[aria-selected="true"] {
@@ -1391,6 +1394,7 @@ main {
   border: 1px solid transparent; border-radius: var(--radius-sm);
   background: transparent; color: var(--fg);
   font-family: var(--sans); font-size: var(--step-0);
+  box-shadow: none;
 }
 .rail-item:hover { background: var(--surface-2); }
 .rail-item[aria-current="true"] {
