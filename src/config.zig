@@ -1476,3 +1476,40 @@ test "an unknown key in a known section does not fail the load" {
     const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
     try std.testing.expectEqual(@as(u32, 24), cfg.agent.max_iterations);
 }
+
+test "resolveProvider splits provider/model and keeps opaque slash ids whole" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = Config{ .default_provider = "zai" };
+    var zai = Provider{ .name = "zai", .base_url = "https://zai.test", .default_model = "glm-5.2" };
+    try zai.models.put(arena, "glm-5.2", .{});
+    try cfg.providers.put(arena, "zai", zai);
+    var kimi = Provider{ .name = "kimi-k3", .base_url = "https://api.moonshot.ai/v1", .default_model = "kimi-k3" };
+    try kimi.models.put(arena, "kimi-k3", .{});
+    try cfg.providers.put(arena, "kimi-k3", kimi);
+
+    // --model zai/glm-5.2 needs no separate --provider.
+    const a = try cfg.resolveProvider(null, "zai/glm-5.2");
+    try std.testing.expectEqualStrings("zai", a.name);
+    try std.testing.expectEqualStrings("glm-5.2", a.default_model);
+
+    // kimi-k3/kimi-k3 heads a provider that is actually configured, so it
+    // routes there.
+    const b = try cfg.resolveProvider(null, "kimi-k3/kimi-k3");
+    try std.testing.expectEqualStrings("kimi-k3", b.name);
+    try std.testing.expectEqualStrings("kimi-k3", b.default_model);
+
+    // An opaque model id whose head names no provider is sent verbatim on the
+    // default provider, never split into a provider (and model) that does not
+    // exist.
+    const c = try cfg.resolveProvider(null, "moonshotai/kimi-k3");
+    try std.testing.expectEqualStrings("zai", c.name);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", c.default_model);
+
+    // An explicit --provider wins over the --model prefix.
+    const d = try cfg.resolveProvider("kimi-k3", "zai/glm-5.2");
+    try std.testing.expectEqualStrings("kimi-k3", d.name);
+    try std.testing.expectEqualStrings("zai/glm-5.2", d.default_model);
+}
