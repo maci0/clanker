@@ -15,6 +15,10 @@ var recencyGroup = window.ckUtil.recencyGroup;
 var isSafeLinkUrl = window.ckUtil.isSafeLinkUrl;
 var splitRow = window.ckUtil.splitRow;
 var prettyJsonIfPossible = window.ckUtil.prettyJsonIfPossible;
+// Labels module bridged from core/labels.js; keep call sites unchanged.
+var runLabel = function (r) { return window.ckLabels.runLabel(r, clip); };
+var modelLabel = function (provider, model) { return window.ckLabels.modelLabel(provider, model, providerCache); };
+var chatRoomLabel = function (r) { return window.ckLabels.chatRoomLabel(r, window.ckChat.isDm, window.ckChat.dmPartner, window.ckChat.clankerMark); };
 
 var el = {
   form: document.getElementById("task-form"),
@@ -1337,12 +1341,7 @@ el.form.addEventListener("submit", function (e) {
 
 
 // ---- runs: pick a recorded run, draw its execution graph ----------------
-
-function runLabel(r) {
-  var task = (r.task || "").replace(/\s+/g, " ").trim();
-  task = clip(task, 60);
-  return r.run_id + "  ·  " + (task || "(no task)");
-}
+// runLabel lives in core/labels.js (bridged above as window.ckLabels.runLabel).
 
 var allRuns = [];
 /* Set when something asks for one particular run before the Runs view has
@@ -1775,11 +1774,7 @@ var chat_poll_max_ms = 60000;
 var chatBackoff = chat_poll_base_ms;
 var chatFailing = false;
 
-function chatRoomLabel(r) {
-  if (!isDm(r.room)) return "# " + r.room;
-  var who = dmPartner(r.room);
-  return clankerMark(who) + " " + who;
-}
+/* chatRoomLabel lives in core/labels.js (bridged above). */
 
 /* Rooms the server knows about, plus a DM entry per configured peer even
    when that conversation has no messages yet — otherwise the only way to
@@ -2070,21 +2065,7 @@ var fmtCost = window.ckUtil.fmtCost;
 
 var allUsage = [];
 
-/* What a model is called here, which is not always what is sent on the wire:
-   kimi-k3 goes out bare because that is what api.moonshot.ai accepts, and is
-   read as moonshotai/kimi-k3, the way an OpenRouter-routed model is written.
-   Renaming the wire id to match would have broken every call to the default
-   provider. */
-function modelLabel(provider, model) {
-  for (var i = 0; i < providerCache.length; i++) {
-    if (providerCache[i].name !== provider) continue;
-    var models = providerCache[i].models || [];
-    for (var k = 0; k < models.length; k++) {
-      if (models[k].name === model) return models[k].display || model;
-    }
-  }
-  return model;
-}
+/* modelLabel lives in core/labels.js (bridged above). */
 
 var usageState = van.state([]);
 
