@@ -57,8 +57,15 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - No `innerHTML` assignments in fleet/vendor/theme; no `style=` in `index.html`; only `/api/*` + `/.well-known/agent.json` same-origin fetches (CSP `connect-src 'self'` intact).
 - Manual proof: before/after screenshots not yet captured (headless run). Fleet reachable at `#fleet`, roster + A2A + DMs + grouped sub-runs navigable, responsive rail/hero + skeletons + phase lamps verified via CSS/JS.
 
+### This turn — lib/markdown + routing (2026-08-12 ~01:48Z)
+
+- Added `tools/zig/webui/lib/markdown.js` (~9KB ES module) — `INLINE_RE, isSafeLinkUrl, inlineInto, paragraphInto, tableRow, splitRow, renderMarkdown, prettyJsonIfPossible, highlightInto, buildCodeBlock, finalizeAnswer` (from `app.js:1046-1362`). Imports `loadHljs, copyText` from `core/vendor.js` only; no new globals.
+- `tools/zig/webui.zig` + `src/cli.zig`: embedded `lib/markdown.js`, extended `is_webui` + handler dispatch + `RenderCache/GzipCache` (`render_markdown/gzip_markdown`), comptime `encodedLen` guard extended (9 assets). Fix for earlier miss: `core/vendor.js`/`core/theme.js` and now `lib/markdown.js` were routed through `webui.zig` but `is_webui` in `src/cli.zig` was stale — patched both.
+- `tools/zig/webui/index.html`: inserted `<script type="module" src="/webui/lib/markdown.js">` between `core/theme.js` and `features/fleet.js`; order still `van-boot → van-ui defer → utils → vendor → theme → lib/markdown → fleet → app.js defer`.
+- `tools/zig/webui/core/utils.js` already bridges to `window.ckUtil` (splitRow, prettyJsonIfPossible, isSafeLinkUrl etc.) for classic `app.js` fallback; `lib/markdown.js` is additive — `app.js` still ships its own copy until switched to `import` (keeps risk bounded).
+
 ## Left / next
 
-- Replace remaining `markLoading` call sites beyond runs (chat/rooms/logs) if any still text-only.
-- Capture screenshots + `axe-core` pass per view (incl. Fleet) for formal a11y gate.
-- Continue ES-module decomposition of the 216KB `app.js` monolith (next: `lib/markdown`, `lib/graph`, `core/ui` — per `docs/webui-framework-research.md` §4).
+- Complete the ES-module cutover: make `app.js` import from `lib/markdown.js` (and eventually `lib/graph.js`, `core/ui.js`, `features/*`) so the duplicated 340-line markdown block is the canonical one in `lib/`.
+- Decompose remaining monolith per `docs/webui-framework-research.md` §4: `lib/graph.js` (D3 layout + node boxes), `core/ui.js` (rail + toast + overlays), then feature modules.
+- `axe-core` + `playwright` screenshot proof per view (incl. Fleet) — no `axe`/`playwright` harness vendored in this repo today, so manual verification until added.
