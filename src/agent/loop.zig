@@ -207,6 +207,8 @@ pub const Agent = struct {
         }
 
         log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
+        const home = ctx.environ_map.get("HOME") orelse "";
+        const global_path = (try system_prompt.resolveGlobalInstructionsPath(arena, home, cfg.agent.global_instructions_file)) orelse "";
         const base_prompt = try system_prompt.build(arena, ctx.io, .{
             .system_prompt_file = cfg.agent.system_prompt_file,
             .skills_dir = cfg.agent.skills_dir,
@@ -215,6 +217,7 @@ pub const Agent = struct {
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
             .catalog = catalog,
+            .global_instructions_file = global_path,
         }, defs);
         const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
@@ -251,6 +254,8 @@ pub const Agent = struct {
     }
 
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
+        const home = self.ctx.environ_map.get("HOME") orelse "";
+        const global_path = (system_prompt.resolveGlobalInstructionsPath(self.arena, home, self.cfg.agent.global_instructions_file) catch null) orelse "";
         const base_prompt = system_prompt.build(self.arena, self.ctx.io, .{
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
@@ -259,6 +264,7 @@ pub const Agent = struct {
             .instance_id = self.instance_id,
             .peers = self.peer_names,
             .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
+            .global_instructions_file = global_path,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;

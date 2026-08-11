@@ -472,6 +472,7 @@ Fields:
   - `max_total_tokens`: total token budget across the run.
   - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
   - `tools_dir`, `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: paths the agent reads/writes at runtime.
+  - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. That content is inserted as a **Global operator instructions** section in the system prompt, distinct from project-root `AGENTS.md` (project conventions). Missing or empty files are skipped.
   - `sandbox_root`: base directory for file operations in tools.
   - `git_commit`: commit promoted improvements with git (default true).
   - `seed`: sampling seed.
