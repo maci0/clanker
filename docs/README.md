@@ -472,7 +472,7 @@ Fields:
   - `max_total_tokens`: total token budget across the run.
   - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
   - `tools_dir`, `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: paths the agent reads/writes at runtime.
-  - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. That content is inserted as a **Global operator instructions** section in the system prompt, distinct from project-root `AGENTS.md` (project conventions). Missing or empty files are skipped.
+  - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: base directory for file operations in tools.
   - `git_commit`: commit promoted improvements with git (default true).
   - `seed`: sampling seed.
@@ -488,6 +488,22 @@ Fields:
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
 - `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
 - `improve`: settings for self-improvement (`max_context_bytes`, `capability_gate`, `max_cache_bytes`).
+
+### Layered agent instructions
+
+At prompt construction and refresh, clanker appends these instruction files as separate sections, from broadest to narrowest:
+
+1. `$HOME/.agents/AGENTS.md` (or `agent.global_instructions_file`) for device-wide operator rules.
+2. `AGENTS.md` for repository-wide shared conventions.
+3. `.agents/AGENTS.md` for one developer's additions in this checkout.
+
+The project-local file is gitignored. It is additive: use it for instructions such as a personal Git workflow without editing or replacing the repository's `AGENTS.md`. Missing or blank files are omitted.
+
+Create the local directory before adding the file:
+
+```bash
+mkdir -p .agents
+```
 
 For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig` — this section is kept in sync by hand and can lag.
 
