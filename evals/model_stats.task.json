@@ -1,0 +1,19 @@
+{
+  "name": "model_stats",
+  "kind": "task",
+  "description": "model_stats must aggregate the token-usage log through the host-side ck_stats and answer ok:true whether or not any usage has been recorded yet — a missing state/token_stats.jsonl aggregates to an empty stats list, not an error. The assertion is only the ok field, so the case is indifferent to how much the harness has actually spent; it goes red when the module wiring (ck_stats denied, aggregation error) breaks, which is exactly the failure that would otherwise hide behind a green build.",
+  "prompt": "Use the model_stats tool with input {}. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "model_stats",
+  "criteria": [
+    {
+      "includes": [
+        "true"
+      ]
+    },
+    {
+      "excludes": [
+        "false"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "history",
+  "kind": "task",
+  "description": "history must answer in one of its two documented shapes: ok:true with the recent improvement records, or ok:false with 'no history yet' when state/improvements.jsonl does not exist. A fresh checkout has no improve history (state/ is gitignored), so asserting ok:true alone would go red on every clean clone; the eval instead asserts the tool answered a legible shape at all, which catches a trap or a raw fs error leaking through while staying green in both environments.",
+  "prompt": "Use the history tool with input {\"last\": 5}. Look at the tool's JSON result. If its ok field is true, or its ok field is false and its error field says there is no history yet, reply with exactly SHAPE_OK. For any other result reply with exactly SHAPE_BAD.",
+  "requires_tool": "history",
+  "criteria": [
+    {
+      "includes": [
+        "SHAPE_OK"
+      ]
+    },
+    {
+      "excludes": [
+        "SHAPE_BAD"
+      ]
+    }
+  ]
+}
