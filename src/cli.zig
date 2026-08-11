@@ -1638,6 +1638,9 @@ var repl_io: std.Io = undefined;
 /// Live spinner state: when the current turn started and what it is doing.
 var repl_turn_start_ns: i128 = 0;
 var repl_activity: []const u8 = "thinking";
+/// Scratch for a batch label like "read_file +2" (see replToolCall): the
+/// status line names the first tool and counts the rest of the batch.
+var repl_activity_buf: [256]u8 = undefined;
 /// True while the spinner is on screen; only touched from the REPL's single
 /// main thread (show/clear calls never overlap with the spinner thread,
 /// which is always joined before the writer is touched again).
@@ -1953,7 +1956,11 @@ fn replToolCall(calls: []const types.ToolCall) void {
     replClearThinking();
     const w = repl_out orelse return;
     const arg_preview_cap = 80;
-    if (calls.len > 0) repl_activity = calls[0].name;
+    if (calls.len == 1) {
+        repl_activity = calls[0].name;
+    } else if (calls.len > 1) {
+        repl_activity = std.fmt.bufPrint(&repl_activity_buf, "{s} +{d}", .{ calls[0].name, calls.len - 1 }) catch calls[0].name;
+    }
     for (calls) |tc| {
         w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
         w.interface.writeAll(tc.name) catch {};
