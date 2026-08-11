@@ -68,7 +68,7 @@ test "apply replaces only the first exact-match occurrence" {
     try testing.expectEqualStrings("hello zig world", content);
 }
 
-test "apply replaces the first exact-match occurrence only" {
+test "apply appends when old is empty and creates missing files under new dirs" {
     const testing = std.testing;
 
     var threaded = std.Io.Threaded.init(testing.allocator, .{});
@@ -78,9 +78,17 @@ test "apply replaces the first exact-match occurrence only" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "hello world world" });
-    try apply(tmp.dir, io, testing.allocator, &.{.{ .file = "a.txt", .old = "world", .new = "zig" }});
-    const content = try tmp.dir.readFileAlloc(io, "a.txt", testing.allocator, .limited(1 << 16));
-    defer testing.allocator.free(content);
-    try testing.expectEqualStrings("hello zig world", content);
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "hello" });
+    try apply(tmp.dir, io, testing.allocator, &.{
+        .{ .file = "a.txt", .old = "", .new = " world" },
+        .{ .file = "sub/dir/b.txt", .old = "", .new = "new file" },
+    });
+
+    const appended = try tmp.dir.readFileAlloc(io, "a.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(appended);
+    try testing.expectEqualStrings("hello world", appended);
+
+    const created = try tmp.dir.readFileAlloc(io, "sub/dir/b.txt", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(created);
+    try testing.expectEqualStrings("new file", created);
 }
