@@ -149,6 +149,30 @@ pub const Agent = struct {
     confirm_writes: ConfirmWrites = .never,
 };
 
+/// Which agent keys a config file actually set. Used so a partial
+/// `config.local.json` `"agent"` object does not replace the whole agent
+/// struct (and reset `tools_dir` etc. to struct defaults).
+pub const AgentFields = struct {
+    max_iterations: bool = false,
+    compact_threshold_bytes: bool = false,
+    max_total_tokens: bool = false,
+    max_tokens_per_turn: bool = false,
+    max_history_tokens: bool = false,
+    tool_catalog: bool = false,
+    hot_tools: bool = false,
+    tools_dir: bool = false,
+    skills_dir: bool = false,
+    system_prompt_file: bool = false,
+    learnings_file: bool = false,
+    global_instructions_file: bool = false,
+    state_dir: bool = false,
+    sandbox_root: bool = false,
+    git_commit: bool = false,
+    seed: bool = false,
+    ask_timeout_seconds: bool = false,
+    confirm_writes: bool = false,
+};
+
 /// Who must approve a write-capable tool call before it runs.
 pub const ConfirmWrites = enum { never, browser, always };
 
@@ -249,6 +273,8 @@ pub const Web = struct {
 
 pub const Config = struct {
     agent_present: bool = false,
+    /// Which keys inside `"agent"` were set when this Config was parsed.
+    agent_fields: AgentFields = .{},
     improve_present: bool = false,
     default_provider: []const u8 = "deepseek",
     providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
@@ -326,7 +352,9 @@ pub const Config = struct {
             cfg.default_provider_present = true;
         }
         if (obj.get("agent")) |v| {
-            cfg.agent = try parseAgent(arena, v);
+            const parsed = try parseAgent(arena, v);
+            cfg.agent = parsed.agent;
+            cfg.agent_fields = parsed.fields;
             cfg.agent_present = true;
         }
         if (obj.get("improve")) |v| {
@@ -607,13 +635,19 @@ pub const Config = struct {
         return std.fmt.allocPrint(arena, "clanker-{d}", .{std.c.getpid()});
     }
 
-    fn parseAgent(arena: std.mem.Allocator, v: json.Value) !Agent {
+    const ParsedAgent = struct {
+        agent: Agent,
+        fields: AgentFields,
+    };
+
+    fn parseAgent(arena: std.mem.Allocator, v: json.Value) !ParsedAgent {
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.AgentNotObject,
         };
         var a = Agent{};
+        var f = AgentFields{};
         warnUnknownKeys(obj, &.{
             "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
             "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
@@ -622,35 +656,108 @@ pub const Config = struct {
             "state_dir",           "sandbox_root",            "git_commit",
             "seed",                "ask_timeout_seconds",     "confirm_writes",
         }, "agent");
-        if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
-        if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
-        if (obj.get("max_total_tokens")) |k| a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
-        if (obj.get("max_tokens_per_turn")) |k| a.max_tokens_per_turn = @intCast(try jsonInt(k, "max_tokens_per_turn"));
-        if (obj.get("max_history_tokens")) |k| a.max_history_tokens = @intCast(try jsonInt(k, "max_history_tokens"));
-        if (obj.get("tools_dir")) |k| a.tools_dir = try jsonStr(k, "tools_dir");
-        if (obj.get("skills_dir")) |k| a.skills_dir = try jsonStr(k, "skills_dir");
-        if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");
-        if (obj.get("learnings_file")) |k| a.learnings_file = try jsonStr(k, "learnings_file");
-        if (obj.get("global_instructions_file")) |k| a.global_instructions_file = try jsonStr(k, "global_instructions_file");
-        if (obj.get("state_dir")) |k| a.state_dir = try jsonStr(k, "state_dir");
-        if (obj.get("sandbox_root")) |k| a.sandbox_root = try jsonStr(k, "sandbox_root");
-        if (obj.get("git_commit")) |k| a.git_commit = switch (k) {
-            .bool => |b| b,
-            else => a.git_commit,
-        };
-        if (obj.get("tool_catalog")) |k| a.tool_catalog = switch (k) {
-            .bool => |b| b,
-            else => a.tool_catalog,
-        };
-        if (obj.get("hot_tools")) |k| a.hot_tools = @intCast(try jsonInt(k, "hot_tools"));
-        if (obj.get("seed")) |k| a.seed = @intCast(try jsonInt(k, "seed"));
-        if (obj.get("ask_timeout_seconds")) |k| a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
+        if (obj.get("max_iterations")) |k| {
+            a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
+            f.max_iterations = true;
+        }
+        if (obj.get("compact_threshold_bytes")) |k| {
+            a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
+            f.compact_threshold_bytes = true;
+        }
+        if (obj.get("max_total_tokens")) |k| {
+            a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
+            f.max_total_tokens = true;
+        }
+        if (obj.get("max_tokens_per_turn")) |k| {
+            a.max_tokens_per_turn = @intCast(try jsonInt(k, "max_tokens_per_turn"));
+            f.max_tokens_per_turn = true;
+        }
+        if (obj.get("max_history_tokens")) |k| {
+            a.max_history_tokens = @intCast(try jsonInt(k, "max_history_tokens"));
+            f.max_history_tokens = true;
+        }
+        if (obj.get("tools_dir")) |k| {
+            a.tools_dir = try jsonStr(k, "tools_dir");
+            f.tools_dir = true;
+        }
+        if (obj.get("skills_dir")) |k| {
+            a.skills_dir = try jsonStr(k, "skills_dir");
+            f.skills_dir = true;
+        }
+        if (obj.get("system_prompt_file")) |k| {
+            a.system_prompt_file = try jsonStr(k, "system_prompt_file");
+            f.system_prompt_file = true;
+        }
+        if (obj.get("learnings_file")) |k| {
+            a.learnings_file = try jsonStr(k, "learnings_file");
+            f.learnings_file = true;
+        }
+        if (obj.get("global_instructions_file")) |k| {
+            a.global_instructions_file = try jsonStr(k, "global_instructions_file");
+            f.global_instructions_file = true;
+        }
+        if (obj.get("state_dir")) |k| {
+            a.state_dir = try jsonStr(k, "state_dir");
+            f.state_dir = true;
+        }
+        if (obj.get("sandbox_root")) |k| {
+            a.sandbox_root = try jsonStr(k, "sandbox_root");
+            f.sandbox_root = true;
+        }
+        if (obj.get("git_commit")) |k| {
+            a.git_commit = switch (k) {
+                .bool => |b| b,
+                else => a.git_commit,
+            };
+            f.git_commit = true;
+        }
+        if (obj.get("tool_catalog")) |k| {
+            a.tool_catalog = switch (k) {
+                .bool => |b| b,
+                else => a.tool_catalog,
+            };
+            f.tool_catalog = true;
+        }
+        if (obj.get("hot_tools")) |k| {
+            a.hot_tools = @intCast(try jsonInt(k, "hot_tools"));
+            f.hot_tools = true;
+        }
+        if (obj.get("seed")) |k| {
+            a.seed = @intCast(try jsonInt(k, "seed"));
+            f.seed = true;
+        }
+        if (obj.get("ask_timeout_seconds")) |k| {
+            a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
+            f.ask_timeout_seconds = true;
+        }
         if (obj.get("confirm_writes")) |k| {
             const s = try jsonStr(k, "confirm_writes");
             a.confirm_writes = std.meta.stringToEnum(ConfirmWrites, s) orelse
                 return error.ConfirmWritesInvalid;
+            f.confirm_writes = true;
         }
-        return a;
+        return .{ .agent = a, .fields = f };
+    }
+
+    fn applyAgentFields(dst: *Agent, src: Agent, fields: AgentFields) void {
+        if (fields.max_iterations) dst.max_iterations = src.max_iterations;
+        if (fields.compact_threshold_bytes) dst.compact_threshold_bytes = src.compact_threshold_bytes;
+        if (fields.max_total_tokens) dst.max_total_tokens = src.max_total_tokens;
+        if (fields.max_tokens_per_turn) dst.max_tokens_per_turn = src.max_tokens_per_turn;
+        if (fields.max_history_tokens) dst.max_history_tokens = src.max_history_tokens;
+        if (fields.tool_catalog) dst.tool_catalog = src.tool_catalog;
+        if (fields.hot_tools) dst.hot_tools = src.hot_tools;
+        if (fields.tools_dir) dst.tools_dir = src.tools_dir;
+        if (fields.skills_dir) dst.skills_dir = src.skills_dir;
+        if (fields.system_prompt_file) dst.system_prompt_file = src.system_prompt_file;
+        if (fields.learnings_file) dst.learnings_file = src.learnings_file;
+        if (fields.global_instructions_file) dst.global_instructions_file = src.global_instructions_file;
+        if (fields.state_dir) dst.state_dir = src.state_dir;
+        if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
+        if (fields.git_commit) dst.git_commit = src.git_commit;
+        if (fields.seed) dst.seed = src.seed;
+        if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
+        if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
     }
 
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
@@ -682,9 +789,11 @@ pub const Config = struct {
         while (it.next()) |kv| {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
-        // Only override agent/improve when the local file actually defined
-        // them; otherwise the local defaults would clobber the global file.
-        if (src.agent_present) dst.agent = src.agent;
+        // Agent is field-merged: a local file that only sets e.g. sandbox_root
+        // must not reset tools_dir (and the rest) to Agent{} defaults — that
+        // made every tool disappear when tools_dir fell back to "tools".
+        if (src.agent_present) applyAgentFields(&dst.agent, src.agent, src.agent_fields);
+        // Improve is still whole-section: it is small and rarely partial.
         if (src.improve_present) dst.improve = src.improve;
         if (src.peers_present) dst.peers = src.peers;
         if (src.web_present) dst.web = src.web;
@@ -1070,6 +1179,34 @@ test "a local override with only default_provider keeps the base providers" {
     try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
     try std.testing.expectEqualStrings("b", cfg.default_provider);
     try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
+}
+
+test "partial local agent keeps base tools_dir" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"tools_dir":"tools/manifests","max_iterations":30}}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.json",
+        .data =
+        \\{"agent":{"sandbox_root":"."}}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
+    try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
+    try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
 }
 
 test "a vertex_anthropic provider missing project/location is rejected at load" {
