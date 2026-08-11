@@ -87,7 +87,7 @@ pub fn formatFiles(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_
 pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_files: []const []const u8) !GateResult {
     // Split so this file does not match its own scan: spelled whole, the
     // needles make lintGate fail on checks.zig every single run.
-    const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME", "HACK", "XXX" };
+    const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME", "HA" ++ "CK", "XX" ++ "X" };
     var hits: usize = 0;
     var hit_buf: [2048]u8 = undefined;
     var hit_w: std.Io.Writer = .fixed(&hit_buf);
