@@ -33,6 +33,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_random", h, fn (*zwasm.Caller) u64, &host.ckRandom);
     try lk.defineFuncCtx("env", "ck_http", h, fn (*zwasm.Caller, u32, u32, u32, u32, u32, u32, u32) u32, &host.ckHttp);
     try lk.defineFuncCtx("env", "ck_fs_read", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsRead);
+    try lk.defineFuncCtx("env", "ck_fs_read_range", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsReadRange);
     try lk.defineFuncCtx("env", "ck_fs_write", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsWrite);
     try lk.defineFuncCtx("env", "ck_fs_list", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsList);
     try lk.defineFuncCtx("env", "ck_getenv", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckGetenv);
@@ -95,6 +96,14 @@ pub const ToolModule = struct {
         if (self.inst.exportFuncSig("host_arena") != null) {
             var arena_fn = self.inst.typedFunc(fn () u32, "host_arena");
             self.h.arena_base = try arena_fn.call(.{});
+        }
+        // A guest may reserve more than the historical 64 KiB; without this the
+        // host would refuse results the guest has room for (and, if it ever
+        // assumed more, write past the end of the guest's buffer).
+        if (self.inst.exportFuncSig("host_arena_size") != null) {
+            var size_fn = self.inst.typedFunc(fn () u32, "host_arena_size");
+            const size = try size_fn.call(.{});
+            if (size > 0) self.h.arena_cap = size;
         }
 
         return self;

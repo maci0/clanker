@@ -16,6 +16,7 @@ extern fn ck_now() u64;
 extern fn ck_random() u64;
 extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
+extern fn ck_fs_read_range(path_ptr: u32, path_len: u32, offset: u32, length: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
@@ -31,7 +32,11 @@ extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
 extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
 
 const scratch_cap = 64 * 1024;
-const host_arena_cap = 64 * 1024;
+/// Every host result lands here, and the host bump-allocates through it for
+/// the whole tool call without resetting, so this is the total a tool can pull
+/// in from the host per invocation. 64 KiB made this project's own source files
+/// unreadable. It is .bss, so it costs linear-memory pages and nothing on disk.
+const host_arena_cap = 1024 * 1024;
 /// Bigger than the input and host-result buffers because a tool's output is
 /// the one thing that can legitimately be large: webui.zig JSON-encodes the
 /// whole embedded page through here. All three are `undefined`, so they cost
@@ -43,6 +48,12 @@ pub const out_cap = 256 * 1024;
 var scratch_buf: [scratch_cap]u8 align(16) = undefined;
 var host_arena_buf: [host_arena_cap]u8 align(16) = undefined;
 var out_buf: [out_cap]u8 align(16) = undefined;
+
+/// How many bytes the host may bump-allocate at `host_arena()`. The host
+/// defaults to 64 KiB for modules that do not export this.
+export fn host_arena_size() callconv(.c) u32 {
+    return host_arena_cap;
+}
 
 /// Pointer to the module's input scratch buffer (host writes the input JSON
 /// here before calling `run`).
@@ -454,6 +465,21 @@ pub fn fsList(path: []const u8) FsError![]const u8 {
 }
 
 /// Writes a file relative to the sandbox root.
+/// Reads [offset, offset+len) of a file. The host writes results into a 64 KiB
+/// arena, so this is the only way to see a file bigger than that: ask for it a
+/// window at a time.
+pub fn fsReadRange(path: []const u8, offset: usize, len: usize) FsError![]const u8 {
+    const p = sliceToMem(path);
+    const rc = ck_fs_read_range(p.ptr, p.len, @intCast(offset), @intCast(len));
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
 pub fn fsWrite(path: []const u8, data: []const u8) FsError!void {
     const p = sliceToMem(path);
     const d = sliceToMem(data);
@@ -474,10 +500,40 @@ pub fn getenv(name: []const u8) ?[]const u8 {
     return readResult();
 }
 
-pub const ExecError = error{ OutOfMemory, WriteFailed, SandboxDenied, InvalidArg, NetworkError };
+pub const ExecError = error{ SandboxDenied, NotFound, TooLarge, NetworkError, InvalidArg, OutOfMemory, WriteFailed };
 
 /// Runs an allowlisted host command (git / rg / ast-grep / semcode) with the
 /// given arguments. Returns the raw {"ok","code","stdout","stderr"} JSON.
+/// Runs a command with `input` on its stdin and returns the {code, stdout,
+/// stderr} JSON. For processes you talk to rather than just launch — an LSP
+/// server reads framed requests and answers on stdout.
+pub fn execStdin(cmd: []const u8, args: []const []const u8, input: []const u8) ExecError![]const u8 {
+    const wbuf = std.heap.wasm_allocator.alloc(u8, 256 * 1024) catch return error.OutOfMemory;
+    defer std.heap.wasm_allocator.free(wbuf);
+    var w: std.Io.Writer = .fixed(wbuf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return error.InvalidArg;
+    s.objectField("cmd") catch return error.InvalidArg;
+    s.write(cmd) catch return error.InvalidArg;
+    s.objectField("args") catch return error.InvalidArg;
+    s.beginArray() catch return error.InvalidArg;
+    for (args) |a| s.write(a) catch return error.InvalidArg;
+    s.endArray() catch return error.InvalidArg;
+    s.objectField("stdin") catch return error.InvalidArg;
+    s.write(input) catch return error.InvalidArg;
+    s.endObject() catch return error.InvalidArg;
+
+    const req = sliceToMem(wbuf[0..w.end]);
+    const rc = ck_exec(req.ptr, req.len);
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        else => error.InvalidArg,
+    };
+}
+
 pub fn exec(cmd: []const u8, args: []const []const u8) ExecError![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.heap.wasm_allocator);

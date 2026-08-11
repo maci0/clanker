@@ -28,8 +28,11 @@ pub const LlmAccess = struct {
     max_tokens: u32 = 1024,
 };
 
-/// The guest reserves this many bytes for the host arena (must match
-/// tools-src/lib.zig).
+/// How much host-arena space a guest is assumed to have when it does not say.
+/// Guests built from tools/zig/lib.zig export `host_arena_size`; the runtime
+/// reads it and writes it to Host.arena_cap. Anything written past what the
+/// guest actually reserved would corrupt its linear memory, so a module that
+/// stays silent keeps the original, smallest guarantee.
 pub const host_arena_cap = 64 * 1024;
 pub const scratch_cap = 64 * 1024;
 
@@ -202,6 +205,9 @@ pub const Host = struct {
     sandbox: *Sandbox,
     arena_base: u32 = 0,
     arena_cur: u32 = 0,
+    /// Bytes reserved by this guest at arena_base. Set from the module's
+    /// `host_arena_size` export at instantiation.
+    arena_cap: u32 = host_arena_cap,
     result_ptr: u32 = 0,
     result_len: u32 = 0,
     rng: std.Random.DefaultPrng,
@@ -213,10 +219,10 @@ pub const Host = struct {
     }
 
     fn writeResult(self: *Host, mem_bytes: []u8, data: []const u8) u32 {
-        if (data.len > host_arena_cap) return Err.too_large;
+        if (data.len > self.arena_cap) return Err.too_large;
         const off = self.arena_cur;
         if (@as(u64, off) + data.len > mem_bytes.len) return Err.too_large;
-        if (self.arena_cur - self.arena_base + data.len > host_arena_cap) return Err.too_large;
+        if (self.arena_cur - self.arena_base + data.len > self.arena_cap) return Err.too_large;
         @memcpy(mem_bytes[off .. off + data.len], data);
         self.result_ptr = off;
         self.result_len = @intCast(data.len);
@@ -1310,12 +1316,9 @@ fn fsReadRangeImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, offset: u32,
     const avail = stat.size - @as(u64, offset);
     const to_read: usize = @intCast(@min(avail, capped_len));
 
-    // Seek to offset.
-    file.seekTo(h.sandbox.io, @as(u64, offset)) catch return Err.invalid;
-
     const buf = h.sandbox.gpa.alloc(u8, to_read) catch return Err.too_large;
     defer h.sandbox.gpa.free(buf);
-    const n = file.readAll(h.sandbox.io, buf) catch return Err.invalid;
+    const n = file.readPositionalAll(h.sandbox.io, buf, @as(u64, offset)) catch return Err.invalid;
     return h.writeResult(mem_bytes, buf[0..n]);
 }
 
@@ -1658,6 +1661,16 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
 
     log.log(.info, "[exec] → {s}", .{cmd});
     const exec_t0 = std.Io.Timestamp.now(h.sandbox.io, .awake);
+    // A tool that needs to *talk* to a process, not just launch one — an LSP
+    // client is the reason this exists — hands over the bytes to write to its
+    // stdin. std.process.run cannot do that (it hardcodes .ignore), so that
+    // case spawns the child directly.
+    if (obj.get("stdin")) |sv| {
+        if (sv == .string and sv.string.len > 0) {
+            return execWithStdin(h, bytes, argv.items, exec_dir, sv.string, cmd);
+        }
+    }
+
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
         .cwd = .{ .dir = exec_dir },
@@ -1718,6 +1731,73 @@ fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []c
 /// Resolves a tool-supplied path against the sandbox root, rejecting absolute
 /// paths, any `..` / `.` component, and anything outside the tool's allowed
 /// prefix list. Returns an allocated joined path.
+/// Runs `argv` with `input` on its stdin and returns its output, for tools that
+/// hold a conversation with a process (LSP over stdio) rather than firing one
+/// off. Kept beside ckExec rather than inside it so the common path stays the
+/// std.process.run one-liner.
+fn execWithStdin(
+    h: *Host,
+    mem_bytes: []u8,
+    argv: []const []const u8,
+    exec_dir: std.Io.Dir,
+    input: []const u8,
+    cmd: []const u8,
+) u32 {
+    const gpa = h.sandbox.gpa;
+    const io = h.sandbox.io;
+
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = .{ .dir = exec_dir },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch |err| {
+        log.log(.warn, "[exec] {s} failed to spawn: {s}", .{ cmd, @errorName(err) });
+        return switch (err) {
+            error.FileNotFound => Err.not_found,
+            else => Err.invalid,
+        };
+    };
+    defer child.kill(io);
+
+    // Write everything, then close: a server reading framed messages waits for
+    // EOF (or a shutdown message) before exiting, and an open pipe would hang
+    // the read below forever.
+    if (child.stdin) |stdin_file| {
+        var wbuf: [4096]u8 = undefined;
+        var writer = stdin_file.writer(io, &wbuf);
+        writer.interface.writeAll(input) catch {};
+        writer.interface.flush() catch {};
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    if (child.stdout) |stdout_file| {
+        var rbuf: [8192]u8 = undefined;
+        var reader = stdout_file.reader(io, &rbuf);
+        while (true) {
+            const chunk = reader.interface.peekGreedy(1) catch break;
+            out.appendSlice(gpa, chunk) catch break;
+            reader.interface.toss(chunk.len);
+            if (out.items.len > 512 * 1024) break;
+        }
+    }
+
+    const term = child.wait(io) catch return Err.invalid;
+    const code: u32 = switch (term) {
+        .exited => |c| c,
+        else => 0,
+    };
+    const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
+    defer gpa.free(wbuf);
+    var w: std.Io.Writer = .fixed(wbuf);
+    writeExecResult(&w, code, out.items, "") catch return Err.too_large;
+    return h.writeResult(mem_bytes, wbuf[0..w.end]);
+}
+
 /// A JSON array of strings as a slice, ignoring anything that is not a string.
 fn stringArray(arena: std.mem.Allocator, value: ?std.json.Value) ![]const []const u8 {
     const v = value orelse return &.{};
@@ -2148,6 +2228,32 @@ test "Host.writeResult enforces the arena cap and memory bounds" {
     // backing memory itself is large enough to hold the payload.
     host.arena_base = 0;
     host.arena_cur = host_arena_cap;
+    try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, "x"));
+}
+
+test "Host.writeResult honours a guest-declared arena larger than the default" {
+    // A guest that exports host_arena_size gets that much room; a guest that
+    // does not keeps the 64 KiB default. Getting this wrong either rejects
+    // reads the guest has space for or writes past the end of its buffer.
+    var host = Host{
+        .sandbox = undefined,
+        .rng = std.Random.DefaultPrng.init(0),
+    };
+    try std.testing.expectEqual(@as(u32, host_arena_cap), host.arena_cap);
+
+    const big_cap = host_arena_cap * 2;
+    const payload = [_]u8{'z'} ** (host_arena_cap + 1);
+    var mem: [big_cap + 64]u8 = undefined;
+
+    // Over the default cap, so it is refused until the guest asks for more.
+    try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, &payload));
+
+    host.arena_cap = big_cap;
+    try std.testing.expectEqual(Err.ok, host.writeResult(&mem, &payload));
+    try std.testing.expectEqual(@as(u32, payload.len), host.result_len);
+
+    // The larger cap is still a cap: cumulative use beyond it is refused.
+    host.arena_cur = big_cap;
     try std.testing.expectEqual(Err.too_large, host.writeResult(&mem, "x"));
 }
 

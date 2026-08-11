@@ -2,7 +2,7 @@
 //! large file can be walked without blowing the context window.
 //!
 //! Input:  {"path": "src/agent/loop.zig", "offset": 0, "limit": 65536}
-//! Output: {"ok": true, "text": "...", "size": 154321, "next_offset": 65536}
+//! Output: {"ok": true, "text": "...", "next_offset": 49152}
 //!         next_offset is present only when the read stopped short of the end.
 
 const std = @import("std");
@@ -16,23 +16,25 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
-const default_limit: usize = 64 * 1024;
+// The host returns results through a 64 KiB arena, so a window has to fit
+// inside it with room for the JSON envelope around the text.
+const default_limit: usize = 48 * 1024;
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const path = jsonString(input, "path") orelse return lib.fail(out, "missing required field: path");
     if (path.len == 0) return lib.fail(out, "path must not be empty");
 
-    const raw = lib.fsRead(path) catch |err| return lib.fail(out, switch (err) {
+    // Read only the requested window. Reading the whole file first capped this
+    // tool at the host arena size, which made every large source file in this
+    // very repository unreadable.
+    const offset = jsonUint(input, "offset", 0);
+    const limit = @min(jsonUint(input, "limit", default_limit), default_limit);
+    const slice = lib.fsReadRange(path, offset, limit) catch |err| return lib.fail(out, switch (err) {
         error.SandboxDenied => "path is outside the sandbox",
         error.NotFound => "no such file",
         error.TooLarge => "file is too large to read",
         else => "read failed",
     });
-
-    const offset = @min(jsonUint(input, "offset", 0), raw.len);
-    const limit = jsonUint(input, "limit", default_limit);
-    const end = @min(raw.len, offset +| limit);
-    const slice = raw[offset..end];
 
     var buf: [lib.out_cap]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -42,13 +44,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("text");
     try s.write(slice);
-    try s.objectField("size");
-    try s.write(raw.len);
     // Only when there is more to come: a caller that sees no next_offset knows
-    // it has the whole file, without comparing byte counts itself.
-    if (end < raw.len) {
+    // it has the whole file, without comparing byte counts itself. A short read
+    // means end of file.
+    if (slice.len == limit) {
         try s.objectField("next_offset");
-        try s.write(end);
+        try s.write(offset + slice.len);
     }
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
