@@ -727,6 +727,50 @@ test "every shipped manifest carries a schema the provider accepts" {
     }
 }
 
+test "a tool that calls the model says so in its descriptor" {
+    // The descriptor is what keeps a model-calling tool off the parallel
+    // worker threads. subagent, rlm and translate all called the model with
+    // nothing declared, so two of them in one turn ran side by side and raced
+    // the shared access-token cache: one thread freeing a token the other had
+    // just been handed. Reading the guests is the only way to catch the next
+    // one, since nothing else connects a source file to its manifest.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer src_dir.close(io);
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{}) catch return error.SkipZigTest;
+    defer man_dir.close(io);
+
+    const calls = [_][]const u8{ "lib.llm(", "lib.llmWith(", "lib.subagent(", "lib.subagentBriefed(" };
+
+    var it = src_dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
+
+        var calls_model = false;
+        for (calls) |c| {
+            if (std.mem.indexOf(u8, body, c) != null) calls_model = true;
+        }
+        if (!calls_model) continue;
+
+        const stem = entry.name[0 .. entry.name.len - ".zig".len];
+        const manifest = try std.fmt.allocPrint(arena, "{s}.tool.json", .{stem});
+        const raw = man_dir.readFileAlloc(io, manifest, arena, .limited(1 << 20)) catch continue;
+        const t = try Registry.parseDescriptor(arena, raw, "tools");
+        if (!t.llm and !t.sequential) {
+            std.debug.print("{s} calls the model but its descriptor sets neither llm nor sequential\n", .{manifest});
+            return error.ModelCallerNotDeclared;
+        }
+    }
+}
+
 test "descriptor statusline flag parses and defaults off" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
