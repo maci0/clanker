@@ -91,8 +91,14 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
          one the composer below continues. Sits above the transcript because it
          names what the transcript is showing. -->
     <section>
+    <!-- A heading, not the kicker this used to be: it names the conversation
+         rather than labelling the row beneath it, and it is the same size as
+         every other view's heading so the primary surface is not the one view
+         with no hierarchy. -->
+    <div class="section-head">
+      <h2 id="session-title">…</h2>
+    </div>
     <div class="run-picker" id="session-picker">
-      <span class="session-title" id="session-title">…</span>
       <div class="session-actions">
         <button type="button" class="secondary" id="session-fork">Fork</button>
         <button type="button" class="secondary" id="session-rename">Rename</button>
@@ -133,7 +139,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
            this thing does; each one is a real task against this repo. -->
       <div class="suggestions" id="suggestions"></div>
     </div>
-    <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
     </section>
 
     <form id="task-form" class="composer">
@@ -162,6 +167,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <div class="toolbar">
         <span class="meta" id="hint"></span>
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
+        <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>

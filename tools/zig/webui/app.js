@@ -2062,7 +2062,9 @@ function buildNodeBox(d, slowest, nodeW) {
 
   var kindEl = document.createElement("span");
   kindEl.className = "run-node-kind";
-  kindEl.textContent = (node.ok === false ? "✕ " : "") + kind;
+  kindEl.textContent = "";
+  if (node.ok === false) kindEl.appendChild(icon("strike", 12));
+  kindEl.appendChild(document.createTextNode(kind));
   box.appendChild(kindEl);
 
   var label = document.createElement("span");
@@ -2087,7 +2089,7 @@ function buildNodeBox(d, slowest, nodeW) {
     box.appendChild(bar);
   }
 
-  // The bar and the ✕ mark are decorative; the label already carries
+  // The bar and the strike mark are decorative; the label already carries
   // kind, name, and every number a screen reader needs.
   box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
   return box;
@@ -2173,7 +2175,9 @@ function showNodeDetail(kind, node) {
   var titleWrap = document.createElement("span");
   var title = document.createElement("span");
   title.className = "run-detail-title";
-  title.textContent = (node.ok === false ? "✕ " : "") + kind + " · " + (node.label || node.detail || kind);
+  title.textContent = "";
+  if (node.ok === false) title.appendChild(icon("strike", 12));
+  title.appendChild(document.createTextNode(kind + " · " + (node.label || node.detail || kind)));
   titleWrap.appendChild(title);
   var meta = document.createElement("span");
   meta.className = "run-detail-meta";
@@ -3466,7 +3470,8 @@ function prefersReducedMotion() {
 }
 
 function syncScrollButton() {
-  el.scrollBottom.hidden = nearBottom() || !el.transcript.querySelector(".turn");
+  var show = !nearBottom() && el.transcript.querySelector(".turn") !== null;
+  el.scrollBottom.hidden = !show;
 }
 
 van.add(el.scrollBottom, icon("deposit", 14));

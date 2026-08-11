@@ -26,6 +26,10 @@
   /* Oxide pencil: the active mark, the thing being deposited now. */
   --accent: #b4531f;
   --accent-dim: #b4531f1f;
+  /* Oxide as a mark is #b4531f; as body text on paper it measures 3.88:1 and
+     on the desk 3.46:1, so text takes a darker cut that clears 4.5:1 on every
+     ground the page has. */
+  --accent-text: #8f3e12;
   --on-accent: #f7f3ea;
   /* Lichen: a gate that held. */
   --ok: #4a6741;
@@ -34,6 +38,7 @@
   --on-danger: #f7f3ea;
   /* Sun-bleached ochre: a limit approaching, not yet crossed. */
   --warn: #8a6414;
+  --warn-text: #6f4f0d;
 
   /* Prose is set in the text face; every measurement is set in mono, because
      a logged quantity is a measurement and columns of them must align. */
@@ -85,11 +90,14 @@
     --fg-muted: #a2988a;
     --accent: #e07a3f;
     --accent-dim: #e07a3f26;
+    --accent-text: #e07a3f;
     --on-accent: #1a1410;
     --ok: #8fae7f;
     --danger: #e5705c;
     --on-danger: #1a1410;
     --warn: #d2a24c;
+  --warn-text: #d2a24c;
+    --warn-text: #d2a24c;
     --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
     --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
   }
@@ -105,11 +113,16 @@
   --fg-muted: #58503f;
   --accent: #b4531f;
   --accent-dim: #b4531f1f;
+  /* Oxide as a mark is #b4531f; as body text on paper it measures 3.88:1 and
+     on the desk 3.46:1, so text takes a darker cut that clears 4.5:1 on every
+     ground the page has. */
+  --accent-text: #8f3e12;
   --on-accent: #f7f3ea;
   --ok: #4a6741;
   --danger: #9b2c1f;
   --on-danger: #f7f3ea;
   --warn: #8a6414;
+  --warn-text: #6f4f0d;
   --lift: 0 1px 2px rgba(36, 31, 26, 0.10), 0 6px 18px -8px rgba(36, 31, 26, 0.30);
   --lift-high: 0 2px 4px rgba(36, 31, 26, 0.12), 0 20px 44px -16px rgba(36, 31, 26, 0.40);
 }
@@ -124,11 +137,13 @@
   --fg-muted: #a2988a;
   --accent: #e07a3f;
   --accent-dim: #e07a3f26;
+  --accent-text: #e07a3f;
   --on-accent: #1a1410;
   --ok: #8fae7f;
   --danger: #e5705c;
   --on-danger: #1a1410;
   --warn: #d2a24c;
+  --warn-text: #d2a24c;
   --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
   --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
 }
@@ -189,9 +204,8 @@ header {
   padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--rule);
 }
 h1 {
-  color: var(--fg);
   font-family: var(--mono); font-size: var(--step-2); font-weight: 700;
-  letter-spacing: -0.02em; margin: 0; color: var(--accent);
+  letter-spacing: -0.02em; margin: 0; color: var(--fg);
 }
 .spacer { flex: 1; }
 .chip {
@@ -276,19 +290,7 @@ main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--sp
 .turn:last-child { border-bottom: 1px solid var(--rule); padding-bottom: var(--space-5); }
 /* The depth rule: ticks down the gutter, drawn once as a gradient rather than
    as elements, so a hundred-turn transcript adds no nodes. */
-.turn::before {
-  content: "";
-  position: absolute;
-  left: calc(var(--gutter) - 1.5rem);
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  /* The rule itself, then the ticks laid over it. */
-  background:
-    repeating-linear-gradient(180deg,
-      var(--fg-muted) 0 1px, transparent 1px 9px) left top / 3px 100% no-repeat,
-    linear-gradient(var(--border), var(--border)) left top / 1px 100% no-repeat;
-}
+.turn::before { content: none; }
 /* The active stratum: still being deposited, marked in oxide down its rule. */
 .turn[data-live="true"]::before {
   background:
@@ -347,11 +349,17 @@ main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--sp
 
 /* The key, shown once, without which hatching is texture rather than
    lithology. */
+/* The key. Set in the text face like the prose it is, and laid out so no item
+   can orphan: below 30rem it stacks rather than wrapping mid-row. */
 .legend {
-  display: flex; flex-wrap: wrap; gap: var(--space-4);
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
   margin: 0 0 var(--space-4) var(--gutter);
-  font-family: var(--mono); font-size: var(--step--1);
-  color: var(--fg-muted); letter-spacing: 0.02em;
+  font-family: var(--sans); font-size: var(--step-0);
+  color: var(--fg-muted);
+}
+@media (max-width: 30rem) {
+  .legend { margin-left: var(--space-4); }
+  .legend-item { flex: 1 0 100%; }
 }
 .legend-item { display: inline-flex; align-items: center; gap: var(--space-2); }
 .legend-swatch {
@@ -665,7 +673,7 @@ select, #run-filter {
 .chat-msg { font-family: var(--mono); font-size: var(--step-0); overflow-wrap: anywhere; }
 .chat-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; margin-bottom: 0.15rem; }
 .chat-mark { font-size: var(--step-1); line-height: 1; }
-.chat-from { color: var(--accent); font-weight: 700; }
+.chat-from { color: var(--accent-text); font-weight: 700; }
 /* This instance's own messages, so a room reads as a conversation rather
    than a log of indistinguishable lines. */
 .chat-msg.mine .chat-from { color: var(--ok); }
@@ -801,7 +809,7 @@ dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1
 dt { font-size: var(--step-0); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); }
 dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
 dd ul { margin: 0; padding-left: 1.1rem; }
-a { color: var(--accent); overflow-wrap: anywhere; }
+a { color: var(--accent-text); overflow-wrap: anywhere; }
 
 @media (max-width: 40rem) {
   header { padding: 0.9rem 1rem; }
@@ -916,16 +924,17 @@ mark {
   border-radius: 2px; padding: 0 0.1em;
 }
 
-/* Fixed, not sticky: a long answer streaming in pushes the page down, and a
-   sticky control inside the column would ride away with it. */
+/* Not an overlay. A control fixed over a scrolling column covers whatever
+   happens to be beneath it, and moving it only changes which button that is.
+   It lives in the composer's toolbar, which is where "latest" is, and is shown
+   only while the latest turn is off screen. */
 .scroll-bottom {
-  /* Clear of the turn's own controls: at 390px it sat on "Edit & resend". */
-  position: fixed; right: var(--space-5); bottom: var(--space-7); z-index: 10;
   min-height: 32px; padding: 0 var(--space-4);
-  border: 1px solid var(--border); border-radius: var(--radius-pill);
-  background: var(--surface); color: var(--fg);
-  font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
-  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 55%, transparent);
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  white-space: nowrap;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: transparent; color: var(--fg);
+  font-family: var(--sans); font-size: var(--step-0); cursor: pointer;
 }
 .scroll-bottom[hidden] { display: none; }
 .scroll-bottom:hover { border-color: var(--accent); color: var(--accent); }
@@ -994,7 +1003,16 @@ mark {
 /* The sheet: main content sits on paper lifted off the desk, with the ruled
    depth column down its left edge. */
 main {
-  background: var(--paper);
+  /* The ruled column runs the whole sheet. It was scoped to .turn, so it
+     started and stopped with the transcript and the composer sat at the foot
+     of nothing. */
+  background:
+    repeating-linear-gradient(180deg,
+      var(--fg-muted) 0 1px, transparent 1px 9px)
+      calc(var(--space-5) + var(--gutter) - 1.5rem) 0 / 3px 100% no-repeat,
+    linear-gradient(var(--border), var(--border))
+      calc(var(--space-5) + var(--gutter) - 1.5rem) 0 / 1px 100% no-repeat,
+    var(--paper);
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
   box-shadow: var(--lift);
@@ -1043,9 +1061,9 @@ main {
 }
 .rail-item-meta { display: block; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .rail-empty { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
-.session-title {
-  font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch;
+h2#session-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%;
 }
 #rail-toggle { display: none; }
 
@@ -1067,7 +1085,7 @@ main {
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
 
-/* Rendered markdown. Sized against the mono body it sits in: headings step
+/* Rendered markdown. Sized against the text face it sits in: headings step
    up rather than shout, and every block keeps the reading measure. */
 .turn-answer.md { white-space: normal; }
 .md .md-p { margin: 0 0 var(--space-4); max-width: var(--measure); }
@@ -1098,7 +1116,7 @@ main {
   padding: 0.1em 0.35em; border-radius: var(--radius-sm);
   background: var(--surface-2); color: var(--fg);
 }
-.md a { color: var(--accent); }
+.md a { color: var(--accent-text); }
 .md a:hover { text-decoration: underline; }
 .md strong { color: var(--fg); font-weight: 700; }
 /* Wide tables scroll in their own box; the page itself never scrolls sideways. */
@@ -1133,7 +1151,7 @@ main {
 .board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 /* Over the limit is said, not enforced: see the endpoint's reasoning. */
-.board-col-count[data-over="true"] { color: var(--warn); }
+.board-col-count[data-over="true"] { color: var(--warn-text); }
 .board-cards { list-style: none; margin: 0; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); overflow-y: auto; }
 .card {
   text-align: left; width: 100%; cursor: pointer;
@@ -1150,8 +1168,8 @@ main {
 .card-flag { border-radius: var(--radius-pill); padding: 0 var(--space-2); border: 1px solid var(--rule); }
 .card-flag[data-priority="high"] { color: var(--danger); border-color: var(--danger); }
 .card-flag[data-priority="low"] { color: var(--fg-muted); }
-/* Cobalt marks the live thing; a due date is not the live thing. */
-.card-flag[data-due="soon"] { color: var(--warn); border-color: var(--warn); }
+/* Oxide marks the live thing; a due date is not the live thing. */
+.card-flag[data-due="soon"] { color: var(--warn-text); border-color: var(--warn); }
 .card-flag[data-due="late"] { color: var(--danger); border-color: var(--danger); }
 .card-flag[data-blocked="true"] { color: var(--fg-muted); }
 .card-progress { color: var(--fg-muted); }
@@ -1200,13 +1218,13 @@ main {
   font-weight: 400; color: var(--fg); margin-bottom: 0; overflow-wrap: anywhere;
 }
 .detail-row label.subtask[data-done="true"] { color: var(--fg-muted); text-decoration: line-through; }
-.dep-open { color: var(--warn); flex: 1; }
+.dep-open { color: var(--warn-text); flex: 1; }
 .log-entry {
   display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 0 var(--space-2);
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
 }
 .log-when { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: 0 0 8rem; }
-.log-who { color: var(--accent); }
+.log-who { color: var(--accent-text); }
 
 /* Log tail */
 .log-view {
@@ -1234,8 +1252,8 @@ main {
 /* Whether the layer held, said in the turn's own foot. */
 .turn-held {
   display: inline-flex; align-items: center; gap: var(--space-2);
-  font-family: var(--mono); font-size: var(--step--1);
-  letter-spacing: 0.02em; color: var(--ok);
+  font-family: var(--sans); font-size: var(--step-0); font-weight: 700;
+  color: var(--ok);
 }
 .turn-held[data-held="false"] { color: var(--danger); }
 
