@@ -24,3 +24,17 @@ test "pack/unpack round trip" {
     try std.testing.expectEqual(@as(u32, 0x12345678), r.ptr);
     try std.testing.expectEqual(@as(u32, 0x9ABCDEF0), r.len);
 }
+
+test "packPtrLen handles zero and maximum word values" {
+    // Zero pointer and length pack to zero.
+    const zero = packPtrLen(0, 0);
+    const zero_back = unpackPtrLen(zero);
+    try std.testing.expectEqual(@as(u32, 0), zero_back.ptr);
+    try std.testing.expectEqual(@as(u32, 0), zero_back.len);
+
+    // Maximum u32 halves round-trip without loss.
+    const max = packPtrLen(0xFFFF_FFFF, 0xFFFF_FFFF);
+    const max_back = unpackPtrLen(max);
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFFF), max_back.ptr);
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFFF), max_back.len);
+}
