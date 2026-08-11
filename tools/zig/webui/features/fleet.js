@@ -73,7 +73,7 @@ function renderError(container, msg, retryFn) {
   }
 }
 
-function renderRoster(container, status, a2a) {
+function renderRoster(container, status, a2a, cards) {
   container.textContent = "";
   container.className = "fleet-roster";
   if (!status || !status.instance) {
@@ -86,6 +86,12 @@ function renderRoster(container, status, a2a) {
   var head = el("p", "fleet-meta");
   head.textContent = inst.name + " (" + inst.id.slice(0, 8) + ")";
   container.appendChild(head);
+  // /api/peers scans each peer's A2A card server-side; merge by peer name so
+  // a roster entry can say who a peer is, not just where it listens.
+  var byName = Object.create(null);
+  if (cards && cards.ok && Array.isArray(cards.peers)) {
+    cards.peers.forEach(function (c) { if (c && c.name) byName[c.name] = c; });
+  }
   var peers = status.peers || [];
   if (!peers.length) {
     container.appendChild(el("p", "run-empty", "No peers configured."));
@@ -95,8 +101,22 @@ function renderRoster(container, status, a2a) {
     peers.forEach(function (p) {
       var li = el("li", "fleet-meta");
       li.setAttribute("role", "listitem");
-      li.textContent = p.name + " \u2014 " + p.url;
-      li.title = p.url;
+      var c = byName[p.name];
+      var label = p.name + " \u2014 " + p.url;
+      if (c && c.status === "up") {
+        li.textContent = label + " \u00b7 up";
+        if (c.card_name && c.card_name !== p.name) li.textContent += " \u00b7 " + c.card_name;
+        var extra = [];
+        if (c.description) extra.push(c.description);
+        if (Array.isArray(c.skills) && c.skills.length) extra.push("skills: " + c.skills.join(", "));
+        li.title = extra.length ? extra.join("\n") : p.url;
+      } else if (c && c.status === "down") {
+        li.textContent = label + " \u00b7 down";
+        li.title = c.error ? p.url + "\n" + c.error : p.url;
+      } else {
+        li.textContent = label;
+        li.title = p.url;
+      }
       ul.appendChild(li);
     });
     container.appendChild(ul);
@@ -473,13 +493,17 @@ export function initFleet() {
       if (d && d.ok === false && /disabled/i.test(d.error || "")) return null;
       return d;
     }).catch(function () { return null; });
-    return Promise.all([statusP, a2aP, runsP, roomsP]).then(function (vals) {
+    // Peer agent cards; null (module disabled, scan failed) degrades the
+    // roster to bare name+url lines rather than blocking it.
+    var peersP = fetch("/api/peers").then(readJson).catch(function () { return null; });
+    return Promise.all([statusP, a2aP, runsP, roomsP, peersP]).then(function (vals) {
       var s = vals[0];
       var a2a = vals[1];
       var r = vals[2];
       var c = vals[3];
+      var cards = vals[4];
       if (s && s.__err) renderError(roster, "Could not load roster: " + s.__err.message, doRefresh);
-      else renderRoster(roster, s, a2a);
+      else renderRoster(roster, s, a2a, cards);
       if (dmsEl) renderDMs(dmsEl, c);
       if (r && r.__err) renderError(runsEl, "Could not load runs: " + r.__err.message, doRefresh);
       else renderRuns(runsEl, detail, r || []);

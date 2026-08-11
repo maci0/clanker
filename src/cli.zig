@@ -2429,6 +2429,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
+        const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
         const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/chat/messages");
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
@@ -2452,7 +2453,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"a2a module disabled\"}");
-        } else if (is_notify and !cfg.modules.peers) {
+        } else if ((is_notify or is_peers) and !cfg.modules.peers) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"peers module disabled\"}");
         } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"chatrooms module disabled\"}");
@@ -2481,6 +2482,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
             handleStatus(cfg, stream);
+        } else if (is_peers) {
+            handlePeers(io, gpa, cfg, environ_map, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/sessions") and
@@ -4770,6 +4773,28 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
         return;
     };
     respond(stream, 200, "OK", out.written());
+}
+
+/// Every configured peer with the A2A agent card it is serving right now —
+/// name, description, skills, and whether it answered at all. Dispatched
+/// through the sandboxed `peers` tool (the same scan `clanker phonebook`
+/// prints), so peer traffic stays behind that tool's `network_from_config`
+/// allowlist rather than becoming a native HTTP call. The browser cannot
+/// fetch the cards itself: the page's CSP allows no other origin, so this
+/// endpoint is the fleet view's only window onto its peers.
+fn handlePeers(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // A verdict from inside the tool ("no peers configured", one peer down)
+    // is JSON the page renders as-is; only failing to run the scan at all is
+    // a server error.
+    const body = toolJson(io, gpa, arena, cfg, environ_map, "peers", "{\"action\":\"phonebook\"}") catch |err| {
+        log.log(.error_, "GET /api/peers: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"peer scan failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", body);
 }
 
 /// Instance + configured peers, consumed by the web UI status panel.

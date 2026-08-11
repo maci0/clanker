@@ -536,6 +536,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/` | GET | Web UI (rendered by the internal `webui` WASM tool) |
 | `/.well-known/agent.json` | GET | Agent card for A2A discovery |
 | `/api/status` | GET | Instance + peers status (JSON) |
+| `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
 | `/api/runs` | GET | Recorded runs, newest first (JSON) |
 | `/api/runs/<run-id>` | GET | One execution graph, node by node (JSON) |
 | `/api/notify` | POST | Receive a notification (JSON) |
