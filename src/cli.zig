@@ -5133,6 +5133,14 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         a.on_token = &runStreamDelta;
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
+        // The client would otherwise see nothing until the first token or tool
+        // call arrives, which can be tens of seconds of "running…" while the
+        // run reaches the provider and works its first turn. Emit a status
+        // line up front so a just-started run has something on screen at once;
+        // a browser shows it as a log line in the run's panel. Not an answer
+        // line: it is a control event, so a client that does not know it just
+        // skips it and streams the answer as before.
+        writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, task_text, &err_detail) catch |err| {
             const detail = err_detail orelse @errorName(err);

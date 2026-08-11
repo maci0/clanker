@@ -4047,6 +4047,11 @@ function runGoal(g, opts) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
       if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
+      // A status event is a run lifecycle note (contacting the provider,
+      // processing) rather than answer text: show it as a bracketed log line
+      // so a run that has just started is not an empty panel labelled
+      // "running…" while it waits for its first streamed output.
+      else if (evt.type === "status") appendGoalText(g.id, "[ " + evt.message + " ]\n");
       return;
     }
     appendGoalText(g.id, line + "\n");
