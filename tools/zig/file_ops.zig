@@ -92,6 +92,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     if (std.mem.eql(u8, op, "delete")) {
+        // The host removes files, not trees. Without this the caller got a
+        // bare "IoError" for a directory and no way to tell that from a real
+        // failure to delete a file.
+        if (kindOf(alloc, path)) |kind| {
+            if (std.mem.eql(u8, kind, "directory")) {
+                return lib.fail(out, "that path is a directory, and this tool removes files only");
+            }
+        }
         lib.fsDelete(path) catch |err| return lib.failErr(out, err, path);
         return done(out, op, path, null);
     }
@@ -103,6 +111,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const to = str(obj, "to") orelse
         return lib.fail(out, "move and copy need \"to\": the destination path");
+    const overwrite = switch (obj.get("overwrite") orelse std.json.Value{ .bool = false }) {
+        .bool => |b| b,
+        else => false,
+    };
+    // Both operations replace the destination outright, so a move onto an
+    // existing path destroyed it and answered ok: nothing in the result said a
+    // file had been lost. Asking for that has to be deliberate.
+    if (!overwrite and kindOf(alloc, to) != null) {
+        var buf: [200]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "{s} already exists; pass overwrite: true to replace it, or pick a destination that does not", .{to}) catch
+            "the destination already exists; pass overwrite: true to replace it";
+        return lib.fail(out, msg);
+    }
     if (std.mem.eql(u8, op, "move")) {
         lib.fsRename(path, to) catch |err| return lib.failErr(out, err, path);
         return done(out, op, path, to);
@@ -113,6 +134,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     return lib.fail(out, "unknown op; use move, copy, delete, mkdir, stat, append or hash");
+}
+
+/// "file", "directory", or null when the path does not exist.
+fn kindOf(alloc: std.mem.Allocator, path: []const u8) ?[]const u8 {
+    const raw = lib.fsStat(path) catch return null;
+    const st = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch return null;
+    if (st != .object) return null;
+    const kind = st.object.get("kind") orelse return null;
+    if (kind != .string) return null;
+    // Copied out: the next host call moves what this points at.
+    return alloc.dupe(u8, kind.string) catch null;
 }
 
 fn done(out: *lib.Out, op: []const u8, path: []const u8, to: ?[]const u8) !void {
