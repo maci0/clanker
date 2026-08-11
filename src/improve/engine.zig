@@ -63,11 +63,78 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
 };
 
-/// The next `std.…` reference in `text`, reduced to its most specific
+/// The next symbol worth looking up in `text`, reduced to its most specific
 /// component: `std.posix.SEEK.SET` identifies itself as `SET`, which is what a
 /// lookup has to search for. Returns the remainder so a caller can walk the
 /// whole message.
-fn nextStdSymbol(text: []const u8) ?struct { sym: []const u8, rest: []const u8 } {
+///
+/// Two shapes matter. The source line the compiler echoes back carries
+/// `std.…` paths. The notes underneath carry the type it actually wanted, in
+/// quotes and without the `std.` prefix: `expected type
+/// 'os.linux.SIG__enum_1935'`. Missing the second shape is how one patch
+/// guessed `.none` for a signal after being shown what `kill` takes but never
+/// what a `SIG` is.
+const SourceRef = struct { path: []const u8, line: usize, rest: []const u8 };
+
+/// The next `<path>:<line>:<col>:` reference into the standard library in a
+/// compiler message. Only std paths: the project's own files are already in
+/// the context the model was given.
+fn nextStdSourceRef(text: []const u8) ?SourceRef {
+    const lib = sandbox_host.zig_lib_dir;
+    if (lib.len == 0) return null;
+    var rest = text;
+    while (std.mem.indexOf(u8, rest, lib)) |at| {
+        const from = rest[at..];
+        const nl = std.mem.indexOfScalar(u8, from, '\n') orelse from.len;
+        const line_text = from[0..nl];
+        rest = from[nl..];
+
+        // path:line:col
+        const c1 = std.mem.indexOfScalar(u8, line_text, ':') orelse continue;
+        const after = line_text[c1 + 1 ..];
+        const c2 = std.mem.indexOfScalar(u8, after, ':') orelse continue;
+        const line_no = std.fmt.parseInt(usize, after[0..c2], 10) catch continue;
+        if (!std.mem.endsWith(u8, line_text[0..c1], ".zig")) continue;
+        return .{ .path = line_text[0..c1], .line = line_no, .rest = rest };
+    }
+    return null;
+}
+
+const Found = struct { sym: []const u8, rest: []const u8 };
+
+fn nextSymbol(text: []const u8) ?Found {
+    const quoted = nextQuotedType(text);
+    const dotted = nextStdSymbol(text);
+    // Whichever comes first, so one pass over the message finds both.
+    if (quoted) |q| {
+        if (dotted) |d| return if (q.rest.len > d.rest.len) q else d;
+        return q;
+    }
+    return dotted;
+}
+
+/// A type named in a compiler note, e.g. `expected type 'os.linux.SIG__enum_1935'`
+/// or `enum 'os.linux.SIG__enum_1935' has no member named 'none'`. Zig's
+/// generated suffix is stripped: what the reader needs is `SIG`.
+fn nextQuotedType(text: []const u8) ?Found {
+    var rest = text;
+    while (std.mem.indexOfScalar(u8, rest, '\'')) |open| {
+        rest = rest[open + 1 ..];
+        const close = std.mem.indexOfScalar(u8, rest, '\'') orelse return null;
+        const inner = rest[0..close];
+        rest = rest[close + 1 ..];
+        // A type reference, not prose or a member name in quotes.
+        if (std.mem.indexOfScalar(u8, inner, '.') == null) continue;
+        if (std.mem.indexOfScalar(u8, inner, ' ') != null) continue;
+        var name = inner[std.mem.lastIndexOfScalar(u8, inner, '.').? + 1 ..];
+        if (std.mem.indexOf(u8, name, "__")) |cut| name = name[0..cut];
+        if (name.len < 3) continue;
+        return .{ .sym = name, .rest = rest };
+    }
+    return null;
+}
+
+fn nextStdSymbol(text: []const u8) ?Found {
     var rest = text;
     while (std.mem.indexOf(u8, rest, "std.")) |at| {
         rest = rest[at + "std.".len ..];
@@ -588,8 +655,25 @@ pub const Engine = struct {
         var seen: [4][]const u8 = undefined;
         var seen_n: usize = 0;
 
+        // The compiler already says where the thing it wanted is declared:
+        // "…/std/os/linux.zig:4036:8: note: enum declared here". Reading those
+        // lines answers the question exactly, with no guessing about which of
+        // several same-named declarations is the relevant one.
+        var notes = err_text;
+        var shown: usize = 0;
+        while (nextStdSourceRef(notes)) |ref| {
+            notes = ref.rest;
+            if (shown == 3) break;
+            const excerpt = self.readAround(ref.path, ref.line) orelse continue;
+            shown += 1;
+            out.appendSlice(self.arena, "\n") catch return "";
+            out.appendSlice(self.arena, ref.path) catch return "";
+            out.appendSlice(self.arena, ", as it actually is in this Zig:\n") catch return "";
+            out.appendSlice(self.arena, excerpt) catch return "";
+        }
+
         var rest = err_text;
-        while (nextStdSymbol(rest)) |found| {
+        while (nextSymbol(rest)) |found| {
             rest = found.rest;
             const sym = found.sym;
 
@@ -612,13 +696,38 @@ pub const Engine = struct {
         return out.items;
     }
 
+    /// 15 lines of `path` centred on `line`, for showing a declaration the
+    /// compiler pointed at.
+    fn readAround(self: *Engine, path: []const u8, line: usize) ?[]const u8 {
+        const data = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, path, self.arena, .limited(4 << 20)) catch return null;
+        var n: usize = 1;
+        var start: usize = 0;
+        var idx: usize = 0;
+        var end: usize = data.len;
+        const first = if (line > 1) line - 1 else 1;
+        const last = line + 14;
+        while (idx < data.len) : (idx += 1) {
+            if (data[idx] != '\n') continue;
+            if (n == first - 1) start = idx + 1;
+            if (n == last) {
+                end = idx;
+                break;
+            }
+            n += 1;
+        }
+        if (start >= end) return null;
+        return data[start..end];
+    }
+
     /// Up to 12 lines mentioning `sym` in the standard library source.
     fn stdGrep(self: *Engine, sym: []const u8) ?[]const u8 {
         const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zig_lib_dir}) catch return null;
         defer self.ctx.gpa.free(std_dir);
         const pattern = std.fmt.allocPrint(self.ctx.gpa, "(pub (fn|const|var) {s}\\b|\\b{s} *[:=])", .{ sym, sym }) catch return null;
         defer self.ctx.gpa.free(pattern);
-        const run_argv = [_][]const u8{ "rg", "-n", "--max-count", "12", "-e", pattern, std_dir };
+        // With context: a bare "pub const SIG = ..." line does not say what
+        // its members are, which is exactly the question being asked.
+        const run_argv = [_][]const u8{ "rg", "-n", "--max-count", "6", "-A", "10", "-e", pattern, std_dir };
         const res = std.process.run(self.ctx.gpa, self.ctx.io, .{
             .argv = &run_argv,
             .stdout_limit = .limited(8 * 1024),
@@ -1617,4 +1726,32 @@ test "a compile error's std references reduce to the symbol worth looking up" {
     // Nothing to look up.
     try std.testing.expect(nextStdSymbol("no standard library here") == null);
     try std.testing.expect(nextStdSymbol("std.x") == null);
+}
+
+test "the type a compiler note names is looked up too" {
+    // The source line says what was called; the note underneath says what the
+    // compiler actually wanted, and only the note carries the type whose
+    // members are the answer.
+    const note = "error: expected type 'os.linux.SIG__enum_1935', found 'comptime_int'";
+    const t = nextQuotedType(note) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SIG", t.sym);
+
+    const missing = "enum 'os.linux.SIG__enum_1935' has no member named 'none'";
+    const m = nextQuotedType(missing) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SIG", m.sym);
+    // 'none' is a member name, not a type: no dot, so it is not looked up.
+    try std.testing.expect(nextQuotedType(m.rest) == null);
+
+    // Prose in quotes is not a type.
+    try std.testing.expect(nextQuotedType("call it 'the thing that failed'") == null);
+
+    // Both shapes in one message are found by the combined scan.
+    const both =
+        \\        fl.whence = @intFromEnum(std.posix.SEEK.SET);
+        \\note: expected type 'os.linux.SIG__enum_1935'
+    ;
+    const first = nextSymbol(both) orelse return error.TestExpectedSymbol;
+    const second = nextSymbol(first.rest) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SET", first.sym);
+    try std.testing.expectEqualStrings("SIG", second.sym);
 }
