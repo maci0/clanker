@@ -126,6 +126,30 @@ pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
     return cost;
 }
 
+/// Running per-session totals behind the REPL status line: one add() per turn
+/// where the turn's resp.usage is consumed, and the composed line reads the
+/// fields directly. Cost uses totalCost so the number matches the token-stats
+/// log instead of drifting into a second pricing formula.
+pub const SessionUsage = struct {
+    prompt: u64 = 0,
+    completion: u64 = 0,
+    cache_hit: u64 = 0,
+    cost: f64 = 0,
+
+    pub fn add(self: *SessionUsage, provider: *const config.Provider, u: types.Usage) void {
+        self.prompt += u.prompt_tokens;
+        self.completion += u.completion_tokens;
+        self.cache_hit += u.prompt_cache_hit_tokens;
+        self.cost += totalCost(provider, u);
+    }
+
+    /// Cached share of all prompt tokens, 0-100; 0 before the first turn.
+    pub fn cachePct(self: SessionUsage) u8 {
+        if (self.prompt == 0) return 0;
+        return @intCast(@min(self.cache_hit, self.prompt) * 100 / self.prompt);
+    }
+};
+
 /// Records one completion in the global token-usage log (best-effort). The
 /// caller supplies `duration_ms`; 0 means "unknown" (chat() times the whole
 /// call via `llm_t0` where the retry loop hides the true duration).
