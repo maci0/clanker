@@ -4850,8 +4850,24 @@ fn handleSessions(
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
                 return;
             };
+            // Moving between folders and renaming are the same kind of edit,
+            // so they share the endpoint; a body may carry either or both.
+            if (req.workspace) |ws| {
+                if (!validWorkspace(ws)) {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"workspace must be 0-64 characters and contain no separators\"}");
+                    return;
+                }
+                session.setWorkspace(io, gpa, arena, std.Io.Dir.cwd(), id, ws) catch {
+                    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                    return;
+                };
+                if (req.title == null) {
+                    respond(stream, 200, "OK", "{\"ok\":true}");
+                    return;
+                }
+            }
             const title = req.title orelse {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title or workspace\"}");
                 return;
             };
             session.renameSession(io, gpa, arena, std.Io.Dir.cwd(), id, title) catch {
@@ -4966,6 +4982,8 @@ fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) 
         try s.write(m.created);
         try s.objectField("updated");
         try s.write(m.updated);
+        try s.objectField("workspace");
+        try s.write(m.workspace);
         try s.objectField("messages");
         try s.write(m.messages);
         try s.objectField("bytes");
@@ -5058,8 +5076,34 @@ fn handlePlugins(
     respond(stream, 200, "OK", out);
 }
 
+/// A workspace is a folder name shown in the rail and stored in the session
+/// file, so it is restricted the way a session id is. It is never a path —
+/// nothing joins it to the filesystem — but it is displayed, sorted and
+/// compared, and a name carrying separators or control characters would make
+/// the rail lie about what is nested in what.
+fn validWorkspace(name: []const u8) bool {
+    if (name.len > 64) return false;
+    for (name) |c| {
+        if (c < 0x20 or c == 0x7f) return false;
+        if (c == '/' or c == '\\') return false;
+    }
+    return true;
+}
+
+test validWorkspace {
+    try std.testing.expect(validWorkspace(""));
+    try std.testing.expect(validWorkspace("research"));
+    try std.testing.expect(validWorkspace("web ui"));
+    try std.testing.expect(!validWorkspace("a/b"));
+    try std.testing.expect(!validWorkspace("a\\b"));
+    try std.testing.expect(!validWorkspace("a\nb"));
+    try std.testing.expect(!validWorkspace("x" ** 65));
+}
+
 const SessionPatchBody = struct {
     title: ?[]const u8 = null,
+    /// Absent means "leave it where it is"; "" means the default folder.
+    workspace: ?[]const u8 = null,
 };
 
 const PluginToggleBody = struct {

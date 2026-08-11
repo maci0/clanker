@@ -32,6 +32,7 @@ var el = {
   sessionStatus: document.getElementById("session-status"),
   sessionFork: document.getElementById("session-fork"),
   sessionRename: document.getElementById("session-rename"),
+  sessionMove: document.getElementById("session-move"),
   sessionDelete: document.getElementById("session-delete"),
   chatRoom: document.getElementById("chat-room"),
   chatLog: document.getElementById("chat-log"),
@@ -500,26 +501,62 @@ function railRowFor(s, current) {
   return T.li({ class: "rail-row" }, row, pin);
 }
 
+/* Workspaces are folders: a conversation is in exactly one, and the unnamed
+   one is where everything starts. Sorted with the default first, then by name,
+   so the list does not reshuffle as folders are added. */
+function workspacesOf(sessions) {
+  var names = {};
+  sessions.forEach(function (s) { names[s.workspace || ""] = true; });
+  return Object.keys(names).sort(function (a, b) {
+    if (a === b) return 0;
+    if (a === "") return -1;
+    if (b === "") return 1;
+    return a < b ? -1 : 1;
+  });
+}
+
 bind(el.railList, railState, function (s) {
   var out = [];
   var ordered = s.sessions.slice().sort(function (a, b) {
     var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
     return pa === pb ? 0 : pb - pa;
   });
-  var lastGroup = "";
   var seen = false;
   var shown = 0;
-  ordered.forEach(function (item) {
-    if (item.id === s.current) seen = true;
-    if (s.filter && sessionLabel(item).toLowerCase().indexOf(s.filter) === -1) return;
-    var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
-    if (group !== lastGroup) {
-      out.push(T.li({ class: "rail-group", role: "presentation" }, group));
-      lastGroup = group;
+
+  workspacesOf(ordered).forEach(function (ws) {
+    var inWorkspace = ordered.filter(function (item) {
+      if ((item.workspace || "") !== ws) return false;
+      return !s.filter || sessionLabel(item).toLowerCase().indexOf(s.filter) !== -1;
+    });
+    // A folder with nothing to show under the current filter is not drawn:
+    // an empty heading says a folder is empty when it is only filtered out.
+    if (!inWorkspace.length) return;
+
+    // The default folder needs no name when it is the only one there is.
+    var onlyDefault = ws === "" && workspacesOf(ordered).length === 1;
+    if (!onlyDefault) {
+      out.push(T.li({ class: "rail-workspace", role: "presentation" },
+        ws === "" ? "Conversations" : ws,
+        T.span({ class: "rail-workspace-count" }, String(inWorkspace.length))));
     }
-    out.push(railRowFor(item, s.current));
-    shown += 1;
+
+    var lastGroup = "";
+    inWorkspace.forEach(function (item) {
+      if (item.id === s.current) seen = true;
+      var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
+      if (group !== lastGroup) {
+        out.push(T.li({ class: "rail-group", role: "presentation" }, group));
+        lastGroup = group;
+      }
+      var row = railRowFor(item, s.current);
+      if (!onlyDefault) row.classList.add("rail-folder");
+      out.push(row);
+      shown += 1;
+    });
   });
+
+  ordered.forEach(function (item) { if (item.id === s.current) seen = true; });
   /* A brand new chat has no file on disk until its first turn completes;
      without this row the rail shows nothing selected while the composer is
      plainly pointed at something. */
@@ -699,6 +736,35 @@ function switchSession(id) {
 }
 
 
+
+/* Workspaces are created by naming one: there is no separate "new folder"
+   step, because a folder with nothing in it is not yet a folder. */
+el.sessionMove.addEventListener("click", function () {
+  var meta = currentSessionMeta();
+  if (!meta) {
+    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    return;
+  }
+  var existing = workspacesOf(knownSessions).filter(function (w) { return w !== ""; });
+  var hint = existing.length ? "Existing: " + existing.join(", ") : "This will be the first workspace.";
+  var next = window.prompt("Move to which workspace? Leave empty for the default.\n" + hint, meta.workspace || "");
+  if (next === null) return;
+  el.sessionMove.disabled = true;
+  fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace: next.trim() })
+  })
+    .then(readJson)
+    .then(function () {
+      el.sessionStatus.textContent = next.trim()
+        ? "Moved to " + next.trim() + "."
+        : "Moved to the default workspace.";
+      return loadSessions();
+    })
+    .catch(function (err) { el.sessionStatus.textContent = "Move failed: " + err.message; })
+    .then(function () { el.sessionMove.disabled = false; });
+});
 
 /* A conversation's title is otherwise the first 60 characters of whatever
    task opened it, which makes a picker full of them read like a list of
