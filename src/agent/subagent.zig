@@ -64,6 +64,7 @@ pub fn runNested(
     provider_name: ?[]const u8,
     brief: Brief,
     parent_ask: ?host.ParentAsk,
+    parent_run_id: []const u8,
 ) ![]const u8 {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -87,6 +88,15 @@ pub fn runNested(
     // the agent that spawned it (see host.ParentAsk for the concurrency
     // story).
     a.parent_ask = parent_ask;
+    // The nested run records its own execution graph (webui-plan 3.1). Its
+    // id is nanosecond-resolution because the default "run-<seconds>" would
+    // collide with the parent's — or a sibling's, spawned within the same
+    // second — and one graph would silently overwrite the other. The "sub-"
+    // prefix makes a nested run recognizable in state/runs/, and
+    // parent_run_id is the upward link to the caller's timeline.
+    const sub_run_id = try std.fmt.allocPrint(arena, "sub-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+    a.run_id_override = sub_run_id;
+    a.parent_run_id = parent_run_id;
 
     // The run's private todo list: arena-owned, so it is discarded with the
     // run. Nothing about it persists except the summary appended below.
@@ -97,13 +107,27 @@ pub fn runNested(
     var err_detail: ?[]const u8 = null;
     const resp = try a.run(&messages, try briefedTask(arena, task, brief), &err_detail);
     const content = resp.message.content orelse "";
-    // gpa-owned so the caller (ckSubagent) can use it after this fn's arena
-    // is gone; the caller frees it.
-    const todo_summary = try private_todos.summary(&todos, arena);
-    if (todo_summary.len == 0) return gpa.dupe(u8, content);
+    var answer: std.ArrayList(u8) = .empty;
+    try answer.appendSlice(arena, content);
     // Surface how far the run got: with items still open (iteration cap,
     // usually) the summary is the parent's only view of the remaining work.
-    return std.fmt.allocPrint(gpa, "{s}\n\n{s}", .{ content, todo_summary });
+    const todo_summary = try private_todos.summary(&todos, arena);
+    if (todo_summary.len > 0) {
+        try answer.appendSlice(arena, "\n\n");
+        try answer.appendSlice(arena, todo_summary);
+    }
+    // The link down: the parent's graph node records this result as its
+    // output preview, so the sub-run id riding on the answer is what lets a
+    // viewer walk from the parent's timeline into the nested one. Only when
+    // a graph was actually persisted — a note pointing at nothing is noise.
+    if (cfg.modules.graphs) {
+        try answer.appendSlice(arena, "\n\n[subagent run: ");
+        try answer.appendSlice(arena, sub_run_id);
+        try answer.append(arena, ']');
+    }
+    // gpa-owned so the caller (ckSubagent) can use it after this fn's arena
+    // is gone; the caller frees it.
+    return gpa.dupe(u8, answer.items);
 }
 
 test "the brief tells a sub-agent what it cannot see" {

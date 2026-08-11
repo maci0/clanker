@@ -34,6 +34,9 @@ const GraphNode = struct {
 
 const GraphFile = struct {
     run_id: []const u8 = "",
+    /// The run that spawned this one; empty for top-level runs. Carried so a
+    /// nested (subagent) run's graph links back to its caller's.
+    parent_run_id: []const u8 = "",
     task: []const u8 = "",
     provider: []const u8 = "",
     started_at: i64 = 0,
@@ -245,6 +248,8 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.beginObject();
         try s.objectField("run_id");
         try s.write(g.run_id);
+        try s.objectField("parent_run_id");
+        try s.write(g.parent_run_id);
         try s.objectField("task");
         try s.write(labelOf(g.task));
         try s.objectField("provider");

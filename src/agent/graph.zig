@@ -51,6 +51,10 @@ pub fn truncatedPreview(s: []const u8) []const u8 {
 
 pub const Graph = struct {
     run_id: []const u8,
+    /// The run id of the agent that spawned this run — empty for top-level
+    /// runs. A nested sub-agent run records its own graph (webui-plan 3.1);
+    /// this is the upward link that parents it to the caller's timeline.
+    parent_run_id: []const u8 = "",
     task: []const u8,
     provider: []const u8 = "",
     started_at: i64,
