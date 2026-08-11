@@ -379,7 +379,8 @@ function renderSessionOptions(sessions) {
     var pin = document.createElement("button");
     pin.type = "button";
     pin.className = "rail-pin";
-    pin.textContent = isPinned(s.id) ? "★" : "☆";
+    pin.appendChild(icon("pin", 15));
+    pin.setAttribute("data-on", String(isPinned(s.id)));
     pin.setAttribute("aria-pressed", String(isPinned(s.id)));
     pin.setAttribute("aria-label", (isPinned(s.id) ? "Unpin " : "Pin ") + title);
     pin.addEventListener("click", function () { togglePin(s.id); });
@@ -698,6 +699,13 @@ function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
   var turn = document.createElement("div");
   turn.className = "turn";
+
+  // The stratum's index, set in the margin against the depth rule.
+  var depth = document.createElement("span");
+  depth.className = "turn-depth";
+  depth.textContent = String(el.transcript.querySelectorAll(".turn").length + 1);
+  depth.setAttribute("aria-hidden", "true");
+  turn.appendChild(depth);
 
   var you = document.createElement("div");
   you.className = "turn-you";
@@ -1357,6 +1365,7 @@ el.form.addEventListener("submit", function (e) {
   if (handOffFocus) el.cancel.focus();
   el.hint.textContent = "";
   showCaret(turn, true);
+  turn.root.setAttribute("data-live", "true");
   var startedAt = Date.now();
   startElapsed(startedAt);
   controller = new AbortController();
@@ -1441,6 +1450,7 @@ el.form.addEventListener("submit", function (e) {
     }
   }).finally(function () {
     showCaret(turn, false);
+    turn.root.removeAttribute("data-live");
     // A run that errored or was stopped never emits `done`, so the turn
     // would end with no way to copy what did arrive and no way to retry the
     // task that just failed — the two things most wanted after a failure.
@@ -3366,6 +3376,59 @@ SUGGESTIONS.forEach(function (text) {
 });
 
 
+
+/* ---------- icons ----------
+
+   Drawn, not typed. A star glyph and a multiplication sign were standing in
+   for an icon system, which means they inherited the text face's weight and
+   could not share a stroke with anything. These are one 24-grid, one 1.75
+   stroke, square cap, and they take their colour from the text around them. */
+
+var ICON_PATHS = {
+  // A survey marker: the pin that says this layer matters.
+  pin: ["M12 3.5v9", "M7.5 12.5h9l-1.5 3h-6z", "M12 15.5v5"],
+  // Struck through: remove this entry.
+  strike: ["M5.5 5.5l13 13", "M18.5 5.5l-13 13"],
+  // A rule and tick: the depth column itself.
+  log: ["M6 4v16", "M6 8h5", "M6 13h8", "M6 18h4"],
+  // Loupe over the sheet.
+  find: ["M11 4.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z", "M16 16l3.5 3.5"],
+  // A sample vial: one recorded run.
+  sample: ["M9.5 3.5h5", "M10.5 3.5v6L7 19a1.5 1.5 0 001.4 2h7.2a1.5 1.5 0 001.4-2l-3.5-9.5v-6"],
+  // Two sheets: a copy.
+  copy: ["M8.5 8.5h10v11h-10z", "M5.5 15.5v-11h10"],
+  // A gate that held.
+  held: ["M5 12.5l4.5 4.5L19 7.5"],
+  // Deposited: an arrow settling onto the rule.
+  deposit: ["M12 4v12", "M7.5 11.5L12 16l4.5-4.5", "M5 20h14"]
+};
+
+function icon(name, size) {
+  var paths = ICON_PATHS[name];
+  if (!paths) return document.createElement("span");
+  var ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size || 16));
+  svg.setAttribute("height", String(size || 16));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.75");
+  svg.setAttribute("stroke-linecap", "square");
+  svg.setAttribute("stroke-linejoin", "miter");
+  // Decorative in every use here: each icon sits beside or inside a control
+  // that already carries its own accessible name.
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add("icon");
+  paths.forEach(function (d) {
+    var path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
 /* ---------- status, said out loud and shown ---------- */
 
 /* Every view writes progress and failures into its own sr-only live region.
@@ -4138,7 +4201,7 @@ function showCardDetail(id) {
     var drop = document.createElement("button");
     drop.type = "button";
     drop.className = "rail-pin";
-    drop.textContent = "×";
+    drop.appendChild(icon("strike", 14));
     drop.setAttribute("aria-label", "Remove subtask: " + s.text);
     drop.addEventListener("click", function () {
       postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed subtask: " + s.text);
@@ -4169,7 +4232,7 @@ function showCardDetail(id) {
     var drop = document.createElement("button");
     drop.type = "button";
     drop.className = "rail-pin";
-    drop.textContent = "×";
+    drop.appendChild(icon("strike", 14));
     drop.setAttribute("aria-label", "Stop waiting on " + (dep ? dep.title : depId));
     drop.addEventListener("click", function () {
       postBoard({ op: "depend_remove", id: c.id, depends_on: depId }, null);
