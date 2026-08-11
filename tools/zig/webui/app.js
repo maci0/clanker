@@ -1,24 +1,35 @@
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fmtDeadline as utilFmtDeadline, fuzzyMatch as utilFuzzyMatch } from "./core/utils.js";
+import { T as vanT, bind as vanBind, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI } from "./core/ui.js";
+import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
+import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod } from "./core/vendor.js";
+import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
+import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod } from "./core/chat.js";
+import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
+import { goalSortKey as goalSortKeyMod, goalFields as goalFieldsMod } from "./core/goals.js";
+import { makeLineSplitter as makeLineSplitterMod } from "./core/stream.js";
+import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
+import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
+import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMod, doneColumn as doneColumnMod, blockers as blockersMod, dueState as dueStateMod } from "./lib/board.js";
+
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
 
-/* Pure helpers live in core/utils.js. It executes before this classic
-   script (module scripts and deferred scripts run in document order) and
-   bridges its exports through window.ckUtil, van-boot-style; these locals
-   keep every call site below unchanged until this file becomes a module
-   itself. */
-var readJson = window.ckUtil.readJson;
-var newSessionId = window.ckUtil.newSessionId;
-var fmtBytes = window.ckUtil.fmtBytes;
-var clip = window.ckUtil.clip;
-var sessionLabel = window.ckUtil.sessionLabel;
-var recencyGroup = window.ckUtil.recencyGroup;
-var isSafeLinkUrl = window.ckUtil.isSafeLinkUrl;
-var splitRow = window.ckUtil.splitRow;
-var prettyJsonIfPossible = window.ckUtil.prettyJsonIfPossible;
-// Labels module bridged from core/labels.js; keep call sites unchanged.
-var runLabel = function (r) { return window.ckLabels.runLabel(r, clip); };
-var modelLabel = function (provider, model) { return window.ckLabels.modelLabel(provider, model, providerCache); };
-var chatRoomLabel = function (r) { return window.ckLabels.chatRoomLabel(r, window.ckChat.isDm, window.ckChat.dmPartner, window.ckChat.clankerMark); };
+var readJson = utilReadJson;
+var newSessionId = utilNewSessionId;
+var fmtBytes = utilFmtBytes;
+var clip = utilClip;
+var sessionLabel = utilSessionLabel;
+var recencyGroup = utilRecencyGroup;
+var isSafeLinkUrl = utilIsSafeLinkUrl;
+var splitRow = utilSplitRow;
+var prettyJsonIfPossible = utilPrettyJsonIfPossible;
+var fmtInt = utilFmtInt;
+var fmtMs = utilFmtMs;
+var fmtCost = utilFmtCost;
+var providerCache = [];
+var runLabel = function (r) { return runLabelMod(r, clip); };
+var modelLabel = function (provider, model) { return modelLabelMod(provider, model, providerCache); };
+var chatRoomLabel = function (r) { return chatRoomLabelMod(r, isDm, function(rr){ return dmPartner(rr); }, clankerMark); };
 
 var el = {
   form: document.getElementById("task-form"),
@@ -140,29 +151,23 @@ var el = {
    van.tags builds real DOM nodes and sets text as text, so nothing here can
    introduce markup from data. */
 
-/* Bind/skeletons/turn-phase live in core/ui.js (bridged on window.ckUi).
-   Module scripts execute in document order before this deferred classic
-   script, so the bridge is already present — no inline fallback needed. */
-var T = window.ckUi.T;
-var bind = window.ckUi.bind;
-var skeletonRows = window.ckUi.skeletonRows;
-var setTurnPhase = window.ckUi.setTurnPhase;
+var T = vanT;
+var bind = vanBind;
+var skeletonRows = vanSkeletonRows;
+var setTurnPhase = vanSetTurnPhase;
 
-/* Icons live in core/icons.js (module, bridged on window.ckIcons). */
-var ICON_PATHS = window.ckIcons.ICON_PATHS;
-var icon = window.ckIcons.icon;
+var ICON_PATHS = iconPaths;
+var icon = iconFn;
 
-/* UI vocabulary lives in core/ui.js (bridged on window.ckUi.UI). */
-var UI = window.ckUi.UI;
+var UI = vanUI;
 
-/* Vendored loader + clipboard live in core/vendor.js (bridged). */
-var vendorLoads = window.vendorLoads;
-var loadVendor = window.loadVendor;
-var loadD3 = window.loadD3;
-var loadHljs = window.loadHljs;
-var registerToml = window.registerToml;
-var reducedMotion = window.reducedMotion;
-var copyText = window.copyText;
+var vendorLoads = vendorLoadsMod;
+var loadVendor = loadVendorMod;
+var loadD3 = loadD3Mod;
+var loadHljs = loadHljsMod;
+var registerToml = registerTomlMod;
+var reducedMotion = reducedMotionMod;
+var copyText = copyTextMod;
 
 var busy = false;
 var controller = null;
@@ -181,10 +186,9 @@ function renderSessionChip() {
   el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
 }
 
-/* THEMES/loadTheme/applyTheme live in core/theme.js (bridged). */
-var THEMES = window.ckTheme.THEMES;
-var loadTheme = window.ckTheme.loadTheme;
-var applyTheme = window.ckTheme.applyTheme;
+var THEMES = THEMESMod;
+var loadTheme = loadThemeMod;
+var applyTheme = applyThemeMod;
 
 var theme = loadTheme();
 applyTheme(theme);
@@ -786,15 +790,14 @@ function showCaret(turn, on) {
    innerHTML, so markup a model writes lands as visible characters and is
    never parsed as markup. */
 
-/* Markdown + code rendering lives in lib/markdown.js (bridged as window.ckMarkdown). */
-var INLINE_RE = window.ckMarkdown ? window.ckMarkdown.INLINE_RE : /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
-var inlineInto = window.ckMarkdown ? window.ckMarkdown.inlineInto : function(parent,text){ parent.appendChild(document.createTextNode(text)); };
-var paragraphInto = window.ckMarkdown ? window.ckMarkdown.paragraphInto : function(parent,lines){ lines.forEach(function(ln,i){ if(i) parent.appendChild(document.createElement("br")); parent.appendChild(document.createTextNode(ln)); }); };
-var tableRow = window.ckMarkdown ? window.ckMarkdown.tableRow : function(tr,cells,tag){ cells.forEach(function(c){ var cell=document.createElement(tag); cell.textContent=c.trim(); tr.appendChild(cell); }); };
-var renderMarkdown = window.ckMarkdown ? window.ckMarkdown.renderMarkdown : function(text){ var f=document.createDocumentFragment(); var p=document.createElement("p"); p.textContent=text; f.appendChild(p); return f; };
-var highlightInto = window.ckMarkdown ? window.ckMarkdown.highlightInto : function(codeEl,lang,raw){ codeEl.textContent=raw; return {text:raw, lang:lang||""}; };
-var buildCodeBlock = window.ckMarkdown ? window.ckMarkdown.buildCodeBlock : function(lang,code){ var d=document.createElement("div"); d.textContent=code; return d; };
-var finalizeAnswer = window.ckMarkdown ? window.ckMarkdown.finalizeAnswer : function(turn){};
+var INLINE_RE = mdINLINE_RE;
+var inlineInto = mdInlineInto;
+var paragraphInto = mdParagraphInto;
+var tableRow = mdTableRow;
+var renderMarkdown = mdRenderMarkdown;
+var highlightInto = mdHighlightInto;
+var buildCodeBlock = mdBuildCodeBlock;
+var finalizeAnswer = mdFinalizeAnswer;
 
 function addToolEvent(turn, names) {
   var row = document.createElement("div");
@@ -1031,8 +1034,7 @@ function renderStats(turn, stats, task) {
   }
 }
 
-/* Stream splitter lives in core/stream.js (bridged as window.ckStream). */
-var makeLineSplitter = window.ckStream.makeLineSplitter;
+var makeLineSplitter = makeLineSplitterMod;
 
 function renderStatus(status) {
   if (!status) {
@@ -1475,8 +1477,8 @@ function loadRun(id) {
     });
 }
 
-var metricsFor = window.ckGraph.metricsFor;
-var buildStages = window.ckGraph.buildStages;
+var metricsFor = graphMetricsFor;
+var buildStages = graphBuildStages;
 
 var lastGraph = null;
 var lastBuilt = null;
@@ -1562,12 +1564,12 @@ function drawRun(g) {
   });
 }
 
-var graphSummaryText = window.ckGraph.graphSummaryText;
-var toDagInput = window.ckGraph.toDagInput;
-var layoutGraph = window.ckGraph.layoutGraph;
+var graphSummaryText = graphSummaryTextMod;
+var toDagInput = graphToDagInput;
+var layoutGraph = graphLayoutGraph;
 
-var buildIncompleteNode = window.ckGraph.buildIncompleteNode;
-var buildNodeBox = window.ckGraph.buildNodeBox;
+var buildIncompleteNode = graphBuildIncompleteNode;
+var buildNodeBox = graphBuildNodeBox;
 
 /* A collapsible tree for JSON-shaped node output — most tool results are
    JSON, and a flat highlighted blob makes a large payload (a big file
@@ -1753,11 +1755,13 @@ el.runsRefresh.addEventListener("click", function () {
   loadRuns().finally(function () { el.runsRefresh.disabled = false; });
 });
 
-/* DM/chat helpers live in core/chat.js (bridged as window.ckChat). */
-var dmRoom = window.ckChat.dmRoom;
-var dmSafeName = window.ckChat.dmSafeName;
-var dmPartner = window.ckChat.dmPartner;
-var isDm = window.ckChat.isDm;
+var dmRoom = dmRoomMod;
+var dmSafeName = dmSafeNameMod;
+var isDm = isDmMod;
+var clankerMark = clankerMarkMod;
+var CLANKER_MARKS = CLANKER_MARKSMod;
+// dmPartner in this file is called as dmPartner(room) closing over instanceName.
+var dmPartner = function(room){ return dmPartnerMod(room, instanceName); };
 
 var instanceName = "";
 var knownPeers = [];
@@ -1935,9 +1939,7 @@ function rememberChatId(id) {
   }
 }
 
-/* CLANKER_MARKS/clankerMark live in core/chat.js (bridged as window.ckChat). */
-var CLANKER_MARKS = window.ckChat.CLANKER_MARKS;
-var clankerMark = window.ckChat.clankerMark;
+
 
 function buildChatMessage(m) {
   var wrap = document.createElement("div");
@@ -1974,15 +1976,14 @@ function buildChatMessage(m) {
   return wrap;
 }
 
-/* Board helpers live in lib/board.js (bridged as window.ckBoard). */
-var BOARD_COLUMNS = window.ckBoard.BOARD_COLUMNS;
-var boardActionLine = window.ckBoard.boardActionLine;
-var doneColumn = function () { return window.ckBoard.doneColumn(board); };
-var blockers = function (card) { return window.ckBoard.blockers(card, board, cardById); };
-var dueState = window.ckBoard.dueState;
+var BOARD_COLUMNS = BOARD_COLUMNSMod;
+var boardActionLine = boardActionLineMod;
+var doneColumn = function () { return doneColumnMod(board); };
+var blockers = function (card) { return blockersMod(card, board, cardById); };
+var dueState = dueStateMod;
 
-/* formatChatTime lives in core/utils.js (bridged as window.ckUtil.formatChatTime). */
-var formatChatTime = window.ckUtil.formatChatTime;
+var formatChatTime = utilFormatChatTime;
+var fmtDeadline = utilFmtDeadline;
 
 /* Polling rather than a socket: the server closes every connection after one
    response (see Connection: close in cli.zig), so there is nothing to hold
@@ -2058,16 +2059,7 @@ el.chatForm.addEventListener("submit", function (e) {
 
 // ---- usage: what the model calls have cost -----------------------------
 
-/* fmtInt/fmtMs/fmtCost live in core/utils.js (bridged). */
-var fmtInt = window.ckUtil.fmtInt;
-var fmtMs = window.ckUtil.fmtMs;
-var fmtCost = window.ckUtil.fmtCost;
-
 var allUsage = [];
-
-/* modelLabel lives in core/labels.js (bridged above). */
-var goalSortKey = window.ckGoals.goalSortKey;
-var goalFields = window.ckGoals.goalFields;
 
 var usageState = van.state([]);
 
@@ -3713,9 +3705,6 @@ function cardById(id) {
 
 /* doneColumn/blockers/dueState live in lib/board.js (bridged as window.ckBoard). */
 
-/* fmtDeadline lives in core/utils.js (bridged). */
-var fmtDeadline = window.ckUtil.fmtDeadline;
-
 /* The board derives from the card set, the column set and the "only mine"
    filter. It used to clear #board and rebuild it, which is what forced the
    focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
@@ -4647,7 +4636,7 @@ function paletteEntries() {
 var paletteItems = [];
 var paletteIndex = 0;
 
-var fuzzyMatch = window.ckUtil.fuzzyMatch;
+var fuzzyMatch = utilFuzzyMatch;
 
 function renderPalette() {
   var rawQ = el.paletteInput.value.trim();
