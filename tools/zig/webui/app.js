@@ -1098,6 +1098,7 @@ function renderMarkdown(text) {
   function buildList(ordered, indent) {
     var list = document.createElement(ordered ? "ol" : "ul");
     var li = null;
+    var first = true;
     while (i < lines.length) {
       var line = lines[i];
       var m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line);
@@ -1113,6 +1114,15 @@ function renderMarkdown(text) {
       }
       var isOrdered = /\d/.test(m[2]);
       if (isOrdered !== ordered) break;
+      // Keep the author's numbering. An answer that numbers eight steps and
+      // writes a paragraph under each one ends the list at every paragraph, so
+      // each step became its own <ol> and every one of them rendered as "1.".
+      // The marker the author wrote is the number the reader should see.
+      if (first && ordered) {
+        var startAt = parseInt(m[2], 10);
+        if (startAt > 1) list.setAttribute("start", String(startAt));
+      }
+      first = false;
       li = document.createElement("li");
       var text = m[3];
       // A task list is a checklist, not two literal brackets.
