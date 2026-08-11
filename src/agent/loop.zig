@@ -455,7 +455,8 @@ pub const Agent = struct {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
             }
-            for (calls, results) |tc, content| {
+            for (calls, results) |tc, maybe_content| {
+                const content = maybe_content orelse "{\"ok\":true,\"result\":\"\"}";
                 // Tool results must follow the assistant tool_calls message
                 // immediately (OpenAI ordering rule; strict providers like
                 // kimi-k3 reject anything interleaved), so the image
@@ -1374,9 +1375,14 @@ pub const Agent = struct {
     /// with `calls`. Distinct tool names run in parallel on worker threads;
     /// duplicate names fall back to sequential execution (zwasm modules are
     /// stateful).
-    fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]const []const u8 {
-        const results = try self.arena.alloc([]const u8, calls.len);
-        @memset(results, "");
+    fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]?[]const u8 {
+        // Optional slots: null means "not yet executed", which has to be
+        // distinguishable from "executed and returned empty output" — a tool
+        // that legitimately returns zero bytes was re-run by the sequential
+        // fallback (doubling its side effects) because "" was both the
+        // initial value and a possible result.
+        const results = try self.arena.alloc(?[]const u8, calls.len);
+        @memset(results, null);
 
         // Warm the shared caches on the main thread before any worker
         // spawns: every tool's wasm bytes and every registered transform
@@ -1467,7 +1473,11 @@ pub const Agent = struct {
                 self.ctx.gpa.free(out);
                 // After-transforms run here, on the main thread after the
                 // join, so no worker ever touches the shared transform cache.
-                results[h.slot] = self.runChain(h.worker.tool.name, .after, owned) catch owned;
+                const transformed = self.runChain(h.worker.tool.name, .after, owned) catch owned;
+                // A tool (or its after-transform chain) may legitimately
+                // produce zero bytes; the conversation must never see a
+                // zero-length tool result.
+                results[h.slot] = if (transformed.len == 0) "{\"ok\":true,\"result\":\"\"}" else transformed;
             } else {
                 results[h.slot] = "{\"ok\":false,\"error\":\"tool produced no output\"}";
             }
@@ -1477,7 +1487,9 @@ pub const Agent = struct {
 
         // ---- sequential fallback: duplicate tool names (stateful modules) --
         for (calls, 0..) |tc, i| {
-            if (results[i].len != 0) continue;
+            // Null means "not executed yet"; a completed call with an empty
+            // result must not be run a second time.
+            if (results[i] != null) continue;
             // Run it on a worker even though nothing here is parallel: the
             // wasm interpreter recurses on the native stack, and the main
             // thread's stack is whatever the OS handed the process (8 MiB),
@@ -1490,6 +1502,11 @@ pub const Agent = struct {
                 try self.executeTool(tc)
             else
                 try self.executeToolOnWorker(tc);
+        }
+        // Defensive: every slot is filled above, but a result handed to the
+        // conversation must never be null or zero-length.
+        for (results) |*r| {
+            if (r.* == null or r.*.?.len == 0) r.* = "{\"ok\":true,\"result\":\"\"}";
         }
         return results;
     }
