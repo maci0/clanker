@@ -1,0 +1,19 @@
+{
+  "name": "peers_phonebook",
+  "kind": "task",
+  "description": "peers with {\"action\": \"phonebook\"} must answer ok:true whatever the network looks like: a peer that is down is reported as status down inside the peers array, not surfaced as a tool failure, and no configured peers folds to an empty array. That makes the ok field the one environment-independent assertion — the eval is indifferent to how many peers exist or whether any answer. It goes red when the config read or the agent-card scan wiring breaks in a way that is neither an up nor a down entry.",
+  "prompt": "Use the peers tool with input {\"action\": \"phonebook\"}. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false. A result whose ok field is true still counts as true even if every listed peer has status down or the peers array is empty.",
+  "requires_tool": "peers",
+  "criteria": [
+    {
+      "includes": [
+        "true"
+      ]
+    },
+    {
+      "excludes": [
+        "false"
+      ]
+    }
+  ]
+}
