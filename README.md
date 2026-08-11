@@ -57,3 +57,56 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **Web UI** – internal WASM tool served at `GET /`
 
 For full documentation, see [docs/README.md](docs/README.md).
+
+## Web UI and `clanker serve`
+
+The Web UI is a browser interface to the agent: a real multi-turn chat backed
+by the same sessions, providers, tools and execution graphs as the CLI. It is
+served by the internal `webui` WASM tool when `modules.webui` is on (default).
+
+Start it with `clanker serve` (default port `17921`, `--port` to change it),
+then open the URL it prints (`http://127.0.0.1:17921/webui`):
+
+```sh
+./zig-out/bin/clanker serve
+```
+
+The server also exposes the peer/chatroom/board/goal/stats APIs over HTTP and
+an A2A agent card at `/.well-known/agent.json`. See the HTTP server section in
+[docs/README.md](docs/README.md#http-server).
+
+## Command reference
+
+`clanker` (no command) drops you into the REPL. `clanker <command>` runs one
+task; `clanker --help` prints usage.
+
+| Command | Description |
+|---------|-------------|
+| `help` / `--help` | Print usage |
+| `version` / `--version` | Print the version |
+| `init` | Create `config.local.json` + `state/` |
+| `providers check [name]` | Verify provider connectivity |
+| `providers models [name]` | List a provider's models |
+| `run "<task>"` | Run the agent on a task |
+| `repl` | Interactive multi-turn chat (streams tokens); the default |
+| `sessions` | List saved sessions |
+| `tools list` | List registered WASM tools |
+| `eval [name] [--tasks]` | Run evals |
+| `improve-self [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |
+| `revert <id>` | Revert a promoted improvement |
+| `git <args...>` | Git passthrough |
+| `mcp` | Serve tools over MCP (stdio) |
+| `goal "<intent>"` | Design and persist a structured goal |
+| `notify <peer> "<message>"` | Send a notification to a peer |
+| `chat send <room> "<text>"` | Send a message to a chatroom |
+| `chat history <room> [after]` | Read chatroom history (newest first) |
+| `chat rooms` | List chatrooms + subscriptions |
+| `chat subscribe <room> [on]` | Join/leave a chatroom |
+| `stats` | Token usage per provider/model |
+| `phonebook` | List peer agent cards |
+| `serve [--port N]` | HTTP server + web UI (default port 17921) |
+| `graph [run-id]` | List runs, or render one as an ASCII timeline |
+| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
+| `autolearn` | Aggregate usage into roadmap items |
+
+For full documentation, see [docs/README.md](docs/README.md).
