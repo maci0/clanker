@@ -14,6 +14,7 @@ const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
 const autolearn = @import("autolearn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
+const filelock = @import("../util/filelock.zig");
 const log = @import("../util/log.zig");
 const toolout = @import("../util/toolout.zig");
 const mock_server = @import("../llm/mock_server.zig");
@@ -735,9 +736,22 @@ pub const Agent = struct {
     const reasoning_record_buf_bytes = 65536;
     const reasoning_record_task_chars = 200;
     const reasoning_record_reasoning_chars = 20000;
+    const reasoning_path = "state/reasoning.jsonl";
+    /// Hard cap on the log so a long-running agent cannot grow state without
+    /// bound; see [[trimReasoningLog]].
+    const reasoning_max_log_bytes = 8 << 20;
+    /// Lines kept when the log is trimmed for exceeding the cap.
+    const reasoning_keep_lines = 2000;
 
     /// Appends one reasoning trace to state/reasoning.jsonl (RLM).
+    ///
+    /// Appends via a locked seek-to-end write rather than a read-modify-write:
+    /// the previous version re-read and rewrote the entire log on every LLM
+    /// call, making per-call cost and total I/O grow with the log's size
+    /// (quadratic over a session), and lost records under concurrent writers
+    /// since it bypassed the lock other state logs use (see filelock.zig).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
+        _ = arena;
         std.Io.Dir.cwd().createDirPath(io, "state") catch return;
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         var buf: [reasoning_record_buf_bytes]u8 = undefined;
@@ -756,18 +770,53 @@ pub const Agent = struct {
         s.write(if (reasoning.len > reasoning_record_reasoning_chars) reasoning[0..reasoning_record_reasoning_chars] else reasoning) catch return;
         s.endObject() catch return;
 
-        const path = "state/reasoning.jsonl";
-        const existing = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 24)) catch |err| switch (err) {
-            error.FileNotFound => "",
-            else => return,
+        appendReasoningLine(std.Io.Dir.cwd(), io, gpa, buf[0..w.end]);
+    }
+
+    fn appendReasoningLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, line: []const u8) void {
+        var guard = filelock.acquire(io, base, "state", "reasoning", gpa);
+        defer guard.release();
+
+        // Trim before opening for append below: trimming rewrites the file
+        // and would otherwise contend with the handle about to be held open.
+        if (base.statFile(io, reasoning_path, .{})) |st| {
+            if (st.size > reasoning_max_log_bytes) trimReasoningLog(base, io, gpa) catch {};
+        } else |_| {}
+
+        const file = base.createFile(io, reasoning_path, .{ .truncate = false }) catch |err| {
+            log.log(.warn, "recordReasoning: failed to open {s}: {s}", .{ reasoning_path, @errorName(err) });
+            return;
         };
+        defer file.close(io);
+        const size = (file.stat(io) catch return).size;
+        var wbuf: [512]u8 = undefined;
+        var fw = file.writer(io, &wbuf);
+        fw.seekToUnbuffered(size) catch return;
+        fw.interface.writeAll(line) catch return;
+        fw.interface.writeAll("\n") catch return;
+        fw.flush() catch return;
+    }
+
+    /// Rewrites state/reasoning.jsonl keeping only the newest
+    /// `reasoning_keep_lines` lines.
+    fn trimReasoningLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator) !void {
+        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(reasoning_max_log_bytes));
+        defer gpa.free(raw);
+        var lines: std.ArrayList([]const u8) = .empty;
+        defer lines.deinit(gpa);
+        var it = std.mem.splitScalar(u8, raw, '\n');
+        while (it.next()) |ln| {
+            if (ln.len == 0) continue;
+            try lines.append(gpa, ln);
+        }
+        const keep = if (lines.items.len > reasoning_keep_lines) lines.items.len - reasoning_keep_lines else 0;
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(gpa);
-        out.appendSlice(gpa, existing) catch return;
-        if (existing.len > 0 and existing[existing.len - 1] != '\n') out.append(gpa, '\n') catch return;
-        out.appendSlice(gpa, buf[0..w.end]) catch return;
-        out.append(gpa, '\n') catch return;
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = out.items }) catch |err| log.log(.warn, "recordReasoning: failed to persist event: {s}", .{@errorName(err)});
+        for (lines.items[keep..]) |ln| {
+            try out.appendSlice(gpa, ln);
+            try out.append(gpa, '\n');
+        }
+        try base.writeFile(io, .{ .sub_path = reasoning_path, .data = out.items });
     }
 
     /// Estimates the number of LLM tokens for a text string using the
