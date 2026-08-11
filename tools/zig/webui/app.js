@@ -4065,8 +4065,9 @@ function renderGoalRunPanel(gid) {
    the run into that goal's own panel. Runs are independent — the chat
    composer's single busy guard does not apply, so several goals can be
    worked at once. */
-function workOnGoal(g) {
+function runGoal(g, opts) {
   if (!g || !g.id) return;
+  opts = opts || {};
   var existing = goalRuns[g.id];
   if (existing && existing.status === "running") {
     el.goalsStatus.textContent = "A run for this goal is already in progress; wait for it to finish.";
@@ -4079,6 +4080,7 @@ function workOnGoal(g) {
   showView("goals", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = "Starting work on goal…";
+  if (opts.onStart) opts.onStart();
 
   var splitter = makeLineSplitter(function (line) {
     if (line.charCodeAt(0) === 1) {
@@ -4116,6 +4118,7 @@ function workOnGoal(g) {
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
       el.goalsStatus.textContent = "Goal run finished.";
+      if (opts.onDone) opts.onDone("finished");
     }
   }).catch(function (err) {
     splitter.flush();
@@ -4123,12 +4126,58 @@ function workOnGoal(g) {
     if (err && err.name === "AbortError") {
       setGoalStatus(g.id, "stopped");
       el.goalsStatus.textContent = "Goal run stopped.";
+      if (opts.onDone) opts.onDone("stopped");
     } else {
       appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
       setGoalStatus(g.id, "failed");
       el.goalsStatus.textContent = "Goal run failed: " + err.message;
+      if (opts.onDone) opts.onDone("failed");
     }
   });
+}
+
+function workOnGoal(g) {
+  runGoal(g);
+}
+
+/* Turns a board card into a goal and starts a run on it, moving the card
+   through the board with the run's lifecycle: into Doing when the run starts,
+   into Review when it finishes, and back to Ready if it is stopped or fails
+   (so it never sits in Doing half-finished). The card id lives in the browser
+   and the run streams back its own end, so the movement is a front-end
+   concern here. */
+function workCardAsGoal(c) {
+  if (!c || !c.id) return;
+  var objective = (c.title || "").trim();
+  if (!objective) {
+    el.boardStatus.textContent = "That card has no title to turn into a goal.";
+    return;
+  }
+  var criterion = (c.body || "").trim() ||
+    "Complete the work described on the board card \"" + objective + "\".";
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added from the board.")
+    .then(function (d) {
+      if (!d) return;
+      // The card's objective is the newest goal carrying that text: matching
+      // by it and taking the largest `updated` picks the one just created even
+      // when an older goal already used the same wording.
+      var created = null, createdUp = -1;
+      var goals = d.goals || [];
+      for (var i = 0; i < goals.length; i++) {
+        if (goals[i].objective === objective && (goals[i].updated || 0) > createdUp) {
+          created = goals[i];
+          createdUp = goals[i].updated || 0;
+        }
+      }
+      if (!created) return;
+      postBoard({ op: "move", id: c.id, column: "doing" }, null);
+      runGoal(created, {
+        onDone: function (status) {
+          var col = status === "finished" ? "review" : "ready";
+          postBoard({ op: "move", id: c.id, column: col }, null);
+        }
+      });
+    });
 }
 
 function postGoal(payload, status) {
@@ -4871,6 +4920,17 @@ function showCardDetail(id) {
     postBoard({ op: "update", id: c.id, assignee: (el.instanceChip.textContent || "").trim() }, "Assigned.");
   });
   fields.appendChild(takeIt);
+
+  var asGoal = document.createElement("button");
+  asGoal.type = "button";
+  asGoal.className = "secondary";
+  asGoal.textContent = "Work as goal";
+  asGoal.title = "Create a goal from this card and run it. The card moves to Doing, then to Review when the goal finishes.";
+  asGoal.addEventListener("click", function () {
+    delete cardDrafts[c.id];
+    workCardAsGoal(c);
+  });
+  fields.appendChild(asGoal);
 
   var del = document.createElement("button");
   del.type = "button";
