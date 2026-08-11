@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const filelock = @import("../util/filelock.zig");
 
 const event_path = "state/autolearn.jsonl";
 
@@ -57,6 +58,11 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
 }
 
 fn appendLine(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line: []const u8) void {
+    // Same read-modify-write as the improvement log, same shared state
+    // directory, same silent loss when two runs overlap.
+    var guard = filelock.acquire(io, std.Io.Dir.cwd(), "state", "autolearn", gpa);
+    defer guard.release();
+
     const existing = std.Io.Dir.cwd().readFileAlloc(io, event_path, arena, .limited(1 << 24)) catch |err| switch (err) {
         error.FileNotFound => "",
         else => return,

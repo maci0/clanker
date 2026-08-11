@@ -3,6 +3,7 @@
 const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
+const filelock = @import("../util/filelock.zig");
 
 pub const Status = enum {
     accepted,
@@ -106,6 +107,12 @@ pub const History = struct {
     ) !void {
         self.base.createDirPath(self.io, self.state_dir) catch {};
         self.base.createDirPath(self.io, self.history_dir) catch {};
+
+        // Read-modify-write, so it has to be serialised: an improve run and
+        // the staged evals a gate spawns are separate processes sharing this
+        // file, and a lost entry is a run the next prompt never learns about.
+        var guard = filelock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
+        defer guard.release();
 
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.gpa);
@@ -479,4 +486,58 @@ test "append keeps every prior improvement" {
         if (line.len > 0) lines += 1;
     }
     try std.testing.expectEqual(@as(usize, 3), lines);
+}
+
+test "records from overlapping runs are all kept" {
+    // The log is read, extended and written back, so two writers both start
+    // from the same contents and one entry is discarded. An improve run and
+    // the staged evals its gate spawns are separate processes over one state
+    // directory, and this file is what the next run's prompt reads to learn
+    // what has already been tried.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const writers = 6;
+    const per_writer = 8;
+
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        id: usize,
+
+        fn run(self: *@This()) void {
+            var h = History.init(self.gpa, self.io, self.dir, "state");
+            defer h.deinit();
+            var i: usize = 0;
+            while (i < per_writer) : (i += 1) {
+                var buf: [64]u8 = undefined;
+                const id = std.fmt.bufPrint(&buf, "imp-{d}-{d}", .{ self.id, i }) catch return;
+                h.append(id, .accepted, "instruction", "summary", &.{}, 0, 0, "", &.{}) catch return;
+            }
+        }
+    };
+
+    var workers: [writers]Worker = undefined;
+    var threads: [writers]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        w.* = .{ .dir = tmp.dir, .io = io, .gpa = std.testing.allocator, .id = i };
+        threads[i] = try std.Thread.spawn(.{}, Worker.run, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", std.testing.allocator, .limited(1 << 22));
+    defer std.testing.allocator.free(raw);
+
+    var kept: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        kept += 1;
+    }
+    try std.testing.expectEqual(@as(usize, writers * per_writer), kept);
 }
