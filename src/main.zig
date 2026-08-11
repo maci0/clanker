@@ -48,6 +48,7 @@ comptime {
     _ = @import("tui2/repl_vaxis.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
+    _ = @import("janitor.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),

@@ -96,6 +96,21 @@ clanker.registerView({
 
     var offices = [];      // { layout, cards, agents, cursor }
     var goals = [];
+    /* The janitor. He is only in the room when there is something to sweep:
+       /api/janitor reports orphaned staging copies and stale run graphs, and
+       when it reports nothing he is not drawn at all. A mascot that mops a
+       clean floor would be the one dishonest thing in this view. */
+    var janitor = { present: false, bytes: 0, items: 0, x: 1, y: 1, dir: 1, quip: null, quipUntil: 0 };
+    /* Short, apologetic, understated: the character says very little, and a
+       mascot with a joke for every occasion would be a different one. The
+       janitor.zig header records why these are not verbatim quotes. */
+    var JANITOR_QUIPS = [
+      "Sorry. I clean here.",
+      "Is nothing. Small job.",
+      "I am only cleaner.",
+      "Excuse me. One moment."
+    ];
+    var quipIdx = 0;
     var instanceName = "";
     var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -154,6 +169,36 @@ clanker.registerView({
       });
 
       o.agents.forEach(function (a) { drawAgent(a, ox, oy, ink); });
+      if (janitor.present && o.isFirst) drawJanitor(ox, oy, ink);
+    }
+
+    /* Mop first, then the man: the handle leans the way he is walking. */
+    function drawJanitor(ox, oy, ink) {
+      var px = ox + janitor.x * TILE;
+      var py = oy + janitor.y * TILE;
+      ctx2d.strokeStyle = cssVar("--fg-muted", "#666");
+      ctx2d.lineWidth = 1;
+      ctx2d.beginPath();
+      ctx2d.moveTo(px + 8 + janitor.dir * 5, py + 14);
+      ctx2d.lineTo(px + 8 + janitor.dir * 2, py + 3);
+      ctx2d.stroke();
+      ctx2d.fillStyle = cssVar("--ok", "#7aa");
+      ctx2d.fillRect(px + 4 + janitor.dir * 5, py + 13, 8, 3); // mop head
+      ctx2d.fillStyle = cssVar("--warn", "#e8c34a");           // hi-vis
+      ctx2d.fillRect(px + 4, py + 2, 8, 12);
+      ctx2d.fillStyle = ink;
+      ctx2d.fillRect(px + 6, py + 4, 2, 2);
+      ctx2d.fillRect(px + 10, py + 4, 2, 2);
+      if (janitor.quip) {
+        var w = Math.min(190, janitor.quip.length * 4.4 + 10);
+        ctx2d.fillStyle = cssVar("--surface", "#fff");
+        ctx2d.fillRect(px + 12, py - 12, w, 12);
+        ctx2d.strokeStyle = cssVar("--border", "#888");
+        ctx2d.strokeRect(px + 12.5, py - 11.5, w - 1, 11);
+        ctx2d.fillStyle = cssVar("--fg", "#111");
+        ctx2d.font = "8px ui-sans-serif, sans-serif";
+        ctx2d.fillText(janitor.quip, px + 15, py - 3);
+      }
     }
 
     function drawBoard(o, ox, oy) {
@@ -284,6 +329,20 @@ clanker.registerView({
         return api.getJSON("/api/goals").catch(function () { return { goals: [] }; });
       }).then(function (g) {
         goals = (g.goals || []).filter(function (x) { return x.status === "active"; });
+        if (offices.length > 0) offices[0].isFirst = true;
+        return api.getJSON("/api/janitor").catch(function () { return null; });
+      }).then(function (jr) {
+        if (jr && jr.ok) {
+          var was = janitor.present;
+          janitor.present = jr.items > 0;
+          janitor.bytes = jr.bytes;
+          janitor.items = jr.items;
+          if (janitor.present && !was) {
+            say("janitor: " + api.fmt.bytes(jr.bytes) + " to sweep up (clanker janitor --yes)");
+          } else if (!janitor.present && was) {
+            say("janitor: floor is clean, sitting down");
+          }
+        }
         status.val = offices.length + (offices.length === 1 ? " room" : " rooms");
         draw();
       }).catch(function (err) {
@@ -327,6 +386,23 @@ clanker.registerView({
       var target = { x: o.layout.board.x + 1, y: o.layout.board.y + o.layout.board.h };
       if (reduced) { onArrive(); return; }
       agent.walk = { to: target, home: { x: agent.x, y: agent.y }, phase: "out", onArrive: onArrive };
+    }
+
+    function stepJanitor(dt, now) {
+      if (!janitor.present || reduced || offices.length === 0) return false;
+      var L = offices[0].layout;
+      janitor.x += janitor.dir * 2.2 * dt;
+      if (janitor.x > L.w - 2) { janitor.x = L.w - 2; janitor.dir = -1; }
+      if (janitor.x < 1) { janitor.x = 1; janitor.dir = 1; }
+      janitor.y = L.h - 2;
+      if (now > janitor.quipUntil) {
+        // A line every so often, cycling rather than random so he does not
+        // say the same thing twice in a row.
+        janitor.quip = JANITOR_QUIPS[quipIdx % JANITOR_QUIPS.length];
+        quipIdx += 1;
+        janitor.quipUntil = now + 9000;
+      }
+      return true;
     }
 
     function stepAgents(dt) {
@@ -410,17 +486,27 @@ clanker.registerView({
     function frame(now) {
       var dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;
-      if (stepAgents(dt) || dirty) { draw(); dirty = false; }
+      if (stepAgents(dt) | stepJanitor(dt, now) || dirty) { draw(); dirty = false; }
       raf = window.requestAnimationFrame(frame);
     }
     var dirty = true;
     var raf = window.requestAnimationFrame(frame);
     var timer = window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
+    var janitorTimer = window.setInterval(function () {
+      api.getJSON("/api/janitor").then(function (jr) {
+        if (!jr || !jr.ok) return;
+        janitor.present = jr.items > 0;
+        janitor.bytes = jr.bytes;
+        janitor.items = jr.items;
+        dirty = true;
+      }).catch(function () {});
+    }, 30000);
 
     // The page keeps a mounted view around; stop the loop if it ever goes away.
     container.addEventListener("clanker:unmount", function () {
       window.cancelAnimationFrame(raf);
       window.clearInterval(timer);
+      window.clearInterval(janitorTimer);
     });
 
     load();

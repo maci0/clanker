@@ -28,6 +28,7 @@ const repl_vaxis = @import("tui2/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const doctor_mod = @import("doctor.zig");
+const janitor_mod = @import("janitor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -75,6 +76,7 @@ pub const Command = enum {
     autolearn,
     doctor,
     setup,
+    prune,
 };
 
 pub const Options = struct {
@@ -105,6 +107,9 @@ pub const Options = struct {
     eval_tasks_only: bool = false,
     iters: u32 = 3,
     dry_run: bool = false,
+    /// `prune --yes`: actually delete. Absent, it only reports, because a
+    /// recursive delete is not undoable.
+    apply: bool = false,
     verbose: bool = false,
     port: u16 = 17921,
     /// Set when `--help` followed a command: print that command's help rather
@@ -213,6 +218,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
                 used = .dry_run;
+            } else if (std.mem.eql(u8, a, "--yes")) {
+                opts.apply = true;
+                used = .yes;
             } else if (std.mem.eql(u8, a, "--tasks")) {
                 opts.eval_tasks_only = true;
                 used = .tasks;
@@ -266,6 +274,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .init;
             } else if (std.mem.eql(u8, a, "doctor")) {
                 opts.command = .doctor;
+            } else if (std.mem.eql(u8, a, "janitor") or std.mem.eql(u8, a, "prune")) {
+                opts.command = .prune;
             } else if (std.mem.eql(u8, a, "setup")) {
                 opts.command = .setup;
             } else if (std.mem.eql(u8, a, "provide") or std.mem.eql(u8, a, "providers")) {
@@ -471,6 +481,7 @@ const Flag = enum {
     dry_run,
     tasks,
     port,
+    yes,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -482,6 +493,7 @@ const Flag = enum {
             .dry_run => "--dry-run",
             .tasks => "--tasks",
             .port => "--port",
+            .yes => "--yes",
         };
     }
 };
@@ -537,6 +549,7 @@ const specs = [_]Spec{
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
 
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can actually reach,\nand finishes with the same checks `clanker doctor` runs." },
+    .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, and improve logs\nbeyond the newest 20. Sessions, goals, learnings and chat history are never touched." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can guard a\nscript or a CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.json and state/", .group = .maintain },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
@@ -575,6 +588,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
         .init => try cmdInit(init, true),
         .doctor => try doctor_mod.cmdDoctor(init),
+        .prune => try janitor_mod.cmdPrune(init, opts.apply),
         .setup => {
             // Scaffolding first: setup is the one command a new checkout runs,
             // and sending them to `init` and back is a step that exists only
@@ -952,7 +966,7 @@ fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id:
     };
     const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
     return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\n", .{
-        provider_id, model_id, @as(i64, @intFromFloat(ctx)),   @as(i64, @intFromFloat(out_limit)),
+        provider_id, model_id, @as(i64, @trunc(ctx)),   @as(i64, @trunc(out_limit)),
         cost_in,     cost_out, if (reasoning) "yes" else "no",
     });
 }
@@ -1053,8 +1067,8 @@ fn renderModelSnippet(arena: std.mem.Allocator, name: []const u8, m: std.json.Va
     if (m != .object) return std.fmt.allocPrint(arena, "// {s}: malformed catalog entry\n", .{name});
     var fields: std.ArrayList([]const u8) = .empty;
     if (m.object.get("limit")) |l| if (l == .object) {
-        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"context_window\": {d}", .{@as(i64, @intFromFloat(c))}));
-        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"max_tokens\": {d}", .{@as(i64, @intFromFloat(o))}));
+        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"context_window\": {d}", .{@as(i64, @trunc(c))}));
+        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"max_tokens\": {d}", .{@as(i64, @trunc(o))}));
     };
     if (m.object.get("cost")) |c| if (c == .object) {
         if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_input\": {d}", .{v}));
@@ -1320,7 +1334,9 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     var out_buf: [4096]u8 = undefined;
     var out_w = stdout_file.writerStreaming(io, &out_buf);
     run_out = &out_w;
-    run_stdout_color = stdout_file.isTty(io) catch false;
+    // NO_COLOR (https://no-color.org) is the standard opt-out; honour it
+    // ahead of the isTty check rather than requiring a clanker-specific flag.
+    run_stdout_color = init.environ_map.get("NO_COLOR") == null and (stdout_file.isTty(io) catch false);
     a.on_token = &runDelta;
 
     // The spinner and the live tool-status line belong to the REPL. `run` is
@@ -2248,6 +2264,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
+        const is_janitor = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/janitor");
         const is_board = std.mem.eql(u8, path, "/api/board") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugins = std.mem.eql(u8, path, "/api/webui/plugins") and
@@ -2319,6 +2336,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
             handleProviders(cfg, stream);
+        } else if (is_janitor) {
+            handleJanitor(io, gpa, cfg, stream);
         } else if (is_board) {
             handleBoard(io, gpa, cfg, environ_map, method, target, body, stream);
         } else if (is_webui_plugins) {
@@ -3678,6 +3697,35 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, bytes.len }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, bytes);
+}
+
+/// `GET /api/janitor` — how much litter is lying around, so the office view can
+/// show the janitor working when there is work and sitting down when there is
+/// not. Read-only: it never deletes. `clanker janitor --yes` is the only thing
+/// that removes anything.
+fn handleJanitor(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const candidates = janitor_mod.scan(io, arena, cfg.agent.state_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not scan\"}");
+        return;
+    };
+    var total: u64 = 0;
+    for (candidates) |c| total += c.bytes;
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("items") catch return;
+    s.write(candidates.len) catch return;
+    s.objectField("bytes") catch return;
+    s.write(total) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// The shared Kanban board.

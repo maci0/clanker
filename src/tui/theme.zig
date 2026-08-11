@@ -22,6 +22,14 @@ pub const Rgb = struct {
     builtin: Rgb24,
     preproc: Rgb24,
     comment: Rgb24,
+    /// UI roles beyond fenced-code syntax, for the vaxis REPL's chrome (box
+    /// border, status line, tool-call lines, error text) — everything the
+    /// ANSI-escape fields already colour but a cell-based renderer can't
+    /// read out of an escape string.
+    dim: Rgb24,
+    tool: Rgb24,
+    err: Rgb24,
+    rule: Rgb24,
 };
 
 /// Catppuccin Mocha, verified against catppuccin/palette's palette.json
@@ -253,6 +261,10 @@ fn catppuccinTheme(comptime p: type) Theme {
             .builtin = p.yellow,
             .preproc = p.pink,
             .comment = p.overlay2,
+            .dim = p.subtext0,
+            .tool = p.blue,
+            .err = p.red,
+            .rule = p.overlay0,
         },
     };
 }
@@ -293,6 +305,10 @@ fn tokyoNightTheme(comptime p: type) Theme {
             .builtin = p.blue,
             .preproc = p.magenta,
             .comment = p.comment,
+            .dim = p.comment,
+            .tool = p.blue,
+            .err = p.red,
+            .rule = p.dark3,
         },
     };
 }

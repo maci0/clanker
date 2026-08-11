@@ -12,7 +12,12 @@
     "skills",
     "evals",
     "state",
-    ".agents"
+    ".agents",
+    ".github",
+    "Dockerfile",
+    ".dockerignore",
+    "docker-compose.yml",
+    "README.md"
   ],
   "input_schema": {
     "type": "object",
