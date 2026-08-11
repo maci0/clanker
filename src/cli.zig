@@ -1621,7 +1621,7 @@ fn binaryUpdated(io: std.Io, exe_path: []const u8, start_mtime: i128) bool {
     const f = std.Io.Dir.cwd().openFile(io, exe_path, .{}) catch return false;
     defer f.close(io);
     var magic: [4]u8 = undefined;
-    const n = std.posix.read(f.handle, &magic) catch return false;
+    const n = f.readPositionalAll(io, &magic, 0) catch return false;
     return n >= 4 and magic[0] == 0x7f and magic[1] == 'E' and magic[2] == 'L' and magic[3] == 'F';
 }
 
