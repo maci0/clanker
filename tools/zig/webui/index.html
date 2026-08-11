@@ -148,10 +148,22 @@
   /* ---- tabs: one view at a time ----
      Everything used to be stacked in one column, so reaching Tools meant
      scrolling past the whole transcript, the run graph and every room. */
-  .tabs {
-    display: flex; flex-wrap: wrap; gap: var(--space-1);
-    border-bottom: 1px solid var(--rule); margin-bottom: var(--space-6);
+  .rail-nav { display: flex; flex-direction: column; gap: 1px; }
+  .rail-tab {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    width: 100%; text-align: left; cursor: pointer;
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--fg-muted);
+    font-family: var(--mono); font-size: var(--step-0);
+    letter-spacing: 0.06em; text-transform: uppercase;
   }
+  .rail-tab:hover { background: var(--surface-2); color: var(--fg); }
+  .rail-tab[aria-selected="true"] {
+    background: var(--surface-2); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .rail-context { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
+  .rail-context[hidden] { display: none; }
   .tab {
     min-height: 44px; padding: 0.4rem 0.9rem;
     font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
@@ -974,11 +986,10 @@
   <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
   <span class="spacer"></span>
   <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
-  <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Conversations</button>
+  <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
   <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
   <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
   <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
-  <button type="button" class="chip-btn" id="new-chat">New chat</button>
 </header>
 
 <div class="shell">
@@ -990,25 +1001,36 @@
      them, so a sighted user gets the same message a screen reader is read. -->
 <div class="toasts" id="toasts"></div>
 <div class="rail-scrim" id="rail-scrim" data-open="false"></div>
-<aside class="rail" id="rail" aria-label="Conversations">
-  <div class="rail-head">
-    <button type="button" class="rail-new" id="rail-new">New chat</button>
-    <label class="sr-only" for="session-filter">Filter conversations</label>
-    <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+<aside class="rail" id="rail" aria-label="Navigation">
+  <!-- Grouped by what you came to do: work on something, watch what happened,
+       or set the place up. Seven flat tabs said these were all one kind of
+       thing. -->
+  <nav class="rail-nav" role="tablist" aria-orientation="vertical" aria-label="Sections">
+    <p class="rail-group" role="presentation">Work</p>
+    <button type="button" class="rail-tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" tabindex="-1" data-view="board">Board</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
+    <p class="rail-group" role="presentation">Watch</p>
+    <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
+    <p class="rail-group" role="presentation">Set up</p>
+    <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
+  </nav>
+
+  <!-- Conversations belong to Chat, so they are shown under it rather than
+       taking a third of the screen while you read a run graph. -->
+  <div class="rail-context" id="rail-context" hidden>
+    <div class="rail-head">
+      <button type="button" class="rail-new" id="new-chat">New chat</button>
+      <label class="sr-only" for="session-filter">Filter conversations</label>
+      <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+    </div>
+    <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
   </div>
-  <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
 </aside>
 
 <main id="main" tabindex="-1">
-<nav class="tabs" role="tablist" aria-label="Sections">
-  <button type="button" class="tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
-  <button type="button" class="tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
-  <button type="button" class="tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
-  <button type="button" class="tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
-  <button type="button" class="tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" tabindex="-1" data-view="board">Board</button>
-  <button type="button" class="tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
-  <button type="button" class="tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
-</nav>
   <div class="view" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
     <!-- No aria-live here: each turn's answer is its own live region (see
          createTurn). Nesting one inside the other made a screen reader announce
@@ -1292,7 +1314,7 @@ document.addEventListener("DOMContentLoaded", function () {
     runStatus: document.getElementById("run-status"),
     rail: document.getElementById("rail"),
     railList: document.getElementById("rail-list"),
-    railNew: document.getElementById("rail-new"),
+    railContext: document.getElementById("rail-context"),
     railToggle: document.getElementById("rail-toggle"),
     sessionTitle: document.getElementById("session-title"),
     railScrim: document.getElementById("rail-scrim"),
@@ -1707,10 +1729,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (items.length) items[0].focus();
   });
 
-  el.railNew.addEventListener("click", function () {
-    el.newChat.click();
-    closeRailOnNarrow();
-  });
+  el.newChat.addEventListener("click", closeRailOnNarrow);
 
   /* The transcript is either turns or a line saying there are none; it used to
      be turns or nothing at all, which looked identical to a failed load. */
@@ -1976,6 +1995,12 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function appendText(turn, text, failed) {
+    /* The rendered answer is not the answer: finalizeAnswer replaces the
+       source with elements, so the fences, hashes, hyphens and pipes are gone
+       from textContent by the time anything reads it back. Copy answer handed
+       over code with no fences and Export .md produced a file that was not
+       markdown. The source is kept here instead of recovered later. */
+    if (!failed) turn.root.markdownSource = (turn.root.markdownSource || "") + text;
     var caret = turn.answer.querySelector(".caret");
     // Content streams in a line at a time. Extending the trailing text node
     // keeps a long answer at one node instead of one per line, which across a
@@ -2181,7 +2206,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function finalizeAnswer(turn) {
     if (turn.answer.querySelector(".failed")) return;
-    var raw = turn.answer.textContent;
+    var raw = turn.root.markdownSource || turn.answer.textContent;
     if (!raw) return;
     var frag = document.createDocumentFragment();
     var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
@@ -2312,7 +2337,7 @@ document.addEventListener("DOMContentLoaded", function () {
     copyBtn.className = "secondary";
     copyBtn.textContent = "Copy answer";
     copyBtn.addEventListener("click", function () {
-      copyText(turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
+      copyText(turn.root.markdownSource || turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
     });
     turn.foot.appendChild(copyBtn);
 
@@ -4172,7 +4197,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // ---- views: one section visible at a time -----------------------------
 
-  var VIEWS = ["chat", "runs", "rooms", "goals", "board", "tools", "system"];
+  var VIEWS = ["chat", "board", "goals", "runs", "rooms", "tools", "system"];
   /* Each view's data is fetched the first time it is opened rather than all of
      it at load. The page used to fire seven requests before showing anything,
      several of which execute a WASM tool. */
@@ -4200,6 +4225,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (window.location.hash !== "#" + name) {
       try { window.history.replaceState(null, "", "#" + name); } catch (e) {}
     }
+    el.railContext.hidden = name !== "chat";
     if (focusPanel) document.getElementById("view-" + name).focus();
     if (!viewLoaded[name] && viewLoaders[name]) {
       viewLoaded[name] = true;
@@ -4211,7 +4237,11 @@ document.addEventListener("DOMContentLoaded", function () {
     var tab = document.getElementById("tab-" + v);
     tab.addEventListener("click", function () { showView(v, false); });
     tab.addEventListener("keydown", function (e) {
-      var step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      // The tablist is a column now, so it answers to Up and Down. Left and
+      // Right keep working: a tablist that ignored them would be a regression
+      // for anyone who learned them here.
+      var step = (e.key === "ArrowDown" || e.key === "ArrowRight") ? 1 :
+        (e.key === "ArrowUp" || e.key === "ArrowLeft") ? -1 : 0;
       if (step) {
         e.preventDefault();
         var next = VIEWS[(i + step + VIEWS.length) % VIEWS.length];
@@ -4247,6 +4277,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function setTabCount(view, n) {
     var tab = document.getElementById("tab-" + view);
+    if (!tab) return;
     var el0 = tab.querySelector(".tab-count");
     if (!el0) {
       el0 = document.createElement("span");
@@ -4718,7 +4749,11 @@ document.addEventListener("DOMContentLoaded", function () {
       var task = turn.querySelector(".turn-you");
       var answer = turn.querySelector(".turn-answer");
       if (task) lines.push("## " + task.textContent.trim(), "");
-      if (answer) lines.push(answer.textContent.replace(/\s+$/, ""), "");
+      // turn.raw is the markdown as it arrived; textContent is what is left of
+      // it after rendering, which is the fallback for a turn that never had a
+      // buffer (a session replayed before this existed).
+      var body = turn.markdownSource || (answer ? answer.textContent : "");
+      if (body) lines.push(body.replace(/\s+$/, ""), "");
     });
     return lines.join("\n");
   }
