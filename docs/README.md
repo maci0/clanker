@@ -483,7 +483,7 @@ Fields:
   - `git_commit`: commit promoted improvements with git (default true).
   - `seed`: sampling seed.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
-  - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions. Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
+  - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs. `"always"` is reserved for also asking interactive REPL sessions, but `src/tui/repl_vaxis.zig` has no prompt-rendering path to answer it yet, so today `"always"` behaves exactly like `"browser"` — the REPL runs write-capable tools ungated whatever this is set to (tracked in `docs/ROADMAP.md`, "vaxis REPL: close the gap left by the deleted REPL"). Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
   - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.

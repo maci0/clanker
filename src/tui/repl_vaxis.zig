@@ -1056,6 +1056,13 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
     log.setLevel(.error_);
 
     var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    // `always` has no prompt-rendering path in this REPL yet (see the module
+    // doc comment and docs/ROADMAP.md): write-capable tools run ungated here
+    // regardless of this setting. Said once, before the alt-screen takes
+    // over stderr, so the operator is not left believing they are protected.
+    if (cfg.agent.confirm_writes == .always) {
+        std.debug.print("warning: agent.confirm_writes=\"always\" does not gate this REPL yet — write-capable tool calls run without confirmation here. Only `clanker serve` honors it today.\n", .{});
+    }
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);

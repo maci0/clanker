@@ -141,11 +141,16 @@ pub const Agent = struct {
     /// Gate write-capable tool calls (a descriptor with exec or filesystem
     /// access, or `"confirm": true`) on a human's allow/deny. `never` is
     /// today's behaviour; `browser` gates streaming web runs, where the
-    /// question travels the run's own stream like ask_user; `always` also
-    /// gates interactive REPL sessions at the terminal. Runs with no human
-    /// channel — headless one-shots, the improve loop, nested sub-agents —
-    /// are never gated, whatever this says: a confirm nobody can answer
-    /// would deny every write instead of protecting anything.
+    /// question travels the run's own stream like ask_user. `always` is
+    /// reserved for also gating interactive REPL sessions at the terminal,
+    /// but src/tui/repl_vaxis.zig has no prompt-rendering path to answer it
+    /// yet (see docs/ROADMAP.md, "vaxis REPL: close the gap left by the
+    /// deleted REPL"): only cli.zig's serve path reads this field, gated on
+    /// `!= .never`, so `always` behaves identically to `browser` until the
+    /// REPL wires a confirm_fn of its own. Runs with no human channel —
+    /// headless one-shots, the improve loop, nested sub-agents — are never
+    /// gated, whatever this says: a confirm nobody can answer would deny
+    /// every write instead of protecting anything.
     confirm_writes: ConfirmWrites = .never,
 };
 
