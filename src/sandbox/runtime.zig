@@ -59,6 +59,10 @@ pub const ToolModule = struct {
     inst_initialized: bool = false,
     sb: *host.Sandbox,
     h: *host.Host,
+    /// Tool name for diagnostics: the caller (the registry) knows it, the
+    /// module bytes do not carry it, and a bare trap log cannot say which
+    /// tool died. Set by the caller after load(); empty means unknown.
+    name: []const u8 = "",
 
     pub fn load(gpa: std.mem.Allocator, io: std.Io, sb: *host.Sandbox, wasm_bytes: []const u8) !*ToolModule {
         const self = try gpa.create(ToolModule);
@@ -139,7 +143,7 @@ pub const ToolModule = struct {
         // ---- execute ----
         var run_fn = self.inst.typedFunc(fn (u32, u32) u64, "run");
         const p = run_fn.call(.{ scratch_ptr, @intCast(input.len) }) catch |err| {
-            log.log(.error_, "[sandbox] tool trap: {s}", .{@errorName(err)});
+            log.log(.error_, "[sandbox] tool trap: {s} (tool={s})", .{ @errorName(err), self.name });
             return error.ToolTrap;
         };
         const r = protocol.unpackPtrLen(p);
@@ -195,25 +199,27 @@ test "zwasm executes on a worker thread" {
     const W = struct {
         wasm: []const u8,
         io: std.Io,
+        name: []const u8,
         result: ?i32 = null,
         fn run(self: *@This()) void {
             var env = std.process.Environ.Map.init(std.testing.allocator);
             defer env.deinit();
             var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = self.io, .root_dir = ".", .network_allow = &.{}, .environ_map = &env };
             const mod = ToolModule.load(std.testing.allocator, self.io, &sb, self.wasm) catch |e| {
-                std.debug.print("worker load err {s}\n", .{@errorName(e)});
+                std.debug.print("worker load err {s} (tool={s})\n", .{ @errorName(e), self.name });
                 return;
             };
             defer mod.deinit();
+            mod.name = self.name;
             var fn_ = mod.inst.typedFunc(fn (i32, i32) i32, "add");
             const r = fn_.call(.{ 17, 25 }) catch |e| {
-                std.debug.print("worker call err {s}\n", .{@errorName(e)});
+                std.debug.print("worker call err {s} (tool={s})\n", .{ @errorName(e), self.name });
                 return;
             };
             self.result = r;
         }
     };
-    var w = W{ .wasm = wasm, .io = io };
+    var w = W{ .wasm = wasm, .io = io, .name = "tiny" };
     const th = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, W.run, .{&w});
     th.join();
     try std.testing.expectEqual(@as(?i32, 42), w.result);
