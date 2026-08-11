@@ -2708,7 +2708,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/subscribe");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_goals = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/goals");
+        const is_goals = std.mem.eql(u8, target, "/api/goals") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
         const is_todos = std.mem.eql(u8, target, "/api/todos") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
@@ -2762,7 +2763,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_goals) {
-            handleGoals(io, gpa, cfg, stream);
+            handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
             handleProviders(cfg, stream);
         } else if (is_todos) {
@@ -3636,6 +3637,100 @@ fn handleTodos(
 }
 
 const todos_path = "state/todos.json";
+const goals_path = "state/goals.json";
+
+/// Adding a goal and changing one's status, the two things the `goal` tool and
+/// `clanker run --goal` already assume someone can do. One POST shape covers
+/// both: an objective creates, an id updates.
+fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+    const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch "[]";
+    var list: std.ArrayList(StoredGoal) = .empty;
+    if (std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
+        list.appendSlice(arena, existing) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    }
+
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    if (req.objective) |objective| {
+        const obj = std.mem.trim(u8, objective, " \t\r\n");
+        const crit = std.mem.trim(u8, req.completion_criterion orelse "", " \t\r\n");
+        if (obj.len == 0 or obj.len > 2000) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"objective must be 1-2000 characters\"}");
+            return;
+        }
+        if (crit.len == 0) {
+            // A goal with no way to tell it is met is a wish; the tool that
+            // writes this file requires one too.
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"a completion criterion is required\"}");
+            return;
+        }
+        const id = std.fmt.allocPrint(arena, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+        list.append(arena, .{
+            .id = id,
+            .objective = obj,
+            .completion_criterion = crit,
+            .created = now,
+            .updated = now,
+        }) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            return;
+        };
+    } else if (req.id) |id| {
+        var kept: std.ArrayList(StoredGoal) = .empty;
+        var hit = false;
+        for (list.items) |g| {
+            if (!std.mem.eql(u8, g.id, id)) {
+                kept.append(arena, g) catch continue;
+                continue;
+            }
+            hit = true;
+            if (req.remove orelse false) continue;
+            var updated = g;
+            if (req.status) |s| {
+                if (!validGoalStatus(s)) {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, done or abandoned\"}");
+                    return;
+                }
+                updated.status = s;
+            }
+            updated.updated = now;
+            kept.append(arena, updated) catch continue;
+        }
+        if (!hit) {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such goal\"}");
+            return;
+        }
+        list = kept;
+    } else {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"need an objective or an id\"}");
+        return;
+    }
+
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(list.items, .{}, &enc.writer) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    atomic_write.writeFile(io, std.Io.Dir.cwd(), goals_path, enc.written()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
+    std.json.Stringify.value(list.items, .{}, &out.writer) catch return;
+    out.writer.writeAll("}") catch return;
+    respond(stream, 200, "OK", out.written());
+}
 
 /// `GET /api/logs` lists the log files; `GET /api/logs/<name>` returns the tail
 /// of one. Names are matched against the listing rather than sanitised, so a
@@ -4106,7 +4201,42 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
 /// `GET /api/goals` — the structured goals that steer runs, straight from
 /// `state/goals.json`. Read natively rather than through the goal tool, which
 /// only writes: it appends a new goal and has no read mode.
-fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+const GoalPost = struct {
+    objective: ?[]const u8 = null,
+    completion_criterion: ?[]const u8 = null,
+    id: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    remove: ?bool = null,
+};
+
+const StoredGoal = struct {
+    id: []const u8,
+    objective: []const u8,
+    completion_criterion: []const u8 = "",
+    proof: []const u8 = "",
+    boundaries: []const u8 = "",
+    stop_rule: []const u8 = "",
+    status: []const u8 = "active",
+    created: i64 = 0,
+    updated: i64 = 0,
+};
+
+/// A goal's status is one of three words. Anything else is refused rather
+/// than written, so the file cannot grow states nothing knows how to read.
+fn validGoalStatus(s: []const u8) bool {
+    return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or std.mem.eql(u8, s, "abandoned");
+}
+
+test validGoalStatus {
+    try std.testing.expect(validGoalStatus("active"));
+    try std.testing.expect(validGoalStatus("done"));
+    try std.testing.expect(validGoalStatus("abandoned"));
+    try std.testing.expect(!validGoalStatus("Active"));
+    try std.testing.expect(!validGoalStatus(""));
+    try std.testing.expect(!validGoalStatus("deleted; drop table"));
+}
+
+fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!cfg.modules.goal) {
         respond(stream, 404, "Not Found", "{\"error\":\"goal module disabled\"}");
         return;
@@ -4114,6 +4244,11 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, st
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+
+    if (std.mem.eql(u8, method, "POST")) {
+        handleGoalWrite(io, arena, body, stream);
+        return;
+    }
 
     const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch {
         // No file yet is the ordinary state on a fresh checkout, not an error.

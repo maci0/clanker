@@ -755,6 +755,14 @@
   @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
+  .goal-form {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    margin-top: var(--space-4);
+  }
+  .goal-form label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .goal-form input { flex: 1 1 16rem; min-width: 0; }
+  .goal-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+
   .prompt-list {
     margin-top: var(--space-2); max-height: 14rem;
     border: 1px solid var(--border); border-radius: var(--radius);
@@ -1082,6 +1090,17 @@
         <h2>Goals</h2>
         <button type="button" class="secondary" id="goals-refresh">Refresh</button>
       </div>
+      <!-- Both fields are required by the goal tool that writes this file, so
+           both are required here: a goal with no way to tell it is met is a
+           wish, and the runs that carry it would never end. -->
+      <form id="goal-form" class="goal-form">
+        <label for="goal-objective">New goal</label>
+        <input type="text" id="goal-objective" placeholder="What should clanker achieve?" maxlength="2000" autocomplete="off" required>
+        <label for="goal-criterion">Done when</label>
+        <input type="text" id="goal-criterion" placeholder="How you will know it is met" maxlength="2000" autocomplete="off" required>
+        <button type="submit" class="secondary" id="goal-add">Add goal</button>
+      </form>
+      <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>
       <div id="goals"></div>
     </section>
   </div>
@@ -1231,6 +1250,10 @@ document.addEventListener("DOMContentLoaded", function () {
     chatStatus: document.getElementById("chat-status"),
     goals: document.getElementById("goals"),
     goalsRefresh: document.getElementById("goals-refresh"),
+    goalForm: document.getElementById("goal-form"),
+    goalObjective: document.getElementById("goal-objective"),
+    goalCriterion: document.getElementById("goal-criterion"),
+    goalsStatus: document.getElementById("goals-status"),
     usage: document.getElementById("usage"),
     usageRefresh: document.getElementById("usage-refresh"),
     tools: document.getElementById("tools"),
@@ -3632,7 +3655,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!goals.length) {
       var none = document.createElement("p");
       none.className = "usage-empty";
-      none.textContent = "No goals set. `clanker goal \"<intent>\"` records one.";
+      none.textContent = "No goals set. Add one above, or run `clanker goal \"<intent>\"`.";
       el.goals.appendChild(none);
       return;
     }
@@ -3659,6 +3682,31 @@ document.addEventListener("DOMContentLoaded", function () {
         meta.appendChild(id);
       }
       card.appendChild(meta);
+
+      if (g.id) {
+        var actions = document.createElement("div");
+        actions.className = "goal-actions";
+        [["Mark done", "done"], ["Abandon", "abandoned"], ["Reactivate", "active"]].forEach(function (pair) {
+          if ((g.status || "active") === pair[1]) return;
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "secondary";
+          b.textContent = pair[0];
+          b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[0] + ": done."); });
+          actions.appendChild(b);
+        });
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "secondary danger";
+        del.textContent = "Delete";
+        del.setAttribute("aria-label", "Delete goal: " + (g.objective || g.id));
+        del.addEventListener("click", function () {
+          if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
+          postGoal({ id: g.id, remove: true }, "Goal deleted.");
+        });
+        actions.appendChild(del);
+        card.appendChild(actions);
+      }
 
       // Only the fields that were actually filled in: an empty criterion is a
       // real state of a goal, and printing an empty label would imply
@@ -4389,11 +4437,40 @@ document.addEventListener("DOMContentLoaded", function () {
         showToast(text);
       });
     });
-    ["session-status", "run-status", "chat-status", "todos-status", "tools-status", "logs-status"].forEach(function (id) {
+    ["session-status", "run-status", "chat-status", "todos-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
       var node = document.getElementById(id);
       if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
     });
   }
+
+  /* ---------- goals ---------- */
+
+  /* The view could only read. Every goal in the file was put there by the
+     `goal` tool or the CLI, so setting one from the page meant leaving it. */
+  function postGoal(payload, status) {
+    return fetch("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+      .then(function (d) {
+        renderGoals(d.goals || []);
+        el.goalsStatus.textContent = status;
+      })
+      .catch(function (err) { el.goalsStatus.textContent = "Goal failed: " + err.message; });
+  }
+
+  el.goalForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var objective = el.goalObjective.value.trim();
+    var criterion = el.goalCriterion.value.trim();
+    if (!objective || !criterion) return;
+    postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function () {
+      el.goalObjective.value = "";
+      el.goalCriterion.value = "";
+    });
+  });
 
   /* ---------- saved prompts ---------- */
 
