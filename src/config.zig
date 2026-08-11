@@ -1256,6 +1256,43 @@ test "partial local agent keeps base tools_dir" {
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
 }
 
+test "agent.git_remote_ops and exec_pattern_allow parse from config" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"git_remote_ops":true,"exec_pattern_allow":["gh pr create*","gh pr merge*"]}}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    try std.testing.expect(cfg.agent.git_remote_ops);
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.exec_pattern_allow.len);
+    try std.testing.expectEqualStrings("gh pr create*", cfg.agent.exec_pattern_allow[0]);
+    try std.testing.expectEqualStrings("gh pr merge*", cfg.agent.exec_pattern_allow[1]);
+
+    // Defaults stay false / empty when the keys are absent.
+    var arena2 = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena2.deinit();
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try tmp2.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}}}
+        ,
+    });
+    const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.json", "config.local.json");
+    try std.testing.expect(!cfg2.agent.git_remote_ops);
+    try std.testing.expectEqual(@as(usize, 0), cfg2.agent.exec_pattern_allow.len);
+}
+
 test "a vertex_anthropic provider missing project/location is rejected at load" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
