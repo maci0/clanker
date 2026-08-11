@@ -1290,6 +1290,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const tool_defs = try reg.toToolDefs(arena);
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
+    defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
@@ -2811,6 +2812,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         respond(stream, 500, "Internal Server Error", "{\"error\":\"agent init failed\"}");
         return;
     };
+    defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
@@ -4568,6 +4570,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
     };
+    defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     // Plan mode makes the run a proposal: the agent loop refuses
     // write-capable tools and the system prompt says why, so the answer is

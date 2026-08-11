@@ -78,6 +78,7 @@ pub fn runNested(
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
     var a = try Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs);
+    defer a.deinit();
     a.max_iterations = sub_max_iterations;
     // Sub-agents may not spawn further sub-agents.
     a.subagent_runner = null;
