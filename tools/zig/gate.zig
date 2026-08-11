@@ -35,6 +35,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
+    // astcheck needs a file to parse; default to the agent loop only because
+    // something must be named, and the caller almost always names its own.
+    var target_file: []const u8 = "src/main.zig";
+    if (parsed == .object) {
+        if (parsed.object.get("file")) |f| {
+            if (f == .string and f.string.len > 0) target_file = f.string;
+        }
+    }
+
     var report: std.ArrayList(u8) = .empty;
     defer report.deinit(alloc);
 
@@ -42,13 +51,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // Only the build steps this project actually has: an arbitrary step
         // name would just be a slow way to fail.
         if (!std.mem.eql(u8, gate, "build") and !std.mem.eql(u8, gate, "test") and
-            !std.mem.eql(u8, gate, "tools") and !std.mem.eql(u8, gate, "fmt"))
+            !std.mem.eql(u8, gate, "tools") and !std.mem.eql(u8, gate, "fmt") and
+            !std.mem.eql(u8, gate, "astcheck"))
         {
-            return errJson(out, "unknown gate; use build, tools, test or fmt");
+            return errJson(out, "unknown gate; use build, tools, test, fmt or astcheck");
         }
 
+        // astcheck parses a single file against the real Zig grammar in
+        // milliseconds: after editing one file, that answers "is this still
+        // valid Zig" deterministically without waiting for a whole build.
         const args: []const []const u8 = if (std.mem.eql(u8, gate, "fmt"))
             &[_][]const u8{ "fmt", "--check", "src" }
+        else if (std.mem.eql(u8, gate, "astcheck"))
+            &[_][]const u8{ "ast-check", target_file }
         else
             &[_][]const u8{ "build", gate };
 

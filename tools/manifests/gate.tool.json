@@ -1,14 +1,20 @@
 {
   "name": "gate",
-  "description": "Run the project's deterministic gates and get back pass/fail with the failing output. WHEN TO USE: after you change source, to check your own work the way the improvement engine does — before you report a change as done. WHEN NOT TO USE: not for reading code (use read_file or search_code) and not for running arbitrary commands (use git for git). Input: {} runs build, tools and test in that order; {\"gates\": [\"fmt\"]} runs only what you name (build | tools | test | fmt). Returns {\"ok\": false, \"error\": \"<gate> failed\", \"text\": \"<tail of the output>\"} on the first failure.",
+  "description": "Run the project's deterministic gates and get back pass/fail with the failing output. WHEN TO USE: after you change source, to check your own work the way the improvement engine does \u2014 before you report a change as done. WHEN NOT TO USE: not for reading code (use read_file or search_code) and not for running arbitrary commands (use git for git). Input: {} runs build, tools and test in that order; {\"gates\": [\"fmt\"]} runs only what you name (build | tools | test | fmt | astcheck). Returns {\"ok\": false, \"error\": \"<gate> failed\", \"text\": \"<tail of the output>\"} on the first failure. astcheck parses one file against the real Zig grammar in milliseconds \u2014 use it right after editing a file, with {\"gates\": [\"astcheck\"], \"file\": \"src/x.zig\"}, before paying for a build.",
   "wasm": "zig-out/tools/gate.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "gates": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Which gates to run, in order. Defaults to build, tools, test."
+      },
+      "file": {
+        "type": "string",
+        "description": "File for the astcheck gate to parse."
       }
     },
     "required": []
@@ -16,7 +22,11 @@
   "category": "verify",
   "check": true,
   "sequential": true,
-  "exec_allow": ["zig"],
-  "fs_prefixes": ["."],
+  "exec_allow": [
+    "zig"
+  ],
+  "fs_prefixes": [
+    "."
+  ],
   "network_allow": []
 }
