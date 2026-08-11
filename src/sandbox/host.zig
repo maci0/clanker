@@ -1890,12 +1890,17 @@ fn execPolicyFor(
     join_buf: []u8,
 ) ExecPolicy {
     if (sb.exec_pattern_allow.len == 0) return .{ .governed = false, .allowed = false };
-    var w: std.Io.Writer = .fixed(join_buf);
+    var j: usize = 0;
     for (argv, 0..) |a, i| {
-        if (i > 0) w.writeByte(' ') catch {};
-        w.writeAll(a) catch {};
+        if (i > 0 and j < join_buf.len) {
+            join_buf[j] = ' ';
+            j += 1;
+        }
+        const n = @min(a.len, join_buf.len -| j);
+        @memcpy(join_buf[j..][0..n], a[0..n]);
+        j += n;
     }
-    const joined = join_buf[0..w.end];
+    const joined = join_buf[0..j];
     const cmd = if (argv.len > 0) argv[0] else "";
     var governed = false;
     var allowed = false;
