@@ -1,7 +1,8 @@
 //! Execution graph: records how an agent run unfolded — each LLM call and
-//! tool invocation with timing, token usage, and outcome — and persists it as
-//! JSON under `state/runs/<run-id>.json` for replay, analysis, and self-review
-//! (`clanker graph [run-id]` renders it as an ASCII tree).
+//! tool invocation with timing, token usage, and outcome. `Agent.run` hands
+//! the assembled graph to the `cmd_graph` WASM tool once, at the end of the
+//! run, which persists it under `state/runs/<run-id>.json` and also renders
+//! it back (`clanker graph [run-id]` as an ASCII tree).
 
 const std = @import("std");
 
@@ -110,76 +111,6 @@ pub const Graph = struct {
         return t;
     }
 };
-
-/// Serializes the graph to JSON and writes `state/runs/<run_id>.json`.
-pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *const Graph) !void {
-    _ = gpa;
-    std.Io.Dir.cwd().createDirPath(io, "state/runs") catch {};
-
-    var buf: [1 << 20]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("run_id");
-    try s.write(g.run_id);
-    try s.objectField("task");
-    try s.write(g.task);
-    try s.objectField("provider");
-    try s.write(g.provider);
-    try s.objectField("started_at");
-    try s.print("{d}", .{g.started_at});
-    try s.objectField("duration_ms");
-    try s.print("{d}", .{g.duration_ms});
-    try s.objectField("total_prompt_tokens");
-    try s.print("{d}", .{g.totalPromptTokens()});
-    try s.objectField("total_completion_tokens");
-    try s.print("{d}", .{g.totalCompletionTokens()});
-    try s.objectField("nodes");
-    try s.beginArray();
-    for (g.nodes.items) |n| {
-        try s.beginObject();
-        try s.objectField("kind");
-        try s.write(switch (n.kind) {
-            .llm => "llm",
-            .tool => "tool",
-            .final => "final",
-            .decision => "decision",
-            .check => "check",
-        });
-        try s.objectField("iteration");
-        try s.print("{d}", .{n.iteration});
-        try s.objectField("label");
-        try s.write(n.label);
-        try s.objectField("detail");
-        try s.write(n.detail);
-        try s.objectField("prompt_tokens");
-        try s.print("{d}", .{n.prompt_tokens});
-        try s.objectField("completion_tokens");
-        try s.print("{d}", .{n.completion_tokens});
-        try s.objectField("result_bytes");
-        try s.print("{d}", .{n.result_bytes});
-        try s.objectField("duration_ms");
-        try s.print("{d}", .{n.duration_ms});
-        try s.objectField("ok");
-        try s.write(n.ok);
-        try s.objectField("output");
-        try s.write(n.output);
-        if (n.repeats > 1) {
-            try s.objectField("repeats");
-            try s.print("{d}", .{n.repeats});
-        }
-        if (n.loop_to > 0) {
-            try s.objectField("loop_to");
-            try s.print("{d}", .{n.loop_to});
-        }
-        try s.endObject();
-    }
-    try s.endArray();
-    try s.endObject();
-
-    const path = try std.fmt.allocPrint(arena, "state/runs/{s}.json", .{g.run_id});
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = buf[0..w.end] });
-}
 
 test "truncatedPreview caps output at output_preview_cap bytes" {
     const short = "hello";
