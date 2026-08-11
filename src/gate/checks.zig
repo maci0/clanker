@@ -213,6 +213,44 @@ test "autoFormatAndCheck short-circuits when there is nothing to format" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// Validates that a set of proposed changes are semantically meaningful:
+/// every (old, new) pair must differ, and at least one change must exist.
+/// Returns ok=false with a diagnostic when the proposal is a no-op.
+pub fn proposalDiffGate(old_texts: []const []const u8, new_texts: []const []const u8) GateResult {
+    if (old_texts.len == 0) return .{ .ok = false, .label = "proposal-diff", .detail = "proposal contains no changes" };
+    if (old_texts.len != new_texts.len) return .{ .ok = false, .label = "proposal-diff", .detail = "mismatched old/new change count" };
+    for (old_texts, new_texts) |old, new| {
+        if (std.mem.eql(u8, old, new)) return .{ .ok = false, .label = "proposal-diff", .detail = "a change has identical old and new text (no-op)" };
+    }
+    return .{ .ok = true, .label = "proposal-diff" };
+}
+
+test "proposalDiffGate rejects no-op and empty proposals" {
+    // Empty proposal.
+    const empty = proposalDiffGate(&.{}, &.{});
+    try std.testing.expect(!empty.ok);
+    try std.testing.expectEqualStrings("proposal-diff", empty.label);
+
+    // Identical old/new is a no-op.
+    const noop = proposalDiffGate(&.{"const x = 1;"}, &.{"const x = 1;"});
+    try std.testing.expect(!noop.ok);
+
+    // A real change passes.
+    const real = proposalDiffGate(&.{"const x = 1;"}, &.{"const x = 2;"});
+    try std.testing.expect(real.ok);
+
+    // Mixed: one real change and one no-op fails.
+    const mixed = proposalDiffGate(
+        &.{ "const a = 1;", "const b = 2;" },
+        &.{ "const a = 99;", "const b = 2;" },
+    );
+    try std.testing.expect(!mixed.ok);
+
+    // Mismatched lengths.
+    const mismatch = proposalDiffGate(&.{"x"}, &.{ "y", "z" });
+    try std.testing.expect(!mismatch.ok);
+}
+
 test "fmtGate and formatFiles short-circuit when there is nothing to format" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
