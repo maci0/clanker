@@ -64,12 +64,15 @@ fn appendLine(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line
     if (existing.len > 0 and existing[existing.len - 1] != '\n') out.append(gpa, '\n') catch return;
     out.appendSlice(gpa, line) catch return;
     out.append(gpa, '\n') catch return;
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items }) catch |err| std.log.warn("autolearn: failed to persist event: {s}", .{@errorName(err)});
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items }) catch |err| std.log.warn("autolearn: failed to persist event to {s} ({d} bytes): {s}", .{ event_path, out.items.len, @errorName(err) });
 }
 
 /// Records a completed run (from agent stats + used tool names).
 pub fn recordRun(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, e: RunEvent) void {
-    std.Io.Dir.cwd().createDirPath(io, "state") catch return;
+    std.Io.Dir.cwd().createDirPath(io, "state") catch |err| {
+        std.log.warn("autolearn: failed to create state dir: {s}", .{@errorName(err)});
+        return;
+    };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
 
     var buf: [8192]u8 = undefined;
