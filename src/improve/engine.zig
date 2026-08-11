@@ -361,6 +361,11 @@ pub const Engine = struct {
         // Gather candidate files with a relevance score (keyword hits).
         var cands: std.ArrayList(Candidate) = .empty;
         try collectCandidates(self, "tools/zig", keywords.items, &cands, 96 * 1024);
+        // Descriptors are part of the modifiable surface (validatePath allows
+        // *.tool.json) but were never gathered, so any instruction about a
+        // tool's name, description or schema asked for an exact-match patch
+        // against a file the model had never seen.
+        try collectCandidates(self, "tools/manifests", keywords.items, &cands, 64 * 1024);
         try collectCandidates(self, "src", keywords.items, &cands, 96 * 1024);
         try collectCandidates(self, "tests", keywords.items, &cands, 96 * 1024);
         for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {

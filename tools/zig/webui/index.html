@@ -173,6 +173,7 @@
   @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .turn-answer:empty::before { animation: none; opacity: 0.6; } }
   .turn-answer .failed { color: var(--danger); }
+  .turn-unanswered { color: var(--fg-muted); font-style: italic; }
 
   /* ---- fenced code blocks inside a finished answer ----
      The language tag and Copy button sit in their own header strip rather
@@ -801,6 +802,9 @@ document.addEventListener("DOMContentLoaded", function () {
     var pendingTurn = null;
     messages.forEach(function (m) {
       if (m.role === "user") {
+        // A question with no reply before the next one: close it off rather
+        // than letting the next answer attach to the wrong question.
+        if (pendingTurn) markTurnUnanswered(pendingTurn);
         pendingTurn = createTurn(m.content);
         return;
       }
@@ -810,6 +814,19 @@ document.addEventListener("DOMContentLoaded", function () {
       renderStats(pendingTurn, {}, null);
       pendingTurn = null;
     });
+    if (pendingTurn) markTurnUnanswered(pendingTurn);
+  }
+
+  /* An empty answer triggers the streaming placeholder — a pulsing ellipsis
+     that says "still thinking". Replayed history is never still thinking, so a
+     conversation that was interrupted or abandoned would otherwise sit there
+     appearing to stream forever. Filling the answer suppresses the placeholder
+     and says what actually happened. */
+  function markTurnUnanswered(turn) {
+    var note = document.createElement("span");
+    note.className = "turn-unanswered";
+    note.textContent = "No answer was recorded for this turn.";
+    turn.answer.appendChild(note);
   }
 
   function switchSession(id) {
@@ -1917,12 +1934,26 @@ document.addEventListener("DOMContentLoaded", function () {
      channel whichever end opens it. That means DMs inherit the whole existing
      room pipeline — history, subscription, the agent's inbox — for free. */
   function dmRoom(a, b) {
-    return "dm:" + [a, b].sort().join("|");
+    return "dm:" + [dmSafeName(a), dmSafeName(b)].sort().join("|");
   }
 
+  /* `|` separates the two halves of the room name, so a name containing one
+     would split into three parts and make each side read the wrong partner
+     out of it. Instance names are free-form config, so this is reachable. */
+  function dmSafeName(name) {
+    return String(name).replace(/\|/g, "-");
+  }
+
+  /* Whichever half is not this instance. Written as "the part that isn't me"
+     rather than an index so a malformed room name degrades to showing
+     something plausible instead of `undefined`. */
   function dmPartner(room) {
-    var pair = room.slice("dm:".length).split("|");
-    return pair[0] === instanceName ? pair[1] : pair[0];
+    var parts = room.slice("dm:".length).split("|");
+    var mine = dmSafeName(instanceName);
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] !== mine) return parts[i];
+    }
+    return parts[parts.length - 1] || room;
   }
 
   function isDm(room) {
@@ -1935,6 +1966,13 @@ document.addEventListener("DOMContentLoaded", function () {
   var chatPoll = null;
   var chatLastTs = 0;
   var chatSeen = {};
+  var chatSeenOrder = [];
+  var chat_seen_cap = 500;
+  // Mirrors chatrooms.max_text_len in the server.
+  var chat_max_bytes = 4096;
+  var chat_poll_base_ms = 5000;
+  var chat_poll_max_ms = 60000;
+  var chatBackoff = chat_poll_base_ms;
 
   function chatRoomLabel(r) {
     return isDm(r.room) ? dmPartner(r.room) : r.room;
@@ -2007,12 +2045,21 @@ document.addEventListener("DOMContentLoaded", function () {
     el.chatLog.textContent = "";
     chatLastTs = 0;
     chatSeen = {};
+    chatSeenOrder = [];
+    chatBackoff = chat_poll_base_ms;
     el.chatText.disabled = false;
     el.chatSend.disabled = false;
     el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
+    // Opening a room fills the log with its history, and a live region would
+    // read every one of those out as if it had just arrived. Announcements
+    // start once the backlog is in place.
+    el.chatLog.setAttribute("aria-live", "off");
     return joinIfNeeded(room)
       .then(function () { return pollChat(room); })
-      .then(function () { startChatPoll(room); });
+      .then(function () {
+        el.chatLog.setAttribute("aria-live", "polite");
+        startChatPoll(room);
+      });
   }
 
   /* A peer's message is only logged for rooms this instance has joined, so
@@ -2044,26 +2091,47 @@ document.addEventListener("DOMContentLoaded", function () {
         return r.json();
       })
       .then(function (data) {
+        chatBackoff = chat_poll_base_ms;
         // The log is returned newest-first (it is read backwards to honour the
         // 50-message limit); a conversation reads downwards, so it is flipped
         // before appending.
         var fresh = (data.messages || [])
           .filter(function (m) { return !chatSeen[m.id]; })
           .sort(function (a, b) { return a.ts - b.ts; });
+        // Measured before anything is appended: whether to follow the
+        // conversation depends on where the reader was, not where they end up.
+        var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
         fresh.forEach(function (m) {
-          chatSeen[m.id] = true;
+          rememberChatId(m.id);
           if (m.ts > chatLastTs) chatLastTs = m.ts;
           el.chatLog.appendChild(buildChatMessage(m));
         });
-        if (fresh.length) {
-          el.chatLog.scrollTop = el.chatLog.scrollHeight;
-          el.chatStatus.textContent = fresh.length + (fresh.length === 1 ? " new message." : " new messages.");
-        }
+        // Only chase the bottom for someone already at it. Scrolling a reader
+        // away from the message they are part-way through is worse than making
+        // them scroll down for themselves.
+        if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
       })
       .catch(function (err) {
-        stopChatPoll();
-        el.chatStatus.textContent = "Could not load messages: " + err.message;
+        // Backs off rather than giving up. Stopping outright meant one
+        // transient 500 — a server restart, say — silently ended live updates
+        // for the rest of the session, with only a stale error line to show
+        // for it.
+        chatBackoff = Math.min(chatBackoff * 3, chat_poll_max_ms);
+        el.chatStatus.textContent = "Could not load messages: " + err.message +
+          " — retrying in " + Math.round(chatBackoff / 1000) + "s.";
       });
+  }
+
+  /* Bounded so a room left open all day does not accumulate an id per message
+     forever. Only the recent window matters: `after` already keeps the server
+     from resending anything older, so the set exists to catch the overlap at
+     the boundary, not to remember the whole room. */
+  function rememberChatId(id) {
+    chatSeen[id] = true;
+    chatSeenOrder.push(id);
+    while (chatSeenOrder.length > chat_seen_cap) {
+      delete chatSeen[chatSeenOrder.shift()];
+    }
   }
 
   function buildChatMessage(m) {
@@ -2099,14 +2167,25 @@ document.addEventListener("DOMContentLoaded", function () {
      response (see Connection: close in cli.zig), so there is nothing to hold
      open. Stopped whenever the tab is hidden so a backgrounded page is not
      waking the agent's HTTP server every few seconds for nothing. */
+  /* A self-rescheduling timeout rather than a fixed interval: the delay has to
+     be read fresh after each attempt, because a failure widens it and the next
+     success narrows it straight back. An interval would keep firing at the
+     rate it was created with. */
   function startChatPoll(room) {
     stopChatPoll();
     if (document.hidden) return;
-    chatPoll = window.setInterval(function () { pollChat(room); }, 5000);
+    chatPoll = window.setTimeout(function () {
+      pollChat(room).finally(function () {
+        // Only reschedule if this poll is still the current one — switching
+        // rooms mid-flight clears it, and reviving it here would leave two
+        // chains running against different rooms.
+        if (chatPoll !== null) startChatPoll(room);
+      });
+    }, chatBackoff);
   }
 
   function stopChatPoll() {
-    if (chatPoll) { window.clearInterval(chatPoll); chatPoll = null; }
+    if (chatPoll) { window.clearTimeout(chatPoll); chatPoll = null; }
   }
 
   document.addEventListener("visibilitychange", function () {
@@ -2128,6 +2207,14 @@ document.addEventListener("DOMContentLoaded", function () {
     var text = el.chatText.value.trim();
     var room = el.chatRoom.value;
     if (!text || !room) return;
+    // maxlength on the input counts UTF-16 units while the server counts
+    // bytes, so multi-byte text passes the browser's check and comes back as a
+    // bare HTTP 400. Checked here in the same units the server uses.
+    var bytes = new TextEncoder().encode(text).length;
+    if (bytes > chat_max_bytes) {
+      el.chatStatus.textContent = "Message is " + bytes + " bytes; the limit is " + chat_max_bytes + ".";
+      return;
+    }
     el.chatSend.disabled = true;
     // /api/chat/send, not /api/chat/message: the latter is the inbound
     // endpoint peers post to, which only logs rooms this instance has already

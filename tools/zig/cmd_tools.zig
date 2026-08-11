@@ -1,7 +1,14 @@
-//! cmd_tools: list registered tools with what each one is for, read from
-//! tools/manifests/*.tool.json.
+//! cmd_tools: list what is registered, split into what the model can call and
+//! what it cannot, read from tools/manifests/*.tool.json.
+//!
+//! A tool is callable: the model picks it by name and gets its result. A
+//! plugin backs the harness itself — the web UI, the markdown formatter, the
+//! slash commands, the transform chain — and never appears in the model's
+//! catalog. Listing them in one flat column implied the model could call the
+//! web UI.
+//!
 //! Input:  {"args": "..."}
-//! Output: {"ok": true, "text": "<name  description, one per line>"}
+//! Output: {"ok": true, "text": "<sections of name  description>"}
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -19,7 +26,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.heap.wasm_allocator);
+    var plugins: std.ArrayList(u8) = .empty;
+    defer plugins.deinit(std.heap.wasm_allocator);
     var count: usize = 0;
+    var plugin_count: usize = 0;
+    try buf.appendSlice(std.heap.wasm_allocator, "tools (the model can call these)\n");
     if (names == .array) {
         for (names.array.items) |item| {
             if (item != .string) continue;
@@ -27,26 +38,35 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // strip the .tool.json suffix
             if (!std.mem.endsWith(u8, name, ".tool.json")) continue;
             const base = name[0 .. name.len - ".tool.json".len];
-            count += 1;
-            try buf.appendSlice(std.heap.wasm_allocator, base);
-
+            const meta = describeFull(name);
+            var target = &buf;
+            if (meta.plugin) {
+                target = &plugins;
+                plugin_count += 1;
+            } else count += 1;
+            try target.appendSlice(std.heap.wasm_allocator, "  ");
+            try target.appendSlice(std.heap.wasm_allocator, base);
             // A bare list of names says nothing about what any of them do:
             // pull each manifest's own description in, padded into a column.
-            const desc = describe(name);
+            const desc = meta.description;
             if (desc.len > 0) {
                 const pad = if (base.len < name_col) name_col - base.len else 1;
-                try buf.appendNTimes(std.heap.wasm_allocator, ' ', pad);
-                // One line per tool: a description with newlines in it would
+                try target.appendNTimes(std.heap.wasm_allocator, ' ', pad);
+                // One line per entry: a description with newlines in it would
                 // break the column, so only the first line is shown.
                 const first = desc[0 .. std.mem.indexOfScalar(u8, desc, '\n') orelse desc.len];
                 const clipped = first[0..@min(first.len, desc_max)];
-                try buf.appendSlice(std.heap.wasm_allocator, clipped);
-                if (clipped.len < first.len) try buf.appendSlice(std.heap.wasm_allocator, "…");
+                try target.appendSlice(std.heap.wasm_allocator, clipped);
+                if (clipped.len < first.len) try target.appendSlice(std.heap.wasm_allocator, "…");
             }
-            try buf.append(std.heap.wasm_allocator, '\n');
+            try target.append(std.heap.wasm_allocator, '\n');
         }
     }
-    const summary = try std.fmt.allocPrint(std.heap.wasm_allocator, "{d} tool(s) registered", .{count});
+    if (plugin_count > 0) {
+        try buf.appendSlice(std.heap.wasm_allocator, "\nplugins (harness-side, not callable by the model)\n");
+        try buf.appendSlice(std.heap.wasm_allocator, plugins.items);
+    }
+    const summary = try std.fmt.allocPrint(std.heap.wasm_allocator, "\n{d} tool(s), {d} plugin(s)", .{ count, plugin_count });
     try buf.appendSlice(std.heap.wasm_allocator, summary);
 
     var rbuf: [8192]u8 = undefined;
@@ -64,6 +84,31 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// Column the descriptions start at, and how much of one is shown.
 const name_col: usize = 18;
 const desc_max: usize = 96;
+
+const Meta = struct {
+    description: []const u8 = "",
+    /// Internal entries and transforms back the harness rather than answering
+    /// the model, so they are plugins, not tools.
+    plugin: bool = false,
+};
+
+/// One manifest's description and whether it is a plugin.
+fn describeFull(file_name: []const u8) Meta {
+    var path_buf: [256]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "tools/manifests/{s}", .{file_name}) catch return .{};
+    const raw = lib.fsRead(path) catch return .{};
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{}) catch return .{};
+    if (parsed != .object) return .{};
+    var meta = Meta{};
+    if (parsed.object.get("description")) |d| {
+        if (d == .string) meta.description = d.string;
+    }
+    if (parsed.object.get("internal")) |i| {
+        if (i == .bool and i.bool) meta.plugin = true;
+    }
+    if (parsed.object.get("transform") != null) meta.plugin = true;
+    return meta;
+}
 
 /// The `description` field of one manifest, or "" when it cannot be read.
 fn describe(file_name: []const u8) []const u8 {
