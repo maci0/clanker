@@ -145,7 +145,7 @@ fn apply(alloc: std.mem.Allocator, room: []const u8, act: cards.Action) !Sent {
 /// The board as the web UI and an agent both read it: the fixed column set,
 /// then every card. Re-derived from the log after a write rather than assumed,
 /// because a concurrent claim from a peer may have won.
-fn respond(out: *lib.Out, room: []const u8, list: []cards.Card) !void {
+fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []const u8) !void {
     var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
@@ -175,6 +175,7 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card) !void {
     try s.objectField("cards");
     try s.beginArray();
     for (list) |c| {
+        if (!cards.concerns(&c, only_for)) continue;
         try s.beginObject();
         try s.objectField("id");
         try s.write(c.id);
@@ -190,6 +191,8 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card) !void {
         try s.write(c.priority);
         try s.objectField("assignee");
         try s.write(c.assignee);
+        try s.objectField("assigned_by");
+        try s.write(c.assigned_by);
         try s.objectField("created_by");
         try s.write(c.created_by);
         try s.objectField("created");
@@ -228,6 +231,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const cfg = std.json.parseFromSliceLeaky(Config, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Config{};
     const op = if (cfg.op) |o| o else if (req.op.len > 0) req.op else "list";
     const room = if (req.room) |r| (if (r.len > 0) r else default_room) else default_room;
+    // A list can be narrowed to what one clanker is concerned with. It narrows
+    // the answer, not the reach: everyone subscribed to the room holds the same
+    // messages, so this is a view. Work that genuinely must not be seen belongs
+    // in a room the wrong readers are not in.
+    const only_for = if (std.mem.eql(u8, op, "list")) (req.who orelse "") else "";
 
     const msgs = history(alloc, room) catch |err| return lib.fail(out, switch (err) {
         error.SandboxDenied => "chatrooms are disabled, and the board is a chatroom",
@@ -236,7 +244,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     });
     const list = try cards.derive(alloc, msgs);
 
-    if (std.mem.eql(u8, op, "list")) return respond(out, room, list);
+    if (std.mem.eql(u8, op, "list")) return respond(out, room, list, only_for);
 
     // Everything else writes, and everything except create names a card. The op
     // is checked before the id so a request wrong in both ways is told the op is
@@ -272,7 +280,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .priority = req.priority,
             .deadline = req.deadline,
         }) catch return lib.fail(out, "could not post the card to the room");
-        return respond(out, room, try cards.derive(alloc, try history(alloc, room)));
+        return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
 
     if (req.id.len == 0) return lib.fail(out, "which card? pass its id from board_list");
@@ -363,5 +371,5 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     };
 
     _ = apply(alloc, room, act) catch return lib.fail(out, "could not post the change to the room");
-    return respond(out, room, try cards.derive(alloc, try history(alloc, room)));
+    return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
 }

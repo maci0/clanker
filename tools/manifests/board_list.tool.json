@@ -12,6 +12,10 @@
       "room": {
         "type": "string",
         "description": "Board room name; omit for the default 'board' room"
+      },
+      "who": {
+        "type": "string",
+        "description": "Show only cards this clanker is concerned with: assigned to them, assigned or created by them, or unclaimed. A view filter, not a permission; everyone in the room can read every card."
       }
     },
     "required": []

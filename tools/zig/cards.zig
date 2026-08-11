@@ -132,6 +132,9 @@ pub const Card = struct {
     column: []const u8 = default_column,
     priority: []const u8 = "normal",
     assignee: []const u8 = "",
+    /// Who put it on them. Self-assignment through `claim` names the claimant
+    /// twice, which is the honest answer: nobody handed them the work.
+    assigned_by: []const u8 = "",
     deadline: i64 = 0,
     subtasks: []const Subtask = &.{},
     depends_on: []const []const u8 = &.{},
@@ -231,6 +234,7 @@ const State = struct {
     column: []const u8 = default_column,
     priority: []const u8 = "normal",
     assignee: []const u8 = "",
+    assigned_by: []const u8 = "",
     deadline: i64 = 0,
 
     title_at: Stamp = .{},
@@ -333,6 +337,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             if (act.who) |v| {
                 if (c.assign_at.beaten(m.ts, m.id)) {
                     c.assignee = v;
+                    c.assigned_by = m.from;
                     c.assign_at = .{ .ts = m.ts, .id = m.id };
                 }
             }
@@ -361,11 +366,13 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 // A deliberate assign that is newer than this claim outranks it.
                 if (!c.assign_at.beaten(m.ts, m.id)) continue;
                 c.assignee = m.from;
+                c.assigned_by = m.from;
             }
         } else if (std.mem.eql(u8, act.action, "assign")) {
             const v = act.who orelse "";
             if (c.assign_at.beaten(m.ts, m.id)) {
                 c.assignee = v;
+                c.assigned_by = m.from;
                 c.assign_at = .{ .ts = m.ts, .id = m.id };
             }
         } else if (std.mem.eql(u8, act.action, "delete")) {
@@ -465,6 +472,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .column = c.column,
             .priority = c.priority,
             .assignee = c.assignee,
+            .assigned_by = c.assigned_by,
             .deadline = c.deadline,
             .subtasks = subs.items,
             .depends_on = deps.items,
@@ -491,6 +499,34 @@ pub fn get(cards: []Card, id: []const u8) ?*Card {
         if (std.mem.eql(u8, c.id, id)) return c;
     }
     return null;
+}
+
+/// Whether a card is one that `who` should be looking at: theirs, assigned by
+/// them, created by them, or claimed by nobody yet.
+///
+/// A *view*, not a permission. Every clanker subscribed to the room already
+/// holds every message in it, so the fold cannot hide a card from someone who
+/// can read the log — filtering here narrows what is shown, not what is
+/// readable. The boundary that actually holds is the room: a card only certain
+/// peers should see belongs in a room only those peers subscribe to.
+pub fn concerns(card: *const Card, who: []const u8) bool {
+    if (who.len == 0) return true;
+    if (card.assignee.len == 0) return true;
+    return std.mem.eql(u8, card.assignee, who) or
+        std.mem.eql(u8, card.assigned_by, who) or
+        std.mem.eql(u8, card.created_by, who);
+}
+
+test concerns {
+    const mine: Card = .{ .id = "a", .title = "t", .created_by = "x", .ts = 1, .assignee = "me", .assigned_by = "boss" };
+    const theirs: Card = .{ .id = "b", .title = "t", .created_by = "x", .ts = 1, .assignee = "them", .assigned_by = "them" };
+    const unclaimed: Card = .{ .id = "c", .title = "t", .created_by = "x", .ts = 1 };
+    try std.testing.expect(concerns(&mine, "me"));
+    try std.testing.expect(concerns(&mine, "boss"));
+    try std.testing.expect(!concerns(&theirs, "me"));
+    try std.testing.expect(concerns(&unclaimed, "me")); // free work is everyone's
+    try std.testing.expect(concerns(&theirs, "")); // no filter asked for
+    try std.testing.expect(concerns(&theirs, "x")); // its author still sees it
 }
 
 /// Whether every card this one waits on is done. A card whose dependencies are
