@@ -91,7 +91,11 @@ pub const Provider = struct {
 };
 
 pub const Agent = struct {
-    max_iterations: u32 = 12,
+    /// A review or audit task spends most of its turns reading before it can
+    /// answer anything. At 12 those runs ended at the ceiling with no answer
+    /// and the whole run wasted, which costs more than the extra turns would
+    /// have.
+    max_iterations: u32 = 24,
     compact_threshold_bytes: usize = 24000,
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn

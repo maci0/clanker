@@ -1424,22 +1424,33 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
     return false;
 }
 
-/// Arguments that are never allowed for sandboxed commands.
-///
-/// The shell-operator tokens here are defense in depth, not the primary
-/// guard: ckExec below runs argv directly via std.process.run, never through
-/// a shell, so none of these can actually be interpreted as operators no
-/// matter what they contain. "|" is deliberately absent even so — it's
-/// ordinary regex alternation syntax, the single most common character in a
-/// search pattern for the exact tools (rg, ast-grep, semcode) this allowlist
-/// exists to let through, and blocking it only breaks the tool it's meant to
-/// protect without closing any real hole.
+/// Arguments that are never allowed for sandboxed commands: destructive git
+/// verbs and flags that make a command run something else.
 const exec_deny_tokens = [_][]const u8{
     "push",   "reset",  "rebase",    "checkout", "clean",   "rm",            "fetch",
     "merge",  "revert", "stash",     "remote",   "tag",     "filter-branch", "gc",
-    "repack", "prune",  "submodule", "-f",       "--force", "--exec",        "&&",
-    "||",     ";",      ">",         "<",        "`",
+    "repack", "prune",  "submodule", "-f",       "--force", "--exec",
 };
+
+/// Shell operators, refused only when the command being run is a shell.
+///
+/// ckExec passes argv straight to std.process.run, never through a shell, so
+/// these cannot be interpreted as operators by anything else: in an argument to
+/// rg or ast-grep they are ordinary pattern syntax. Refusing them everywhere
+/// broke the search tools this allowlist exists to serve — a review run was
+/// denied the pattern "jsonInt|float => |@intFromFloat" because it contains a
+/// greater-than sign. "|" was already exempt for the same reason; the rest
+/// follow it.
+const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
+
+/// Whether `cmd` would interpret its arguments as shell syntax.
+fn runsAShell(cmd: []const u8) bool {
+    const base = if (std.mem.lastIndexOfScalar(u8, cmd, '/')) |i| cmd[i + 1 ..] else cmd;
+    for ([_][]const u8{ "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "xargs" }) |shell| {
+        if (std.mem.eql(u8, base, shell)) return true;
+    }
+    return false;
+}
 
 /// ck_std_api: look up a symbol name in the Zig 0.16 standard library source
 /// tree and return up to 40 matching lines (signatures, doc comments, usage).
@@ -1652,6 +1663,14 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
                             return Err.denied;
                         }
                     }
+                    if (runsAShell(cmd)) {
+                        for (shell_op_deny_tokens) |t| {
+                            if (argDenied(arg, t)) {
+                                log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ t, arg });
+                                return Err.denied;
+                            }
+                        }
+                    }
                     argv.append(h.sandbox.gpa, arg) catch return Err.invalid;
                 }
             },
@@ -1853,6 +1872,30 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "a shell operator in a search pattern is allowed, but not when running a shell" {
+    // A real review run was refused the pattern "jsonInt|float => |@intFromFloat"
+    // because it contains a greater-than sign. Nothing interprets it: argv goes
+    // to execve, and rg reads it as a pattern.
+    const pattern = "jsonInt|float => |@intFromFloat";
+    for (exec_deny_tokens) |t| {
+        try std.testing.expect(!argDenied(pattern, t));
+    }
+    // Redirection into a shell is still refused, because a shell would act on it.
+    try std.testing.expect(runsAShell("sh"));
+    try std.testing.expect(runsAShell("/bin/bash"));
+    try std.testing.expect(!runsAShell("rg"));
+    try std.testing.expect(!runsAShell("git"));
+    var denied = false;
+    for (shell_op_deny_tokens) |t| {
+        if (argDenied("cat /etc/passwd > /tmp/out", t)) denied = true;
+    }
+    try std.testing.expect(denied);
+
+    // Destructive git verbs stay refused for every command.
+    try std.testing.expect(argDenied("push", "push"));
+    try std.testing.expect(argDenied("--force", "--force"));
+}
 
 test "exec_deny_tokens does not block regex alternation but still blocks real danger" {
     for (exec_deny_tokens) |t| {

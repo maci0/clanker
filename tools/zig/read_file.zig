@@ -1,6 +1,12 @@
 //! read_file: read a file's text by path, with byte-range pagination so a
 //! large file can be walked without blowing the context window.
 //!
+//! Windows are snapped to line boundaries: offset and limit are byte counts,
+//! but a fragment of a line at either end reads as corrupted source, so the
+//! partial first line is dropped and the last is cut at its newline.
+//! next_offset points at the first byte not returned, so paging with it loses
+//! nothing.
+//!
 //! Input:  {"path": "src/agent/loop.zig", "offset": 0, "limit": 65536}
 //! Output: {"ok": true, "text": "...", "next_offset": 49152}
 //!         next_offset is present only when the read stopped short of the end.
@@ -30,12 +36,32 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // very repository unreadable.
     const offset = jsonUint(input, "offset", 0);
     const limit = @min(jsonUint(input, "limit", default_limit), default_limit);
-    const slice = lib.fsReadRange(path, offset, limit) catch |err| return lib.fail(out, switch (err) {
+    const raw = lib.fsReadRange(path, offset, limit) catch |err| return lib.fail(out, switch (err) {
         error.SandboxDenied => "path is outside the sandbox",
         error.NotFound => "no such file",
         error.TooLarge => "file is too large to read",
         else => "read failed",
     });
+
+    // Whole lines only. A byte window lands mid-line at both ends, and source
+    // that begins with the tail of one statement and stops in the middle of
+    // another reads as corruption: an agent reviewing this project reported the
+    // output "truncated/garbled" and spent its remaining turns trying smaller
+    // reads, which land mid-line just the same.
+    var start: usize = 0;
+    if (offset > 0) {
+        // The caller resumed inside a line; drop that fragment.
+        if (std.mem.indexOfScalar(u8, raw, '\n')) |nl| start = nl + 1;
+    }
+    var end: usize = raw.len;
+    if (raw.len == limit) {
+        // More to come, so end on a line boundary rather than mid-statement.
+        if (std.mem.lastIndexOfScalar(u8, raw[start..], '\n')) |nl| end = start + nl + 1;
+    }
+    // A line longer than the whole window has no boundary to snap to. Returning
+    // it unsnapped is the only way the caller makes progress.
+    const slice = if (end > start) raw[start..end] else raw;
+    const consumed = if (end > start) end else raw.len;
 
     // Straight into the output buffer: a local array of this size would be a
     // megabyte-plus on the wasm stack, which traps.
@@ -49,9 +75,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // Only when there is more to come: a caller that sees no next_offset knows
     // it has the whole file, without comparing byte counts itself. A short read
     // means end of file.
-    if (slice.len == limit) {
+    if (raw.len == limit) {
         try s.objectField("next_offset");
-        try s.write(offset + slice.len);
+        try s.write(offset + consumed);
     }
     try s.endObject();
     out.len = w.end;
