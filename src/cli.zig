@@ -2098,12 +2098,6 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     // transcript and the persisted session.
     const t0 = std.Io.Timestamp.now(io, .awake);
     var err_detail: ?[]const u8 = null;
-    // stats are cumulative across turns; capture per-turn counters before.
-    const prev_prompt = a.stats.total_prompt_tokens;
-    const prev_completion = a.stats.total_completion_tokens;
-    const prev_cost = a.stats.cost;
-    const prev_cache_hit = a.stats.total_cache_hit_tokens;
-    const prev_cache_miss = a.stats.total_cache_miss_tokens;
     repl_answer_started = false;
     repl_turn_start_ns = t0.nanoseconds;
     repl_activity = "thinking";
@@ -2125,11 +2119,13 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     repl_md.flush(&out_w.interface);
     try out_w.interface.writeAll("\n\n");
     // Dim turn stats (tokens + wall time) so each turn reports its cost.
-    const turn_prompt = a.stats.total_prompt_tokens -| prev_prompt;
-    const turn_completion = a.stats.total_completion_tokens -| prev_completion;
-    const turn_cost = a.stats.cost - prev_cost;
-    const turn_cache_hit = a.stats.total_cache_hit_tokens -| prev_cache_hit;
-    const turn_cache_miss = a.stats.total_cache_miss_tokens -| prev_cache_miss;
+    // a.stats is reset to zero at the top of Agent.run(), so it already
+    // holds exactly this turn's numbers here — no diffing needed.
+    const turn_prompt = a.stats.total_prompt_tokens;
+    const turn_completion = a.stats.total_completion_tokens;
+    const turn_cost = a.stats.cost;
+    const turn_cache_hit = a.stats.total_cache_hit_tokens;
+    const turn_cache_miss = a.stats.total_cache_miss_tokens;
     const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(turn_completion)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
     const cache_total = turn_cache_hit + turn_cache_miss;
     const hit_rate: f64 = if (cache_total > 0) @as(f64, @floatFromInt(turn_cache_hit)) / @as(f64, @floatFromInt(cache_total)) * 100.0 else 0;
@@ -2967,7 +2963,8 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         respond(stream, 400, "Bad Request", "{\"error\":\"missing room\"}");
         return;
     }
-    const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, after, 50) catch {
+    const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, after, 50) catch |err| {
+        log.log(.error_, "GET /api/chat/messages room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
         return;
     };
@@ -3030,12 +3027,14 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     // this instance has joined — and a DM room has no reason to exist in the
     // config before someone opens it.
     if (!chatrooms.isSubscribed(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room)) {
-        chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, true) catch {
+        chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, true) catch |err| {
+            log.log(.error_, "POST /api/chat/send room={s}: auto-join failed: {s}", .{ room, @errorName(err) });
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not join room\"}");
             return;
         };
     }
-    const msg = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, room, text) catch {
+    const msg = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, room, text) catch |err| {
+        log.log(.error_, "POST /api/chat/send room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
         return;
     };
@@ -3068,7 +3067,8 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
     };
-    chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, parsed.on) catch {
+    chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, parsed.on) catch |err| {
+        log.log(.error_, "POST /api/chat/subscribe room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
         return;
     };
@@ -3132,7 +3132,8 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rooms = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch {
+    const rooms = chatrooms.listRooms(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch |err| {
+        log.log(.error_, "GET /api/chat/rooms: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
         return;
     };
@@ -3174,11 +3175,13 @@ fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, st
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const stats = token_stats.aggregate(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch {
+    const stats = token_stats.aggregate(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir) catch |err| {
+        log.log(.error_, "GET /api/stats: aggregate failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
         return;
     };
-    const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch {
+    const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch |err| {
+        log.log(.error_, "GET /api/stats: encode failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
         return;
     };

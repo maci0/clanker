@@ -26,6 +26,9 @@ pub const Theme = theme_mod.Theme;
 pub const MdStream = struct {
     theme: Theme = Theme.default,
     in_fence: bool = false,
+    /// True for the language tag right after an opening fence (e.g. the
+    /// "python" in "```python\n"), which is consumed and never printed.
+    in_fence_lang: bool = false,
     in_bold: bool = false,
     in_italic: bool = false,
     in_code: bool = false,
@@ -55,6 +58,15 @@ pub const MdStream = struct {
         while (i < total) {
             const remaining = total - i;
             const c = self.at(chunk, i);
+
+            // The language tag right after an opening fence (e.g. "python")
+            // is consumed, not printed: it names the block, it isn't code.
+            if (self.in_fence_lang) {
+                self.in_fence_lang = (c != '\n');
+                self.at_line_start = (c == '\n');
+                i += 1;
+                continue;
+            }
 
             // Inside a fence everything is literal: a code block full of *,
             // _ and ` must not toggle emphasis on its way to the terminal.
@@ -150,6 +162,7 @@ pub const MdStream = struct {
             if (c == '`' and remaining < 3) break; // could still become ```
             if (c == '`' and self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
                 self.in_fence = true;
+                self.in_fence_lang = true;
                 w.writeAll(t.fence) catch {};
                 i += 3;
                 self.at_line_start = false;
@@ -359,6 +372,18 @@ test "MdStream leaves fenced code untouched" {
     try std.testing.expect(std.mem.indexOf(u8, out, "const p: *u8 = x; // **not bold**") != null);
     // And the fence closes, so following text is not left dim.
     try std.testing.expect(std.mem.endsWith(u8, out, "after\n"));
+}
+
+test "MdStream consumes the fence language tag instead of printing it" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var md: MdStream = .{};
+    md.feed(&w, "```python\nprint(1)\n```\n");
+    md.flush(&w);
+    const out = buf[0..w.end];
+
+    try std.testing.expect(std.mem.indexOf(u8, out, "python") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "print(1)") != null);
 }
 
 test "MdStream does not mistake a hyphen mid-sentence for a rule" {
