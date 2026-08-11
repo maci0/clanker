@@ -92,6 +92,34 @@ pub const History = struct {
         return false;
     }
 
+    /// True when a recently rejected attempt proposed exactly this set of
+    /// edits. Without this the loop re-proposes the same failing change
+    /// indefinitely — it knows not to repeat accepted work but has no memory
+    /// of rejected work beyond the summary text. `max_lookback` limits how
+    /// far back to search: a very old rejection may no longer apply after
+    /// surrounding code changed.
+    pub fn alreadyRejected(self: *History, arena: std.mem.Allocator, fingerprints: []const u64, max_lookback: usize) !bool {
+        if (fingerprints.len == 0) return false;
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return false;
+        const start = if (entries.len > max_lookback) entries.len - max_lookback else 0;
+        for (entries[start..]) |e| {
+            if (!std.mem.eql(u8, e.status, "rejected")) continue;
+            if (e.changes.len == 0) continue;
+            if (e.changes.len != fingerprints.len) continue;
+            var all = true;
+            for (fingerprints) |fp| {
+                var found = false;
+                for (e.changes) |seen| {
+                    if (seen == fp) found = true;
+                }
+                if (!found) all = false;
+            }
+            if (all) return true;
+        }
+        return false;
+    }
+
     /// Appends one JSON line describing an attempt.
     pub fn append(
         self: *History,
@@ -464,6 +492,44 @@ test "history append + revert round trip" {
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(raw);
     try std.testing.expect(std.mem.indexOf(u8, raw, "test-id-1") != null);
+}
+
+test "an edit already rejected is recognised within the lookback window" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    const fp = History.changeFingerprint("src/foo.zig", "old code", "new code");
+    try std.testing.expect(!try hist.alreadyRejected(arena, &.{fp}, 10));
+
+    try hist.append("imp-r1", .rejected, "i", "bad edit", &.{"src/foo.zig"}, 0.0, 0.0, "build failed", &.{fp});
+    try std.testing.expect(try hist.alreadyRejected(arena, &.{fp}, 10));
+
+    // An accepted edit with the same fingerprint is not a rejection.
+    const fp2 = History.changeFingerprint("src/bar.zig", "a", "b");
+    try hist.append("imp-a1", .accepted, "i", "good edit", &.{"src/bar.zig"}, 0.0, 1.0, "", &.{fp2});
+    try std.testing.expect(!try hist.alreadyRejected(arena, &.{fp2}, 10));
+
+    // A different edit is not matched.
+    const fp3 = History.changeFingerprint("src/baz.zig", "x", "y");
+    try std.testing.expect(!try hist.alreadyRejected(arena, &.{fp3}, 10));
+
+    // A lookback of 0 finds nothing (the rejection is outside the window).
+    try std.testing.expect(!try hist.alreadyRejected(arena, &.{fp}, 0));
 }
 
 test "an edit already accepted is recognised, a different one is not" {
