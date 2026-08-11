@@ -102,6 +102,14 @@ pub const Options = struct {
     dry_run: bool = false,
     verbose: bool = false,
     port: u16 = 17921,
+    /// Set when `--help` followed a command: print that command's help rather
+    /// than the whole list.
+    help_for: ?Command = null,
+    /// `--continue`/`-c`: pick up the most recently updated session instead of
+    /// naming it with `--session`. Every other agent CLI has this; reaching for
+    /// `clanker sessions`, reading an id and pasting it back is the workaround
+    /// it replaces.
+    continue_last: bool = false,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -111,14 +119,55 @@ fn setDiag(diag: ?*[]const u8, token: []const u8) void {
     if (diag) |d| d.* = token;
 }
 
+/// The value belonging to `flag`, taken from `--flag=value` when that is how it
+/// was written and from the next argument otherwise.
+fn takeValue(
+    args: []const []const u8,
+    idx: *usize,
+    inline_value: ?[]const u8,
+    flag: []const u8,
+    diag: ?*[]const u8,
+) ![]const u8 {
+    if (inline_value) |v| {
+        if (v.len == 0) {
+            setDiag(diag, flag);
+            return error.MissingArg;
+        }
+        return v;
+    }
+    idx.* += 1;
+    if (idx.* >= args.len) {
+        setDiag(diag, flag);
+        return error.MissingArg;
+    }
+    return args[idx.*];
+}
+
 pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     var opts = Options{};
     var idx: usize = 1;
     var cmd_seen = false;
     var pending_sub: ?[]const u8 = null;
+    var seen_flags: [8]Flag = undefined;
+    var seen_flags_len: usize = 0;
+
+    // `--flag=value` is written as often as `--flag value`; the parser only
+    // understood the second. Split here so every flag below sees the value the
+    // same way, whichever form was typed.
+    var split_buf: [2][]const u8 = undefined;
+    var inline_value: ?[]const u8 = null;
 
     while (idx < args.len) : (idx += 1) {
-        const a = args[idx];
+        var a = args[idx];
+        if (inline_value == null and a.len > 2 and a[0] == '-' and a[1] == '-') {
+            if (std.mem.indexOfScalar(u8, a, '=')) |eq| {
+                split_buf[0] = a[0..eq];
+                split_buf[1] = a[eq + 1 ..];
+                a = split_buf[0];
+                inline_value = split_buf[1];
+            }
+        }
+        defer inline_value = null;
 
         // Once git is the active command, every remaining token — including
         // dash-prefixed ones like git's own flags/options — passes through to
@@ -132,10 +181,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
 
         // Help/version flags act as their own command regardless of position.
         if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
-            if (cmd_seen) {
-                setDiag(diag, a);
-                return error.UnknownArg;
-            }
+            // After a command, --help asks about that command rather than
+            // being an unrecognized argument, which is the least useful thing
+            // a --help can do.
+            if (cmd_seen) opts.help_for = opts.command;
             opts.command = .help;
             cmd_seen = true;
             continue;
@@ -150,65 +199,56 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             continue;
         }
 
-        // Known global flags may appear anywhere.
+        // Flags may appear before or after the command; which command they
+        // are legal for is checked once the command is known.
         if (a.len > 0 and a[0] == '-') {
+            var used: ?Flag = null;
             if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
+                used = .dry_run;
             } else if (std.mem.eql(u8, a, "--tasks")) {
                 opts.eval_tasks_only = true;
+                used = .tasks;
             } else if (std.mem.eql(u8, a, "--provider")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.provider = args[idx];
-            } else if (std.mem.eql(u8, a, "--model")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.model = args[idx];
+                opts.provider = try takeValue(args, &idx, inline_value, a, diag);
+                used = .provider;
+            } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
+                opts.continue_last = true;
+                used = .session;
+            } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
+                opts.model = try takeValue(args, &idx, inline_value, a, diag);
+                used = .model;
+            } else if (std.mem.eql(u8, a, "--session")) {
+                opts.session = try takeValue(args, &idx, inline_value, a, diag);
+                used = .session;
+            } else if (std.mem.eql(u8, a, "--goal")) {
+                opts.goal = try takeValue(args, &idx, inline_value, a, diag);
+                used = .goal;
             } else if (std.mem.eql(u8, a, "--iters")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch {
-                    setDiag(diag, args[idx]);
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.iters = std.fmt.parseInt(u32, v, 10) catch {
+                    setDiag(diag, v);
                     return error.BadIters;
                 };
-            } else if (std.mem.eql(u8, a, "--session")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.session = args[idx];
-            } else if (std.mem.eql(u8, a, "--goal")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.goal = args[idx];
+                used = .iters;
             } else if (std.mem.eql(u8, a, "--port")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.port = std.fmt.parseInt(u16, args[idx], 10) catch {
-                    setDiag(diag, args[idx]);
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.port = std.fmt.parseInt(u16, v, 10) catch {
+                    setDiag(diag, v);
                     return error.BadPort;
                 };
+                used = .port;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
+            }
+            if (used) |f| {
+                if (seen_flags_len < seen_flags.len) {
+                    seen_flags[seen_flags_len] = f;
+                    seen_flags_len += 1;
+                }
             }
             continue;
         }
@@ -264,6 +304,17 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .repl;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
+            } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
+                // Not a command: treat it as the task, the way every other
+                // agent CLI takes a bare prompt (`clanker "fix the bug"`).
+                // Only when it cannot be a command name, so a typo'd command
+                // is still reported rather than silently run as a prompt.
+                if (std.mem.indexOfScalar(u8, a, ' ') == null and a.len < 24) {
+                    setDiag(diag, a);
+                    return error.UnknownCommand;
+                }
+                opts.command = .run;
+                opts.task = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownCommand;
@@ -309,10 +360,24 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         }
     }
 
-    if (pending_sub != null) {
+    // `clanker chat --help` asks what the subcommands are, so a missing
+    // subcommand is the question rather than the error.
+    if (pending_sub != null and opts.command != .help) {
         setDiag(diag, "<subcommand>");
         return error.BadSubcommand;
     }
+    // A flag the chosen command does not take is refused rather than ignored.
+    // `clanker stats --model x` used to exit 0 having done nothing with it,
+    // which reads as "the model was honoured" to whoever typed it.
+    if (opts.command != .help and opts.command != .version and opts.command != .git) {
+        for (seen_flags[0..seen_flags_len]) |f| {
+            if (!commandAccepts(opts.command, f)) {
+                setDiag(diag, f.name());
+                return error.FlagNotForCommand;
+            }
+        }
+    }
+
     if (opts.command == .run and opts.task == null) return error.MissingTask;
     if (opts.command == .notify and opts.peer == null) {
         setDiag(diag, "<peer>");
@@ -336,48 +401,159 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     return opts;
 }
 
+/// The whole command list, grouped. Rendered from `specs` so a new command
+/// cannot be added without appearing here.
 pub fn printUsage(io: std.Io) void {
-    writeStdErr(io, usage_text) catch {};
+    var buf: [8192]u8 = undefined;
+    writeStdErr(io, renderUsage(&buf)) catch {};
 }
 
-const usage_text =
-    \\clanker — self-improving AI agent harness
-    \\
-    \\usage:
-    \\  clanker init                    create config.local.json + state/
-    \\  clanker providers check [name]  verify provider connectivity
-    \\  clanker run "<task>"            run the agent on a task
-    \\  clanker run --goal <id> "<task>"  run with an active goal
-    \\  clanker run --session <id> "<task>"  continue a saved session
-    \\  clanker repl                    interactive multi-turn chat (streams tokens)
-    \\  clanker sessions                list saved sessions
-    \\  clanker tools list              list registered WASM tools
-    \\  clanker eval [name] [--tasks]   run evals (all, one by name, --tasks = capability only)
-    \\  clanker improve-self [--iters N] [--dry-run] "<instructions>"  self-improvement loop
-    \\  clanker revert <id>             revert a previously applied improvement
-    \\  clanker goal "<intent>"         design and persist a structured goal
-    \\  clanker graph [run-id]          list runs or render one as an ASCII timeline
-    \\  clanker gate                    run deterministic gates (build/test/tools/fmt/lint)
-    \\  clanker mcp                     serve tools over MCP (stdio)
-    \\  clanker serve [--port N]        HTTP API + web UI (default port 17921)
-    \\  clanker notify <peer> "<message>" send a notification to a peer
-    \\  clanker chat send <room> "<text>"  send a message to a chatroom
-    \\  clanker chat history <room> [after]  read chatroom history (newest first)
-    \\  clanker chat rooms              list chatrooms + subscriptions
-    \\  clanker chat subscribe <room> [on]  join/leave a chatroom (on = true/false)
-    \\  clanker stats                   token usage per provider/model
-    \\  clanker phonebook               list peer agent cards
-    \\  clanker git <args...>           passthrough to git (e.g. clanker git status)
-    \\  clanker --verbose               enable debug logging
-    \\  clanker --help                  show this usage text
-    \\  clanker --version               print the clanker version
-    \\
-;
+fn renderUsage(buf: []u8) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    w.writeAll("clanker - self-improving AI agent harness\n\nusage: clanker [command] [options]\n       clanker            with no command, starts the REPL\n") catch {};
+    for (std.enums.values(Group)) |g| {
+        w.print("\n{s}\n", .{g.title()}) catch {};
+        for (&specs) |*s| {
+            if (s.group != g) continue;
+            w.print("  {s: <34}{s}\n", .{ s.usage, s.blurb }) catch {};
+        }
+    }
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    return buf[0..w.end];
+}
+
+/// `clanker <command> --help`: what that one command takes, rather than the
+/// whole list. Previously this errored with "unrecognized argument '--help'",
+/// which is the least helpful thing a --help can do.
+fn printCommandHelp(io: std.Io, cmd: Command) void {
+    const s = specFor(cmd) orelse return printUsage(io);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
+    if (s.detail.len > 0) w.print("\n{s}\n", .{s.detail}) catch {};
+    if (s.flags.len > 0) {
+        w.writeAll("\noptions:\n") catch {};
+        for (s.flags) |f| {
+            w.print("  {s}\n", .{f.name()}) catch {};
+        }
+    }
+    w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
+    writeStdOut(io, buf[0..w.end]) catch {};
+}
+
+/// Every flag the parser knows. A command declares the ones it accepts, so
+/// `clanker stats --model x` is refused instead of silently ignored: a flag
+/// that does nothing is worse than one that is rejected, because the user
+/// believes it took effect.
+const Flag = enum {
+    provider,
+    model,
+    session,
+    goal,
+    iters,
+    dry_run,
+    tasks,
+    port,
+
+    fn name(self: Flag) []const u8 {
+        return switch (self) {
+            .provider => "--provider",
+            .model => "--model",
+            .session => "--session",
+            .goal => "--goal",
+            .iters => "--iters",
+            .dry_run => "--dry-run",
+            .tasks => "--tasks",
+            .port => "--port",
+        };
+    }
+};
+
+/// Which section of `--help` a command is listed under. A flat list of 22
+/// commands makes the reader scan all of them to find the one they want.
+const Group = enum {
+    work,
+    inspect,
+    peers,
+    maintain,
+
+    fn title(self: Group) []const u8 {
+        return switch (self) {
+            .work => "Working with the agent",
+            .inspect => "Looking at what happened",
+            .peers => "Talking to other instances",
+            .maintain => "Setting up and maintaining",
+        };
+    }
+};
+
+const Spec = struct {
+    command: Command,
+    /// How it is typed, including positional arguments.
+    usage: []const u8,
+    blurb: []const u8,
+    group: Group,
+    flags: []const Flag = &.{},
+    /// Longer help shown by `clanker <command> --help`, when the blurb alone
+    /// leaves a real question unanswered.
+    detail: []const u8 = "",
+};
+
+/// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
+/// so are not listed per command.
+const specs = [_]Spec{
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .goal }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--session <id>   continue that saved conversation\n--continue, -c   continue the most recently touched one\n--goal <id>      run against a persisted goal\n--model, -m      <model>, or <provider>/<model> (--model zai/glm-5.2)" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "--continue, -c picks up the most recently touched session." },
+    .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
+    .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
+    .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. Default port 17921." },
+    .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
+
+    .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
+    .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
+    .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
+    .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
+    .{ .command = .providers_check, .usage = "providers <check|models> [name]", .blurb = "verify provider connectivity, or list models", .group = .inspect },
+
+    .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
+    .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
+    .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
+
+    .{ .command = .init, .usage = "init", .blurb = "create config.local.json and state/", .group = .maintain },
+    .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
+    .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{.tasks}, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates." },
+    .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
+    .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
+    .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
+};
+
+fn specFor(cmd: Command) ?*const Spec {
+    for (&specs) |*s| {
+        if (s.command == cmd) return s;
+    }
+    return null;
+}
+
+fn commandAccepts(cmd: Command, flag: Flag) bool {
+    const s = specFor(cmd) orelse return false;
+    for (s.flags) |f| {
+        if (f == flag) return true;
+    }
+    return false;
+}
+
 
 pub fn run(init: std.process.Init, opts: Options) !void {
     switch (opts.command) {
         // Requested output (--help, --version), not an error: stdout, exit 0.
-        .help => try writeStdOut(init.io, usage_text),
+        .help => {
+            if (opts.help_for) |c| {
+                printCommandHelp(init.io, c);
+            } else {
+                var buf: [8192]u8 = undefined;
+                try writeStdOut(init.io, renderUsage(&buf));
+            }
+        },
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
         .init => try cmdInit(init),
         .providers_check => try cmdProvidersCheck(init, opts),
@@ -517,7 +693,7 @@ const local_template =
     \\{{
     \\  "default_provider": "deepseek",
     \\  "providers": {{
-    \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 }}
+    \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat", "models": {{ "deepseek-chat": {{ "max_tokens": 2048 }} }} }}
     \\  }},
     \\  "instance": {{ "name": "{s}", "id": "{s}" }},
     \\  "agent": {{ "max_iterations": 12 }}
@@ -793,6 +969,18 @@ fn reportUnfinishedRun(
     }
 }
 
+/// The id `--continue` means: the session touched most recently. Returns null
+/// when there are none, so a first `clanker -c "..."` starts a session rather
+/// than failing at someone who has not made one yet.
+fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
+    const metas = session.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
+    var best: ?session.SessionMeta = null;
+    for (metas) |m| {
+        if (best == null or m.updated > best.?.updated) best = m;
+    }
+    return if (best) |b| b.id else null;
+}
+
 /// The provider named by `--provider` (or the config default), with
 /// `--model` applied as a one-off override of its `default_model`.
 ///
@@ -862,7 +1050,12 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
-    if (opts.session) |sid| {
+    var opts_session = opts.session;
+    if (opts_session == null and opts.continue_last) {
+        opts_session = latestSessionId(io, arena);
+        if (opts_session) |sid| log.log(.info, "continuing session {s}", .{sid});
+    }
+    if (opts_session) |sid| {
         const maybe_s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
@@ -1907,7 +2100,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
-            handleA2AMessage(gpa, stream, body);
+            handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
             handleAsk(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
@@ -2313,7 +2506,7 @@ fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16,
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8) void {
+fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -2341,6 +2534,47 @@ fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []c
             }
         }
     }
+
+    // Run the incoming message through the agent model instead of echoing
+    // it back. The agent card advertises real skills; echoing raw input
+    // makes the peer receive its own message as the "answer".
+    if (text.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"error\":\"empty message\"}");
+        return;
+    }
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    var provider = cfg.provider(null) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"provider unavailable\"}");
+        return;
+    };
+    var provider_copy = provider.*;
+    provider = &provider_copy;
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "POST /api/a2a/message: registry load failed: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
+        return;
+    };
+    const tool_defs = reg.toToolDefs(arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"tool defs failed\"}");
+        return;
+    };
+    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch |err| {
+        log.log(.error_, "POST /api/a2a/message: agent init failed: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"agent init failed\"}");
+        return;
+    };
+    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
+    var messages: std.ArrayList(types.Message) = .empty;
+    var err_detail: ?[]const u8 = null;
+    const resp = a.run(&messages, text, &err_detail) catch |err| {
+        const detail = err_detail orelse @errorName(err);
+        log.log(.error_, "POST /api/a2a/message: agent run failed: {s}", .{detail});
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"agent run failed\"}");
+        return;
+    };
+    const content = resp.message.content orelse "";
+
     var buf: [1 << 20]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -2363,7 +2597,7 @@ fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []c
     s.beginArray() catch return;
     s.beginObject() catch return;
     s.objectField("text") catch return;
-    s.write(text) catch return;
+    s.write(content) catch return;
     s.endObject() catch return;
     s.endArray() catch return;
     s.endObject() catch return;
@@ -4496,6 +4730,61 @@ test "a turn that read a large file does not wipe the conversation" {
     try std.testing.expectEqual(types.Role.system, messages.items[0].role);
     try std.testing.expectEqualStrings("here is the plan", messages.items[messages.items.len - 1].content.?);
     try std.testing.expect(messages.items.len >= 3);
+}
+
+test "flags take their value in either form" {
+    const a = try parse(&.{ "clanker", "serve", "--port=9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), a.port);
+    const b = try parse(&.{ "clanker", "serve", "--port", "9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), b.port);
+    // An empty value is missing, not empty.
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--port=" }, null));
+}
+
+test "a flag the command does not take is refused, not ignored" {
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--model", "x" }, &diag));
+    try std.testing.expectEqualStrings("--model", diag);
+    // The same flag on a command that does take it is fine.
+    const ok = try parse(&.{ "clanker", "run", "--model", "x", "do a thing" }, null);
+    try std.testing.expectEqualStrings("x", ok.model.?);
+}
+
+test "--help after a command asks about that command" {
+    const opts = try parse(&.{ "clanker", "run", "--help" }, null);
+    try std.testing.expectEqual(Command.help, opts.command);
+    try std.testing.expectEqual(Command.run, opts.help_for.?);
+    // Alone, it is the whole list.
+    const all = try parse(&.{ "clanker", "--help" }, null);
+    try std.testing.expectEqual(Command.help, all.command);
+    try std.testing.expect(all.help_for == null);
+}
+
+test "a bare prompt runs, a mistyped command does not" {
+    const opts = try parse(&.{ "clanker", "fix the failing eval please" }, null);
+    try std.testing.expectEqual(Command.run, opts.command);
+    try std.testing.expectEqualStrings("fix the failing eval please", opts.task.?);
+    // A single short word is a command that does not exist, not a prompt:
+    // silently running "relp" as a task would hide the typo.
+    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "relp" }, null));
+}
+
+test "-m and -c are the short forms every other agent CLI uses" {
+    const opts = try parse(&.{ "clanker", "run", "-m", "zai/glm-5.2", "-c", "keep going" }, null);
+    try std.testing.expectEqualStrings("zai/glm-5.2", opts.model.?);
+    try std.testing.expect(opts.continue_last);
+}
+
+test "every command is listed in the help table" {
+    // A command with no spec would be invisible in --help; the table is the
+    // only place the list lives, so this is what keeps it honest.
+    for (std.enums.values(Command)) |c| {
+        if (c == .help or c == .version) continue;
+        if (specFor(c) == null) {
+            std.debug.print("command {s} has no spec entry\n", .{@tagName(c)});
+            return error.TestUnexpectedResult;
+        }
+    }
 }
 
 test "--model provider/model picks both, and leaves a slashed model id alone" {

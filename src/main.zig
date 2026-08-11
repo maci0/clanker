@@ -44,6 +44,7 @@ comptime {
     _ = @import("tui/width.zig");
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
+    _ = @import("tui2/syntax.zig");
     _ = @import("tui2/repl_vaxis.zig");
     _ = @import("cli.zig");
 }
@@ -104,6 +105,7 @@ pub fn main(init: std.process.Init) !void {
             error.MissingArg => log.log(.error_, "'{s}' needs a value", .{diag}),
             error.BadIters => log.log(.error_, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadPort => log.log(.error_, "--port wants a 16-bit port number, got '{s}'", .{diag}),
+            error.FlagNotForCommand => log.log(.error_, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
             error.BadSubcommand => log.log(.error_, "usage: clanker providers check [name] / clanker chat <send|history|rooms|subscribe> ...", .{}),
         }
         cli.printUsage(init.io);
