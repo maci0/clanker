@@ -24,11 +24,12 @@ pub const RequestParams = struct {
     stream: bool = false,
 };
 
-pub const BuildError = error{ OutOfMemory, BodyTooLarge } || std.Io.Writer.Error;
+pub const BuildError = error{OutOfMemory} || std.Io.Writer.Error;
 
-/// Upper bound for request bodies (large tool schemas).
-const body_cap = 1 << 20;
-
+/// The body grows to fit. It used to be capped at 1 MiB, which was ample for
+/// tool schemas and then became a ceiling on how much source the
+/// self-improvement engine could send: a context near the cap failed the whole
+/// request with a bare WriteFailed, naming nothing.
 /// Serializes a request body for the provider into a newly allocated buffer
 /// (caller frees).
 pub fn buildRequest(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
@@ -41,28 +42,24 @@ pub fn buildRequest(gpa: std.mem.Allocator, params: RequestParams) BuildError![]
 }
 
 fn newBuilder(gpa: std.mem.Allocator) !Builder {
-    const buf = try gpa.alloc(u8, body_cap);
-    return .{ .buf = buf, .w = .fixed(buf), .gpa = gpa };
+    return .{ .out = .init(gpa), .gpa = gpa };
 }
 
 const Builder = struct {
-    buf: []u8,
-    w: std.Io.Writer,
+    out: std.Io.Writer.Allocating,
     gpa: std.mem.Allocator,
 };
 
 /// Creates a Stringify writing into the builder's writer. The returned
 /// Stringify is only valid while the Builder is alive.
 fn begin(b: *Builder) json.Stringify {
-    return .{ .writer = &b.w, .options = .{ .emit_null_optional_fields = false } };
+    return .{ .writer = &b.out.writer, .options = .{ .emit_null_optional_fields = false } };
 }
 
-/// Shrinks the buffer to the exact bytes written; the returned slice is the
-/// exact allocation, so it can be freed with the builder's allocator.
+/// Hands over the exact bytes written; the caller frees them with the
+/// builder's allocator.
 fn finish(b: *Builder) ![]u8 {
-    const end = b.w.end;
-    b.buf = try b.gpa.realloc(b.buf, end);
-    return b.buf;
+    return b.out.toOwnedSlice();
 }
 
 fn jstr(s: *json.Stringify, value: []const u8) !void {
@@ -77,7 +74,7 @@ fn jval(s: *json.Stringify, value: anytype) !void {
 
 fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     var b = try newBuilder(gpa);
-    errdefer gpa.free(b.buf);
+    errdefer b.out.deinit();
     var s = begin(&b);
 
     try s.beginObject();
@@ -334,7 +331,7 @@ const AnthropicError = struct {
 
 fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     var b = try newBuilder(gpa);
-    errdefer gpa.free(b.buf);
+    errdefer b.out.deinit();
     // Scratch space for re-parsing tool arguments; freed when the body is
     // built, so the parsed values never outlive this call.
     var scratch_state = std.heap.ArenaAllocator.init(gpa);

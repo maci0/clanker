@@ -122,9 +122,14 @@ pub const Engine = struct {
         // with the instruction — every attempt re-billed the whole context at
         // full price, which is why this path ran at a 0% cache hit rate.
         const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context });
+        // What earlier runs already did and where they failed. Volatile, so it
+        // belongs in the user half with the instruction, not in the cached
+        // system half.
+        const history_block = self.hist.recentSummary(self.arena, 12) catch "";
         const user_prompt = try std.fmt.allocPrint(self.arena, improve_user_fmt, .{
             opts.instructions,
             gate_tail,
+            if (history_block.len > 0) history_block else "(no earlier attempts)",
             last_error orelse "none",
         });
 
@@ -952,6 +957,12 @@ const improve_user_fmt =
     \\{s}
     \\
     \\# Current gate status
+    \\{s}
+    \\
+    \\# Earlier runs on this repository
+    \\Work listed as accepted is already in the source you were given: do not
+    \\propose it again. Work listed as rejected failed for the stated reason;
+    \\do not repeat that mistake.
     \\{s}
     \\
     \\# Previous attempt feedback

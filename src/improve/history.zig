@@ -203,6 +203,8 @@ pub const History = struct {
         id: []const u8,
         status: []const u8,
         files: []const []const u8,
+        summary: []const u8 = "",
+        detail: []const u8 = "",
         /// Empty for entries written before fingerprints existed; those simply
         /// cannot be matched against, rather than matching everything.
         changes: []const u64 = &.{},
@@ -250,16 +252,65 @@ pub const History = struct {
                     else => {},
                 }
             }
+            const text = struct {
+                fn get(o: json.ObjectMap, key: []const u8) []const u8 {
+                    const x = o.get(key) orelse return "";
+                    return switch (x) {
+                        .string => |str| str,
+                        else => "",
+                    };
+                }
+            }.get;
             try out.append(arena, .{
                 .id = id,
                 .status = status,
                 .files = try files.toOwnedSlice(arena),
+                .summary = text(obj, "summary"),
+                .detail = text(obj, "detail"),
                 .changes = try fps.toOwnedSlice(arena),
             });
         }
         return out.toOwnedSlice(arena);
     }
+
+    /// The last `max_entries` attempts, as a block for the improve prompt:
+    /// what was already done, and what was tried and rejected.
+    ///
+    /// Nothing carried across runs before this, so the same mistake came back
+    /// indefinitely — one wrong import proposed in three separate runs — and
+    /// work already promoted got proposed again as a no-op that passed every
+    /// gate because it changed nothing that mattered.
+    pub fn recentSummary(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return "";
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var buf: std.ArrayList(u8) = .empty;
+        for (entries[start..]) |e| {
+            if (e.summary.len == 0) continue;
+            try buf.appendSlice(arena, "- ");
+            try buf.appendSlice(arena, e.status);
+            try buf.appendSlice(arena, ": ");
+            try buf.appendSlice(arena, firstLine(e.summary, 160));
+            // Why it failed is the part worth carrying: the summary alone says
+            // what was attempted, not what went wrong with it.
+            if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
+                try buf.appendSlice(arena, "\n    rejected because: ");
+                try buf.appendSlice(arena, firstLine(e.detail, 200));
+            }
+            try buf.appendSlice(arena, "\n");
+        }
+        return buf.toOwnedSlice(arena);
+    }
 };
+
+/// First non-empty line, clipped. A gate detail can be a whole build log, and
+/// the first error line is the part that says what to do differently.
+fn firstLine(s: []const u8, max: usize) []const u8 {
+    const trimmed = std.mem.trim(u8, s, " \t\r\n");
+    const end = std.mem.indexOfScalar(u8, trimmed, '\n') orelse trimmed.len;
+    return trimmed[0..@min(end, max)];
+}
 
 fn dirName(path: []const u8) []const u8 {
     if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
