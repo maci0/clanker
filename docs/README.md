@@ -562,7 +562,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 ### `POST /api/run`
 
-Body: `{"task": "...", "stream": bool, "session": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after.
+Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after. `goal` is optional: when set, that entry from `state/goals.json` is prepended as an `## Active goal` preamble, and an empty `task` becomes a default work order for the goal (what the web UI **Work on this** button sends). When `goal` is omitted and `modules.goal` is on, the newest active goal steers the run automatically.
 
 With `"stream": true`, the response body is `text/plain` and framed line-by-line: plain lines are answer content, verbatim; a line prefixed with byte `0x01` is an out-of-band JSON event instead of content:
 
