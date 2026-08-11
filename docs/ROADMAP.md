@@ -35,10 +35,12 @@
 
 - **`recent_commits` tool** — the Autolearn item asking for a dedicated tool for the recurring "summarize the last 3 git commits" task: one read-only call (`git log` with a fixed argv, `{"count": N}` clamped to 1..50) returning one `hash  date  subject  (author)` line per commit, instead of a full agent loop over the general `git` tool.
 
+- **Plan mode** — a run that proposes instead of executing (webui-plan 2.2): `{"plan": true}` on `/api/run` sets `Agent.plan_mode`, which threads a plan-mode block into the system prompt *and* hard-refuses write-capable tool calls in the dispatch loop — the same `needsConfirm` predicate confirm-before-write gates on, so what a viewer would be asked about and what plan mode refuses can never drift. Read-only research runs free; the answer is a numbered plan. The page has a Plan toggle beside Run, badges the proposal turn, and offers "Apply plan", which re-runs in the same session with plan mode off so the plan is in context and writes work again.
+
 ## Planned
 
 - **Plugin manifest SDK** — a formal manifest format for third-party tool packaging and distribution.
-- **Web UI: interaction, fleet views, pixel floor** — a phased plan lives in [docs/webui-plan.md](webui-plan.md). The ask bridge (1.1), confirm-before-write (1.2), image input (1.3), fork (2.1), visible compact (2.3) and model switching (2.4) have landed; still open: plan mode (2.2), subagent runs recorded as their own graphs (3.1) — a nested run still returns one string — the cross-agent view (3.2), and the `webui_pixelagents` floor.
+- **Web UI: interaction, fleet views, pixel floor** — a phased plan lives in [docs/webui-plan.md](webui-plan.md). The ask bridge (1.1), confirm-before-write (1.2), image input (1.3), fork (2.1), plan mode (2.2), visible compact (2.3) and model switching (2.4) have landed; still open: subagent runs recorded as their own graphs (3.1) — a nested run still returns one string — the cross-agent view (3.2), and the `webui_pixelagents` floor.
 - **Web UI: split `app.js` into ES modules** — framework research in [docs/webui-framework-research.md](webui-framework-research.md) concluded: stay on vanilla JS (no build step, JSON-not-HTML server, CSP), with the escape hatches pre-decided — VanJS (+copy-in VanUI components) for a small state-driven view, Preact + htm for a real component tree. The real debt is one 178 KB `app.js`; native `<script type="module">` needs no build step and `webui.zig`'s `assetFor` already maps paths to embedded assets.
 - **Remaining eval coverage** — more `evals/` definitions and graded examples.
 - **Other ideas** — more advanced sandbox policies (fuel metering hardening, syscall-level denials), multi-tenant deployments.

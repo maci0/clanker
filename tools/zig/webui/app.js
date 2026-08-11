@@ -93,6 +93,7 @@ var el = {
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
   enterSends: document.getElementById("enter-sends"),
+  planMode: document.getElementById("plan-mode"),
   turnFilter: document.getElementById("turn-filter"),
   turnFilterCount: document.getElementById("turn-filter-count"),
   scrollBottom: document.getElementById("scroll-bottom"),
@@ -1495,6 +1496,24 @@ function renderStats(turn, stats, task) {
   });
   turn.foot.appendChild(copyBtn);
 
+  /* A plan turn that held is a proposal awaiting a verdict: Apply runs it
+     for real, in the same conversation so the plan is in context, with plan
+     mode off so the harness stops refusing writes. Failed plans get the
+     ordinary Run again / Edit & resend, not an Apply for half a plan. */
+  if (turn.root.getAttribute("data-plan") === "true" && !failed) {
+    var applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.textContent = "Apply plan";
+    applyBtn.title = "Execute the proposed plan in this conversation";
+    applyBtn.addEventListener("click", function () {
+      if (busy) return;
+      if (el.planMode) el.planMode.checked = false;
+      el.task.value = "Apply the plan you proposed above, executing its steps now.";
+      el.form.requestSubmit();
+    });
+    turn.foot.appendChild(applyBtn);
+  }
+
   if (task) {
     var regenBtn = document.createElement("button");
     regenBtn.type = "button";
@@ -1715,7 +1734,17 @@ el.form.addEventListener("submit", function (e) {
   var task = el.task.value.trim();
   if (busy || task === "") return;
 
+  var isPlan = el.planMode && el.planMode.checked;
   var turn = createTurn(task);
+  if (isPlan) {
+    /* The badge marks the proposal turn so renderStats can offer Apply, and
+       so a reader scanning back knows this answer never touched anything. */
+    turn.root.setAttribute("data-plan", "true");
+    var planBadge = document.createElement("span");
+    planBadge.className = "plan-badge";
+    planBadge.textContent = "plan";
+    turn.root.querySelector(".turn-you").appendChild(planBadge);
+  }
   scrollTo(turn.root, "start");
 
   // Submit is about to be disabled. If it holds focus, focus would fall to
@@ -1765,7 +1794,8 @@ el.form.addEventListener("submit", function (e) {
       provider: opts.provider || "",
       model: opts.model || "",
       temperature: typeof opts.temperature === "number" ? opts.temperature : null,
-      top_p: typeof opts.top_p === "number" ? opts.top_p : null
+      top_p: typeof opts.top_p === "number" ? opts.top_p : null,
+      plan: isPlan
     }),
     signal: controller.signal
   }).then(function (resp) {

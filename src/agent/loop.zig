@@ -23,6 +23,12 @@ const mock_server = @import("../llm/mock_server.zig");
 /// (a string, a number, JSON) does not wrap it in prose or markdown fences.
 const exact_format_suffix = "\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.";
 
+/// Appended to the system prompt when [[Agent.plan_mode]] is set. The prompt
+/// alone is not the gate — executeCalls refuses write-capable tools in plan
+/// mode whatever the model decides — but telling the model up front is what
+/// turns those refusals from confusing failures into a coherent mode.
+const plan_mode_suffix = "\n\nPLAN MODE: This run is a proposal, not an execution. Read-only tools work normally; any tool that could change state (files, commands, delegation) is refused by the harness in this mode, so do not attempt it. Investigate as needed, then answer with a concrete, numbered plan of the steps you would take. The user reviews the plan and applies it as a follow-up run.";
+
 /// A fork resolved by the human: what was asked, and what they chose.
 pub const Decision = struct {
     question: []const u8,
@@ -102,6 +108,12 @@ pub const Agent = struct {
     /// means no gate — the state headless runs, the improve loop and nested
     /// sub-agents must stay in, because they have nobody to answer.
     confirm_fn: ?host.ConfirmFn = null,
+    /// Plan mode (webui-plan 2.2): the run proposes instead of executing.
+    /// [[plan_mode_suffix]] is threaded into the system prompt and
+    /// executeCalls refuses write-capable tools (the same needsConfirm
+    /// predicate confirm-before-write gates on), so a plan run can research
+    /// freely but cannot change anything, whatever the model decides.
+    plan_mode: bool = false,
     /// Images a caller (the /api/run composer) wants attached to the next
     /// task message. run() consumes them once and clears the slot, so a
     /// later turn never re-sends an old attachment.
@@ -239,7 +251,7 @@ pub const Agent = struct {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}", .{ base_prompt, exact_format_suffix }) catch |err| {
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "" }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
@@ -1807,6 +1819,21 @@ pub const Agent = struct {
                         self.revealed.put(self.arena, t.name, {}) catch {};
                         self.rebuildToolDefs();
                         log.log(.info, "tool '{s}' called from the catalog; its schema is now loaded", .{t.name});
+                    }
+                }
+            }
+            // Plan mode: write-capable calls are refused outright, before
+            // any confirm channel gets a say — a plan run must not be able
+            // to change state even when the human would have allowed it,
+            // because "apply" is a separate run they have not started yet.
+            // Same predicate as the confirm gate, so what a viewer is asked
+            // about and what plan mode refuses can never drift apart.
+            if (self.plan_mode) {
+                if (self.reg.get(tc.name)) |t| {
+                    if (t.enabled and t.needsConfirm()) {
+                        log.log(.info, "plan mode: tool '{s}' refused (write-capable)", .{tc.name});
+                        results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plan mode: the {s} tool can change state and was not executed. Describe this action as a step in your plan instead.\"}}", .{tc.name});
+                        continue;
                     }
                 }
             }

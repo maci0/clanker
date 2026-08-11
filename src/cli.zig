@@ -3401,6 +3401,10 @@ const RunRequestBody = struct {
     model: []const u8 = "",
     temperature: ?f64 = null,
     top_p: ?f64 = null,
+    /// Plan mode (webui-plan 2.2): the run researches and proposes but the
+    /// harness refuses write-capable tools, so nothing changes until the
+    /// user applies the plan as a follow-up run.
+    plan: bool = false,
 };
 
 /// The composer refuses images over 4 MB; the server enforces the same cap on
@@ -5027,6 +5031,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
+    // Plan mode makes the run a proposal: the agent loop refuses
+    // write-capable tools and the system prompt says why, so the answer is
+    // a plan the browser renders with an Apply action.
+    a.plan_mode = req.plan;
     // Multimodal attachments from the composer: hand them to the agent, which
     // attaches them to the task message exactly as the tool-result image path
     // does. Same module flag as the agent's own image handling, and the 4 MB
@@ -5579,6 +5587,11 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqual(@as(usize, 2), b64DecodedLen("aGk="));
     try std.testing.expectEqual(@as(usize, 5), b64DecodedLen("aGVsbG8="));
     try std.testing.expectEqual(@as(usize, 0), b64DecodedLen(""));
+
+    // Plan mode is opt-in per request and absent means off.
+    try std.testing.expect(!bare.plan);
+    const plan = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"plan\":true}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(plan.plan);
 }
 
 test "an ask accepts only its own options and hands the pick to the waiter" {
