@@ -244,7 +244,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | DuckDuckGo HTML search, up to 8 results with title, url, snippet |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`. Destructive verbs (`push`, `reset`, `rebase`, `checkout`, `clean`, `rm`, `fetch`, `merge`, `revert`, `stash`) are denied |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.json`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | `config.json` | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
