@@ -687,7 +687,9 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const parsed = std.json.parseFromSliceLeaky(ChatOp, arena, input, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.warn, "[chat] json parse failed: '{s}'", .{input});
+        // Log only the length, never the input: chat payloads contain
+        // user-generated messages (personal data).
+        log.log(.warn, "[chat] json parse failed ({d} bytes)", .{input.len});
         return Err.invalid;
     };
     const op = parsed.op orelse return Err.invalid;

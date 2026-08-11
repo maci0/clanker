@@ -302,7 +302,9 @@ pub const Engine = struct {
         }
         if (json_text.len == 0) {
             log.log(.error_, "model returned no proposal content", .{});
-            if (resp.raw) |raw| log.log(.debug, "raw response (first 1200): {s}", .{raw[0..@min(raw.len, 1200)]});
+            // Log the length only, not the content: the raw model response can
+            // contain user PII echoed back from the conversation context.
+            if (resp.raw) |raw| log.log(.debug, "raw response length: {d} chars", .{raw.len});
             feedback = "Your previous response had an empty content field. Output the JSON object in the content field.";
             return .failed;
         }

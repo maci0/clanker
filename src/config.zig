@@ -845,7 +845,7 @@ pub fn configuredHosts(self: *const Config, arena: std.mem.Allocator, which: []c
 /// The hostname of a URL, without the port: `ck_http` matches against
 /// `std.Uri.host`, which excludes it, so keeping `:17932` here would deny every
 /// peer that runs on a non-default port.
-fn hostOf(url: []const u8) ?[]const u8 {
+pub fn hostOf(url: []const u8) ?[]const u8 {
     const scheme_end = std.mem.indexOf(u8, url, "://") orelse return null;
     const rest = url[scheme_end + 3 ..];
     const end = std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len;

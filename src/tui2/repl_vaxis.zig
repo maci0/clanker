@@ -149,6 +149,23 @@ const Model = struct {
     /// embedded Enters would otherwise submit the task early, mid-paste.
     /// While true, Enter is folded to a space and inserted instead.
     in_paste: bool = false,
+    /// vxfw.App.run() unconditionally enables mouse reporting (setMouseMode),
+    /// which takes click-drag away from the terminal's own text selection in
+    /// most emulators (Konsole included) — so this app owes its own
+    /// selection + clipboard copy in exchange for grabbing the mouse.
+    /// Row-major, drag-to-select over the transcript region only (not the
+    /// status line or input box); copies via OSC 52 on release.
+    mouse_down: bool = false,
+    has_selection: bool = false,
+    sel_start: vxfw.Point = .{ .row = 0, .col = 0 },
+    sel_end: vxfw.Point = .{ .row = 0, .col = 0 },
+    /// The last frame's rendered cells, kept only to read back the plain
+    /// text under a selection (surface.readCell) — its backing arena is the
+    /// draw arena, valid until the next redraw actually runs, which is
+    /// after event handling in vxfw.App's own loop.
+    last_surface: ?vxfw.Surface = null,
+    transcript_top: u16 = 0,
+    transcript_bottom: u16 = 0,
 
     fn widget(self: *Model) vxfw.Widget {
         return .{
@@ -268,7 +285,47 @@ const Model = struct {
             },
             .paste_start => self.in_paste = true,
             .paste_end => self.in_paste = false,
+            .mouse => |m| try self.handleMouse(ctx, m),
             else => try self.text_field.handleEvent(ctx, event),
+        }
+    }
+
+    /// Row-major drag-to-select over the transcript region. `row`/`col` are
+    /// already in this widget's local coordinates (vxfw translates before
+    /// dispatch), clamped to the transcript so dragging into the status
+    /// line or input box can't select outside what's actually copyable.
+    fn handleMouse(self: *Model, ctx: *vxfw.EventContext, m: vaxis.Mouse) !void {
+        if (m.button != .left and m.type != .release) return;
+        const row = std.math.clamp(
+            @as(u16, @intCast(@max(0, m.row))),
+            self.transcript_top,
+            if (self.transcript_bottom > 0) self.transcript_bottom - 1 else 0,
+        );
+        const col: u16 = @intCast(@max(0, m.col));
+        switch (m.type) {
+            .press => {
+                self.mouse_down = true;
+                self.has_selection = false;
+                self.sel_start = .{ .row = row, .col = col };
+                self.sel_end = self.sel_start;
+                ctx.redraw = true;
+            },
+            .drag => {
+                if (!self.mouse_down) return;
+                self.sel_end = .{ .row = row, .col = col };
+                self.has_selection = !std.meta.eql(self.sel_start, self.sel_end);
+                ctx.redraw = true;
+            },
+            .release => {
+                if (!self.mouse_down) return;
+                self.mouse_down = false;
+                if (!self.has_selection) return;
+                const surface = self.last_surface orelse return;
+                const text = extractSelectionText(ctx.alloc, surface, self.sel_start, self.sel_end) catch return;
+                try ctx.copyToClipboard(text);
+                ctx.redraw = true;
+            },
+            .motion => {},
         }
     }
 
@@ -304,6 +361,8 @@ const Model = struct {
 
         const top: u16 = 1;
         const bottom = box_y -| 1;
+        self.transcript_top = top;
+        self.transcript_bottom = bottom;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
         var row: u16 = top;
         const start = tailStart(self.lines.items, avail_rows);
@@ -334,6 +393,9 @@ const Model = struct {
         if (streaming and row < bottom and stream_snapshot.len > 0) {
             self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
         }
+
+        if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
+        self.last_surface = surface;
 
         surface.children = children;
         return surface;
@@ -432,6 +494,52 @@ fn drawBox(surface: vxfw.Surface, x: u16, y: u16, w: u16, h: u16) void {
         surface.writeCell(x, r, .{ .char = .{ .grapheme = "\xe2\x94\x82", .width = 1 }, .style = style });
         surface.writeCell(x + w -| 1, r, .{ .char = .{ .grapheme = "\xe2\x94\x82", .width = 1 }, .style = style });
     }
+}
+
+/// Row-major order: dragging can go in any direction, so this puts
+/// whichever of `a`/`b` comes first on screen first.
+fn normalizeSelection(a: vxfw.Point, b: vxfw.Point) struct { first: vxfw.Point, last: vxfw.Point } {
+    if (a.row < b.row or (a.row == b.row and a.col <= b.col)) return .{ .first = a, .last = b };
+    return .{ .first = b, .last = a };
+}
+
+/// Reverse-video over the selected cells, drawn last so it wins over
+/// whatever style the content underneath already had.
+fn highlightSelection(surface: vxfw.Surface, a: vxfw.Point, b: vxfw.Point) void {
+    const n = normalizeSelection(a, b);
+    var row = n.first.row;
+    while (row <= n.last.row and row < surface.size.height) : (row += 1) {
+        const col_start: u16 = if (row == n.first.row) n.first.col else 0;
+        const col_end: u16 = if (row == n.last.row) n.last.col else surface.size.width -| 1;
+        var col = col_start;
+        while (col <= col_end and col < surface.size.width) : (col += 1) {
+            var cell = surface.readCell(col, row);
+            cell.style.reverse = true;
+            surface.writeCell(col, row, cell);
+        }
+    }
+}
+
+/// Reads the plain text back out of the selected cells (works uniformly
+/// across plain, wrapped, and syntax-highlighted rows since it reads the
+/// final rendered buffer, not any one code path's own text). Trailing
+/// padding spaces on each row are trimmed; rows join with '\n'.
+fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw.Point, b: vxfw.Point) ![]const u8 {
+    const n = normalizeSelection(a, b);
+    var out: std.ArrayList(u8) = .empty;
+    var row = n.first.row;
+    while (row <= n.last.row and row < surface.size.height) : (row += 1) {
+        const col_start: u16 = if (row == n.first.row) n.first.col else 0;
+        const col_end: u16 = if (row == n.last.row) n.last.col else surface.size.width -| 1;
+        var col = col_start;
+        while (col <= col_end and col < surface.size.width) : (col += 1) {
+            const cell = surface.readCell(col, row);
+            try out.appendSlice(alloc, cell.char.grapheme);
+        }
+        while (out.items.len > 0 and out.items[out.items.len - 1] == ' ') out.items.len -= 1;
+        if (row < n.last.row) try out.append(alloc, '\n');
+    }
+    return out.toOwnedSlice(alloc);
 }
 
 pub fn cmdReplVaxis(init: std.process.Init) !void {
