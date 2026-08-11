@@ -4,5 +4,6 @@
   "wasm": "zig-out/tools/config_view.wasm",
   "input_schema": { "type": "object", "properties": {"section":{"type":"string"}}, "required": [] },
   "fs_prefixes": ["config.json","config.local.json"],
-  "network_allow": []
+  "network_allow": [],
+  "confirm": false
 }

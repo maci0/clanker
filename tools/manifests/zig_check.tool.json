@@ -22,5 +22,6 @@
   "network_allow": [],
   "exec_allow": [
     "zig"
-  ]
+  ],
+  "confirm": false
 }

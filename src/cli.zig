@@ -919,6 +919,9 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     // prompt nobody sees.
     ask_interactive = stdin_file.isTty(io) catch false;
     if (ask_interactive) a.ask_fn = &replAsk;
+    // Confirm-before-write reaches the terminal only at "always": "browser"
+    // means the web surface alone, and a piped session has nobody to answer.
+    if (ask_interactive and cfg.agent.confirm_writes == .always) a.confirm_fn = &replConfirm;
     a.on_token = &replDelta;
     a.on_tool_call = &replToolCall;
     a.on_tool_results = &replToolResults;
@@ -1407,6 +1410,29 @@ fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u
     const chosen = try tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, options);
     replShowThinking();
     return chosen;
+}
+
+/// Confirm-before-write's terminal side (agent.confirm_writes = "always"):
+/// the same approval widget as replAsk, asking whether one write-capable
+/// tool call may run. Anything short of an explicit "allow" — including a
+/// prompt that fails — refuses the call.
+fn replConfirm(tool_name: []const u8, args_preview: []const u8) bool {
+    const gpa = ask_gpa orelse return false;
+    const out_w = ask_out orelse return false;
+    const stdin_file = ask_stdin orelse return false;
+
+    var qbuf: [512]u8 = undefined;
+    const question = std.fmt.bufPrint(&qbuf, "Run '{s}' with {s}?", .{ tool_name, args_preview }) catch
+        std.fmt.bufPrint(&qbuf, "Run '{s}'?", .{tool_name}) catch "Run this tool?";
+
+    replClearThinking();
+    const chosen = tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, confirm_options) catch {
+        replShowThinking();
+        return false;
+    };
+    replShowThinking();
+    defer gpa.free(chosen);
+    return std.mem.eql(u8, chosen, "allow");
 }
 
 /// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
@@ -2602,6 +2628,10 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     var server = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
     defer server.socket.close(io);
 
+    // Parked for serveConfirm, which frees answers that connection threads
+    // duped with this same allocator (see handleAsk).
+    serve_gpa = gpa;
+
     log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
     // Bare clickable URL (no log prefix) so terminals render it as a link.
     std.debug.print("http://127.0.0.1:{d}/webui\n", .{port});
@@ -3503,6 +3533,32 @@ fn serveAsk(question: []const u8, options: []const []const u8) anyerror![]const 
     const id = askRegister(options) orelse return error.NoUser;
     writeStreamEvent(fd, "ask", .{ .id = id, .question = question, .options = options });
     return askAwait(id, serve_ask_timeout_ns) orelse error.NoUser;
+}
+
+/// The two answers a confirm question offers. Static, so a pending confirm
+/// borrows nothing from the asking frame and POST /api/ask's byte-for-byte
+/// option check applies unchanged.
+const confirm_options: []const []const u8 = &.{ "allow", "deny" };
+
+/// The server's allocator, parked for serveConfirm: ConfirmFn is a bare
+/// function pointer (same shape as AskFn), and the answer askAwait hands
+/// back was duped on the answering thread with this same gpa.
+var serve_gpa: ?std.mem.Allocator = null;
+
+/// The serve-side ConfirmFn: puts one write-capable tool call to the browser
+/// as a `confirm` control event on the run's own stream, then blocks this
+/// connection thread until POST /api/ask answers "allow" or "deny", riding
+/// the ask machinery above unchanged. Everything that fails to produce an
+/// explicit "allow" — no stream, no free slot, a timeout, "deny" — refuses
+/// the call: an unattended gate that waves writes through protects nothing,
+/// and the model is told to take another path rather than left hanging.
+fn serveConfirm(tool_name: []const u8, args_preview: []const u8) bool {
+    const fd = run_stream_socket orelse return false;
+    const id = askRegister(confirm_options) orelse return false;
+    writeStreamEvent(fd, "confirm", .{ .id = id, .tool = tool_name, .args_preview = args_preview, .options = confirm_options });
+    const answer = askAwait(id, serve_ask_timeout_ns) orelse return false;
+    defer if (serve_gpa) |gpa| gpa.free(answer);
+    return std.mem.eql(u8, answer, "allow");
 }
 
 const AskAnswerBody = struct { id: u64 = 0, answer: []const u8 = "" };
@@ -4959,6 +5015,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // only — without the stream there is no channel to carry a question.
         serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
         a.ask_fn = &serveAsk;
+        // Confirm-before-write: with a browser on the stream, write-capable
+        // tool calls wait for its allow/deny (`browser` and `always` both
+        // cover this surface). Non-streaming runs stay ungated like ask —
+        // without the stream there is no channel to carry the question.
+        if (cfg.agent.confirm_writes != .never) a.confirm_fn = &serveConfirm;
         a.on_token = &runStreamDelta;
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;

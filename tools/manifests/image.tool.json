@@ -17,5 +17,6 @@
     "."
   ],
   "network_allow": [],
-  "category": "media"
+  "category": "media",
+  "confirm": false
 }

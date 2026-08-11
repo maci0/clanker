@@ -19,5 +19,6 @@
     "docs/"
   ],
   "network_allow": [],
-  "category": "agent"
+  "category": "agent",
+  "confirm": false
 }

@@ -1355,6 +1355,47 @@ function addAskEvent(turn, evt) {
   if (first) first.focus();
 }
 
+/* Confirm-before-write (agent.confirm_writes): the run is holding a
+   write-capable tool call and asks whether it may run. Same waiting row and
+   the same POST /api/ask resolution as an ask event — the answer is one of
+   the server's fixed options ("allow" / "deny") — plus a preview of the
+   call's arguments, because "allow git?" is not a question anyone can answer
+   without seeing what git was asked to do. On timeout the server denies. */
+function addConfirmEvent(turn, evt) {
+  if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
+  var row = document.createElement("div");
+  row.className = "event-ask event-confirm";
+  var q = document.createElement("div");
+  q.className = "ask-question";
+  q.textContent = "Allow this " + (evt.tool || "tool") + " call?";
+  row.appendChild(q);
+  if (evt.args_preview) {
+    var pre = document.createElement("pre");
+    pre.className = "confirm-preview";
+    pre.textContent = evt.args_preview;
+    row.appendChild(pre);
+  }
+  var group = document.createElement("div");
+  group.className = "ask-options";
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", q.textContent);
+  evt.options.forEach(function (opt) {
+    if (typeof opt !== "string") return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary";
+    btn.textContent = opt;
+    btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
+    group.appendChild(btn);
+  });
+  row.appendChild(group);
+  turn.events.appendChild(row);
+  /* Focus the first option, i.e. "allow": the run is blocked on this row,
+     same reasoning as addAskEvent. Enter is still a deliberate keypress. */
+  var first = group.querySelector("button");
+  if (first) first.focus();
+}
+
 function answerAsk(row, id, opt) {
   var buttons = row.querySelectorAll("button");
   for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
@@ -1675,6 +1716,7 @@ el.form.addEventListener("submit", function (e) {
       if (evt.type === "tool_call") addToolEvent(turn, evt.names);
       else if (evt.type === "tool_result") settleLastToolEvent(turn, evt.ms);
       else if (evt.type === "ask") addAskEvent(turn, evt);
+      else if (evt.type === "confirm") addConfirmEvent(turn, evt);
       else if (evt.type === "error") appendText(turn, "\n[" + evt.message + "]\n", true);
       else if (evt.type === "done") {
         renderStats(turn, evt, task);

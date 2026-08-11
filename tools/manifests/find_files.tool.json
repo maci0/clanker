@@ -22,5 +22,6 @@
     "required": [
       "pattern"
     ]
-  }
+  },
+  "confirm": false
 }

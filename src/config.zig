@@ -134,7 +134,19 @@ pub const Agent = struct {
     /// threads, so it must be bounded: on timeout the tool gets the same
     /// "nobody attached" answer a headless run gets and the run proceeds.
     ask_timeout_seconds: u32 = 120,
+    /// Gate write-capable tool calls (a descriptor with exec or filesystem
+    /// access, or `"confirm": true`) on a human's allow/deny. `never` is
+    /// today's behaviour; `browser` gates streaming web runs, where the
+    /// question travels the run's own stream like ask_user; `always` also
+    /// gates interactive REPL sessions at the terminal. Runs with no human
+    /// channel — headless one-shots, the improve loop, nested sub-agents —
+    /// are never gated, whatever this says: a confirm nobody can answer
+    /// would deny every write instead of protecting anything.
+    confirm_writes: ConfirmWrites = .never,
 };
+
+/// Who must approve a write-capable tool call before it runs.
+pub const ConfirmWrites = enum { never, browser, always };
 
 pub const Improve = struct {
     min_delta: f64 = 0.05,
@@ -529,6 +541,11 @@ pub const Config = struct {
         };
         if (obj.get("seed")) |k| a.seed = @intCast(try jsonInt(k, "seed"));
         if (obj.get("ask_timeout_seconds")) |k| a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
+        if (obj.get("confirm_writes")) |k| {
+            const s = try jsonStr(k, "confirm_writes");
+            a.confirm_writes = std.meta.stringToEnum(ConfirmWrites, s) orelse
+                return error.ConfirmWritesInvalid;
+        }
         return a;
     }
 
@@ -695,6 +712,48 @@ test "config load and merge" {
     // provider lookup
     const found = try cfg.provider(null);
     try std.testing.expectEqualStrings("deepseek", found.name);
+}
+
+test "confirm_writes parses its three values and rejects anything else" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{
+        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
+        \\  "agent": { "confirm_writes": "browser" }
+        \\}
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.json", "config.local.json");
+    try std.testing.expectEqual(ConfirmWrites.browser, cfg.agent.confirm_writes);
+
+    // Left out, the default keeps headless runs and the improve loop ungated.
+    try std.testing.expectEqual(ConfirmWrites.never, (Agent{}).confirm_writes);
+
+    // A typo must fail the load, not silently run without the gate the
+    // config asked for.
+    try dir.writeFile(io, .{
+        .sub_path = "bad.json",
+        .data =
+        \\{
+        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
+        \\  "agent": { "confirm_writes": "sometimes" }
+        \\}
+        ,
+    });
+    try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.json", "config.local.json"));
 }
 
 /// Hosts a tool may reach when its descriptor sets `network_from_config`.

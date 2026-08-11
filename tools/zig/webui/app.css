@@ -375,6 +375,16 @@ main { flex: 1 1 auto; min-width: 0; max-width: 84rem; margin: 0 auto; padding: 
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
   margin-top: var(--space-2);
 }
+/* The truncated arguments of a tool call awaiting confirm-before-write:
+   code, so mono, and scrollable rather than page-widening when one long
+   line arrives (the server caps the preview, not its line length). */
+.event-confirm .confirm-preview {
+  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
+  margin: var(--space-2) 0 0; padding: var(--space-2);
+  background: var(--surface-2); border-radius: 4px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  max-width: var(--measure);
+}
 .turn-answer {
   font-family: var(--sans); font-size: var(--step-1);
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;

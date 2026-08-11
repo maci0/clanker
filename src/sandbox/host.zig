@@ -60,6 +60,20 @@ pub const AskFn = *const fn (
     options: []const []const u8,
 ) anyerror![]const u8;
 
+/// Puts one write-capable tool call to the human before it runs
+/// (agent.confirm_writes) and returns whether they allowed it. Installed by
+/// the surfaces that have a human to ask — the streaming web run, the
+/// interactive REPL — and left null everywhere else, which means "allow":
+/// the improve loop and headless runs must never be gated on an answer
+/// nobody is there to give. The preview is truncated by the caller; a
+/// confirm that cannot reach its human (closed tab, timeout) answers deny,
+/// because waving writes through an unattended gate is worse than making
+/// the model take another path.
+pub const ConfirmFn = *const fn (
+    tool_name: []const u8,
+    args_preview: []const u8,
+) bool;
+
 /// Answers a sub-agent's question on the parent's behalf (`ask_user` with
 /// `{"parent": true}`). `ctx` is the parent agent; the answer is gpa-owned
 /// and freed by the caller.

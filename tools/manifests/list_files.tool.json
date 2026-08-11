@@ -25,5 +25,6 @@
         "description": "Maximum entries to return (default 500). The result says whether it was cut short."
       }
     }
-  }
+  },
+  "confirm": false
 }
