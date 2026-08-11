@@ -23,6 +23,7 @@ const chatrooms = @import("peers/chatrooms.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
+const diskcap = @import("util/diskcap.zig");
 const gate_checks = @import("gate/checks.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
@@ -327,6 +328,10 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
+    // The other place that compiles repeatedly, and so the other place the
+    // build cache grows without bound.
+    const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch config.Config{};
+    _ = diskcap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
     try verifyGates(gpa, io, arena);
 }
 

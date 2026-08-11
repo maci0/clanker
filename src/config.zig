@@ -124,6 +124,12 @@ pub const Improve = struct {
     /// run each, which is the price of noticing a patch that compiles, passes
     /// every unit test, and breaks a tool an agent depends on.
     capability_gate: bool = true,
+    /// Ceiling on the local zig build cache, checked before each attempt.
+    /// The cache only ever grows (zig never prunes it) and each gate run adds
+    /// to it; unbounded, it reached 72 GB here and filled the disk, which
+    /// stops self-improvement completely. Dropping it costs about a second,
+    /// because the artifacts themselves live in zig's global cache. 0 disables.
+    max_cache_bytes: u64 = 4 << 30,
     max_staged_bytes: usize = 256 * 1024,
     max_tool_source_bytes: usize = 64 * 1024,
     max_skill_bytes: usize = 32 * 1024,
@@ -511,6 +517,7 @@ pub const Config = struct {
             .bool => |b| b,
             else => im.capability_gate,
         };
+        if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
         if (obj.get("max_staged_bytes")) |k| im.max_staged_bytes = @intCast(try jsonInt(k, "max_staged_bytes"));
         if (obj.get("max_tool_source_bytes")) |k| im.max_tool_source_bytes = @intCast(try jsonInt(k, "max_tool_source_bytes"));
         if (obj.get("max_skill_bytes")) |k| im.max_skill_bytes = @intCast(try jsonInt(k, "max_skill_bytes"));

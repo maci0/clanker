@@ -26,6 +26,7 @@ const sandbox_host = @import("../sandbox/host.zig");
 const peers = @import("../peers/notify.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const diskcap = @import("../util/diskcap.zig");
 
 pub const Options = struct {
     instructions: []const u8,
