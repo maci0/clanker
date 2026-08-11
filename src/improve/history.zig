@@ -237,6 +237,29 @@ pub const History = struct {
         log.log(.info, "restored the pre-promotion snapshot for improvement {s} ({d} file(s))", .{ id, files.len });
     }
 
+    /// Number of files that were successfully restored from a snapshot.
+    /// Returns the count so the caller can decide whether the restore
+    /// was complete. Unlike `restoreFiles` (which is fire-and-forget),
+    /// this variant is useful when the caller needs to act on partial
+    /// restores.
+    pub fn restoreFilesCount(self: *History, id: []const u8, files: []const []const u8) usize {
+        var restored: usize = 0;
+        for (files) |f| {
+            const src = std.fmt.allocPrint(self.gpa, "{s}/{s}/{s}", .{ self.history_dir, id, f }) catch {
+                log.log(.error_, "restore of '{s}' failed: out of memory", .{f});
+                continue;
+            };
+            defer self.gpa.free(src);
+            copyFile(self.io, self.gpa, self.base, src, f) catch |err| {
+                log.log(.error_, "restore of '{s}' failed: {s}", .{ f, @errorName(err) });
+                continue;
+            };
+            restored += 1;
+        }
+        log.log(.info, "restored the pre-promotion snapshot for improvement {s} ({d}/{d} file(s))", .{ id, restored, files.len });
+        return restored;
+    }
+
     /// Restores files for an improvement id from its snapshot.
     pub fn revert(self: *History, id: []const u8) !void {
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
