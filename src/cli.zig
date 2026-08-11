@@ -3541,7 +3541,8 @@ fn renderWebui(
     path: []const u8,
     stream: std.Io.net.Stream,
 ) ?[]const u8 {
-    const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+    const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "renderWebui path={s}: registry load failed: {s}", .{ path, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
         return null;
     };
@@ -3549,7 +3550,8 @@ fn renderWebui(
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found (run zig build tools)\"}");
         return null;
     };
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch |err| {
+        log.log(.error_, "renderWebui path={s}: wasm read failed: {s}", .{ path, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui wasm missing (run zig build tools)\"}");
         return null;
     };
@@ -3562,7 +3564,8 @@ fn renderWebui(
         .network_allow = tool.network_allow,
         .environ_map = environ_map,
     };
-    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
+    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch |err| {
+        log.log(.error_, "renderWebui path={s}: wasm load failed: {s}", .{ path, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui load failed\"}");
         return null;
     };
@@ -3574,7 +3577,8 @@ fn renderWebui(
         respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
         return null;
     };
-    const out = mod.executeTool(req) catch {
+    const out = mod.executeTool(req) catch |err| {
+        log.log(.error_, "renderWebui path={s}: wasm exec failed: {s}", .{ path, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui render failed\"}");
         return null;
     };
@@ -3738,7 +3742,8 @@ fn handleRuns(
         return;
     }
 
-    const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch {
+    const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
+        log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"error\":\"graph read failed\"}");
         return;
     };
@@ -4437,11 +4442,13 @@ fn handleSessions(
         return;
     }
 
-    const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch {
+    const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch |err| {
+        log.log(.error_, "GET /api/sessions: list failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session list failed\"}");
         return;
     };
-    const listing = sessionListJSON(arena, list) catch {
+    const listing = sessionListJSON(arena, list) catch |err| {
+        log.log(.error_, "GET /api/sessions: encode failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
         return;
     };
