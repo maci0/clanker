@@ -1069,7 +1069,7 @@ function renderStats(turn, stats, task) {
   if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
     parts.push(stats.prompt_tokens + " prompt + " + stats.completion_tokens + " completion");
   }
-  if (typeof stats.ms === "number") parts.push(stats.ms + "ms");
+  if (typeof stats.ms === "number") parts.push(fmtMs(stats.ms));
   if (typeof stats.cost === "number") parts.push("$" + stats.cost.toFixed(4));
   var span = document.createElement("span");
   span.textContent = parts.join(" · ");
@@ -1388,6 +1388,9 @@ el.form.addEventListener("submit", function (e) {
     // renderStats omits any number it wasn't given, so an empty stats object
     // yields just the buttons.
     if (!statsRendered) renderStats(turn, {}, task);
+    // A turn appended under an active filter showed regardless of whether it
+    // matched, and the count line then contradicted the screen.
+    if (el.turnFilter.value.trim()) applyTurnFilter();
     stopElapsed();
     el.hint.textContent = "";
     controller = null;
@@ -1409,6 +1412,9 @@ function runLabel(r) {
 }
 
 var allRuns = [];
+/* Set when something asks for one particular run before the Runs view has
+   loaded its list. */
+var pendingRunId = null;
 
 /* Rebuilds the <select>'s actual option list from allRuns filtered by
    substring match on task text or run id — kept as a real native <select>
@@ -1469,6 +1475,16 @@ function loadRuns() {
     .then(readJson)
     .then(function (runs) {
       allRuns = runs;
+      // A run asked for by name wins over the filter's first match, which was
+      // otherwise a race between two graph fetches on first open.
+      if (pendingRunId) {
+        var want = pendingRunId;
+        pendingRunId = null;
+        el.runFilter.value = "";
+        renderRunOptions("");
+        el.runSelect.value = want;
+        return loadRun(want);
+      }
       var wanted = renderRunOptions(el.runFilter.value);
       if (wanted) return loadRun(wanted);
     })
@@ -1487,6 +1503,20 @@ function showRunsError(message) {
   p.textContent = message;
   el.runGraph.appendChild(p);
   el.runStatus.textContent = message;
+}
+
+/* One way to open a named run, whether the view has loaded yet or not. */
+function openRun(id) {
+  if (viewLoaded.runs) {
+    showView("runs", true);
+    el.runFilter.value = "";
+    renderRunOptions("");
+    el.runSelect.value = id;
+    return loadRun(id);
+  }
+  pendingRunId = id;
+  showView("runs", true);
+  return null;
 }
 
 function loadRun(id) {
@@ -2371,6 +2401,15 @@ function fmtInt(n) {
 /* Cost is the reading people actually come here for, so it gets four
    decimals rather than a rounded currency format: a single run is often
    worth less than a cent, and rounding it to $0.00 would say nothing. */
+/* 183245ms is a number; three minutes is a duration. */
+function fmtMs(ms) {
+  if (typeof ms !== "number" || !isFinite(ms)) return "";
+  if (ms < 1000) return ms + "ms";
+  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  var mins = Math.floor(ms / 60000);
+  return mins + "m " + Math.round((ms % 60000) / 1000) + "s";
+}
+
 function fmtCost(n) {
   return "$" + (typeof n === "number" ? n : 0).toFixed(4);
 }
@@ -2500,13 +2539,15 @@ function renderGoals(goals) {
     if (g.id) {
       var actions = document.createElement("div");
       actions.className = "goal-actions";
-      [["Mark done", "done"], ["Abandon", "abandoned"], ["Reactivate", "active"]].forEach(function (pair) {
+      [["Mark done", "done", "Goal marked done."],
+       ["Abandon", "abandoned", "Goal abandoned."],
+       ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
         if ((g.status || "active") === pair[1]) return;
         var b = document.createElement("button");
         b.type = "button";
         b.className = "secondary";
         b.textContent = pair[0];
-        b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[0] + ": done."); });
+        b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); });
         actions.appendChild(b);
       });
       var del = document.createElement("button");
@@ -2962,6 +3003,8 @@ function clearLoading(name) {
   if (node) node.removeAttribute("aria-busy");
 }
 
+var viewSettled = false;
+
 function showView(name, focusPanel) {
   if (VIEWS.indexOf(name) === -1) name = "chat";
   VIEWS.forEach(function (v) {
@@ -2974,8 +3017,15 @@ function showView(name, focusPanel) {
     tab.tabIndex = on ? 0 : -1;
   });
   if (window.location.hash !== "#" + name) {
-    try { window.history.replaceState(null, "", "#" + name); } catch (e) {}
+    // Pushed for a switch someone made, replaced for the initial normalisation
+    // of whatever the URL arrived with. Writing a fragment into the address bar
+    // is a promise that Back returns to where you were, and it did not.
+    try {
+      if (viewSettled) window.history.pushState(null, "", "#" + name);
+      else window.history.replaceState(null, "", "#" + name);
+    } catch (e) {}
   }
+  viewSettled = true;
   el.railContext.hidden = name !== "chat";
   if (focusPanel) document.getElementById("view-" + name).focus();
   if (!viewLoaded[name] && viewLoaders[name]) {
@@ -3348,9 +3398,13 @@ el.promptSave.addEventListener("click", function () {
     el.sessionStatus.textContent = "Write the prompt in the composer first.";
     return;
   }
-  if (prompts.indexOf(text) === -1) prompts.push(text);
+  if (prompts.indexOf(text) !== -1) {
+    el.sessionStatus.textContent = "That prompt is already saved.";
+    return;
+  }
+  prompts.push(text);
   savePrompts();
-  el.sessionStatus.textContent = "Saved " + prompts.length + (prompts.length === 1 ? " prompt." : " prompts.");
+  el.sessionStatus.textContent = "Prompt saved. Type / in the composer to use it.";
 });
 
 var promptIndex = 0;
@@ -3754,7 +3808,10 @@ function cardNode(c) {
     var due = document.createElement("span");
     due.className = "card-flag";
     due.setAttribute("data-due", dueState(c));
-    due.textContent = "due " + fmtDeadline(c.deadline);
+    // The state is in the words as well as the colour, which is the part
+    // colour blindness and forced-colors both take away.
+    var state = dueState(c);
+    due.textContent = (state === "late" ? "late · " : state === "soon" ? "due soon · " : "due ") + fmtDeadline(c.deadline);
     meta.appendChild(due);
   }
   var blocked = blockers(c);
@@ -4093,11 +4150,7 @@ function showCardDetail(id) {
       b.className = "secondary";
       b.textContent = rid;
       b.title = "Open this run's graph";
-      b.addEventListener("click", function () {
-        showView("runs", true);
-        el.runSelect.value = rid;
-        loadRun(rid);
-      });
+      b.addEventListener("click", function () { openRun(rid); });
       u.appendChild(b);
     });
   }
@@ -4581,7 +4634,7 @@ function paletteEntries() {
     out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); switchSession(s.id); } });
   });
   allRuns.forEach(function (r) {
-    out.push({ kind: "run", label: runLabel(r), run: function () { showView("runs", false); el.runSelect.value = r.run_id; loadRun(r.run_id); } });
+    out.push({ kind: "run", label: runLabel(r), run: function () { openRun(r.run_id); } });
   });
   board.cards.forEach(function (c) {
     out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {
