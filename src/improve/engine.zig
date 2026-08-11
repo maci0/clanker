@@ -1147,3 +1147,53 @@ test "the context budget follows the model's own window" {
     engine.provider = &huge;
     try std.testing.expectEqual(@as(usize, 1024 * 1024), engine.contextBudget());
 }
+
+test "a patch that drops a gate call from the engine is rejected before it compiles" {
+    // The improvement machinery is modifiable, so the one thing that must not
+    // be removable is the gating itself. This runs against the staged text,
+    // which is the only place a patch exists before it is promoted.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, "src/improve");
+
+    // A file that still contains every load-bearing call passes.
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = "src/improve/engine.zig", .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = "src/improve/engine.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    // Drop one call and it is named.
+    const dropped = try std.mem.replaceOwned(u8, arena, keeps.items, "self.capabilityGate(", "");
+    try staged.writeFile(io, .{ .sub_path = "src/improve/engine.zig", .data = dropped });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings("self.capabilityGate(", bad.needle);
+
+    // A proposal that does not touch the file is not checked against it: the
+    // rest of the tree is a verbatim copy where these already hold.
+    const elsewhere = [_]proposal_mod.Change{.{ .file = "src/cli.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
+}
