@@ -447,7 +447,11 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, h.sandbox.gpa, json_input, .{}) catch {
+    // Parse into a scoped arena: parseFromSliceLeaky on the long-lived gpa
+    // would leak the parse tree on every docker tool call (mirrors ckLlm).
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(), json_input, .{}) catch {
         log.log(.warn, "[docker] json parse failed: '{s}'", .{json_input});
         return Err.invalid;
     };
