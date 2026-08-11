@@ -20,5 +20,6 @@
   "network_allow": [],
   "exec_allow": [
     "rg"
-  ]
+  ],
+  "confirm": false
 }

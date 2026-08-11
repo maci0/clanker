@@ -70,12 +70,26 @@ pub const Tool = struct {
     /// in host.zig, never the whole process environment: that is where the API
     /// keys are.
     env_allow: []const []const u8 = &.{},
+    /// Ask the human before running this tool, when a confirm channel is
+    /// installed (agent.confirm_writes). Unset, the answer is derived from
+    /// what the descriptor grants: anything with exec or filesystem access —
+    /// fs_prefixes carry write access, there is no read-only grant — is a
+    /// write in a viewer's eyes. Read-only tools opt out with
+    /// `"confirm": false` so reads keep running free; a tool whose risk its
+    /// grants understate (delegation, say) opts in with `"confirm": true`.
+    confirm: ?bool = null,
 
     /// Core tools (the `cmd_*` slash commands, the web UI, the formatter) back
     /// the harness itself and stay on. A transform is hidden from the model
     /// like an internal tool, but switching it off is the whole point of it.
     pub fn toggleable(self: Tool) bool {
         return !self.internal or self.transform != null;
+    }
+
+    /// Whether a human channel, when one is installed, must approve a call
+    /// to this tool before it runs (see the `confirm` field for the default).
+    pub fn needsConfirm(self: *const Tool) bool {
+        return self.confirm orelse (self.exec_allow.len > 0 or self.fs_prefixes.len > 0);
     }
 
     /// True when `key` is one the descriptor opted in to runtime editing.
@@ -468,6 +482,12 @@ pub const Registry = struct {
                 else => {},
             }
         }
+        if (obj.get("confirm")) |cv| {
+            switch (cv) {
+                .bool => |b| t.confirm = b,
+                else => {},
+            }
+        }
         if (obj.get("sequential")) |sv| {
             switch (sv) {
                 .bool => |b| t.sequential = b,
@@ -810,6 +830,41 @@ test "a tool that calls the model says so in its descriptor" {
             return error.ModelCallerNotDeclared;
         }
     }
+}
+
+test "confirm derives from exec/fs grants and the descriptor overrides it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // No grants: nothing a viewer would call a write, so no confirm.
+    const inert = try Registry.parseDescriptor(arena,
+        \\{ "name": "calc", "description": "d", "wasm": "c.wasm" }
+    );
+    try std.testing.expect(!inert.needsConfirm());
+
+    // An exec grant is a write in a viewer's eyes.
+    const execs = try Registry.parseDescriptor(arena,
+        \\{ "name": "git", "description": "d", "wasm": "g.wasm", "exec_allow": ["git"] }
+    );
+    try std.testing.expect(execs.needsConfirm());
+
+    // So is any fs prefix: prefixes carry write access, never read-only.
+    const writes = try Registry.parseDescriptor(arena,
+        \\{ "name": "edit", "description": "d", "wasm": "e.wasm", "fs_prefixes": ["src"] }
+    );
+    try std.testing.expect(writes.needsConfirm());
+
+    // A read-only tool opts out despite its grants, and an explicit opt-in
+    // wins despite having none.
+    const reader = try Registry.parseDescriptor(arena,
+        \\{ "name": "read", "description": "d", "wasm": "r.wasm", "fs_prefixes": ["."], "confirm": false }
+    );
+    try std.testing.expect(!reader.needsConfirm());
+    const delegator = try Registry.parseDescriptor(arena,
+        \\{ "name": "sub", "description": "d", "wasm": "s.wasm", "confirm": true }
+    );
+    try std.testing.expect(delegator.needsConfirm());
 }
 
 test "descriptor statusline flag parses and defaults off" {

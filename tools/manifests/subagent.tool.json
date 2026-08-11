@@ -33,5 +33,6 @@
   "fs_prefixes": [],
   "network_allow": [],
   "category": "agent",
-  "llm": true
+  "llm": true,
+  "confirm": true
 }

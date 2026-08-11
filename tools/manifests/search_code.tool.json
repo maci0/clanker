@@ -33,5 +33,6 @@
     "rg",
     "ast-grep",
     "semcode"
-  ]
+  ],
+  "confirm": false
 }

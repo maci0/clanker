@@ -97,6 +97,11 @@ pub const Agent = struct {
     /// Human prompt for the ask_user tool, wired by the REPL. Null elsewhere:
     /// a scripted run has nobody to ask.
     ask_fn: ?host.AskFn = null,
+    /// Human approval for write-capable tool calls, wired by the surfaces
+    /// agent.confirm_writes opts in (the streaming web run, the REPL). Null
+    /// means no gate — the state headless runs, the improve loop and nested
+    /// sub-agents must stay in, because they have nobody to answer.
+    confirm_fn: ?host.ConfirmFn = null,
     /// Images a caller (the /api/run composer) wants attached to the next
     /// task message. run() consumes them once and clears the slot, so a
     /// later turn never re-sends an old attachment.
@@ -1789,6 +1794,22 @@ pub const Agent = struct {
                     }
                 }
             }
+            // Confirm-before-write: with a human channel installed, a call
+            // to a write-capable tool waits here for their allow/deny.
+            // Gated in this loop rather than in executeTool because it is
+            // the one point the parallel pass, the worker fallback, and the
+            // sequential path all flow through — a denied call must reach
+            // none of them, and a confirmed batch must be settled before
+            // the first worker spawns.
+            if (self.confirm_fn) |confirm| {
+                if (self.reg.get(tc.name)) |t| {
+                    if (t.enabled and t.needsConfirm() and !confirm(tc.name, argsPreview(tc.arguments))) {
+                        log.log(.info, "tool '{s}' declined by the user", .{tc.name});
+                        results[i] = try std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"the user declined this {s} call. Do not retry it unchanged: adjust the approach, or put the question to ask_user.\"}}", .{tc.name});
+                        continue;
+                    }
+                }
+            }
         }
 
         // Warm the shared caches on the main thread before any worker
@@ -2187,6 +2208,28 @@ const ToolWorker = struct {
 /// Strips trailing punctuation from a candidate exact-match answer only when
 /// the remainder is a number or boolean, so "42." becomes "42" while a string
 /// like "hello." keeps its period (the user asked for the exact value).
+/// What the human is shown when asked to allow a tool call: enough of the
+/// arguments to judge it, never all of them — a whole file write would drown
+/// the question. Truncation backs up to a UTF-8 boundary because the preview
+/// is re-encoded as JSON for the stream event, and a split code point there
+/// is not a smaller preview but a malformed one.
+fn argsPreview(args: []const u8) []const u8 {
+    const cap = 400;
+    if (args.len <= cap) return args;
+    var end: usize = cap;
+    while (end > 0 and (args[end] & 0xC0) == 0x80) end -= 1;
+    return args[0..end];
+}
+
+test argsPreview {
+    try std.testing.expectEqualStrings("short", argsPreview("short"));
+    const long = "x" ** 500;
+    try std.testing.expectEqual(@as(usize, 400), argsPreview(long).len);
+    // A multi-byte code point straddling the cap is dropped whole.
+    const emoji = ("y" ** 399) ++ "\u{1F600}";
+    try std.testing.expectEqualStrings("y" ** 399, argsPreview(emoji));
+}
+
 fn stripTrailingPunctForExact(s: []const u8) []const u8 {
     var stripped = s;
     while (stripped.len > 0) {
