@@ -2171,6 +2171,35 @@ fn cmdSessions(init: std.process.Init) !void {
 /// Runs an internal `cmd_*` WASM tool and returns its `text` (arena-owned).
 /// The CLI subcommands that render persisted state go through here, so the
 /// plugin is the single implementation and the CLI is only a caller.
+/// Runs a tool whose input is a JSON object rather than a command string, and
+/// returns its raw JSON output including a refusal.
+///
+/// toolText exists for the `cmd_*` tools, which take {"args": "<string>"} and
+/// answer with {"text": "..."}. A tool that models an API takes the request
+/// object itself and answers with the resource, and its refusals are part of
+/// what the caller has to relay, so they are returned rather than logged and
+/// swallowed.
+fn toolJson(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    tool_name: []const u8,
+    input: []const u8,
+) ![]const u8 {
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
+        log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+        return error.ToolWasmMissing;
+    };
+    defer mod.deinit();
+    const raw = try mod.executeTool(if (input.len > 0) input else "{}");
+    defer gpa.free(raw);
+    return arena.dupe(u8, raw);
+}
+
 fn toolText(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -4030,7 +4059,7 @@ fn handleBoard(
     // tool's input, so the op set is the tool's and this file does not get a
     // second opinion about what a valid board operation is.
     const args = if (std.mem.eql(u8, method, "POST")) body else "{\"op\":\"list\"}";
-    const out = toolText(io, gpa, arena, cfg, environ_map, "board", args) catch {
+    const out = toolJson(io, gpa, arena, cfg, environ_map, "board", args) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"board tool unavailable\"}");
         return;
     };

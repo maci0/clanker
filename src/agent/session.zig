@@ -26,10 +26,13 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     _ = arena;
     try base.createDirPath(io, store_dir);
 
-    const buf = try gpa.alloc(u8, 1 << 20);
-    defer gpa.free(buf);
-    var w: std.Io.Writer = .fixed(buf);
-    var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    // Grows to fit the conversation rather than a fixed cap: a fixed buffer
+    // silently failed (and callers `catch {}`'d the failure away) once a
+    // long-context model's history crossed it, so the session simply stopped
+    // being saved with no visible error.
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
 
     try s.beginObject();
     try s.objectField("id");
@@ -83,7 +86,7 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     // Atomic: a reader (including this same process resuming after a
     // hot-reload restart) must never observe a session file truncated
     // mid-write.
-    try atomic_write.writeFile(io, base, path, w.buffer[0..w.end]);
+    try atomic_write.writeFile(io, base, path, out.written());
 }
 
 const StoredToolCall = struct {
@@ -296,6 +299,44 @@ test "session save/load round trip" {
     try std.testing.expectEqual(types.Role.tool, loaded.messages[3].role);
     try std.testing.expectEqualStrings("42", loaded.messages[3].content.?);
     try std.testing.expectEqualStrings("tc1", loaded.messages[3].tool_call_id.?);
+}
+
+test "a session larger than the old fixed 1MB buffer still saves and loads" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const chunk = try arena.alloc(u8, 64 * 1024);
+    @memset(chunk, 'x');
+    var messages: std.ArrayList(types.Message) = .empty;
+    var i: usize = 0;
+    while (i < 20) : (i += 1) {
+        try messages.append(arena, .{ .role = .user, .content = chunk });
+    }
+
+    const session = Session{
+        .id = "big",
+        .title = "Big session",
+        .messages = messages.items,
+        .created = 1,
+        .updated = 2,
+    };
+    try saveSession(io, gpa, arena, tmp.dir, session);
+
+    const loaded = try loadSession(io, gpa, arena, tmp.dir, "big");
+    try std.testing.expectEqual(@as(usize, 20), loaded.messages.len);
+    try std.testing.expectEqualStrings(chunk, loaded.messages[19].content.?);
 }
 
 test "forkSession copies a conversation under a new id and leaves the original alone" {
