@@ -66,6 +66,39 @@ pub const History = struct {
         return h.final();
     }
 
+    /// A region fingerprint: file + old text only. Two proposals with the
+    /// same region fingerprint target the same code even if the replacement
+    /// differs — a variation of a failing edit that fails for the same
+    /// structural reason.
+    pub fn regionFingerprint(file: []const u8, old: []const u8) u64 {
+        var h = std.hash.Wyhash.init(0xAE610D);
+        h.update(file);
+        h.update("\x00");
+        h.update(old);
+        return h.final();
+    }
+
+    /// True when a recently rejected attempt targeted the same region
+    /// (file + old text) even with different replacement text. Catches
+    /// the model proposing variations of a structurally failing edit.
+    pub fn sameRegionRejected(self: *History, arena: std.mem.Allocator, region_fps: []const u64, max_lookback: usize) !bool {
+        if (region_fps.len == 0) return false;
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return false;
+        const start = if (entries.len > max_lookback) entries.len - max_lookback else 0;
+        for (entries[start..]) |e| {
+            if (!std.mem.eql(u8, e.status, "rejected")) continue;
+            if (e.region_fps.len == 0) continue;
+            // Any overlap means the proposal revisits a rejected region.
+            for (region_fps) |fp| {
+                for (e.region_fps) |seen| {
+                    if (seen == fp) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /// True when an accepted improvement already made exactly this edit.
     ///
     /// The gates answer "is this change correct", never "is this change new",
@@ -133,6 +166,24 @@ pub const History = struct {
         detail: []const u8,
         changes: []const u64,
     ) !void {
+        return self.appendFull(id, status, instruction, summary, files, score_before, score_after, detail, changes, &.{});
+    }
+
+    /// Like `append` but also records region fingerprints for same-region
+    /// rejection detection.
+    pub fn appendFull(
+        self: *History,
+        id: []const u8,
+        status: Status,
+        instruction: []const u8,
+        summary: []const u8,
+        files: []const []const u8,
+        score_before: f64,
+        score_after: f64,
+        detail: []const u8,
+        changes: []const u64,
+        region_fps: []const u64,
+    ) !void {
         self.base.createDirPath(self.io, self.state_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.state_dir, err });
         self.base.createDirPath(self.io, self.history_dir) catch |err|
@@ -194,6 +245,15 @@ pub const History = struct {
             try s.write(std.fmt.bufPrint(&fp_buf, "{x:0>16}", .{c}) catch continue);
         }
         try s.endArray();
+        if (region_fps.len > 0) {
+            try s.objectField("region_fps");
+            try s.beginArray();
+            for (region_fps) |r| {
+                var rfp_buf: [16]u8 = undefined;
+                try s.write(std.fmt.bufPrint(&rfp_buf, "{x:0>16}", .{r}) catch continue);
+            }
+            try s.endArray();
+        }
         try s.endObject();
 
         try buf.appendSlice(self.gpa, w.buffer[0..w.end]);
@@ -294,6 +354,8 @@ pub const History = struct {
         /// Empty for entries written before fingerprints existed; those simply
         /// cannot be matched against, rather than matching everything.
         changes: []const u64 = &.{},
+        /// Region fingerprints (file+old only), for same-region detection.
+        region_fps: []const u64 = &.{},
     };
 
     fn loadAll(self: *History, arena: std.mem.Allocator) ![]Entry {
@@ -338,6 +400,17 @@ pub const History = struct {
                     else => {},
                 }
             }
+            var rfps: std.ArrayList(u64) = .empty;
+            if (obj.get("region_fps")) |rv| {
+                switch (rv) {
+                    .array => |arr| for (arr.items) |item| switch (item) {
+                        .string => |sv| try rfps.append(arena, std.fmt.parseInt(u64, sv, 16) catch continue),
+                        .integer => |n| try rfps.append(arena, @bitCast(n)),
+                        else => {},
+                    },
+                    else => {},
+                }
+            }
             const text = struct {
                 fn get(o: json.ObjectMap, key: []const u8) []const u8 {
                     const x = o.get(key) orelse return "";
@@ -366,6 +439,7 @@ pub const History = struct {
                 .score_before = score_b,
                 .score_after = score_a,
                 .changes = try fps.toOwnedSlice(arena),
+                .region_fps = try rfps.toOwnedSlice(arena),
             });
         }
         return out.toOwnedSlice(arena);
@@ -686,6 +760,48 @@ test "trailingRejectionStreak counts consecutive non-accepted entries at the tai
     // The summary must mention the streak.
     const summary = try hist.recentSummary(arena, 10);
     try std.testing.expect(std.mem.indexOf(u8, summary, "consecutive attempts were rejected") != null);
+}
+
+test "sameRegionRejected catches variations of the same failing edit" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    const rfp = History.regionFingerprint("src/foo.zig", "old code");
+    try std.testing.expect(!try hist.sameRegionRejected(arena, &.{rfp}, 10));
+
+    // Record a rejected attempt with region fingerprints.
+    const fp = History.changeFingerprint("src/foo.zig", "old code", "new code v1");
+    try hist.appendFull("imp-r1", .rejected, "i", "bad edit", &.{"src/foo.zig"}, 0.0, 0.0, "build failed", &.{fp}, &.{rfp});
+    try std.testing.expect(try hist.sameRegionRejected(arena, &.{rfp}, 10));
+
+    // A different replacement for the same region is still caught.
+    const rfp_same = History.regionFingerprint("src/foo.zig", "old code");
+    try std.testing.expectEqual(rfp, rfp_same);
+
+    // A different region is not matched.
+    const rfp_other = History.regionFingerprint("src/foo.zig", "different old code");
+    try std.testing.expect(!try hist.sameRegionRejected(arena, &.{rfp_other}, 10));
+
+    // An accepted entry's region is not matched.
+    const rfp_acc = History.regionFingerprint("src/bar.zig", "accepted code");
+    const fp_acc = History.changeFingerprint("src/bar.zig", "accepted code", "new");
+    try hist.appendFull("imp-a1", .accepted, "i", "good", &.{"src/bar.zig"}, 0.0, 1.0, "", &.{fp_acc}, &.{rfp_acc});
+    try std.testing.expect(!try hist.sameRegionRejected(arena, &.{rfp_acc}, 10));
 }
 
 test "an edit already rejected is recognised within the lookback window" {
