@@ -11,6 +11,7 @@
 //!
 //! Input:  {"path": "src/x.zig", "old": "exact text", "new": "replacement"}
 //!         {"path": "src/new.zig", "content": "whole file", "create": true}
+//!         create refuses a path that already exists unless overwrite is set.
 //! Output: {"ok": true, "path": "src/x.zig", "replaced": 1, "bytes": 12043}
 //!         {"ok": false, "error": "..."}
 
@@ -37,6 +38,22 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (create) {
         const content = str(obj, "content") orelse
             return lib.fail(out, "create needs \"content\": the whole text of the new file");
+        const overwrite = switch (obj.get("overwrite") orelse std.json.Value{ .bool = false }) {
+            .bool => |b| b,
+            else => false,
+        };
+        // Writing truncates, so creating over a path that already exists
+        // destroys it and answers ok, with nothing in the result to say
+        // anything was lost. Replacing text goes through an exact match for
+        // exactly this reason; the create flag must not be the way around it.
+        if (!overwrite) {
+            if (existingSize(alloc, path)) |size| {
+                var buf: [220]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "{s} already exists ({d} bytes). Use old/new to change part of it, or pass overwrite: true to replace the whole file deliberately", .{ path, size }) catch
+                    "that file already exists; use old/new, or pass overwrite: true";
+                return lib.fail(out, msg);
+            }
+        }
         lib.fsWrite(path, content) catch |err| return lib.failErr(out, err, path);
         return report(out, path, 0, content.len);
     }
@@ -75,6 +92,20 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     lib.fsWrite(path, result.items) catch |err| return lib.failErr(out, err, path);
     return report(out, path, 1, result.items.len);
+}
+
+/// The size of `path` if it is an existing file, else null.
+fn existingSize(alloc: std.mem.Allocator, path: []const u8) ?u64 {
+    const raw = lib.fsStat(path) catch return null;
+    const st = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch return null;
+    if (st != .object) return null;
+    const kind = st.object.get("kind") orelse return null;
+    if (kind != .string or !std.mem.eql(u8, kind.string, "file")) return null;
+    const size = st.object.get("size") orelse return null;
+    return switch (size) {
+        .integer => |i| if (i < 0) null else @as(u64, @intCast(i)),
+        else => null,
+    };
 }
 
 fn report(out: *lib.Out, path: []const u8, replaced: usize, bytes: usize) !void {

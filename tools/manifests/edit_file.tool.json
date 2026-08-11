@@ -1,10 +1,18 @@
 {
   "name": "edit_file",
-  "description": "Changes a file by replacing an exact piece of its text: pass path, old (the exact text to replace, copied from the file) and new. The match must be unique, so include enough surrounding lines to identify one place; the tool tells you how many times it matched rather than guessing. Pass create: true with content to write a whole new file. Read the file first with read_file: text reconstructed from memory usually differs in whitespace and will not match.",
+  "description": "Changes a file by replacing an exact piece of its text: pass path, old (the exact text to replace, copied from the file) and new. The match must be unique, so include enough surrounding lines to identify one place; the tool tells you how many times it matched rather than guessing. Pass create: true with content to write a whole new file; that is refused if the path already exists unless you also pass overwrite: true, so a guessed filename cannot quietly erase something. Read the file first with read_file: text reconstructed from memory usually differs in whitespace and will not match.",
   "wasm": "zig-out/tools/edit_file.wasm",
   "enabled": true,
   "category": "code",
-  "fs_prefixes": ["src", "tools", "tests", "docs", "skills", "evals", "state"],
+  "fs_prefixes": [
+    "src",
+    "tools",
+    "tests",
+    "docs",
+    "skills",
+    "evals",
+    "state"
+  ],
   "input_schema": {
     "type": "object",
     "properties": {
@@ -22,13 +30,19 @@
       },
       "create": {
         "type": "boolean",
-        "description": "Write a whole new file from content instead of replacing text."
+        "description": "Write a whole new file from content. Refused if the path already exists, unless overwrite is also set."
       },
       "content": {
         "type": "string",
         "description": "Whole file text, used with create."
+      },
+      "overwrite": {
+        "type": "boolean",
+        "description": "With create, replace an existing file's entire contents. Prefer old/new, which changes only what you name."
       }
     },
-    "required": ["path"]
+    "required": [
+      "path"
+    ]
   }
 }
