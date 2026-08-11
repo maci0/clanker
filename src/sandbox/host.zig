@@ -855,6 +855,19 @@ fn parseCustomHeaders(
     return count;
 }
 
+/// Whether a tool may run `cmd`.
+///
+/// An empty list used to fall back to a fixed set of twelve commands - git,
+/// find, cat and the rest - so a descriptor that declared nothing inherited
+/// more authority than most that declare something. Naming what you run costs
+/// one line, and every shipped tool that execs now does.
+fn execAllowed(allow: []const []const u8, cmd: []const u8) bool {
+    for (allow) |c| {
+        if (std.mem.eql(u8, cmd, c)) return true;
+    }
+    return false;
+}
+
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
     const uri = std.Uri.parse(url) catch return Err.invalid;
     const hostname = switch (uri.host orelse return Err.invalid) {
@@ -1530,8 +1543,6 @@ pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
 
 // ------------------------------------------------------- ck_exec (shell-ish) --
 
-const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode", "zig", "find", "cat", "wc", "head", "tail", "ls", "diff" };
-
 fn isWordChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == '-';
 }
@@ -1758,15 +1769,10 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    var allowed_cmd = false;
-    const allowed = if (h.sandbox.exec_allow.len > 0) h.sandbox.exec_allow else &exec_cmds;
-    for (allowed) |c| {
-        if (std.mem.eql(u8, cmd, c)) {
-            allowed_cmd = true;
-            break;
-        }
+    if (!execAllowed(h.sandbox.exec_allow, cmd)) {
+        log.log(.warn, "[sandbox] tool may not run '{s}'; its manifest lists {d} command(s)", .{ cmd, h.sandbox.exec_allow.len });
+        return Err.denied;
     }
-    if (!allowed_cmd) return Err.denied;
 
     // Optional cwd: resolve relative to sandbox root via safeJoin.
     var exec_dir: std.Io.Dir = std.Io.Dir.cwd();
@@ -2657,4 +2663,20 @@ test "a tool with no declared prefixes reaches no file at all" {
     const anywhere = try safeJoin(&sb, "src/main.zig");
     std.testing.allocator.free(anywhere);
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "../outside"));
+}
+
+test "a tool may run only the commands its manifest names" {
+    const none: []const []const u8 = &.{};
+    try std.testing.expect(!execAllowed(none, "git"));
+    try std.testing.expect(!execAllowed(none, "rg"));
+
+    const only_zig = [_][]const u8{"zig"};
+    try std.testing.expect(execAllowed(&only_zig, "zig"));
+    try std.testing.expect(!execAllowed(&only_zig, "git"));
+    // Not a prefix or substring match: "zigzag" is a different program.
+    try std.testing.expect(!execAllowed(&only_zig, "zigzag"));
+
+    const several = [_][]const u8{ "rg", "ast-grep", "semcode" };
+    try std.testing.expect(execAllowed(&several, "ast-grep"));
+    try std.testing.expect(!execAllowed(&several, "sh"));
 }
