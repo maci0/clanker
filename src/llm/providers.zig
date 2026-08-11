@@ -71,6 +71,23 @@ fn jval(s: *json.Stringify, value: anytype) !void {
     try s.write(value);
 }
 
+/// Writes `temperature` and `top_p` when configured. Only sent when
+/// configured: both knobs narrow the same distribution, so a model left at
+/// its provider default is deliberately left there rather than given a value
+/// this harness invented.
+fn writeSamplingParams(s: *json.Stringify, params: RequestParams) !void {
+    const temp = params.temperature orelse params.provider.activeModel().temperature;
+    if (temp) |t| {
+        try s.objectField("temperature");
+        try s.print("{d}", .{t});
+    }
+    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
+    if (nucleus) |tp| {
+        try s.objectField("top_p");
+        try s.print("{d}", .{tp});
+    }
+}
+
 // ---------------------------------------------------------------- openai --
 
 fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
@@ -166,19 +183,7 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
         try s.endArray();
     }
 
-    const temp = params.temperature orelse params.provider.activeModel().temperature;
-    if (temp) |t| {
-        try s.objectField("temperature");
-        try s.print("{d}", .{t});
-    }
-    // Only sent when configured. Both knobs narrow the same distribution, so a
-    // model left at its provider default is deliberately left there rather
-    // than given a value this harness invented.
-    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
-    if (nucleus) |tp| {
-        try s.objectField("top_p");
-        try s.print("{d}", .{tp});
-    }
+    try writeSamplingParams(&s, params);
     // Clamp the requested output budget to fit the model's context window:
     // never ask for more completion tokens than half the window.
     const active = params.provider.activeModel();
@@ -504,19 +509,7 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
         try s.endArray();
     }
 
-    const temp = params.temperature orelse params.provider.activeModel().temperature;
-    if (temp) |t| {
-        try s.objectField("temperature");
-        try s.print("{d}", .{t});
-    }
-    // Only sent when configured. Both knobs narrow the same distribution, so a
-    // model left at its provider default is deliberately left there rather
-    // than given a value this harness invented.
-    const nucleus = params.top_p orelse params.provider.activeModel().top_p;
-    if (nucleus) |tp| {
-        try s.objectField("top_p");
-        try s.print("{d}", .{tp});
-    }
+    try writeSamplingParams(&s, params);
     try s.endObject();
 
     return try finish(&b);
