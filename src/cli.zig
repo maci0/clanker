@@ -3494,20 +3494,31 @@ test validPluginName {
     try std.testing.expect(!validPluginName("x" ** 65));
 }
 
-/// Only these two files are served from a plugin directory. Anything else it
-/// happens to contain — notes, sources, a stray key — stays on disk.
+/// Only these files are served from a plugin directory. Anything else it
+/// happens to contain — notes, sources, a stray key — stays on disk. The list
+/// is exact names rather than extensions on purpose: a plugin cannot serve
+/// arbitrary files by naming them well, and adding a kind of asset is a
+/// deliberate edit here.
 fn pluginAssetType(file: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, file, "app.js")) return "text/javascript; charset=utf-8";
     if (std.mem.eql(u8, file, "app.css")) return "text/css; charset=utf-8";
+    // A view that draws needs its art. The handler already reads the file as
+    // bytes and writes them through verbatim, so nothing else has to change;
+    // the page's CSP allows img-src 'self'.
+    if (std.mem.eql(u8, file, "sprites.png")) return "image/png";
     return null;
 }
 
 test pluginAssetType {
     try std.testing.expect(pluginAssetType("app.js") != null);
     try std.testing.expect(pluginAssetType("app.css") != null);
+    try std.testing.expectEqualStrings("image/png", pluginAssetType("sprites.png").?);
     try std.testing.expect(pluginAssetType("plugin.json") == null);
     try std.testing.expect(pluginAssetType("../app.js") == null);
     try std.testing.expect(pluginAssetType("secrets.env") == null);
+    // Named exactly, so a lookalike is still refused.
+    try std.testing.expect(pluginAssetType("other.png") == null);
+    try std.testing.expect(pluginAssetType("../sprites.png") == null);
 }
 
 fn pluginEnabled(state: WebuiPluginState, name: []const u8) bool {
