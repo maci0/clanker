@@ -167,11 +167,14 @@ clanker.registerView({
 
     /* Characters come from a second CC0 pack, because neither pack has both
        halves: this one has animated people and no office, Kenney's has the
-       office and only static figures. Two rows of seven 24x24 frames, frame 0
-       idle and 1-6 a run cycle, so an avatar walking actually walks. */
+       office and only static figures. One 16px row per character, twelve
+       columns: four walk frames for each of down, up and left. Right is left
+       mirrored (the two side columns are pixel-identical on the source sheet),
+       so it costs no columns. Row CH_JANITOR is his; the rest are avatars. */
     var CHARS = new Image();
     var charsReady = false;
-    var CH = 24, CH_FRAMES = 7, CH_ROWS = 2;
+    var CH = 16, CH_FRAMES = 4, CH_AGENTS = 8, CH_JANITOR = 8;
+    var DIR_DOWN = 0, DIR_UP = 1, DIR_LEFT = 2, DIR_RIGHT = 3;
     CHARS.onload = function () { charsReady = true; dirty = true; };
     CHARS.src = "/webui/plugins/office/characters.png";
 
@@ -204,25 +207,37 @@ clanker.registerView({
       return S_AGENTS[hashString(name) % S_AGENTS.length];
     }
 
-    /* Draws a walking character. `phase` advances only while moving, so a
-       standing avatar holds its idle frame instead of jogging on the spot. */
-    function character(name, dx, dy, moving, phase, facing) {
+    /* Which way a mover points. Vertical only wins on a clear vertical run,
+       so an avatar crossing the room to the board keeps facing the way it
+       travels instead of flickering between axes on a near-diagonal. */
+    function facingOf(dx, dy, previous) {
+      if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return previous || DIR_DOWN;
+      if (Math.abs(dy) > Math.abs(dx)) return dy > 0 ? DIR_DOWN : DIR_UP;
+      return dx > 0 ? DIR_RIGHT : DIR_LEFT;
+    }
+
+    /* Draws one character filling the tile at (dx, dy). `phase` advances only
+       while moving, so a standing avatar holds its first frame instead of
+       marching on the spot. False before the sheet loads, which is the
+       caller's cue to fall back to a drawn figure. */
+    function character(row, dx, dy, moving, phase, facing) {
       if (!charsReady) return false;
-      var row = hashString(name) % CH_ROWS;
-      var frame = moving ? 1 + (Math.floor(phase * 10) % (CH_FRAMES - 1)) : 0;
-      var w = CH * (TILE / 16) * 0.75;
-      var h = CH * (TILE / 16) * 0.75;
-      ctx2d.save();
-      if (facing < 0) {
-        // The sheet only faces one way; the other is the same frame mirrored.
-        ctx2d.translate(dx + w, dy);
-        ctx2d.scale(-1, 1);
-        ctx2d.drawImage(CHARS, frame * CH, row * CH, CH, CH, 0, 0, w, h);
-      } else {
-        ctx2d.drawImage(CHARS, frame * CH, row * CH, CH, CH, dx, dy, w, h);
+      var frame = moving ? Math.floor(phase * 8) % CH_FRAMES : 0;
+      var col = (facing === DIR_RIGHT ? DIR_LEFT : facing) * CH_FRAMES + frame;
+      if (facing !== DIR_RIGHT) {
+        ctx2d.drawImage(CHARS, col * CH, row * CH, CH, CH, dx, dy, TILE, TILE);
+        return true;
       }
+      ctx2d.save();
+      ctx2d.translate(dx + TILE, dy);
+      ctx2d.scale(-1, 1);
+      ctx2d.drawImage(CHARS, col * CH, row * CH, CH, CH, 0, 0, TILE, TILE);
       ctx2d.restore();
       return true;
+    }
+
+    function charRow(name) {
+      return hashString(name) % CH_AGENTS;
     }
 
     /* ---------- drawing ----------
@@ -308,7 +323,9 @@ clanker.registerView({
       var px = ox + janitor.x * TILE;
       var py = oy + janitor.y * TILE;
       janitor.phase = (janitor.phase || 0) + 0.016;
-      var drawn = character("janitor", px, py - 8, true, janitor.phase, janitor.dir);
+      // He sweeps a horizontal beat, so his facing is his direction of travel.
+      var drawn = character(CH_JANITOR, px, py, true, janitor.phase,
+        janitor.dir > 0 ? DIR_RIGHT : DIR_LEFT);
       if (!drawn && !tile(S_JANITOR, px, py)) {
         ctx2d.fillStyle = cssVar("--warn", "#e8c34a");
         ctx2d.fillRect(px + 4, py + 2, 8, 12);
@@ -316,13 +333,13 @@ clanker.registerView({
         ctx2d.fillRect(px + 6, py + 4, 2, 2);
         ctx2d.fillRect(px + 10, py + 4, 2, 2);
       }
-      var cx = drawn ? px + 18 : px + 8;      // centre of whichever figure ran
-      var foot = drawn ? py + 26 : py + 14;
-      var hand = drawn ? py + 6 : py + 3;
+      var cx = drawn ? px + TILE / 2 : px + 8;  // centre of whichever figure ran
+      var foot = drawn ? py + TILE - 2 : py + 14;
+      var hand = drawn ? py + TILE / 2 : py + 3;
       // Stepped in 2px blocks rather than stroked: a smooth antialiased
       // diagonal is the one thing on this floor that is not pixel art.
       ctx2d.fillStyle = cssVar("--fg-muted", "#666");
-      var x0 = cx + janitor.dir * 17, x1 = cx + janitor.dir * 6;
+      var x0 = cx + janitor.dir * 14, x1 = cx + janitor.dir * 5;
       for (var s = 0; s <= 12; s++) {
         var t = s / 12;
         ctx2d.fillRect(
@@ -331,7 +348,7 @@ clanker.registerView({
           2, 2);
       }
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
-      ctx2d.fillRect(cx + janitor.dir * 17 - 5, foot - 2, 10, 4); // mop head
+      ctx2d.fillRect(cx + janitor.dir * 14 - 4, foot - 2, 9, 4); // mop head
       if (janitor.quip && offices.length > 0) bubble(px, py, janitor.quip, ox, offices[0].layout.w);
     }
 
@@ -423,7 +440,7 @@ clanker.registerView({
       var px = ox + a.x * TILE;
       var py = oy + a.y * TILE;
       var walking = !!a.walk;
-      if (character(a.name, px, py - 4, walking, a.phase || 0, a.facing || 1)) {
+      if (character(charRow(a.name), px, py, walking, a.phase || 0, a.facing || DIR_DOWN)) {
         // drawn
       } else if (!tile(spriteFor(a.name), px, py)) {
         ctx2d.fillStyle = agentColor(a.name);
@@ -616,7 +633,7 @@ clanker.registerView({
             a.x += (dx / dist) * speed;
             a.y += (dy / dist) * speed;
             a.phase = (a.phase || 0) + dt;
-            if (Math.abs(dx) > 0.01) a.facing = dx > 0 ? 1 : -1;
+            a.facing = facingOf(dx, dy, a.facing);
           }
         });
       });

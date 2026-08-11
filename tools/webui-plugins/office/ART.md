@@ -28,29 +28,37 @@ without having to re-derive it.
 
 ## characters.png
 
-Built from two sheets in one pack, stacked into a single image so the view
-costs one request rather than two. Row 0 is Gabe, row 1 is Mani; each row is
-seven 24x24 frames, frame 0 idle and frames 1-6 a run cycle.
+Nine characters, one 16x16 row each: eight agent avatars and the janitor on
+the last row. Twelve columns per row, four walk frames for each of down, up
+and left. Right is left mirrored, because on the source sheets the two side
+columns are pixel-identical, so storing both would only cost bytes.
 
-- **Source:** Generic RPG pack v0.4 (alpha), `rpg-pack/chars/gabe/gabe-idle-run.png`
-  and `rpg-pack/chars/mani/mani-idle-run.png`
-- **Author:** Estudio Vaca Roxa (Bakudas and Gabe Fern)
-- **Licence:** Creative Commons Zero (CC0 1.0 Universal)
-- **Licence text, quoted from the pack's own `release.txt`:**
+- **Source:** Superpowers Ninja Adventure asset pack, `ninja-adventure/characters/`
+  (sheets 4, 5, 9, 12, 13, 17, 20, 25 for the agents; 14 for the janitor)
+- **Repository:** https://github.com/sparklinlabs/superpowers-asset-packs
+- **Author:** Pixel-boy, at Sparklin Labs
+- **Licence:** Creative Commons Zero (CC0 1.0), the full text in that
+  repository's `LICENSE.txt`
+- **Licence statement, quoted from the repository README:**
 
-  > Licence:
-  > CC0 1.0 Universal (CC0 1.0)
-  > Public Domain Dedication
+  > The assets in this repository are created at Sparklin Labs by Pixel-boy.
+  > They are released under the Creative Commons Zero (CC0) license.
   >
-  > You can copy, modify, distribute and perform the work, even for commercial
-  > purposes, all without asking permission.
+  > You can use the assets found in this repository in your own games,
+  > even commercial ones. Attribution is not required but appreciated.
+  > Placing a link to http://superpowers-html5.com/ somewhere would be awesome :)
 
-- **Modifications:** the two sheets were stacked vertically into one image. The
-  frames themselves are unaltered.
+- **Modifications:** each source sheet is 64x112 (four direction columns by
+  seven frame rows). We take the three distinct directions and the first four
+  frames of each, transpose them into one row per character, and stack the
+  nine chosen characters into a single image so the view still costs one
+  request. The pixels themselves are unaltered.
+- **Attribution:** not required. The link above is the "would be awesome"
+  the author asks for, given willingly.
 
 Two packs rather than one because neither has both halves: this one has
-animated characters and no office interior, Kenney's has the interior and only
-static figures. Both are CC0, so combining them owes nothing to either.
+animated people and no office, Kenney's has the office and only static
+figures. Both are CC0, so combining them owes nothing to either.
 
 ## Rejected, and why
 
