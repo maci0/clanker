@@ -30,15 +30,16 @@ clanker loads **[config.json](config.json)** (committed example) and merges **`c
 | Key | Purpose |
 |-----|---------|
 | `default_provider` | Name of the active entry under `providers` |
-| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, `model`, `max_tokens`, `context_window`, optional `reasoning_effort`) |
+| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
 | `agent` | Loop limits, `tools_dir` / `skills_dir`, sandbox root, compaction |
 | `improve` | Self-improvement iteration and context size caps |
 | `instance` | This agent's `name` and `id` |
 | `peers` | Other instances (`name` + `url`) for notify / phonebook |
 | `notify` | Peer notification topic / enable |
+| `chatrooms` | Default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag |
 | `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`) |
 
-Provider `kind` is either `openai_compat` or `anthropic`. See the full field list and HTTP/CLI reference in [docs/README.md](docs/README.md#configuration).
+Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropic models via Google Vertex AI; requires `project` + `location`, and either `api_key_env` or `service_account_file`). See the full field list and HTTP/CLI reference in [docs/README.md](docs/README.md#configuration).
 
 ## Features
 

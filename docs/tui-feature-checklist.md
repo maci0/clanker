@@ -1,4 +1,13 @@
-# REPL TUI feature checklist
+# REPL TUI feature checklist (src/tui/* — `clanker repl-legacy`)
+
+**As of the libvaxis migration, `clanker repl` runs the new libvaxis-backed
+REPL (`src/tui2/repl_vaxis.zig`), not the implementation this checklist
+describes.** This file, and every item below, is about the original
+hand-rolled REPL (`src/tui/*`) — still shipped and still fully working,
+reachable as `clanker repl-legacy`, since it has real capabilities the
+vaxis REPL doesn't have yet (full markdown rendering, the slash-command
+palette, inline approval prompts, session resume). See `docs/ROADMAP.md`
+for the migration's own status and what the vaxis REPL covers so far.
 
 Tracks each target item from the TUI rewrite against the code that
 implements it and the test that proves it. See

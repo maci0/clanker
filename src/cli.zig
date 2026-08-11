@@ -71,11 +71,13 @@ pub const Command = enum {
     stats,
     phonebook,
     serve,
+    /// The libvaxis-backed REPL (docs/ROADMAP.md migration) — the default
+    /// `clanker repl` since the migration finished. `src/tui2/repl_vaxis.zig`.
     repl,
-    /// Phase 1 of the libvaxis migration (docs/ROADMAP.md): a minimal
-    /// vaxis-backed skeleton, separate from `repl`, proving the dependency
-    /// integrates before anything user-facing moves onto it.
-    repl_vaxis,
+    /// The original hand-rolled REPL (src/tui/*), kept reachable but no
+    /// longer the default: real markdown rendering, slash palette, inline
+    /// approval prompts, and session resume the vaxis REPL doesn't have yet.
+    repl_legacy,
     graph,
     gate,
     autolearn,
@@ -266,7 +268,11 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "repl")) {
                 opts.command = .repl;
             } else if (std.mem.eql(u8, a, "repl-vaxis")) {
-                opts.command = .repl_vaxis;
+                // Compatibility alias from when the vaxis REPL was a
+                // separate opt-in command; now `repl` itself.
+                opts.command = .repl;
+            } else if (std.mem.eql(u8, a, "repl-legacy")) {
+                opts.command = .repl_legacy;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else {
@@ -400,8 +406,8 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .stats => try cmdStats(init),
         .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
-        .repl => try cmdRepl(init, opts),
-        .repl_vaxis => try repl_vaxis.cmdReplVaxis(init),
+        .repl => try repl_vaxis.cmdReplVaxis(init),
+        .repl_legacy => try cmdRepl(init, opts),
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
@@ -1967,7 +1973,11 @@ var hot_reload_active: ?*HotReload = null;
 
 fn buildReplArgvTail(arena: std.mem.Allocator, sid: []const u8, opts: Options) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.append(arena, "repl");
+    // This builds cmdRepl's own re-exec argv (hot-reload self-restart) —
+    // cmdRepl is reachable as "repl-legacy" now that "repl" means the
+    // vaxis REPL (src/tui2/repl_vaxis.zig), which has no hot-reload of
+    // its own yet.
+    try argv.append(arena, "repl-legacy");
     try argv.append(arena, "--session");
     try argv.append(arena, sid);
     if (opts.provider) |p| {

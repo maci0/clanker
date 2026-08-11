@@ -136,6 +136,7 @@ const Model = struct {
     lines: std.ArrayList(Line) = .empty,
     text_field: vxfw.TextField,
     thread: ?std.Thread = null,
+    spinner_frame: u8 = 0,
     status_buf: [160]u8 = undefined,
 
     fn widget(self: *Model) vxfw.Widget {
@@ -200,7 +201,10 @@ const Model = struct {
                 g_mutex.lockUncancelable(g_io);
                 const still_streaming = g_streaming;
                 g_mutex.unlock(g_io);
-                if (still_streaming) try ctx.tick(50, self.widget());
+                if (still_streaming) {
+                    self.spinner_frame +%= 1;
+                    try ctx.tick(50, self.widget());
+                }
                 ctx.redraw = true;
             },
             .key_press => |key| {
@@ -239,10 +243,13 @@ const Model = struct {
         const stream_snapshot = ctx.arena.dupe(u8, g_stream_buf.items) catch "";
         g_mutex.unlock(g_io);
 
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s} \xc2\xb7 /quit or Ctrl-C to exit", .{
+        const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
+        const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /quit or Ctrl-C to exit", .{
             self.provider.name,
             self.provider.activeModelName(),
-            if (streaming) "thinking\xe2\x80\xa6" else "ready",
+            activity,
+            if (streaming) " thinking" else "ready",
         }) catch "clanker (vaxis)";
         writeRow(surface, 0, status, dim);
 

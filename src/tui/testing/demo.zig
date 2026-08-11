@@ -46,7 +46,10 @@ fn readUntilContains(pty: *Pty, accum: *std.ArrayList(u8), gpa: std.mem.Allocato
 }
 
 fn spawnRepl(arena: std.mem.Allocator, envp: [*:null]const ?[*:0]const u8) !Pty {
-    const argv = try pty_mod.buildArgv(arena, &.{ clanker_bin, "repl" });
+    // This suite drives src/tui/*'s specific behaviors (cards, palette,
+    // approval widget) — "repl-legacy" now that "repl" is the vaxis REPL
+    // (src/tui2/repl_vaxis.zig), which none of that exists in yet.
+    const argv = try pty_mod.buildArgv(arena, &.{ clanker_bin, "repl-legacy" });
     return Pty.spawn(clanker_bin, argv, envp, 80, 24);
 }
 

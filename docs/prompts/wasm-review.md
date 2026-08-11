@@ -157,7 +157,9 @@ Run this on every file/function in scope.
 6. Does moving it cross the model's tool catalog boundary: i.e. should the
    *model* ever be allowed to call this directly?
    NO, it's harness-internal only → still fine as a tool, just mark
-   `"internal": true` (same pattern as `cmd_*`, `format`, `webui`).
+   `"internal": true` (same pattern as `cmd_*`, `webui`; `format` used to be
+   in this set too, but `tools/zig/format.zig` was deleted, see
+   `abstractions-review.md`'s worked examples).
    YES → make sure the descriptor's `fs_prefixes`/`network_allow` are the
    minimum the job needs, not "."/wildcard.
 
