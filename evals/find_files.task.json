@@ -1,0 +1,19 @@
+{
+  "name": "find_files",
+  "kind": "task",
+  "description": "find_files must locate a file by name from anywhere under the root — the question list_files and search_code cannot answer. The name asserted is build.zig.zon, which the build itself depends on, so it exists in every checkout that compiles; the assertion is the shape of the answer (found, count >= 1), not any particular path list, so adding another matching file elsewhere cannot break it.",
+  "prompt": "Use the find_files tool with pattern \"build.zig.zon\". Look at the tool's JSON result. Reply with exactly FOUND if its ok field is true and its count field is at least 1; otherwise reply with exactly MISSING.",
+  "requires_tool": "find_files",
+  "criteria": [
+    {
+      "includes": [
+        "FOUND"
+      ]
+    },
+    {
+      "excludes": [
+        "MISSING"
+      ]
+    }
+  ]
+}
