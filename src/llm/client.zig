@@ -148,6 +148,20 @@ pub const SessionUsage = struct {
         if (self.prompt == 0) return 0;
         return @intCast(@min(self.cache_hit, self.prompt) * 100 / self.prompt);
     }
+
+    /// The built-in status-line segment: `provider/model · ↑in ↓out tok · $cost · cache pct%`.
+    /// Statusline tool segments are appended after this by the caller (the REPL),
+    /// which owns the registry and the sandbox; this type only knows the totals.
+    pub fn writeSegment(self: SessionUsage, w: *std.Io.Writer, provider: *const config.Provider) !void {
+        try w.print("{s}/{s} · ↑{d} ↓{d} tok · ${d:.4} · cache {d}%", .{
+            provider.name,
+            provider.activeModelName(),
+            self.prompt,
+            self.completion,
+            self.cost,
+            self.cachePct(),
+        });
+    }
 };
 
 /// Records one completion in the global token-usage log (best-effort). The
@@ -1060,4 +1074,37 @@ test "cached prompt tokens are billed at the cache-read rate" {
     // No cache: unchanged from the plain rate.
     const cold = types.Usage{ .prompt_tokens = 1000, .completion_tokens = 0, .total_tokens = 1000 };
     try std.testing.expectApproxEqAbs(@as(f64, 0.005), promptCost(cold, 5.0), 1e-9);
+}
+
+test "session usage accumulates and renders the built-in status segment" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var provider = try config.Provider.single(arena, "mock", "https://x", .openai_compat, "model-x", .{});
+
+    var su = SessionUsage{};
+    try std.testing.expectEqual(@as(u8, 0), su.cachePct()); // before the first turn
+    su.add(&provider, .{
+        .prompt_tokens = 1000,
+        .completion_tokens = 50,
+        .total_tokens = 1050,
+        .prompt_cache_hit_tokens = 250,
+        .prompt_cache_miss_tokens = 750,
+    });
+    su.add(&provider, .{
+        .prompt_tokens = 500,
+        .completion_tokens = 25,
+        .total_tokens = 525,
+    });
+    try std.testing.expectEqual(@as(u64, 1500), su.prompt);
+    try std.testing.expectEqual(@as(u64, 75), su.completion);
+    try std.testing.expectEqual(@as(u64, 250), su.cache_hit);
+    try std.testing.expectEqual(@as(u8, 16), su.cachePct()); // 250/1500, truncated
+
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try su.writeSegment(&w, &provider);
+    const line = w.buffered();
+    try std.testing.expectEqualStrings("mock/model-x · ↑1500 ↓75 tok · $0.0000 · cache 16%", line);
 }
