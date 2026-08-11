@@ -2798,7 +2798,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_providers) {
             handleProviders(cfg, stream);
         } else if (is_board) {
-            handleBoard(io, gpa, cfg, environ_map, method, body, stream);
+            handleBoard(io, gpa, cfg, environ_map, method, target, body, stream);
         } else if (is_webui_plugins) {
             handleWebuiPlugins(io, gpa, method, body, stream);
         } else if (is_webui_plugin_asset) {
@@ -3922,6 +3922,7 @@ fn handleBoard(
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     method: []const u8,
+    target: []const u8,
     body: []const u8,
     stream: std.Io.net.Stream,
 ) void {
@@ -3929,10 +3930,32 @@ fn handleBoard(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // A GET is the tool's "list"; a POST passes the request body through as the
-    // tool's input, so the op set is the tool's and this file does not get a
-    // second opinion about what a valid board operation is.
-    const args = if (std.mem.eql(u8, method, "POST")) body else "{\"op\":\"list\"}";
+    // A GET is the tool's "list", and it names the room the same way the chat
+    // endpoints do; a POST passes the request body through as the tool's input,
+    // so the op set is the tool's and this file does not get a second opinion
+    // about what a valid board operation is.
+    var room: []const u8 = "";
+    if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+        var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
+        while (params.next()) |pair| {
+            if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
+                if (std.mem.eql(u8, pair[0..eq], "room"))
+                    room = percentDecode(arena, pair[eq + 1 ..]) catch pair[eq + 1 ..];
+            }
+        }
+    }
+    const list_args = if (room.len == 0) "{\"op\":\"list\"}" else blk: {
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer };
+        s.beginObject() catch break :blk "{\"op\":\"list\"}";
+        s.objectField("op") catch break :blk "{\"op\":\"list\"}";
+        s.write("list") catch break :blk "{\"op\":\"list\"}";
+        s.objectField("room") catch break :blk "{\"op\":\"list\"}";
+        s.write(room) catch break :blk "{\"op\":\"list\"}";
+        s.endObject() catch break :blk "{\"op\":\"list\"}";
+        break :blk w.written();
+    };
+    const args = if (std.mem.eql(u8, method, "POST")) body else list_args;
     const out = toolJson(io, gpa, arena, cfg, environ_map, "board", args) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"board tool unavailable\"}");
         return;
