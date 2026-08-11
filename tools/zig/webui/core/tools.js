@@ -1,0 +1,305 @@
+// Vanilla, no bundler. Tools list — derived view over plugins + filter, with
+// row rendering, detail, toggles and config editing. Keeps the list itself as
+// a derived state (toolState) so filter and data cannot disagree.
+import { scrollTo as vendorScrollTo } from "./vendor.js";
+
+var _el = null;
+var _allToolsHolder = null;
+var _toolState = null;
+var _clip = null;
+var _readJson = null;
+var _scrollTo = vendorScrollTo;
+
+export function renderTools(filterText) {
+  _toolState.val = {
+    tools: _allToolsHolder.list,
+    filter: (filterText == null ? _el.toolFilter.value : filterText).trim().toLowerCase()
+  };
+}
+
+function buildToolRow(t) {
+  var row = document.createElement("div");
+  row.className = "tool-row";
+  var name = document.createElement("button");
+  name.type = "button";
+  name.className = "tool-name";
+  name.textContent = t.name;
+  name.setAttribute("aria-label", "Show details for " + t.name);
+  name.addEventListener("click", function () { showToolDetail(t); });
+  row.appendChild(name);
+  if (t.core) {
+    var tag = document.createElement("span");
+    tag.className = "tool-tag";
+    tag.textContent = "core";
+    row.appendChild(tag);
+  } else {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tool-toggle";
+    btn.dataset.on = String(!!t.enabled);
+    btn.textContent = t.enabled ? "on" : "off";
+    btn.setAttribute("aria-pressed", String(!!t.enabled));
+    btn.setAttribute("aria-label", (t.enabled ? "Disable " : "Enable ") + t.name);
+    btn.addEventListener("click", function () { toggleTool(t, btn); });
+    row.appendChild(btn);
+  }
+  if (t.transform) {
+    var tr = document.createElement("span");
+    tr.className = "tool-tag";
+    tr.textContent = "transform " + t.transform.phase;
+    row.appendChild(tr);
+  }
+  if (t.llm) {
+    var llm = document.createElement("span");
+    llm.className = "tool-tag";
+    llm.textContent = "llm";
+    row.appendChild(llm);
+  }
+  if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
+  var desc = document.createElement("span");
+  desc.className = "tool-desc";
+  var text = (t.description || "").trim();
+  var stop = text.indexOf(". ");
+  desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : _clip(text, 160);
+  desc.title = text;
+  row.appendChild(desc);
+  return row;
+}
+
+function buildToolConfig(t) {
+  var details = document.createElement("details");
+  details.className = "tool-config";
+  var summary = document.createElement("summary");
+  summary.textContent = "settings";
+  details.appendChild(summary);
+  var body = document.createElement("div");
+  body.className = "tool-config-body";
+  var inputs = {};
+  t.config_editable.forEach(function (key) {
+    var current = (t.config || {})[key];
+    var field = document.createElement("div");
+    field.className = "tool-field";
+    var id = "cfg-" + t.name + "-" + key;
+    var label = document.createElement("label");
+    label.setAttribute("for", id);
+    label.textContent = key;
+    field.appendChild(label);
+    var input = document.createElement("input");
+    input.id = id;
+    input.type = typeof current === "number" ? "number" : "text";
+    input.value = current === undefined || current === null ? "" : String(current);
+    input.dataset.kind = typeof current;
+    field.appendChild(input);
+    inputs[key] = input;
+    body.appendChild(field);
+  });
+  var save = document.createElement("button");
+  save.type = "button";
+  save.className = "tool-config-save";
+  save.textContent = "Save";
+  save.addEventListener("click", function () { saveToolConfig(t, inputs, save); });
+  body.appendChild(save);
+  details.appendChild(body);
+  return details;
+}
+
+function saveToolConfig(t, inputs, btn) {
+  var next = {};
+  var bad = null;
+  Object.keys(inputs).forEach(function (key) {
+    var input = inputs[key];
+    if (input.dataset.kind === "number") {
+      var n = Number(input.value);
+      if (input.value.trim() === "" || !isFinite(n)) { bad = key; return; }
+      next[key] = n;
+    } else if (input.dataset.kind === "boolean") {
+      next[key] = input.value.trim().toLowerCase() === "true";
+    } else {
+      next[key] = input.value;
+    }
+  });
+  if (bad) {
+    _el.toolsStatus.textContent = t.name + ": " + bad + " must be a number.";
+    return;
+  }
+  btn.disabled = true;
+  fetch("/api/plugins/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: t.name, config: next })
+  }).then(function (r) {
+    return r.json().then(function (data) {
+      if (!r.ok || !data.ok) throw new Error(data.error || ("HTTP " + r.status));
+      return data;
+    });
+  }).then(function () {
+    t.config = next;
+    _el.toolsStatus.textContent = "Saved settings for " + t.name + ".";
+  }).catch(function (err) {
+    _el.toolsStatus.textContent = "Could not save " + t.name + ": " + err.message;
+  }).finally(function () {
+    btn.disabled = false;
+  });
+}
+
+export function showToolDetail(t) {
+  _el.toolDetail.textContent = "";
+  _el.toolDetail.hidden = false;
+  var head = document.createElement("div");
+  head.className = "run-detail-head";
+  var titleWrap = document.createElement("span");
+  var title = document.createElement("span");
+  title.className = "run-detail-title";
+  title.textContent = t.name;
+  titleWrap.appendChild(title);
+  var meta = document.createElement("span");
+  meta.className = "run-detail-meta";
+  var tags = [];
+  if (t.core) tags.push("core");
+  if (t.category) tags.push(t.category);
+  if (t.llm) tags.push("calls the model");
+  if (t.sequential) tags.push("sequential");
+  if (t.check) tags.push("check");
+  if (t.transform) tags.push("transform " + t.transform.phase + " (order " + t.transform.order + ")");
+  tags.push(t.enabled ? "enabled" : "disabled");
+  meta.textContent = "  " + tags.join("  \u00b7  ");
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+  var closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "secondary run-detail-close";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", function () {
+    _el.toolDetail.hidden = true;
+    _el.toolDetail.textContent = "";
+  });
+  head.appendChild(closeBtn);
+  _el.toolDetail.appendChild(head);
+  var desc = document.createElement("p");
+  desc.className = "tool-detail-desc";
+  desc.textContent = t.description || "(no description)";
+  _el.toolDetail.appendChild(desc);
+  var schema = t.input_schema;
+  var props = schema && schema.properties ? Object.keys(schema.properties) : [];
+  if (props.length) {
+    var required = (schema.required || []);
+    var list = document.createElement("dl");
+    list.className = "tool-params";
+    props.forEach(function (key) {
+      var spec = schema.properties[key] || {};
+      var dt = document.createElement("dt");
+      dt.textContent = key;
+      if (required.indexOf(key) !== -1) {
+        var req = document.createElement("span");
+        req.className = "tool-req";
+        req.textContent = " required";
+        dt.appendChild(req);
+      }
+      list.appendChild(dt);
+      var dd = document.createElement("dd");
+      dd.textContent = (spec.type || "any") + (spec.description ? " \u2014 " + spec.description : "");
+      list.appendChild(dd);
+    });
+    _el.toolDetail.appendChild(sectionTitle("Accepts"));
+    _el.toolDetail.appendChild(list);
+  }
+  _el.toolDetail.appendChild(sectionTitle("Sandbox"));
+  var policy = document.createElement("dl");
+  policy.className = "tool-params";
+  [["Network", t.network_allow, "no network"],
+   ["Filesystem", t.fs_prefixes, "no filesystem access"],
+   ["Commands", t.exec_allow, "the harness default set"]].forEach(function (row) {
+    var dt = document.createElement("dt");
+    dt.textContent = row[0];
+    policy.appendChild(dt);
+    var dd = document.createElement("dd");
+    dd.textContent = row[1] && row[1].length ? row[1].join(", ") : row[2];
+    if (!(row[1] && row[1].length)) dd.className = "tool-none";
+    policy.appendChild(dd);
+  });
+  _el.toolDetail.appendChild(policy);
+  _scrollTo(_el.toolDetail, "nearest");
+  closeBtn.focus();
+}
+
+function sectionTitle(text) {
+  var h = document.createElement("h3");
+  h.className = "tool-detail-h";
+  h.textContent = text;
+  return h;
+}
+
+export function toggleTool(t, btn) {
+  var want = !t.enabled;
+  btn.disabled = true;
+  fetch("/api/plugins", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: t.name, on: want })
+  }).then(function (r) {
+    return r.text().then(function (text) {
+      if (!r.ok) throw new Error(String(text).trim() || "HTTP " + r.status);
+      return text;
+    });
+  }).then(function (reply) {
+    t.enabled = want;
+    btn.dataset.on = String(want);
+    btn.textContent = want ? "on" : "off";
+    btn.setAttribute("aria-pressed", String(want));
+    btn.setAttribute("aria-label", (want ? "Disable " : "Enable ") + t.name);
+    _el.toolsStatus.textContent = String(reply).trim();
+  }).catch(function (err) {
+    _el.toolsStatus.textContent = "Could not switch " + t.name + ": " + err.message;
+  }).finally(function () {
+    btn.disabled = false;
+  });
+}
+
+export function loadTools() {
+  return fetch("/api/plugins")
+    .then(_readJson)
+    .then(function (data) {
+      _allToolsHolder.list.length = 0; Array.prototype.push.apply(_allToolsHolder.list, data.plugins || []);
+      renderTools(_el.toolFilter.value);
+    })
+    .catch(function (err) {
+      _el.tools.textContent = "";
+      var p = document.createElement("p");
+      p.className = "usage-empty";
+      p.textContent = "Could not load tools: " + err.message;
+      _el.tools.appendChild(p);
+      _el.toolsStatus.textContent = p.textContent;
+    });
+}
+
+export function bindTools(ctx) {
+  _el = ctx.el;
+  _allToolsHolder = ctx.allToolsHolder;
+  _toolState = ctx.toolState;
+  _clip = ctx.clip;
+  _readJson = ctx.readJson;
+  _scrollTo = ctx.scrollTo || _scrollTo;
+  // renderer that was previously inline as bind(el.tools, toolState, ...)
+  if (ctx.bind && ctx.T && ctx.UI) {
+    ctx.bind(_el.tools, _toolState, function (s) {
+      var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
+        return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
+          (t.description || "").toLowerCase().indexOf(s.filter) !== -1;
+      });
+      _el.toolsStatus.textContent = s.filter
+        ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")
+        : "";
+      if (!shown.length) {
+        return ctx.UI.empty(s.filter
+          ? "No tool matches " + s.filter + "."
+          : "No tools registered. `zig build tools` compiles them.");
+      }
+      return shown.map(buildToolRow);
+    });
+  }
+  var timer = null;
+  _el.toolFilter.addEventListener("input", function () {
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(function () { renderTools(_el.toolFilter.value); }, 120);
+  });
+}

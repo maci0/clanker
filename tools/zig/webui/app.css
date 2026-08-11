@@ -728,7 +728,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 }
 .attachment button {
   position: absolute; top: -6px; right: -6px;
-  min-height: 22px; width: 22px; padding: 0; line-height: 1;
+  min-height: 24px; width: 24px; padding: 0; line-height: 1;
   font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
   background: var(--surface); color: var(--fg-muted);
   border: 1px solid var(--border); border-radius: var(--radius-pill); cursor: pointer;

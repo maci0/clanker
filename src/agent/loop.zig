@@ -161,11 +161,6 @@ pub const Agent = struct {
     /// the wall-clock time spent executing them (e.g. the REPL prints
     /// "done in Nms" under the tool status line).
     on_tool_result: ?*const fn (u64) void = null,
-    /// Optional hook fired alongside `on_tool_result`, carrying the calls and
-    /// their actual results (JSON strings; null for a call that produced no
-    /// result) rather than just timing — e.g. the REPL renders a tool-call
-    /// card showing what the tool returned, not only how long it took.
-    on_tool_results: ?*const fn ([]const types.ToolCall, []const ?[]const u8) void = null,
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
@@ -619,7 +614,6 @@ pub const Agent = struct {
                     }
                 }
             }
-            if (self.on_tool_results) |cb| cb(calls, results);
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);

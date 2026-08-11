@@ -389,9 +389,10 @@ lamps carry further). The seven named palettes ride the same tokens.
   <div class="overlay-box palette-box">
     <label class="sr-only" id="palette-label" for="palette-input">Jump to a view, conversation, run or tool</label>
     <input type="text" id="palette-input" placeholder="Jump to a view, conversation, run, tool or action…" autocomplete="off"
-           role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+           role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
+           aria-describedby="palette-hint">
     <ul class="palette-list" id="palette-list" role="listbox" aria-label="Results"></ul>
-    <p class="meta palette-hint">Enter opens · arrows move · Esc closes</p>
+    <p class="meta palette-hint" id="palette-hint">Enter opens · arrows move · Esc closes</p>
   </div>
 </div>
 
@@ -417,7 +418,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="run-detail-title" id="text-prompt-title">Rename</span>
       </div>
       <label for="text-prompt-input" id="text-prompt-label">Value</label>
-      <input type="text" id="text-prompt-input" autocomplete="off" list="text-prompt-options" maxlength="200">
+      <input type="text" id="text-prompt-input" autocomplete="off" list="text-prompt-options" maxlength="200"
+             aria-describedby="text-prompt-hint">
       <datalist id="text-prompt-options"></datalist>
       <p class="meta" id="text-prompt-hint"></p>
       <div class="goal-actions">
@@ -455,6 +457,13 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/core/composer.js"></script>
 <script type="module" src="/webui/core/scroll.js"></script>
 <script type="module" src="/webui/core/dialog.js"></script>
+<script type="module" src="/webui/core/status.js"></script>
+<script type="module" src="/webui/core/attachments.js"></script>
+<script type="module" src="/webui/core/logs.js"></script>
+<script type="module" src="/webui/core/plugins.js"></script>
+<script type="module" src="/webui/core/palette.js"></script>
+<script type="module" src="/webui/core/modelpicker.js"></script>
+<script type="module" src="/webui/core/usage.js"></script>
 <script type="module" src="/webui/lib/markdown.js"></script>
 <script type="module" src="/webui/lib/graph.js"></script>
 <script type="module" src="/webui/lib/board.js"></script>

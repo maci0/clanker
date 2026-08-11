@@ -2,7 +2,7 @@
 export var SHORTCUTS = [
   ["Ctrl/\u2318 + K", "Jump to a view, conversation, run, tool or action"],
   ["?", "This list"],
-  ["1 \u2013 7", "Go to a view by number"],
+  ["1 \u2013 8", "Go to a view by number"],
   ["\u2190 \u2192", "Move between tabs when one is focused"],
   ["Ctrl/\u2318 + Enter", "Run the task in the composer"],
   ["Ctrl/\u2318 + \u2190 \u2192", "Move the focused board card between columns"],

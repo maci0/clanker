@@ -120,7 +120,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadIters => log.log(.error_, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadPort => log.log(.error_, "--port wants a 16-bit port number, got '{s}'", .{diag}),
             error.FlagNotForCommand => log.log(.error_, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
-            error.BadSubcommand => log.log(.error_, "usage: clanker providers <check|models|catalog|fill> [name] / clanker chat <send|history|rooms|subscribe> ...", .{}),
+            error.BadSubcommand => log.log(.error_, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
             error.OutOfMemory => log.log(.error_, "out of memory", .{}),
         }
         cli.printUsageHint(init.io);

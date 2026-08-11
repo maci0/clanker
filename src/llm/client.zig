@@ -46,6 +46,14 @@ fn appendResponseBytes(list: *std.ArrayList(u8), gpa: std.mem.Allocator, bytes: 
     try list.appendSlice(gpa, bytes);
 }
 
+/// Appends one decoded streaming fragment while bounding the complete
+/// assistant response, including text and tool arguments across all slots.
+fn appendStreamBytes(list: *std.ArrayList(u8), gpa: std.mem.Allocator, bytes: []const u8, total: *usize) !void {
+    if (bytes.len > resp_cap -| total.*) return error.ResponseTooLarge;
+    try list.appendSlice(gpa, bytes);
+    total.* += bytes.len;
+}
+
 /// Prefix on Anthropic OAuth access tokens (`sk-ant-oat01-…`), as minted by
 /// `ant auth login`. Matched without the version digits so a later `oat02`
 /// is still recognised.
@@ -453,6 +461,7 @@ pub fn chatStream(
     var sse_done = false;
     var stream_usage: ?StreamUsage = null;
     var finish_reason: ?[]const u8 = null;
+    var stream_bytes: usize = 0;
     var at_eof = false;
     while (!sse_done) {
         // A peek, not a consuming swap: Agent.stopRequested() is the one
@@ -498,7 +507,7 @@ pub fn chatStream(
                     break;
                 }
                 if (anthropic_family) {
-                    try handleAnthropicEvent(ctx, arena, chunk_arena, payload, on_delta, &content, &call_ids, &call_names, &call_args, &stream_usage, &finish_reason);
+                    try handleAnthropicEvent(ctx, arena, chunk_arena, payload, on_delta, &content, &call_ids, &call_names, &call_args, &stream_bytes, &stream_usage, &finish_reason);
                     continue;
                 }
                 const chunk = std.json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
@@ -519,7 +528,7 @@ pub fn chatStream(
                 if (choice.finish_reason) |fr| finish_reason = try arena.dupe(u8, fr);
                 if (choice.delta.content) |c| {
                     if (c.len > 0) {
-                        try content.appendSlice(ctx.gpa, c);
+                        try appendStreamBytes(&content, ctx.gpa, c, &stream_bytes);
                         on_delta(c);
                     }
                 }
@@ -539,7 +548,7 @@ pub fn chatStream(
                             if (fname.len > 0 and call_names.items[idx].len == 0) call_names.items[idx] = try arena.dupe(u8, fname);
                         }
                         if (frag.function.arguments) |fargs| {
-                            if (fargs.len > 0) try call_args.items[idx].appendSlice(ctx.gpa, fargs);
+                            if (fargs.len > 0) try appendStreamBytes(&call_args.items[idx], ctx.gpa, fargs, &stream_bytes);
                         }
                     }
                 }
@@ -656,6 +665,7 @@ fn handleAnthropicEvent(
     call_ids: *std.ArrayList([]const u8),
     call_names: *std.ArrayList([]const u8),
     call_args: *std.ArrayList(std.ArrayList(u8)),
+    stream_bytes: *usize,
     stream_usage: *?StreamUsage,
     finish_reason: *?[]const u8,
 ) !void {
@@ -693,7 +703,7 @@ fn handleAnthropicEvent(
         const d = ev.delta orelse return;
         if (d.text) |text| {
             if (text.len > 0) {
-                try content.appendSlice(ctx.gpa, text);
+                try appendStreamBytes(content, ctx.gpa, text, stream_bytes);
                 on_delta(text);
             }
             return;
@@ -706,7 +716,7 @@ fn handleAnthropicEvent(
                 try call_ids.append(ctx.gpa, "");
                 try call_names.append(ctx.gpa, "");
             }
-            try call_args.items[ev.index].appendSlice(ctx.gpa, frag);
+            try appendStreamBytes(&call_args.items[ev.index], ctx.gpa, frag, stream_bytes);
         }
         return;
     }
@@ -825,6 +835,13 @@ test "provider response buffers reject bytes beyond their limit" {
         appendResponseBytes(&list, std.testing.allocator, "56", 5),
     );
     try std.testing.expectEqualStrings("1234", list.items);
+
+    var stream_total: usize = resp_cap - 1;
+    try appendStreamBytes(&list, std.testing.allocator, "5", &stream_total);
+    try std.testing.expectError(
+        error.ResponseTooLarge,
+        appendStreamBytes(&list, std.testing.allocator, "6", &stream_total),
+    );
 }
 
 test "endpoint url building" {
@@ -910,6 +927,7 @@ test "anthropic stream events fold into text, tool calls and usage" {
         args.deinit(ctx.gpa);
     }
     var usage: ?StreamUsage = null;
+    var stream_bytes: usize = 0;
 
     const Noop = struct {
         fn onDelta(_: []const u8) void {}
@@ -942,7 +960,7 @@ test "anthropic stream events fold into text, tool calls and usage" {
     };
     var finish_reason: ?[]const u8 = null;
     for (frames) |f| {
-        try handleAnthropicEvent(&ctx, arena, arena, f, &Noop.onDelta, &content, &ids, &names, &args, &usage, &finish_reason);
+        try handleAnthropicEvent(&ctx, arena, arena, f, &Noop.onDelta, &content, &ids, &names, &args, &stream_bytes, &usage, &finish_reason);
     }
 
     try std.testing.expectEqualStrings("tool_use", finish_reason.?);
@@ -1000,8 +1018,9 @@ test "fuzz: anthropic stream events never hang or crash on malformed payloads" {
             }
             var usage: ?StreamUsage = null;
             var finish_reason: ?[]const u8 = null;
+            var stream_bytes: usize = 0;
 
-            try handleAnthropicEvent(self.ctx, arena, arena, payload, &Noop.onDelta, &content, &ids, &names, &args, &usage, &finish_reason);
+            try handleAnthropicEvent(self.ctx, arena, arena, payload, &Noop.onDelta, &content, &ids, &names, &args, &stream_bytes, &usage, &finish_reason);
         }
     };
     try std.testing.fuzz(FCtx{ .ctx = &ctx }, FCtx.one, .{});
@@ -1035,6 +1054,7 @@ test "a no-argument tool call survives the stream" {
     }
     var usage: ?StreamUsage = null;
     var finish_reason: ?[]const u8 = null;
+    var stream_bytes: usize = 0;
 
     const Noop = struct {
         fn onDelta(_: []const u8) void {}
@@ -1051,7 +1071,7 @@ test "a no-argument tool call survives the stream" {
         ,
     };
     for (frames) |f| {
-        try handleAnthropicEvent(&ctx, arena, arena, f, &Noop.onDelta, &content, &ids, &names, &args, &usage, &finish_reason);
+        try handleAnthropicEvent(&ctx, arena, arena, f, &Noop.onDelta, &content, &ids, &names, &args, &stream_bytes, &usage, &finish_reason);
     }
 
     var calls: std.ArrayList(types.ToolCall) = .empty;

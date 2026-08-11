@@ -387,9 +387,16 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         } else if (pending_sub) |sub| {
             if (std.mem.eql(u8, a, sub)) {
                 pending_sub = null;
-            } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models") or std.mem.eql(u8, a, "catalog") or std.mem.eql(u8, a, "fill"))) {
-                opts.providers_sub = a;
-                pending_sub = null; // sub consumed; next token is the provider name
+            } else if (opts.command == .providers_check and sub.len == 0) {
+                if (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models") or std.mem.eql(u8, a, "catalog") or std.mem.eql(u8, a, "fill")) {
+                    opts.providers_sub = a;
+                } else {
+                    // Not one of the subcommand keywords: the default
+                    // subcommand is "check", so `clanker providers openai`
+                    // does the obvious thing instead of erroring.
+                    opts.provider = a;
+                }
+                pending_sub = null;
             } else if (opts.command == .chat and sub.len == 0 and (std.mem.eql(u8, a, "send") or std.mem.eql(u8, a, "history") or std.mem.eql(u8, a, "rooms") or std.mem.eql(u8, a, "subscribe"))) {
                 opts.chat_sub = a;
                 pending_sub = null; // sub consumed; next tokens are room etc.
@@ -426,10 +433,15 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     }
 
     // `clanker chat --help` asks what the subcommands are, so a missing
-    // subcommand is the question rather than the error.
-    if (pending_sub != null and opts.command != .help) {
-        setDiag(diag, "<subcommand>");
-        return error.BadSubcommand;
+    // subcommand is the question rather than the error. A pending_sub of ""
+    // (providers, chat) is an optional subcommand with a documented default
+    // ("check", "rooms") and never errors; only a named one still pending
+    // (e.g. "list" for `clanker tools`) is mandatory.
+    if (pending_sub) |sub| {
+        if (sub.len > 0 and opts.command != .help) {
+            setDiag(diag, "<subcommand>");
+            return error.BadSubcommand;
+        }
     }
     // A flag the chosen command does not take is refused rather than ignored.
     // `clanker stats --model x` used to exit 0 having done nothing with it,
@@ -605,7 +617,7 @@ const specs = [_]Spec{
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
-    .{ .command = .providers_check, .usage = "providers <check|models|catalog|fill> [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
+    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
@@ -1333,7 +1345,7 @@ fn goalField(obj: std.json.ObjectMap, key: []const u8) []const u8 {
 fn goalUpdated(obj: std.json.ObjectMap) i64 {
     if (obj.get("updated")) |v| switch (v) {
         .integer => |n| return n,
-        .float => |f| return @intFromFloat(f),
+        .float => |f| return @trunc(f),
         // Web UI / goal tool write timestamps as JSON numbers that may arrive
         // as strings when the file was hand-edited.
         .string => |s| return std.fmt.parseInt(i64, s, 10) catch 0,
@@ -1349,7 +1361,7 @@ fn goalMaxIterations(obj: std.json.ObjectMap) ?u32 {
     const v = obj.get("max_iterations") orelse return null;
     const n: i64 = switch (v) {
         .integer => |x| x,
-        .float => |f| @intFromFloat(f),
+        .float => |f| @trunc(f),
         else => return null,
     };
     if (n <= 0) return null;
@@ -2523,7 +2535,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or
             std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
@@ -2569,7 +2581,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
                 std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or
-                std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+                std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
                 std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
                 std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {
@@ -3656,9 +3668,17 @@ fn handleWebuiAsset(
     const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
     const is_utils = std.mem.endsWith(u8, target, "utils.js");
     const is_icons = std.mem.endsWith(u8, target, "icons.js");
+    const is_dialog = std.mem.endsWith(u8, target, "dialog.js");
+    const is_usage = std.mem.endsWith(u8, target, "usage.js");
+    const is_status = std.mem.endsWith(u8, target, "status.js");
+    const is_attachments = std.mem.endsWith(u8, target, "attachments.js");
+    const is_logs_asset = std.mem.endsWith(u8, target, "logs.js");
+    const is_plugins = std.mem.endsWith(u8, target, "plugins.js");
+    const is_palette = std.mem.endsWith(u8, target, "palette.js");
+    const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -5305,6 +5325,14 @@ var render_goals: RenderCache = .{};
 var render_stream: RenderCache = .{};
 var render_utils: RenderCache = .{};
 var render_icons: RenderCache = .{};
+var render_dialog: RenderCache = .{};
+var render_usage: RenderCache = .{};
+var render_status: RenderCache = .{};
+var render_attachments: RenderCache = .{};
+var render_logs: RenderCache = .{};
+var render_plugins: RenderCache = .{};
+var render_palette: RenderCache = .{};
+var render_modelpicker: RenderCache = .{};
 var render_ui: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
@@ -5323,6 +5351,14 @@ var gzip_goals: GzipCache = .{};
 var gzip_stream: GzipCache = .{};
 var gzip_utils: GzipCache = .{};
 var gzip_icons: GzipCache = .{};
+var gzip_dialog: GzipCache = .{};
+var gzip_usage: GzipCache = .{};
+var gzip_status: GzipCache = .{};
+var gzip_attachments: GzipCache = .{};
+var gzip_logs: GzipCache = .{};
+var gzip_plugins: GzipCache = .{};
+var gzip_palette: GzipCache = .{};
+var gzip_modelpicker: GzipCache = .{};
 var gzip_ui: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};

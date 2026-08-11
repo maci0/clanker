@@ -15,6 +15,14 @@ import { clearMarks as searchClear, markMatches as searchMark } from "./core/sea
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
 import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
+import { renderUsageTable as usageRenderTable } from "./core/usage.js";
+import { renderStatusInto as statusRenderInto } from "./core/status.js";
+import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addImageFile as attachAddFile } from "./core/attachments.js";
+import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
+import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
+import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
+import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, syncModelSearchLabel as mpSyncLabel, renderModelList as mpRenderList, hideModelList as mpHideList, selectModel as mpSelectModel, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
+import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -225,7 +233,8 @@ el.newChat.addEventListener("click", function () {
 
 // ---- conversations: switch between saved sessions ----------------------
 
-var knownSessions = [];
+var knownSessionsHolder = { list: [] };
+var knownSessions = knownSessionsHolder.list;
 
 /* fmtBytes, clip, sessionLabel live in core/utils.js. */
 
@@ -260,7 +269,7 @@ function togglePin(id) {
 var railState = van.state({ sessions: [], filter: "", pins: [], current: "" });
 
 function renderSessionOptions(sessions) {
-  if (sessions) knownSessions = sessions;
+  if (sessions) { knownSessionsHolder.list.length = 0; Array.prototype.push.apply(knownSessionsHolder.list, sessions); knownSessions = knownSessionsHolder.list; }
   railState.val = {
     sessions: knownSessions,
     filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
@@ -939,11 +948,20 @@ function answerAsk(row, id, opt) {
 function settleAsk(row, text, iconName) {
   var group = row.querySelector(".ask-options");
   if (group) group.remove();
+  // The focused choice was inside the group that was just removed. Keep the
+  // keyboard and screen-reader position at the resolved prompt instead of
+  // letting focus fall back to <body>, and stop exposing a completed prompt
+  // as an active alert dialog.
+  row.removeAttribute("role");
+  row.removeAttribute("aria-live");
+  row.removeAttribute("aria-label");
   var done = document.createElement("div");
   done.className = "ask-answered";
+  done.tabIndex = -1;
   if (iconName) done.appendChild(icon(iconName, 12));
   done.appendChild(document.createTextNode(text));
   row.appendChild(done);
+  done.focus();
 }
 
 function settleLastToolEvent(turn, ms) {
@@ -1043,50 +1061,9 @@ function renderStats(turn, stats, task) {
 var makeLineSplitter = makeLineSplitterMod;
 
 function renderStatus(status) {
-  if (!status) {
-    el.instanceChip.textContent = "disconnected";
-    el.instanceChip.dataset.state = "down";
-    el.peersChip.hidden = true;
-    el.instance.textContent = "unreachable (is `clanker serve` still running?)";
-    el.peers.textContent = "unknown";
-    return;
-  }
-  var peers = status.peers || [];
-  // Chat needs both: the name to mark this instance's own messages and to
-  // derive DM room names, the peer list to offer a DM per peer.
-  instanceName = status.instance.name;
-  knownPeers = peers;
-  el.instanceChip.textContent = status.instance.name;
-  el.instanceChip.dataset.state = "live";
-  el.peersChip.hidden = peers.length === 0;
-  el.peersChip.textContent = peers.length + (peers.length === 1 ? " peer" : " peers");
-  el.instance.textContent = status.instance.name + " (" + status.instance.id + ")";
-
-  el.peers.textContent = "";
-  if (peers.length === 0) {
-    el.peers.textContent = "none configured";
-    return;
-  }
-  var list = document.createElement("ul");
-  peers.forEach(function (p) {
-    var item = document.createElement("li");
-    var name = document.createElement("b");
-    name.textContent = p.name;
-    item.appendChild(name);
-    item.appendChild(document.createTextNode(": "));
-    /* Peer URLs come from config.json; only http(s) becomes a live link so a
-       hand-edited javascript: URL cannot be clicked into execution. */
-    if (/^https?:\/\//i.test(p.url)) {
-      var link = document.createElement("a");
-      link.href = p.url;
-      link.textContent = p.url;
-      item.appendChild(link);
-    } else {
-      item.appendChild(document.createTextNode(p.url));
-    }
-    list.appendChild(item);
-  });
-  el.peers.appendChild(list);
+  var out = statusRenderInto(status, el);
+  instanceName = out.instanceName;
+  knownPeers = out.knownPeers;
 }
 
 function loadStatus() {
@@ -1102,62 +1079,10 @@ function loadStatus() {
    ImageParts — but the composer was a text box, so the one thing you most
    want to show an agent (a screenshot of the thing you are asking about)
    could not be sent. Encoded here and posted with the run. */
-var pendingImages = [];
-var max_image_bytes = 4 * 1024 * 1024;
-
-function renderAttachments() {
-  el.attachments.textContent = "";
-  el.attachments.hidden = pendingImages.length === 0;
-  pendingImages.forEach(function (img, i) {
-    var wrap = document.createElement("div");
-    wrap.className = "attachment";
-    var thumb = document.createElement("img");
-    thumb.src = "data:" + img.mime + ";base64," + img.b64;
-    thumb.alt = "Attached image " + (i + 1) + ", " + fmtBytes(img.bytes);
-    wrap.appendChild(thumb);
-    var rm = document.createElement("button");
-    rm.type = "button";
-    rm.appendChild(icon("strike", 14));
-    rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
-    rm.addEventListener("click", function () {
-      pendingImages.splice(i, 1);
-      renderAttachments();
-      el.hint.textContent = "";
-    });
-    wrap.appendChild(rm);
-    el.attachments.appendChild(wrap);
-  });
-}
-
-function addImageFile(file) {
-  if (!file) return;
-  // Silence on a dropped PDF read as the drop having failed.
-  if (file.type.indexOf("image/") !== 0) {
-    el.sessionStatus.textContent = "Only images can be attached; " + (file.type || "that file") + " was ignored.";
-    return;
-  }
-  var reader = new FileReader();
-  reader.onload = function () {
-    // Split on the comma: a data: URL is "data:<mime>;base64,<payload>" and
-    // only the payload travels.
-    var comma = String(reader.result).indexOf(",");
-    if (comma === -1) return;
-    var b64 = String(reader.result).slice(comma + 1);
-    // The server enforces the same cap on the decoded size, so measure the
-    // decoded size here rather than the base64 length, which is a third larger.
-    var bytes = Math.floor(b64.length * 3 / 4);
-    if (bytes > max_image_bytes) {
-      // #hint belongs to the elapsed ticker, and three writers were clearing
-      // each other there; a refused attachment is announced and shown instead.
-      el.sessionStatus.textContent = "That image is " + fmtBytes(bytes) + "; the limit is " + fmtBytes(max_image_bytes) + ".";
-      return;
-    }
-    pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
-    renderAttachments();
-    el.hint.textContent = pendingImages.length + (pendingImages.length === 1 ? " image attached." : " images attached.");
-  };
-  reader.readAsDataURL(file);
-}
+var pendingImages = attachImages;
+var max_image_bytes = attachMaxBytes;
+function renderAttachments() { attachRender(el, icon, fmtBytes); }
+function addImageFile(file) { attachAddFile(file, el, icon, fmtBytes); }
 
 el.task.addEventListener("paste", function (e) {
   var items = (e.clipboardData && e.clipboardData.items) || [];
@@ -1306,7 +1231,7 @@ el.form.addEventListener("submit", function (e) {
     }
     el.task.value = "";
     // Attachments belong to the turn that just went out, not the next one.
-    pendingImages = [];
+    pendingImages.length = 0;
     renderAttachments();
     // The turn just gave this session its title and a newer timestamp, and a
     // first turn created it server-side at all — so the picker is refreshed
@@ -1350,7 +1275,8 @@ el.form.addEventListener("submit", function (e) {
 
 // ---- runs: pick a recorded run, draw its execution graph ----------------
 
-var allRuns = [];
+var allRunsHolder = { list: [] };
+var allRuns = allRunsHolder.list;
 /* Set when something asks for one particular run before the Runs view has
    loaded its list. */
 var pendingRunId = null;
@@ -1417,7 +1343,7 @@ function loadRuns() {
     .then(readJson)
     .then(function (runs) {
       el.runGraph.removeAttribute("aria-busy");
-      allRuns = runs;
+      allRunsHolder.list.length = 0; Array.prototype.push.apply(allRunsHolder.list, runs); allRuns = allRunsHolder.list;
       // A run asked for by name wins over the filter's first match, which was
       // otherwise a race between two graph fetches on first open.
       if (pendingRunId) {
@@ -2073,52 +1999,8 @@ function renderUsage(rows) {
   usageState.val = allUsage.slice();
 }
 
-var USAGE_COLUMNS = [
-  ["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"],
-  ["Completion", "num"], ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]
-];
-
-/* Provider and model are often the same string, and showing it twice is
-   noise — unless the model has a name of its own to be shown by. */
-function usageName(r) {
-  var shown = modelLabel(r.provider, r.model);
-  if (shown === r.provider) return T.td(r.provider);
-  return T.td(r.provider + " / ", T.span({ class: "model" }, shown));
-}
-
-function usageRow(r) {
-  return T.tr(usageName(r), [
-    fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
-    (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)
-  ].map(function (v) { return T.td({ class: "num" }, v); }));
-}
-
 bind(el.usage, usageState, function (rows) {
-  if (!rows.length) {
-    return UI.empty("No completions recorded yet. Run a task and the totals appear here.");
-  }
-  var totals = rows.reduce(function (a, r) {
-    a.calls += r.calls || 0;
-    a.prompt += r.prompt_tokens || 0;
-    a.completion += r.completion_tokens || 0;
-    a.cost += r.cost || 0;
-    return a;
-  }, { calls: 0, prompt: 0, completion: 0, cost: 0 });
-
-  return T.div({ class: "usage-wrap" },
-    T.table({ class: "usage" },
-      T.thead(T.tr(USAGE_COLUMNS.map(function (col) {
-        var th = T.th({ class: col[1] || null }, col[0]);
-        // Set directly: van did not carry `scope` through as an attribute, and
-        // a header cell without it is not associated with its column.
-        th.setAttribute("scope", "col");
-        return th;
-      }))),
-      T.tbody(rows.map(usageRow)),
-      T.tfoot(T.tr(
-        T.td(rows.length + (rows.length === 1 ? " model" : " models")),
-        [fmtInt(totals.calls), fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
-          .map(function (v) { return T.td({ class: "num" }, v); })))));
+  return usageRenderTable(rows, modelLabel, fmtInt, fmtCost, UI, T);
 });
 
 function loadUsage() {
@@ -2218,7 +2100,8 @@ function loadGoals() {
 
 // ---- tools: every WASM plugin, and a switch for the optional ones ------
 
-var allTools = [];
+var allToolsHolder = { list: [] };
+var allTools = allToolsHolder.list;
 
 /* The tool list is a derivation of what is registered and what is typed in
    the filter, so the two can never disagree about what is on screen. */
@@ -2536,7 +2419,7 @@ function loadTools() {
   return fetch("/api/plugins")
     .then(readJson)
     .then(function (data) {
-      allTools = data.plugins || [];
+      allToolsHolder.list.length = 0; Array.prototype.push.apply(allToolsHolder.list, data.plugins || []); allTools = allToolsHolder.list;
       renderTools(el.toolFilter.value);
     })
     .catch(function (err) {
@@ -2726,215 +2609,14 @@ function setTabCount(view, n) {
 
 
 
-/* ---------- model picker and sampling ---------- */
-
-/* The CLI has --provider and config.json has temperature and top_p; the
-   composer had neither, so every run through the page used the default. */
-var providerCache = [];
-
-/* The hidden <select> stays the single source of truth for "what did the
-   user pick" (runOptions(), localStorage, the change listener below all
-   already read it) — the visible fuzzy search box is a second view onto the
-   same value, not a replacement for it, which is why loadProviders() still
-   builds every <option> exactly as before. modelIndex is the flat list the
-   search box filters; it carries the pricing/context metadata the plain
-   <select> never showed. */
-var modelIndex = [];
-
-function loadProviders() {
-  return fetch("/api/providers")
-    .then(readJson)
-    .then(function (d) {
-      providerCache = d.providers || [];
-      // Usage may have rendered before this arrived; its labels come from here.
-      if (allUsage.length) renderUsage(null);
-      el.modelSelect.textContent = "";
-      modelIndex = [];
-      (d.providers || []).forEach(function (prov) {
-        var group = document.createElement("optgroup");
-        group.label = prov.name;
-        (prov.models || []).forEach(function (m) {
-          var value = prov.name + " " + m.name;
-          var label = m.display || m.name;
-          var meta = [];
-          if (m.context_window) meta.push(fmtInt(m.context_window) + " ctx");
-          if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
-            meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
-                       " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
-          }
-          var opt = document.createElement("option");
-          opt.value = value;
-          opt.textContent = label + (meta.length ? "  .  " + meta.join("  .  ") : "");
-          if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
-          group.appendChild(opt);
-          modelIndex.push({ value: value, provider: prov.name, model: m.name, label: label, meta: meta.join("  ·  ") });
-        });
-        el.modelSelect.appendChild(group);
-      });
-      var saved = null;
-      try { saved = window.localStorage.getItem("clanker.model"); } catch (e) {}
-      if (saved && el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
-        el.modelSelect.value = saved;
-      }
-      syncModelSearchLabel();
-    })
-    .catch(function () {
-      // Providers are informational: a failure here must not stop a run,
-      // which then simply uses whatever the config says.
-      var opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "config default";
-      el.modelSelect.appendChild(opt);
-      syncModelSearchLabel();
-    });
-}
-
-el.modelSelect.addEventListener("change", function () {
-  try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
-  renderContextMeter();
-  syncModelSearchLabel();
-});
-
-/* Mirrors the hidden select's current choice into the visible search box's
-   label, the way a closed <select> shows its chosen option. */
-function syncModelSearchLabel() {
-  var entry = null;
-  for (var i = 0; i < modelIndex.length; i++) {
-    if (modelIndex[i].value === el.modelSelect.value) { entry = modelIndex[i]; break; }
-  }
-  el.modelSearch.value = entry ? entry.provider + " / " + entry.label : "";
-}
-
-var modelListIndex = 0;
-
-function renderModelList() {
-  var q = el.modelSearch.value.trim().toLowerCase();
-  var matches = modelIndex.filter(function (e) { return fuzzyMatch(q, e.provider + " " + e.label); });
-  el.modelList.textContent = "";
-  if (!matches.length) { hideModelList(); return; }
-  if (modelListIndex >= matches.length) modelListIndex = 0;
-  var lastProvider = null;
-  matches.forEach(function (entry, i) {
-    if (entry.provider !== lastProvider) {
-      lastProvider = entry.provider;
-      var header = document.createElement("li");
-      header.className = "palette-kind-header";
-      header.textContent = entry.provider;
-      header.setAttribute("role", "presentation");
-      el.modelList.appendChild(header);
-    }
-    var li = document.createElement("li");
-    li.className = "palette-item";
-    li.id = "model-item-" + i;
-    li.setAttribute("role", "option");
-    li.setAttribute("aria-selected", String(i === modelListIndex));
-    var label = document.createElement("span");
-    label.className = "palette-label";
-    label.textContent = entry.label;
-    li.appendChild(label);
-    if (entry.meta) {
-      var meta = document.createElement("span");
-      meta.className = "model-meta";
-      meta.textContent = entry.meta;
-      li.appendChild(meta);
-    }
-    li.addEventListener("mousedown", function (e) {
-      e.preventDefault();
-      selectModel(entry);
-    });
-    el.modelList.appendChild(li);
-  });
-  el.modelList.hidden = false;
-  el.modelSearch.setAttribute("aria-expanded", "true");
-  el.modelSearch.setAttribute("aria-activedescendant", "model-item-" + modelListIndex);
-  el.modelList.setAttribute("data-count", String(matches.length));
-  return matches;
-}
-
-function hideModelList() {
-  el.modelList.hidden = true;
-  el.modelList.textContent = "";
-  el.modelSearch.setAttribute("aria-expanded", "false");
-  el.modelSearch.removeAttribute("aria-activedescendant");
-}
-
-function selectModel(entry) {
-  el.modelSelect.value = entry.value;
-  // The <select> already owns persistence + the context meter; firing its
-  // own listener keeps this one source of truth instead of duplicating it.
-  el.modelSelect.dispatchEvent(new Event("change"));
-  hideModelList();
-  el.modelSearch.blur();
-}
-
-el.modelSearch.addEventListener("focus", function () {
-  el.modelSearch.select();
-  renderModelList();
-});
-el.modelSearch.addEventListener("input", function () { modelListIndex = 0; renderModelList(); });
-el.modelSearch.addEventListener("focusout", function (e) {
-  if (e.relatedTarget && el.modelList.contains(e.relatedTarget)) return;
-  window.setTimeout(function () {
-    if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
-    hideModelList(); syncModelSearchLabel();
-  }, 120);
-});
-el.modelSearch.addEventListener("keydown", function (e) {
-  if (el.modelList.hidden) return;
-  var items = el.modelList.querySelectorAll(".palette-item");
-  if (!items.length) return;
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    modelListIndex = (modelListIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-    renderModelList();
-    return;
-  }
-  if (e.key === "Escape") {
-    e.preventDefault();
-    hideModelList();
-    syncModelSearchLabel();
-    el.modelSearch.blur();
-    return;
-  }
-  if (e.key === "Enter") {
-    e.preventDefault();
-    var matches = renderModelList() || [];
-    if (matches[modelListIndex]) selectModel(matches[modelListIndex]);
-    return;
-  }
-});
-
-/* Everything the composer adds to a run, in one place, so the submit handler
-   and any future caller cannot disagree about it. */
-function runOptions() {
-  var out = {};
-  var raw = (el.modelSelect.value || "").trim();
-  var sp = raw.indexOf(" ");
-  if (sp !== -1) {
-    out.provider = raw.slice(0, sp);
-    out.model = raw.slice(sp + 1).trim();
-    if (!out.model) delete out.model;
-  } else if (raw) {
-    out.provider = raw;
-  }
-  var t = parseFloat(el.paramTemp.value);
-  if (!isNaN(t)) out.temperature = t;
-  var tp = parseFloat(el.paramTopP.value);
-  if (!isNaN(tp)) out.top_p = tp;
-  return out;
-}
-
-/* Enter-to-send is the habit every other chat UI trains, but it also throws
-   away a half-written multi-line task, so it is opt-in and remembered. */
-try { el.enterSends.checked = window.localStorage.getItem("clanker.entersends") === "1"; } catch (e) {}
-el.enterSends.addEventListener("change", function () {
-  try { window.localStorage.setItem("clanker.entersends", el.enterSends.checked ? "1" : "0"); } catch (e) {}
-  syncSubmitLabel();
-});
-
-function syncSubmitLabel() {
-  el.submit.textContent = el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
-}
+/* ---------- model picker and sampling — delegated ---------- */
+var loadProviders = mpLoadProviders;
+var syncModelSearchLabel = mpSyncLabel;
+var renderModelList = mpRenderList;
+var hideModelList = mpHideList;
+var selectModel = mpSelectModel;
+var runOptions = mpRunOptions;
+var syncSubmitLabel = mpSyncSubmit;
 
 el.task.addEventListener("keydown", function (e) {
   if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -3565,7 +3247,7 @@ function cardById(id) {
 var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null });
 
 function renderBoard(next) {
-  board = next || board;
+  if (next) { board.columns = next.columns || []; board.cards = next.cards || []; }
   boardState.val = {
     columns: board.columns || [],
     cards: board.cards || [],
@@ -4114,248 +3796,14 @@ el.boardRoom.addEventListener("change", function () { loadBoard(); });
    A view a plugin registers is an ordinary view: same rail button, same panel,
    same digit shortcut, same URL fragment. */
 
-var pluginViews = {};
+var pluginViews = pluginsViews;
+var loadPluginAssets = pluginsLoadPluginAssets;
+var loadWebuiPlugins = pluginsLoadWebuiPlugins;
+var renderWebuiPlugins = pluginsRenderWebuiPlugins;
+pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime });
 
-function pluginApi() {
-  return {
-    getJSON: function (path) {
-      return fetch(path).then(function (r) {
-        return r.json().then(function (d) {
-          if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
-          return d;
-        });
-      });
-    },
-    el: function (tag, className, text) {
-      var node = document.createElement(tag);
-      if (className) node.className = className;
-      if (text != null) node.textContent = text;
-      return node;
-    },
-    status: function (message) { el.webuiPluginsStatus.textContent = message; },
-    // The page's own formatters, so a plugin's numbers read like the rest.
-    fmt: { bytes: fmtBytes, int: fmtInt, cost: fmtCost, time: formatChatTime },
-    /* VanJS and VanUI, so a plugin can build reactive DOM declaratively rather
-       than hand-rolling appendChild chains, and can reach for a Modal or Tabs
-       without shipping its own. Both are vendored and same-origin, so a plugin
-       using them adds no request and no policy exception. */
-    van: window.van,
-    ui: {
-      Modal: window.Modal, Tabs: window.Tabs, Banner: window.Banner,
-      Tooltip: window.Tooltip, Toggle: window.Toggle, Await: window.Await,
-      MessageBoard: window.MessageBoard, OptionGroup: window.OptionGroup,
-      choose: window.choose
-    },
-    showView: function (id) { showView(id, false); }
-  };
-}
-
-/* The whole surface a plugin sees. Deliberately small: everything here is
-   something the page is promising to keep working. */
-window.clanker = {
-  registerView: function (spec) {
-    if (!spec || !spec.id || typeof spec.mount !== "function") return;
-    if (VIEWS.indexOf(spec.id) !== -1) return;
-    var group = spec.group || "Watch";
-
-    var panel = document.createElement("div");
-    panel.className = "view";
-    panel.id = "view-" + spec.id;
-    panel.setAttribute("role", "tabpanel");
-    panel.setAttribute("aria-labelledby", "tab-" + spec.id);
-    panel.tabIndex = -1;
-    panel.hidden = true;
-    var section = document.createElement("section");
-    panel.appendChild(section);
-    document.getElementById("main").appendChild(panel);
-
-    var tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "rail-tab";
-    tab.setAttribute("role", "tab");
-    tab.id = "tab-" + spec.id;
-    tab.setAttribute("aria-controls", "view-" + spec.id);
-    tab.setAttribute("aria-selected", "false");
-    tab.tabIndex = -1;
-    tab.setAttribute("data-view", spec.id);
-    tab.textContent = spec.title || spec.id;
-
-    // Placed under its group's heading rather than appended, so a plugin's
-    // view sits where its kind of thing already lives.
-    var nav = document.querySelector(".rail-nav");
-    var headings = nav.querySelectorAll(".rail-group");
-    var placed = false;
-    for (var i = 0; i < headings.length; i++) {
-      if (headings[i].textContent !== group) continue;
-      var at = headings[i].nextElementSibling;
-      while (at && at.nextElementSibling && !at.nextElementSibling.classList.contains("rail-group")) {
-        at = at.nextElementSibling;
-      }
-      nav.insertBefore(tab, at ? at.nextElementSibling : null);
-      placed = true;
-      break;
-    }
-    if (!placed) nav.appendChild(tab);
-
-    VIEWS.push(spec.id);
-    pluginViews[spec.id] = { spec: spec, section: section };
-    var mounted = false;
-    viewLoaders[spec.id] = function () {
-      if (!mounted) {
-        mounted = true;
-        return spec.mount.call(spec, section, pluginApi());
-      }
-      if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi());
-      return null;
-    };
-    wireTab(tab, VIEWS.length - 1);
-  }
-};
-
-function loadPluginAssets(list) {
-  var pending = [];
-  list.forEach(function (p) {
-    if (!p.enabled) return;
-    if (p.has_css && !document.querySelector('link[data-plugin="' + p.name + '"]')) {
-      var link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = "/webui/plugins/" + encodeURIComponent(p.name) + "/app.css";
-      link.setAttribute("data-plugin", p.name);
-      document.head.appendChild(link);
-    }
-    if (document.querySelector('script[data-plugin="' + p.name + '"]')) return;
-    pending.push(new Promise(function (resolve) {
-      var s = document.createElement("script");
-      s.src = "/webui/plugins/" + encodeURIComponent(p.name) + "/app.js";
-      s.setAttribute("data-plugin", p.name);
-      // A plugin that fails to load must not take the page down with it.
-      s.onload = function () { resolve(true); };
-      s.onerror = function () {
-        el.webuiPluginsStatus.textContent = "Plugin " + p.name + " failed to load.";
-        resolve(false);
-      };
-      document.head.appendChild(s);
-    }));
-  });
-  return Promise.all(pending);
-}
-
-function loadWebuiPlugins() {
-  return fetch("/api/webui/plugins")
-    .then(readJson)
-    .then(function (d) {
-      renderWebuiPlugins(d.plugins || []);
-      return loadPluginAssets(d.plugins || []);
-    })
-    .catch(function (err) { el.webuiPluginsStatus.textContent = "Could not load plugins: " + err.message; });
-}
-
-function renderWebuiPlugins(list) {
-  el.webuiPlugins.textContent = "";
-  if (!list.length) {
-    var none = document.createElement("p");
-    none.className = "run-empty";
-    none.textContent = "No plugins installed. A plugin is a directory under tools/webui-plugins/ — see its README.";
-    el.webuiPlugins.appendChild(none);
-    return;
-  }
-  list.forEach(function (p) {
-    var row = document.createElement("div");
-    row.className = "webui-plugin";
-
-    var box = document.createElement("input");
-    box.type = "checkbox";
-    box.id = "plugin-" + p.name;
-    box.checked = !!p.enabled;
-    box.addEventListener("change", function () {
-      box.disabled = true;
-      fetch("/api/webui/plugins", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: p.name, enabled: box.checked })
-      })
-        .then(readJson)
-        .then(function (d) {
-          var nowOn = box.checked;
-          renderWebuiPlugins(d.plugins || []);
-          if (nowOn) {
-            return loadPluginAssets(d.plugins || []).then(function () {
-              el.webuiPluginsStatus.textContent = (p.title || p.name) + " enabled.";
-            });
-          }
-          // Script already run cannot be recalled, and saying otherwise would
-          // misdescribe what is running.
-          el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload to remove it from this page.";
-        })
-        .catch(function (err) {
-          // Same reason as the subtask box: the click moved it, the server did
-          // not agree, so it goes back.
-          box.checked = !box.checked;
-          el.webuiPluginsStatus.textContent = "Plugin: " + err.message;
-        })
-        .then(function () { box.disabled = false; });
-    });
-
-    var name = document.createElement("label");
-    name.className = "webui-plugin-name";
-    name.htmlFor = box.id;
-    name.textContent = p.title || p.name;
-
-    var desc = document.createElement("span");
-    desc.className = "webui-plugin-desc";
-    desc.textContent = p.description || "";
-
-    var group = document.createElement("span");
-    group.className = "webui-plugin-group";
-    group.textContent = p.group || "";
-
-    row.appendChild(box);
-    row.appendChild(name);
-    row.appendChild(desc);
-    row.appendChild(group);
-    el.webuiPlugins.appendChild(row);
-  });
-}
-
-el.webuiPluginsRefresh.addEventListener("click", function () { loadWebuiPlugins(); });
-
-/* ---------- logs ---------- */
-
-function loadLogList() {
-  return fetch("/api/logs")
-    .then(readJson)
-    .then(function (d) {
-      var logs = (d.logs || []).slice().sort(function (a, b) { return a.name < b.name ? 1 : -1; });
-      var keep = el.logSelect.value;
-      el.logSelect.textContent = "";
-      logs.forEach(function (l) {
-        var opt = document.createElement("option");
-        opt.value = l.name;
-        opt.textContent = l.name + "  ·  " + fmtBytes(l.bytes);
-        el.logSelect.appendChild(opt);
-      });
-      if (!logs.length) {
-        el.logView.textContent = "No logs yet. clanker writes them under state/logs/.";
-        return;
-      }
-      el.logSelect.value = keep && el.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
-      return loadLog(el.logSelect.value);
-    })
-    .catch(function (err) { el.logsStatus.textContent = "Could not list logs: " + err.message; });
-}
-
-function loadLog(name) {
-  if (!name) return Promise.resolve();
-  return fetch("/api/logs/" + encodeURIComponent(name))
-    .then(readJson)
-    .then(function (d) {
-      el.logView.textContent = d.text || "(empty)";
-      // Newest lines are at the bottom, which is where a tail is read from.
-      el.logView.scrollTop = el.logView.scrollHeight;
-      el.logsStatus.textContent = "Showing the tail of " + d.name + " (" + fmtBytes(d.bytes) + " total).";
-    })
-    .catch(function (err) { el.logsStatus.textContent = "Could not read log: " + err.message; });
-}
+function loadLogList() { return logsLoadLogList(el, readJson, fmtBytes); }
+function loadLog(name) { return logsLoadLog(name, el, readJson, fmtBytes); }
 
 el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
 el.logsRefresh.addEventListener("click", function () { loadLogList(); });
@@ -4375,156 +3823,17 @@ van.add(el.helpOpen, icon("help", 15));
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
-/* Everything reachable, in one list. Built fresh on open so it reflects the
-   conversations, runs and tools actually loaded rather than a stale copy. */
-function paletteEntries() {
-  var out = [];
-  VIEWS.forEach(function (v, i) {
-    out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + "  (" + (i + 1) + ")", run: function () { showView(v, true); } });
-  });
-  out.push({ kind: "action", label: "New chat", run: function () { el.newChat.click(); } });
-  out.push({ kind: "action", label: "Fork this conversation", run: function () { el.sessionFork.click(); } });
-  out.push({ kind: "action", label: "Compact this conversation", run: function () { el.sessionCompact.click(); } });
-  out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { el.sessionExport.click(); } });
-  out.push({ kind: "action", label: "Cycle theme", run: function () { el.themeToggle.click(); } });
-  out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { openOverlay(el.help, el.helpClose); } });
-  knownSessions.forEach(function (s) {
-    out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); switchSession(s.id); } });
-  });
-  allRuns.forEach(function (r) {
-    out.push({ kind: "run", label: runLabel(r), run: function () { openRun(r.run_id); } });
-  });
-  board.cards.forEach(function (c) {
-    out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {
-      openCardId = c.id;
-      showView("board", true);
-      renderBoard(board);
-    } });
-  });
-  (goalState.val || []).forEach(function (g) {
-    var label = (g.objective || g.id || "goal").slice(0, 96);
-    var st = g.status ? " · " + g.status : "";
-    out.push({ kind: "goal", label: label + st, run: function () { showView("goals", true); } });
-  });
-  allTools.forEach(function (t) {
-    var label = t.name + (t.description ? "  ·  " + t.description.slice(0, 80) : "");
-    out.push({ kind: "tool", label: label, run: function () { showView("tools", true); showToolDetail(t); } });
-  });
-  return out;
-}
+var providerCacheHolder = { list: providerCache };
+mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, fuzzyMatch: fuzzyMatch, providerCacheHolder: providerCacheHolder });
 
-var paletteItems = [];
-var paletteIndex = 0;
-
-var fuzzyMatch = utilFuzzyMatch;
-
-function renderPalette() {
-  var rawQ = el.paletteInput.value.trim();
-  var q = rawQ.toLowerCase();
-  var empty = !q;
-  // fuzzyMatch is case-insensitive (lowercases text) — query already lowered
-  var all = paletteEntries();
-  paletteItems = [];
-  el.paletteList.textContent = "";
-  for (var i = 0; i < all.length && paletteItems.length < 40; i++) {
-    if (!empty && !fuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
-    paletteItems.push(all[i]);
-  }
-  // When query empty, show grouped views→actions→sessions/runs/tools (paletteEntries already ordered)
-  // textContent only — never innerHTML — verified below for XSS
-  if (paletteIndex >= paletteItems.length) paletteIndex = 0;
-  paletteItems.forEach(function (entry, i) {
-    var li = document.createElement("li");
-    li.className = "palette-item";
-    li.id = "palette-item-" + i;
-    li.setAttribute("role", "option");
-    li.setAttribute("aria-selected", String(i === paletteIndex));
-    var kind = document.createElement("span");
-    kind.className = "palette-kind";
-    kind.textContent = entry.kind;
-    var label = document.createElement("span");
-    label.className = "palette-label";
-    label.textContent = entry.label;
-    label.title = entry.label;
-    li.appendChild(kind);
-    li.appendChild(label);
-    li.addEventListener("click", function () { runPalette(i); });
-    el.paletteList.appendChild(li);
-  });
-  if (!paletteItems.length) {
-    var empty = document.createElement("li");
-    empty.className = "palette-item";
-    empty.textContent = "Nothing matches.";
-    el.paletteList.appendChild(empty);
-  }
-  el.paletteInput.setAttribute("aria-activedescendant", paletteItems.length ? "palette-item-" + paletteIndex : "");
-}
-
-function runPalette(i) {
-  var entry = paletteItems[i];
-  closeOverlay(el.palette);
-  if (entry) entry.run();
-}
-
-function openPalette() {
-  el.paletteInput.value = "";
-  paletteIndex = 0;
-  openOverlay(el.palette, el.paletteInput);
-  renderPalette();
-}
-
-el.paletteOpen.addEventListener("click", openPalette);
-el.paletteInput.addEventListener("input", function () { paletteIndex = 0; renderPalette(); });
-el.paletteInput.addEventListener("keydown", function (e) {
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    if (!paletteItems.length) return;
-    var step = e.key === "ArrowDown" ? 1 : -1;
-    paletteIndex = (paletteIndex + step + paletteItems.length) % paletteItems.length;
-    renderPalette();
-    var sel = document.getElementById("palette-item-" + paletteIndex);
-    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
-    return;
-  }
-  if (e.key === "Enter") {
-    e.preventDefault();
-    runPalette(paletteIndex);
-  }
+paletteBind({
+  VIEWS: VIEWS, showView: showView, el: el,
+  refs: { knownSessionsHolder: knownSessionsHolder, allRunsHolder: allRunsHolder, board: board, goalState: goalState, allToolsHolder: allToolsHolder, sessionLabel: sessionLabel, runLabel: runLabel },
+  setRailOpen: setRailOpen, switchSession: switchSession, openRun: openRun, renderBoard: renderBoard, showToolDetail: showToolDetail,
+  setOpenCardId: function (id) { openCardId = id; }
 });
-
-/* Clicking the scrim closes; clicking the box does not. */
-[el.palette, el.help].forEach(function (node) {
-  node.addEventListener("mousedown", function (e) {
-    if (e.target === node) closeOverlay(node);
-  });
-});
-
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Tab") {
-    if (!el.textPrompt.hidden) { trapOverlayTab(e, el.textPrompt); return; }
-    if (!el.palette.hidden) { trapOverlayTab(e, el.palette); return; }
-    if (!el.help.hidden) { trapOverlayTab(e, el.help); return; }
-    return;
-  }
-  if (e.key === "Escape") {
-    if (!el.textPrompt.hidden) { finishTextPrompt(null); e.preventDefault(); return; }
-    if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }
-    if (el.rail.getAttribute("data-open") === "true") { setRailOpen(false); el.railToggle.focus(); e.preventDefault(); return; }
-    if (!el.help.hidden) { closeOverlay(el.help); e.preventDefault(); return; }
-    return;
-  }
-  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
-    e.preventDefault();
-    if (el.palette.hidden) openPalette(); else closeOverlay(el.palette);
-    return;
-  }
-  // "?" is a plain key, so it must never fire while something is being typed.
-  if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    var t = e.target;
-    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-    e.preventDefault();
-    openOverlay(el.help, el.helpClose);
-  }
+  if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
 
 renderSessionChip();
