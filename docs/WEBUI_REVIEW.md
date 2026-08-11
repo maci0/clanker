@@ -64,8 +64,12 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - `out_cap` per-file: all `ok` (max ~201KB well under 2MiB; 18 assets via assetFor).
 - CSP/connect: only `/api/*` + `/.well-known/agent.json` same-origin fetches; `/webui/vendor` immutable-cache + gzip; no inline script, no third-party origin.
 
+### Shipped this turn
+- `app.js` ↔ `features/fleet.js` now import-linked: `app.js` imports `refreshFleet/setNavShowView/setOpenRun`, `fleet.js` exports them and `app.js` wires `showView/openRun` at startup. `viewLoaders.fleet` no longer probes `window.clankerFleet`.
+- Board cards: hover lift + press sink + drag tilt + accent drop wash (reduced-motion gated).
+
 ## Left / next
 
-- Finish module hygiene: remove dead `window.ck*` bridges from `core/*`/`lib/*` (kept for node --check today, no longer read by app.js) and make `features/fleet.js` use an imported registry instead of `window.openRun/showView` globals.
+- Remove dead `window.ck*` bridges from `core/*`/`lib/*` (still present for standalone `node --check`, no longer read by app.js — remove once every consumer is a module).
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, `features/tools.js`, palette/model-picker) per `docs/webui-framework-research.md` §4 — now cheaper because imports are real.
 - `axe-core` + `playwright` screenshot proof per view (incl. Fleet) — no harness vendored yet, manual verification until added.
