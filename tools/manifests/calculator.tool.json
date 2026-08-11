@@ -5,6 +5,10 @@
   "input_schema": {
     "type": "object",
     "properties": {
+      "expr": {
+        "type": "string",
+        "description": "Arithmetic expression such as \"2+3*4\" or \"(1+2)^3\". Operators + - * / ^, parentheses, standard precedence. When present, a/b/op are ignored."
+      },
       "a": {
         "type": "number"
       },
@@ -21,12 +25,7 @@
           "^"
         ]
       }
-    },
-    "required": [
-      "a",
-      "b",
-      "op"
-    ]
+    }
   },
   "network_allow": [],
   "category": "compute"
