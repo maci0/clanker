@@ -579,6 +579,46 @@ pub const History = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// Number of consecutive non-accepted entries at the tail of the log.
+    /// A streak of 3+ means the model has been failing repeatedly and
+    /// should try something fundamentally different. The engine uses this
+    /// to adjust strategy: switch providers, raise temperature, or request
+    /// a completely different approach.
+    pub fn currentStreak(self: *History, arena: std.mem.Allocator) !usize {
+        const entries = try self.loadAll(arena);
+        return self.trailingRejectionStreak(entries, 0);
+    }
+
+    /// Deduplicated, non-empty rejection reasons from the last
+    /// `max_lookback` entries, most recent first. The engine can feed
+    /// these to the prompt as a concise "avoid these failure modes" list
+    /// without parsing the full summary text.
+    pub fn recentFailureReasons(self: *History, arena: std.mem.Allocator, max_lookback: usize) ![]const []const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_lookback) entries.len - max_lookback else 0;
+
+        var out: std.ArrayList([]const u8) = .empty;
+        var i: usize = entries.len;
+        while (i > start) {
+            i -= 1;
+            const e = entries[i];
+            if (!std.mem.eql(u8, e.status, "rejected") and !std.mem.eql(u8, e.status, "failed")) continue;
+            const reason = std.mem.trim(u8, e.detail, " \t\r\n");
+            if (reason.len == 0) continue;
+            // Deduplicate: skip if we already have this exact reason.
+            var seen = false;
+            for (out.items) |have| {
+                if (std.mem.eql(u8, have, reason)) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) try out.append(arena, reason);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// Number of consecutive non-accepted entries at the tail of the
     /// window `entries[start..]`. A streak of 3+ means the model has been
     /// failing repeatedly and should try something fundamentally different.
@@ -873,6 +913,76 @@ test "hotFiles ranks files by rejection frequency" {
     try hist2.append("a2", .accepted, "i", "s", &.{"src/c.zig"}, 0, 1, "", &.{});
     const empty = try hist2.hotFiles(arena, 10);
     try std.testing.expectEqual(@as(usize, 0), empty.len);
+}
+
+test "currentStreak exposes the trailing rejection streak publicly" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), try hist.currentStreak(arena));
+
+    try hist.append("cs1", .accepted, "i", "s", &.{}, 0, 1, "", &.{});
+    try std.testing.expectEqual(@as(usize, 0), try hist.currentStreak(arena));
+
+    try hist.append("cs2", .rejected, "i", "s", &.{}, 0, 0, "d", &.{});
+    try hist.append("cs3", .rejected, "i", "s", &.{}, 0, 0, "d", &.{});
+    try std.testing.expectEqual(@as(usize, 2), try hist.currentStreak(arena));
+}
+
+test "recentFailureReasons returns deduplicated rejection reasons most-recent first" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // Empty history.
+    const empty = try hist.recentFailureReasons(arena, 10);
+    try std.testing.expectEqual(@as(usize, 0), empty.len);
+
+    try hist.append("fr1", .rejected, "i", "s", &.{}, 0, 0, "build failed", &.{});
+    try hist.append("fr2", .accepted, "i", "s", &.{}, 0, 1, "", &.{});
+    try hist.append("fr3", .rejected, "i", "s", &.{}, 0, 0, "test failed", &.{});
+    try hist.append("fr4", .rejected, "i", "s", &.{}, 0, 0, "build failed", &.{});
+    try hist.append("fr5", .failed, "i", "s", &.{}, 0, 0, "   ", &.{});
+
+    const reasons = try hist.recentFailureReasons(arena, 10);
+    // "build failed" appears twice but is deduplicated; empty/whitespace detail is skipped.
+    try std.testing.expectEqual(@as(usize, 2), reasons.len);
+    // Most recent first: fr4's "build failed" before fr3's "test failed".
+    try std.testing.expectEqualStrings("build failed", reasons[0]);
+    try std.testing.expectEqualStrings("test failed", reasons[1]);
+
+    // Lookback window of 1 only sees the last entry (whitespace, so 0 reasons).
+    const narrow = try hist.recentFailureReasons(arena, 1);
+    try std.testing.expectEqual(@as(usize, 0), narrow.len);
 }
 
 test "trailingRejectionStreak counts consecutive non-accepted entries at the tail" {
