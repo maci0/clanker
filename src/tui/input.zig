@@ -166,13 +166,15 @@ pub fn frame(arena: std.mem.Allocator, editor: *const lineedit.Editor, cols: usi
 }
 
 test "KeyReader hands back a byte the decoder left unconsumed" {
+    // Plain pipe(), not pipe2: the flags were empty anyway, and pipe2 does
+    // not exist on macOS (std.c.pipe2 is a void placeholder there).
     var fds: [2]std.posix.fd_t = undefined;
-    switch (std.posix.errno(std.posix.system.pipe2(&fds, .{}))) {
+    switch (std.posix.errno(std.c.pipe(&fds))) {
         .SUCCESS => {},
         else => return error.SkipZigTest,
     }
-    defer _ = std.os.linux.close(fds[0]);
-    defer _ = std.os.linux.close(fds[1]);
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
 
     // Esc followed immediately by 'h' then 'i': decodeEscape resolves the
     // Esc+'h' pair as `.ignored` as soon as a 3rd byte is available to look
