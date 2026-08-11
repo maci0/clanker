@@ -565,6 +565,31 @@ pub const History = struct {
         return streak;
     }
 
+    /// A file path with the status of the attempt it came from.
+    pub const TouchedFile = struct {
+        file: []const u8,
+        status: []const u8,
+        summary: []const u8 = "",
+    };
+
+    /// Every file touched by the last `max_entries` attempts, tagged with
+    /// whether that attempt was accepted, rejected or failed. The improve
+    /// prompt can use this to avoid conflicting with recently accepted work
+    /// and to skip files that keep failing.
+    pub fn recentlyTouchedWithStatus(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const TouchedFile {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var out: std.ArrayList(TouchedFile) = .empty;
+        for (entries[start..]) |e| {
+            for (e.files) |f| {
+                try out.append(arena, .{ .file = f, .status = e.status, .summary = e.summary });
+            }
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// Every file touched by the last `max_entries` attempts.
     ///
     /// These are the files most likely to change again, and a file that
@@ -667,6 +692,31 @@ pub const History = struct {
             try buf.appendSlice(arena, "\nRecent rejected attempts targeted specific code regions (file + matched text). ");
             try buf.appendSlice(arena, "Proposing a different replacement for the same old text in the same file will be automatically rejected. ");
             try buf.appendSlice(arena, "To fix code in those regions, use a different (larger or shifted) match span, or fix a different file entirely.\n");
+        }
+
+        // Recently accepted changes: list them so the model knows what
+        // areas were just modified and can avoid conflicting edits or
+        // redundant re-proposals.
+        const touched = try self.recentlyTouchedWithStatus(arena, max_entries);
+        var has_accepted = false;
+        for (touched) |t| {
+            if (std.mem.eql(u8, t.status, "accepted")) {
+                has_accepted = true;
+                break;
+            }
+        }
+        if (has_accepted) {
+            try buf.appendSlice(arena, "\nRecently accepted changes (avoid conflicting edits to these files):\n");
+            for (touched) |t| {
+                if (!std.mem.eql(u8, t.status, "accepted")) continue;
+                try buf.appendSlice(arena, "- ");
+                try buf.appendSlice(arena, t.file);
+                if (t.summary.len > 0) {
+                    try buf.appendSlice(arena, ": ");
+                    try buf.appendSlice(arena, firstLine(t.summary, 120));
+                }
+                try buf.appendSlice(arena, "\n");
+            }
         }
 
         // Append a hot-files section when files have been rejected multiple
@@ -902,6 +952,42 @@ test "partialOverlapRejected detects shared changes with rejected proposals" {
 
     // Lookback window of 0 finds nothing.
     try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{fp_a}, 0));
+}
+
+test "recentlyTouchedWithStatus tags files with their attempt status" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try hist.append("t1", .accepted, "i", "added feature", &.{"src/a.zig"}, 0, 1, "", &.{});
+    try hist.append("t2", .rejected, "i", "bad change", &.{"src/b.zig"}, 0, 0, "d", &.{});
+
+    const touched = try hist.recentlyTouchedWithStatus(arena, 10);
+    try std.testing.expectEqual(@as(usize, 2), touched.len);
+    try std.testing.expectEqualStrings("src/a.zig", touched[0].file);
+    try std.testing.expectEqualStrings("accepted", touched[0].status);
+    try std.testing.expectEqualStrings("added feature", touched[0].summary);
+    try std.testing.expectEqualStrings("src/b.zig", touched[1].file);
+    try std.testing.expectEqualStrings("rejected", touched[1].status);
+
+    // The summary includes the recently accepted section.
+    const summary = try hist.recentSummary(arena, 10);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "Recently accepted changes") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "src/a.zig") != null);
 }
 
 test "an edit already rejected is recognised within the lookback window" {
