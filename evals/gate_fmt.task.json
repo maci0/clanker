@@ -1,0 +1,10 @@
+{
+  "name": "gate_fmt",
+  "kind": "task",
+  "description": "The gate tool must run the fmt gate on the project and report PASS when zig fmt --check succeeds.",
+  "prompt": "Use the gate tool with input {\"gates\": [\"fmt\"]} and report the result. If the fmt gate passed, answer with exactly PASS. Otherwise answer with exactly FAIL.",
+  "requires_tool": "gate",
+  "criteria": [
+    {"includes": ["PASS"]}
+  ]
+}
