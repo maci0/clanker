@@ -26,6 +26,19 @@
     --step-0: 0.75rem;
     --step-1: 1rem;
     --step-2: 1.25rem;
+    /* One spacing scale, replacing sixteen hand-picked values. Steps are
+       roughly 1.5x so adjacent ones are visibly different: a rhythm you can
+       see is worth more than a ratio you can prove. */
+    --space-1: 0.25rem;
+    --space-2: 0.4rem;
+    --space-3: 0.6rem;
+    --space-4: 0.9rem;
+    --space-5: 1.4rem;
+    --space-6: 2.2rem;
+    /* Prose and streamed answers stop at a comfortable measure even though the
+       column is wider: the graph, tables and code want the full width, running
+       text does not. Measured at 87ch before this existed. */
+    --measure: 72ch;
     --radius-sm: 4px;
     --radius: 6px;
     --radius-lg: 10px;
@@ -130,14 +143,14 @@
   }
   button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
 
-  main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: 1.25rem 1.5rem 2rem; }
+  main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-6); }
 
   /* ---- tabs: one view at a time ----
      Everything used to be stacked in one column, so reaching Tools meant
      scrolling past the whole transcript, the run graph and every room. */
   .tabs {
-    display: flex; flex-wrap: wrap; gap: 0.35rem;
-    border-bottom: 1px solid var(--rule); margin-bottom: 1.25rem;
+    display: flex; flex-wrap: wrap; gap: var(--space-1);
+    border-bottom: 1px solid var(--rule); margin-bottom: var(--space-6);
   }
   .tab {
     min-height: 44px; padding: 0.4rem 0.9rem;
@@ -159,8 +172,15 @@
   .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
   /* ---- transcript: a running list of turns, chat-style ---- */
-  .transcript { display: flex; flex-direction: column; gap: 1.5rem; }
+  .transcript { display: flex; flex-direction: column; gap: var(--space-6); margin-top: var(--space-6); }
   .transcript:empty { display: none; }
+  /* Delete used to be the loudest element on the page: a solid red fill beside
+     two quiet buttons, pulling the eye to the one action you rarely want. It
+     now reads as the others do and only turns red once you are on it. */
+  .secondary.danger { color: var(--danger); }
+  .secondary.danger:hover, .secondary.danger:focus-visible {
+    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
+  }
   .turn { border: 1px solid var(--rule); border-radius: var(--radius-lg); overflow: hidden; }
   .turn-you {
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
@@ -168,8 +188,11 @@
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .turn-you::before { content: "you  ·  "; color: var(--accent); font-weight: 700; }
-  .turn-body { padding: 0.9rem; }
-  .turn-events { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.6rem; }
+  /* A restored answer whose question is no longer in the transcript is not
+     yours: attributing it to "you" said the wrong thing about who wrote it. */
+  .turn-you[data-orphan="true"]::before { content: "clanker  ·  "; color: var(--fg-muted); }
+  .turn-body { padding: var(--space-4); }
+  .turn-events { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
   .turn-events:empty { display: none; margin: 0; }
   .event-tool {
     font-family: var(--mono); font-size: var(--step-0); color: var(--accent);
@@ -191,6 +214,7 @@
   .turn-answer {
     font-family: var(--mono); font-size: var(--step-1);
     white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
+    max-width: var(--measure);
   }
   .turn-answer:empty::before {
     content: "…"; color: var(--fg-muted); display: inline-block;
@@ -246,8 +270,9 @@
   .hljs-emphasis { font-style: italic; }
   .hljs-strong { font-weight: 700; }
   .turn-foot {
+    font-variant-numeric: tabular-nums;
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
-    margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed var(--rule);
+    margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px dashed var(--rule);
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
   }
   .turn-foot:empty { display: none; margin: 0; padding: 0; border: 0; }
@@ -265,7 +290,7 @@
   @media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
 
   /* ---- composer ---- */
-  .composer { margin-top: 1.5rem; }
+  .composer { margin-top: var(--space-6); }
   /* Images travelling with the next task. Small enough to stay out of the way,
      large enough to tell two screenshots apart. */
   .attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
@@ -297,9 +322,9 @@
   ::placeholder { color: var(--fg-muted); opacity: 1; }
   .toolbar {
     display: flex; flex-wrap: wrap; justify-content: space-between;
-    align-items: center; gap: 0.75rem; margin-top: 0.75rem;
+    align-items: center; gap: var(--space-4); margin-top: var(--space-4);
   }
-  .toolbar-actions { display: flex; gap: 0.5rem; }
+  .toolbar-actions { display: flex; gap: var(--space-3); }
   button {
     min-height: 44px; padding: 0.5rem 1.25rem;
     font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
@@ -315,17 +340,17 @@
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  .meta { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); }
+  .meta { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 
-  section { margin-top: 2.5rem; border-top: 1px solid var(--rule); padding-top: 1.25rem; }
-  .section-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+  section { margin-top: var(--space-6); border-top: 1px solid var(--rule); padding-top: var(--space-5); }
+  .section-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); margin-bottom: var(--space-3); }
   h2 {
     font-size: var(--step-0); font-weight: 700; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--fg-muted); margin: 0;
   }
   /* ---- runs: the execution graph of a recorded run ---- */
-  .runs { margin-top: 1.25rem; }
-  .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+  .runs { margin-top: var(--space-5); }
+  .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }
   /* Each label takes a full row so both sit above their own control, the way
      the composer's Task label does — otherwise one wraps above and the other
      lands beside its field. */
@@ -342,6 +367,7 @@
   #run-filter::-webkit-search-cancel-button { cursor: pointer; }
   .run-graph { margin-top: 1rem; }
   .run-head {
+    max-width: var(--measure);
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
     padding-bottom: 0.6rem; border-bottom: 1px dashed var(--rule); margin-bottom: 0.75rem;
     overflow-wrap: anywhere; white-space: pre-line;
@@ -376,7 +402,7 @@
   .run-node[data-kind="tool"] .run-node-kind { color: var(--ok); }
   .run-node[data-ok="false"] .run-node-kind { color: var(--danger); }
   .run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .run-node-metrics { display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
+  .run-node-metrics { font-variant-numeric: tabular-nums; display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
   /* The bar is the picture: width is the node's share of the run's slowest node. */
   .run-node-bar { display: block; height: 3px; margin-top: 0.3rem; border-radius: var(--radius-sm); background: var(--rule); overflow: hidden; }
   .run-node-bar > span { display: block; height: 100%; background: var(--accent); }
@@ -393,7 +419,7 @@
 
   /* ---- detail panel: what a clicked node actually produced ---- */
   .run-detail {
-    margin-top: 1rem; padding: 0.9rem; border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    margin-top: var(--space-5); padding: var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius-lg);
     background: var(--surface-2);
   }
   .run-detail[hidden] { display: none; }
@@ -457,8 +483,8 @@
   /* This instance's own messages, so a room reads as a conversation rather
      than a log of indistinguishable lines. */
   .chat-msg.mine .chat-from { color: var(--ok); }
-  .chat-time { color: var(--fg-muted); }
-  .chat-text { white-space: pre-wrap; color: var(--fg); }
+  .chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .chat-text { white-space: pre-wrap; color: var(--fg); max-width: var(--measure); }
   .chat-composer { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
   .chat-composer input {
     flex: 1; min-width: 12rem; min-height: 44px; padding: 0.5rem 0.75rem;
@@ -513,6 +539,7 @@
   }
   button.tool-name:hover { color: var(--accent); }
   .tool-detail-desc {
+    max-width: var(--measure);
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
     margin: 0.25rem 0 0.75rem; overflow-wrap: anywhere;
   }
@@ -570,7 +597,7 @@
     border: 1px solid var(--rule); border-radius: var(--radius-lg);
     padding: 0.75rem 0.9rem; margin-top: 0.75rem;
   }
-  .goal-objective { font-family: var(--mono); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
+  .goal-objective { max-width: var(--measure); font-family: var(--mono); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
   .goal-meta {
     display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; margin-top: 0.4rem;
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
@@ -605,6 +632,85 @@
     .run-edges path { stroke: CanvasText; }
     :focus-visible { outline: 2px solid Highlight; }
   }
+
+  /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
+     positioned high rather than centred so the list grows downward into space
+     the eye is already looking at. */
+  .overlay {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; justify-content: center; align-items: flex-start;
+    padding: 10vh var(--space-5) var(--space-5);
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  .overlay[hidden] { display: none; }
+  .overlay-box {
+    width: 100%; max-width: 40rem; max-height: 70vh; overflow-y: auto;
+    padding: var(--space-4); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); background: var(--surface);
+    box-shadow: 0 1rem 3rem color-mix(in srgb, var(--bg) 60%, transparent);
+  }
+  .palette-box { padding: var(--space-3); }
+  #palette-input {
+    width: 100%; box-sizing: border-box;
+    font-family: var(--mono); font-size: var(--step-1);
+    padding: var(--space-3); border: 1px solid var(--rule);
+    border-radius: var(--radius-sm); background: var(--surface-2); color: var(--fg);
+  }
+  #palette-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .palette-list { list-style: none; margin: var(--space-3) 0 0; padding: 0; max-height: 46vh; overflow-y: auto; }
+  .palette-item {
+    display: flex; align-items: center; gap: var(--space-3);
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    font-family: var(--mono); font-size: var(--step-0);
+    border-radius: var(--radius-sm); cursor: pointer; color: var(--fg);
+  }
+  .palette-item[aria-selected="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .palette-kind {
+    flex: none; min-width: 4.5rem; color: var(--fg-muted);
+    text-transform: uppercase; letter-spacing: 0.08em; font-size: var(--step-0);
+  }
+  .palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .palette-hint { margin: var(--space-3) 0 0; }
+  .shortcuts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4); margin: 0; }
+  .shortcuts dt { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
+  .shortcuts dd { margin: 0; color: var(--fg); }
+
+  .more { position: relative; }
+  .more > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; min-height: 32px;
+    padding: 0 var(--space-4); border: 1px solid var(--border);
+    border-radius: var(--radius-pill); background: var(--surface-2);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  }
+  .more > summary::-webkit-details-marker { display: none; }
+  .more > summary:hover { color: var(--fg); }
+  .more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .more[open] > summary { color: var(--fg); border-color: var(--accent); }
+  .more-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+
+  /* Todos */
+  .todos { list-style: none; margin: var(--space-5) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .todo {
+    display: flex; align-items: center; gap: var(--space-3);
+    min-height: 32px; padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-2);
+  }
+  .todo-text { flex: 1; font-family: var(--mono); font-size: var(--step-0); overflow-wrap: anywhere; }
+  .todo[data-done="true"] .todo-text { color: var(--fg-muted); text-decoration: line-through; }
+  .todo-when { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); font-variant-numeric: tabular-nums; }
+
+  /* Log tail */
+  .log-view {
+    margin: var(--space-4) 0 0; padding: var(--space-4);
+    max-height: 28rem; overflow: auto;
+    font-family: var(--mono); font-size: var(--step-0); line-height: 1.5;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    background: var(--surface-2); color: var(--fg);
+  }
+  .log-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -620,6 +726,8 @@
   <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
   <span class="spacer"></span>
   <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
+  <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
+  <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
   <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
   <button type="button" class="chip-btn" id="new-chat">New chat</button>
 </header>
@@ -630,6 +738,7 @@
   <button type="button" class="tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
   <button type="button" class="tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
   <button type="button" class="tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
+  <button type="button" class="tab" role="tab" id="tab-todos" aria-controls="view-todos" aria-selected="false" tabindex="-1" data-view="todos">Todos</button>
   <button type="button" class="tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
   <button type="button" class="tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
 </nav>
@@ -643,15 +752,29 @@
     <div class="run-picker" id="session-picker">
       <label for="session-select">Conversation</label>
       <select id="session-select"></select>
+      <label for="session-filter">Find</label>
+      <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
       <div class="session-actions">
         <button type="button" class="secondary" id="session-fork">Fork</button>
         <button type="button" class="secondary" id="session-rename">Rename</button>
         <button type="button" class="secondary danger" id="session-delete">Delete</button>
+        <!-- Folded away rather than dropped: six equal buttons in a row read as
+             one wall and hide which three you reach for daily. All of them are
+             also in the command palette. -->
+        <details class="more">
+          <summary>More</summary>
+          <div class="more-actions">
+            <button type="button" class="secondary" id="session-compact" title="Drop the oldest exchanges from this conversation">Compact</button>
+            <button type="button" class="secondary" id="session-export" title="Download this conversation as Markdown">Export</button>
+            <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
+          </div>
+        </details>
       </div>
       <p class="sr-only" id="session-status" role="status" aria-live="polite"></p>
     </div>
 
     <div class="transcript" id="transcript"></div>
+    <p class="run-empty" id="transcript-empty" hidden>No turns in this conversation yet. Describe a task below, or press Ctrl+K to jump somewhere.</p>
 
     <form id="task-form" class="composer">
       <label for="task">Task</label>
@@ -672,7 +795,10 @@
     <section>
       <div class="section-head">
         <h2>Runs</h2>
-        <button type="button" class="secondary" id="runs-refresh">Refresh</button>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="run-copy">Copy summary</button>
+          <button type="button" class="secondary" id="runs-refresh">Refresh</button>
+        </div>
       </div>
       <div class="runs">
         <div class="run-picker">
@@ -723,6 +849,23 @@
       <div id="goals"></div>
     </section>
   </div>
+  <div class="view" id="view-todos" role="tabpanel" aria-labelledby="tab-todos" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Todos</h2>
+        <button type="button" class="secondary" id="todos-refresh">Refresh</button>
+      </div>
+      <!-- state/todos.json is a plain file, so anything else that opens it,
+           including the agent, shares this list. -->
+      <form id="todo-form" class="run-picker">
+        <label for="todo-text">New todo</label>
+        <input type="text" id="todo-text" placeholder="What needs doing?" maxlength="500" autocomplete="off" required>
+        <button type="submit" class="secondary" id="todo-add">Add</button>
+      </form>
+      <ul class="todos" id="todos"></ul>
+      <p class="sr-only" id="todos-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
   <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -760,8 +903,44 @@
         <dd id="peers">…</dd>
       </dl>
     </section>
+    <section>
+      <div class="section-head">
+        <h2>Logs</h2>
+        <button type="button" class="secondary" id="logs-refresh">Refresh</button>
+      </div>
+      <div class="run-picker">
+        <label for="log-select">Log file</label>
+        <select id="log-select"></select>
+      </div>
+      <!-- The tail only: the server sends the last 64 KB, cut at a line
+           boundary, so a long-running improve log stays openable. -->
+      <pre class="log-view" id="log-view" tabindex="0" aria-label="Log tail"></pre>
+      <p class="sr-only" id="logs-status" role="status" aria-live="polite"></p>
+    </section>
   </div>
 </main>
+
+<!-- Overlays live outside main so the tab order reaches them last and a screen
+     reader is not told they are part of the current view. -->
+<div class="overlay" id="palette" role="dialog" aria-modal="true" aria-labelledby="palette-label" hidden>
+  <div class="overlay-box palette-box">
+    <label class="sr-only" id="palette-label" for="palette-input">Jump to a view, conversation, run or tool</label>
+    <input type="text" id="palette-input" placeholder="Jump to a view, conversation, run, tool or action…" autocomplete="off"
+           role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Results"></ul>
+    <p class="meta palette-hint">Enter opens · arrows move · Esc closes</p>
+  </div>
+</div>
+
+<div class="overlay" id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+  <div class="overlay-box">
+    <div class="run-detail-head">
+      <span class="run-detail-title" id="help-title">Keyboard shortcuts</span>
+      <button type="button" class="secondary" id="help-close">Close</button>
+    </div>
+    <dl class="shortcuts" id="shortcuts"></dl>
+  </div>
+</div>
 
 <!-- Vendored (not CDN-loaded): d3-dag for the run graph layout below, highlight.js
      for code-block syntax coloring. Served from /webui/vendor/ by the native HTTP
@@ -816,7 +995,30 @@ document.addEventListener("DOMContentLoaded", function () {
     toolDetail: document.getElementById("tool-detail"),
     runSelect: document.getElementById("run-select"),
     runGraph: document.getElementById("run-graph"),
-    runDetail: document.getElementById("run-detail")
+    runDetail: document.getElementById("run-detail"),
+    sessionFilter: document.getElementById("session-filter"),
+    sessionCompact: document.getElementById("session-compact"),
+    sessionExport: document.getElementById("session-export"),
+    sessionCopy: document.getElementById("session-copy"),
+    runCopy: document.getElementById("run-copy"),
+    todos: document.getElementById("todos"),
+    todoForm: document.getElementById("todo-form"),
+    todoText: document.getElementById("todo-text"),
+    todosRefresh: document.getElementById("todos-refresh"),
+    todosStatus: document.getElementById("todos-status"),
+    logSelect: document.getElementById("log-select"),
+    logView: document.getElementById("log-view"),
+    logsRefresh: document.getElementById("logs-refresh"),
+    logsStatus: document.getElementById("logs-status"),
+    palette: document.getElementById("palette"),
+    paletteOpen: document.getElementById("palette-open"),
+    paletteInput: document.getElementById("palette-input"),
+    paletteList: document.getElementById("palette-list"),
+    help: document.getElementById("help"),
+    helpOpen: document.getElementById("help-open"),
+    helpClose: document.getElementById("help-close"),
+    shortcuts: document.getElementById("shortcuts"),
+    transcriptEmpty: document.getElementById("transcript-empty")
   };
 
   /* Fetches a vendored library on first use and caches the promise, so the
@@ -994,10 +1196,15 @@ document.addEventListener("DOMContentLoaded", function () {
      and dropping it from the list would make the picker disagree with what the
      composer is actually continuing. */
   function renderSessionOptions(sessions) {
-    knownSessions = sessions || [];
+    if (sessions) knownSessions = sessions;
+    /* The filter narrows what the picker offers, never what is known: the
+       conversation currently open always stays selectable, or typing would
+       be able to deselect the transcript on screen. */
+    var q = el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "";
     el.sessionSelect.textContent = "";
     var seen = false;
     knownSessions.forEach(function (s) {
+      if (q && s.id !== sessionId && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
       var opt = document.createElement("option");
       opt.value = s.id;
       opt.textContent = sessionLabel(s);
@@ -1011,6 +1218,12 @@ document.addEventListener("DOMContentLoaded", function () {
       el.sessionSelect.insertBefore(pending, el.sessionSelect.firstChild);
     }
     el.sessionSelect.value = sessionId;
+  }
+
+  /* The transcript is either turns or a line saying there are none; it used to
+     be turns or nothing at all, which looked identical to a failed load. */
+  function syncTranscriptEmpty() {
+    el.transcriptEmpty.hidden = el.transcript.querySelector(".turn") !== null;
   }
 
   function loadSessions() {
@@ -1043,7 +1256,10 @@ document.addEventListener("DOMContentLoaded", function () {
         pendingTurn = createTurn(m.content);
         return;
       }
-      if (!pendingTurn) pendingTurn = createTurn("(earlier turn)");
+      if (!pendingTurn) {
+        pendingTurn = createTurn("(question not in this transcript)");
+        pendingTurn.querySelector(".turn-you").setAttribute("data-orphan", "true");
+      }
       appendText(pendingTurn, m.content, false);
       finalizeAnswer(pendingTurn);
       renderStats(pendingTurn, {}, null);
@@ -1091,6 +1307,7 @@ document.addEventListener("DOMContentLoaded", function () {
       })
       .then(function (data) {
         renderSessionHistory(data.messages || []);
+        syncTranscriptEmpty();
         var n = (data.messages || []).length;
         el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
       })
@@ -1230,6 +1447,7 @@ document.addEventListener("DOMContentLoaded", function () {
      a real conversation history instead of one box that forgets the past
      answer as soon as you ask another question. */
   function createTurn(task) {
+    if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
     var turn = document.createElement("div");
     turn.className = "turn";
 
@@ -1863,6 +2081,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   var lastGraph = null;
+  var lastBuilt = null;
   var resizeTimer = null;
   window.addEventListener("resize", function () {
     if (resizeTimer) window.clearTimeout(resizeTimer);
@@ -1898,6 +2117,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     var built = buildStages(nodes);
+    lastBuilt = built;
     // Duration bars are scaled against the slowest node, not the run total:
     // one long LLM call would otherwise flatten every tool call to an
     // invisible sliver.
@@ -3241,7 +3461,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // ---- views: one section visible at a time -----------------------------
 
-  var VIEWS = ["chat", "runs", "rooms", "goals", "tools", "system"];
+  var VIEWS = ["chat", "runs", "rooms", "goals", "todos", "tools", "system"];
   /* Each view's data is fetched the first time it is opened rather than all of
      it at load. The page used to fire seven requests before showing anything,
      several of which execute a WASM tool. */
@@ -3250,8 +3470,9 @@ document.addEventListener("DOMContentLoaded", function () {
     runs: loadRuns,
     rooms: function () { return loadStatus().then(loadChatRooms); },
     goals: loadGoals,
+    todos: loadTodos,
     tools: loadTools,
-    system: function () { return Promise.all([loadUsage(), loadStatus()]); }
+    system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList()]); }
   };
 
   function showView(name, focusPanel) {
@@ -3324,6 +3545,395 @@ document.addEventListener("DOMContentLoaded", function () {
     el0.textContent = n ? String(n) : "";
   }
 
+
+  /* ---------- conversation utilities ---------- */
+
+  el.sessionFilter.addEventListener("input", function () { renderSessionOptions(null); });
+
+  /* Compaction is otherwise a thing that happens to you: it fires on its own
+     once a transcript passes agent.compact_threshold_bytes. This runs the same
+     trim on demand, and reports the size it left behind. */
+  el.sessionCompact.addEventListener("click", function () {
+    if (!currentSessionMeta()) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    if (busy) {
+      el.sessionStatus.textContent = "Finish or stop the current run before compacting.";
+      return;
+    }
+    el.sessionCompact.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+      .then(function (d) {
+        el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
+        return loadSessions().then(function () {
+          el.transcript.textContent = "";
+          return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+            .then(function (r) { return r.json(); })
+            .then(function (data) { renderSessionHistory(data.messages || []); });
+        });
+      })
+      .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })
+      .then(function () { el.sessionCompact.disabled = false; });
+  });
+
+  /* One conversation as Markdown. Built from the transcript on screen rather
+     than refetched, so what downloads is what you are looking at. */
+  function transcriptMarkdown() {
+    var meta = currentSessionMeta();
+    var lines = ["# " + ((meta && meta.title) || "clanker conversation"), "", "`" + sessionId + "`", ""];
+    var turns = el.transcript.querySelectorAll(".turn");
+    Array.prototype.forEach.call(turns, function (turn) {
+      var task = turn.querySelector(".turn-you");
+      var answer = turn.querySelector(".turn-answer");
+      if (task) lines.push("## " + task.textContent.trim(), "");
+      if (answer) lines.push(answer.textContent.replace(/\s+$/, ""), "");
+    });
+    return lines.join("\n");
+  }
+
+  function downloadText(name, text, mime) {
+    var blob = new Blob([text], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoked on the next tick: revoking synchronously races the download in
+    // some browsers and produces an empty file.
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  el.sessionExport.addEventListener("click", function () {
+    var md = transcriptMarkdown();
+    if (!md.trim()) {
+      el.sessionStatus.textContent = "Nothing to export yet.";
+      return;
+    }
+    downloadText("clanker-" + sessionId.slice(0, 8) + ".md", md, "text/markdown");
+    el.sessionStatus.textContent = "Exported as Markdown.";
+  });
+
+  el.sessionCopy.addEventListener("click", function () {
+    copyText(transcriptMarkdown(), el.sessionCopy, "Copy all", el.transcript);
+  });
+
+  el.runCopy.addEventListener("click", function () {
+    if (!lastBuilt) {
+      el.runStatus.textContent = "No run is open.";
+      return;
+    }
+    copyText(graphSummaryText(lastBuilt), el.runCopy, "Copy summary", el.runGraph);
+  });
+
+  /* ---------- todos ---------- */
+
+  var todos = [];
+
+  function loadTodos() {
+    return fetch("/api/todos")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) { renderTodos(d.todos || []); })
+      .catch(function (err) { el.todosStatus.textContent = "Could not load todos: " + err.message; });
+  }
+
+  function postTodo(payload, status) {
+    return fetch("/api/todos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+      .then(function (d) {
+        renderTodos(d.todos || []);
+        el.todosStatus.textContent = status;
+      })
+      .catch(function (err) { el.todosStatus.textContent = "Todo failed: " + err.message; });
+  }
+
+  function renderTodos(list) {
+    todos = list;
+    el.todos.textContent = "";
+    var open = 0;
+    list.forEach(function (t) {
+      if (!t.done) open += 1;
+      var li = document.createElement("li");
+      li.className = "todo";
+      li.setAttribute("data-done", String(!!t.done));
+
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !!t.done;
+      box.id = "todo-box-" + t.id;
+      box.addEventListener("change", function () {
+        postTodo({ id: t.id, done: box.checked }, box.checked ? "Marked done." : "Marked open.");
+      });
+
+      var label = document.createElement("label");
+      label.className = "todo-text";
+      label.htmlFor = box.id;
+      label.textContent = t.text;
+
+      var when = document.createElement("span");
+      when.className = "todo-when";
+      when.textContent = t.created ? formatChatTime(t.created) : "";
+
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "secondary danger";
+      del.textContent = "Delete";
+      del.setAttribute("aria-label", "Delete todo: " + t.text);
+      del.addEventListener("click", function () { postTodo({ id: t.id, remove: true }, "Deleted."); });
+
+      li.appendChild(box);
+      li.appendChild(label);
+      li.appendChild(when);
+      li.appendChild(del);
+      el.todos.appendChild(li);
+    });
+    if (!list.length) {
+      var p = document.createElement("p");
+      p.className = "run-empty";
+      p.textContent = "No todos yet. Anything written here is also in state/todos.json.";
+      el.todos.appendChild(p);
+    }
+    setTabCount("todos", open);
+  }
+
+  el.todoForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var text = el.todoText.value.trim();
+    if (!text) return;
+    el.todoText.value = "";
+    postTodo({ text: text }, "Added.");
+  });
+  el.todosRefresh.addEventListener("click", function () { loadTodos(); });
+
+  /* ---------- logs ---------- */
+
+  function loadLogList() {
+    return fetch("/api/logs")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        var logs = (d.logs || []).slice().sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+        var keep = el.logSelect.value;
+        el.logSelect.textContent = "";
+        logs.forEach(function (l) {
+          var opt = document.createElement("option");
+          opt.value = l.name;
+          opt.textContent = l.name + "  ·  " + fmtBytes(l.bytes);
+          el.logSelect.appendChild(opt);
+        });
+        if (!logs.length) {
+          el.logView.textContent = "No logs yet. clanker writes them under state/logs/.";
+          return;
+        }
+        el.logSelect.value = keep && el.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
+        return loadLog(el.logSelect.value);
+      })
+      .catch(function (err) { el.logsStatus.textContent = "Could not list logs: " + err.message; });
+  }
+
+  function loadLog(name) {
+    if (!name) return Promise.resolve();
+    return fetch("/api/logs/" + encodeURIComponent(name))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        el.logView.textContent = d.text || "(empty)";
+        // Newest lines are at the bottom, which is where a tail is read from.
+        el.logView.scrollTop = el.logView.scrollHeight;
+        el.logsStatus.textContent = "Showing the tail of " + d.name + " (" + fmtBytes(d.bytes) + " total).";
+      })
+      .catch(function (err) { el.logsStatus.textContent = "Could not read log: " + err.message; });
+  }
+
+  el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
+  el.logsRefresh.addEventListener("click", function () { loadLogList(); });
+
+  /* ---------- overlays: command palette and shortcut sheet ---------- */
+
+  var lastFocus = null;
+
+  function openOverlay(node, toFocus) {
+    lastFocus = document.activeElement;
+    node.hidden = false;
+    if (toFocus) toFocus.focus();
+  }
+
+  function closeOverlay(node) {
+    node.hidden = true;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
+
+  var SHORTCUTS = [
+    ["Ctrl/⌘ + K", "Jump to a view, conversation, run, tool or action"],
+    ["?", "This list"],
+    ["1 – 7", "Go to a view by number"],
+    ["← →", "Move between tabs when one is focused"],
+    ["Ctrl/⌘ + Enter", "Run the task in the composer"],
+    ["Esc", "Close an overlay, or stop a running task"]
+  ];
+
+  SHORTCUTS.forEach(function (pair) {
+    var dt = document.createElement("dt");
+    dt.textContent = pair[0];
+    var dd = document.createElement("dd");
+    dd.textContent = pair[1];
+    el.shortcuts.appendChild(dt);
+    el.shortcuts.appendChild(dd);
+  });
+
+  el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
+  el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
+
+  /* Everything reachable, in one list. Built fresh on open so it reflects the
+     conversations, runs and tools actually loaded rather than a stale copy. */
+  function paletteEntries() {
+    var out = [];
+    VIEWS.forEach(function (v, i) {
+      out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + "  (" + (i + 1) + ")", run: function () { showView(v, true); } });
+    });
+    out.push({ kind: "action", label: "New chat", run: function () { el.newChat.click(); } });
+    out.push({ kind: "action", label: "Fork this conversation", run: function () { el.sessionFork.click(); } });
+    out.push({ kind: "action", label: "Compact this conversation", run: function () { el.sessionCompact.click(); } });
+    out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { el.sessionExport.click(); } });
+    out.push({ kind: "action", label: "Cycle theme", run: function () { el.themeToggle.click(); } });
+    out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { openOverlay(el.help, el.helpClose); } });
+    knownSessions.forEach(function (s) {
+      out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); el.sessionSelect.value = s.id; switchSession(s.id); } });
+    });
+    allRuns.forEach(function (r) {
+      out.push({ kind: "run", label: runLabel(r), run: function () { showView("runs", false); el.runSelect.value = r.run_id; loadRun(r.run_id); } });
+    });
+    todos.forEach(function (t) {
+      out.push({ kind: "todo", label: t.text, run: function () { showView("todos", true); } });
+    });
+    return out;
+  }
+
+  var paletteItems = [];
+  var paletteIndex = 0;
+
+  /* Subsequence matching, the same thing an editor's file finder does: "grp"
+     finds "run graph". Cheap, and it forgives the order you remember. */
+  function fuzzyMatch(query, text) {
+    if (!query) return true;
+    var t = text.toLowerCase();
+    var qi = 0;
+    for (var i = 0; i < t.length && qi < query.length; i++) {
+      if (t.charAt(i) === query.charAt(qi)) qi += 1;
+    }
+    return qi === query.length;
+  }
+
+  function renderPalette() {
+    var q = el.paletteInput.value.trim().toLowerCase();
+    var all = paletteEntries();
+    paletteItems = [];
+    el.paletteList.textContent = "";
+    for (var i = 0; i < all.length && paletteItems.length < 40; i++) {
+      if (!fuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
+      paletteItems.push(all[i]);
+    }
+    if (paletteIndex >= paletteItems.length) paletteIndex = 0;
+    paletteItems.forEach(function (entry, i) {
+      var li = document.createElement("li");
+      li.className = "palette-item";
+      li.id = "palette-item-" + i;
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === paletteIndex));
+      var kind = document.createElement("span");
+      kind.className = "palette-kind";
+      kind.textContent = entry.kind;
+      var label = document.createElement("span");
+      label.className = "palette-label";
+      label.textContent = entry.label;
+      li.appendChild(kind);
+      li.appendChild(label);
+      li.addEventListener("click", function () { runPalette(i); });
+      el.paletteList.appendChild(li);
+    });
+    if (!paletteItems.length) {
+      var empty = document.createElement("li");
+      empty.className = "palette-item";
+      empty.textContent = "Nothing matches.";
+      el.paletteList.appendChild(empty);
+    }
+    el.paletteInput.setAttribute("aria-activedescendant", paletteItems.length ? "palette-item-" + paletteIndex : "");
+  }
+
+  function runPalette(i) {
+    var entry = paletteItems[i];
+    closeOverlay(el.palette);
+    if (entry) entry.run();
+  }
+
+  function openPalette() {
+    el.paletteInput.value = "";
+    paletteIndex = 0;
+    openOverlay(el.palette, el.paletteInput);
+    renderPalette();
+  }
+
+  el.paletteOpen.addEventListener("click", openPalette);
+  el.paletteInput.addEventListener("input", function () { paletteIndex = 0; renderPalette(); });
+  el.paletteInput.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!paletteItems.length) return;
+      var step = e.key === "ArrowDown" ? 1 : -1;
+      paletteIndex = (paletteIndex + step + paletteItems.length) % paletteItems.length;
+      renderPalette();
+      var sel = document.getElementById("palette-item-" + paletteIndex);
+      if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runPalette(paletteIndex);
+    }
+  });
+
+  /* Clicking the scrim closes; clicking the box does not. */
+  [el.palette, el.help].forEach(function (node) {
+    node.addEventListener("mousedown", function (e) {
+      if (e.target === node) closeOverlay(node);
+    });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }
+      if (!el.help.hidden) { closeOverlay(el.help); e.preventDefault(); return; }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      if (el.palette.hidden) openPalette(); else closeOverlay(el.palette);
+      return;
+    }
+    // "?" is a plain key, so it must never fire while something is being typed.
+    if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      openOverlay(el.help, el.helpClose);
+    }
+  });
+
   renderSessionChip();
   renderSessionOptions([]);
   setBusy(false);
@@ -3333,7 +3943,26 @@ document.addEventListener("DOMContentLoaded", function () {
   loadStatus();
   // Only the opening view's data is fetched now; the rest load when opened.
   showView(window.location.hash.replace("#", ""), false);
-  loadSessions();
+  /* Reopening the page used to show an empty transcript even when the picker
+     said the conversation had nine messages: nothing ever fetched them. The
+     conversation you were last in is replayed, so a reload resumes rather
+     than restarts. */
+  loadSessions().then(function () {
+    if (!currentSessionMeta()) {
+      syncTranscriptEmpty();
+      return;
+    }
+    return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        renderSessionHistory(data.messages || []);
+        syncTranscriptEmpty();
+      })
+      .catch(function () { syncTranscriptEmpty(); });
+  });
 });
 </script>
 </body>

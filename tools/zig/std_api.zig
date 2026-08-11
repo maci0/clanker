@@ -19,6 +19,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     };
     if (symbol.len == 0) return lib.fail(out, "symbol must not be empty");
 
-    const raw = lib.stdApi(symbol) catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.stdApi(symbol) catch |err| return lib.failErr(out, err, "looking up the std symbol");
     return lib.okText(out, raw);
 }

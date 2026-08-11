@@ -68,7 +68,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
-    const plugins = readPlugins(alloc) catch |err| return lib.fail(out, @errorName(err));
+    const plugins = readPlugins(alloc) catch |err| return lib.failErr(out, err, "reading the plugin list");
 
     if (args.len == 0) return listJson(out, alloc, plugins);
     // The REPL wants a rendered table; the web UI wants the same facts as data
@@ -102,7 +102,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return textJson(out, alloc, if (want_enabled) "already on: " else "already off: ", name);
 
     plugin.enabled = want_enabled;
-    writeDisabled(plugins) catch |err| return lib.fail(out, @errorName(err));
+    writeDisabled(plugins) catch |err| return lib.failErr(out, err, "reading the plugin list");
     return textJson(out, alloc, if (want_enabled) "enabled: " else "disabled: ", name);
 }
 

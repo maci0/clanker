@@ -13,6 +13,6 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     _ = input;
-    const result = lib.stats() catch |err| return lib.fail(out, @errorName(err));
+    const result = lib.stats() catch |err| return lib.failErr(out, err, "reading token stats");
     try out.writeAll(result);
 }

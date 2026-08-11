@@ -67,7 +67,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .{ instruction, depth, text, depth + 1 },
         );
         defer lib.alloc.free(task);
-        result = lib.subagent(task, null) catch |err| return lib.fail(out, @errorName(err));
+        result = lib.subagent(task, null) catch |err| return lib.failErr(out, err, "this tool needs a parent agent to run its sub-steps, and this call has none");
     }
 
     return lib.okText(out, result);

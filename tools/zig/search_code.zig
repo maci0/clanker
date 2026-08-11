@@ -57,7 +57,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const result = lib.exec(engine, args.items) catch |err| {
-        return lib.fail(out, @errorName(err));
+        return lib.failErr(out, err, "running the search");
     };
 
     // For ast-grep, parse the exec result into structured matches.

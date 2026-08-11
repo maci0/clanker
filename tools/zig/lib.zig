@@ -149,6 +149,26 @@ pub fn json(w: *std.Io.Writer) std.json.Stringify {
 /// message raw, so any message containing a quote, backslash, or newline
 /// produced output the host could not parse — turning a useful error into a
 /// parse failure. Escaping it once here makes that unrepresentable.
+/// Reports a host-call failure in terms of what the caller can do about it.
+///
+/// `@errorName` was going straight to the model at 28 call sites: "NotFound",
+/// "SandboxDenied", "InvalidArg". None of those say which path, which command,
+/// or which policy, and a model handed one has nothing to act on. `what`
+/// names the thing that failed, e.g. "reading state/sessions" or "running rg".
+pub fn failErr(out: *Out, err: anyerror, what: []const u8) !void {
+    var buf: [512]u8 = undefined;
+    const msg = switch (err) {
+        error.SandboxDenied => std.fmt.bufPrint(&buf, "{s}: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow)", .{what}),
+        error.NotFound => std.fmt.bufPrint(&buf, "{s}: not found", .{what}),
+        error.TooLarge => std.fmt.bufPrint(&buf, "{s}: too large for one call — ask for a smaller range or narrow the query", .{what}),
+        error.NetworkError => std.fmt.bufPrint(&buf, "{s}: the request did not complete", .{what}),
+        error.InvalidArg => std.fmt.bufPrint(&buf, "{s}: the arguments were rejected", .{what}),
+        error.OutOfMemory => std.fmt.bufPrint(&buf, "{s}: out of memory in the sandbox", .{what}),
+        else => std.fmt.bufPrint(&buf, "{s}: {s}", .{ what, @errorName(err) }),
+    } catch what;
+    return fail(out, msg);
+}
+
 pub fn fail(out: *Out, msg: []const u8) !void {
     out.reset();
     var w = writer(out);

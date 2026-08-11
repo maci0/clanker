@@ -34,7 +34,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try argv.append(alloc, e);
     }
     try argv.append(alloc, path);
-    const raw = lib.exec("rg", argv.items) catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.exec("rg", argv.items) catch |err| return lib.failErr(out, err, "running rg");
 
     // Parse the exec result to extract stdout.
     const exec_result = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .ignore_unknown_fields = true }) catch return lib.fail(out, "could not parse exec result");

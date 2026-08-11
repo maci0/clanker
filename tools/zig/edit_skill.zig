@@ -26,7 +26,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (content.len > 64 * 1024) return lib.fail(out, "content too large");
 
     lib.fsWrite(path, content) catch |err| {
-        return lib.fail(out, @errorName(err));
+        return lib.failErr(out, err, "writing the skill file");
     };
 
     var buf: [512]u8 = undefined;

@@ -22,7 +22,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     _ = parsed;
 
     const alloc = lib.alloc;
-    const raw = lib.fsList("tools/manifests") catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.fsList("tools/manifests") catch |err| return lib.failErr(out, err, "listing tools/manifests");
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     const Entry = struct { name: []const u8, meta: Meta };

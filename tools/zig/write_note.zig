@@ -35,7 +35,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try new_content.append(lib.alloc, '\n');
 
     lib.fsWrite(path, new_content.items) catch |err| {
-        return lib.fail(out, @errorName(err));
+        return lib.failErr(out, err, "writing the note");
     };
 
     try out.writeAll("{\"ok\":true}");

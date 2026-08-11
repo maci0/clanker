@@ -44,7 +44,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else |err| {
         switch (err) {
             error.NotFound => existing = "[]",
-            else => return lib.fail(out, @errorName(err)),
+            else => return lib.failErr(out, err, "saving the goal"),
         }
     }
 
@@ -65,7 +65,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try new_content.appendSlice(lib.alloc, "]");
 
     lib.fsWrite("state/goals.json", new_content.items) catch |err| {
-        return lib.fail(out, @errorName(err));
+        return lib.failErr(out, err, "saving the goal");
     };
 
     try out.writeAll("{\"ok\":true,\"goal\":");

@@ -26,7 +26,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try argv.append(lib.alloc, f.string);
         }
     }
-    const raw = lib.exec("zig", argv.items) catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.exec("zig", argv.items) catch |err| return lib.failErr(out, err, "running zig test");
 
     // Parse the exec result to build a structured response with ok/error.
     const exec_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch {

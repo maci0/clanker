@@ -19,7 +19,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
 
-    const raw = lib.fsList("state/sessions") catch |err| return lib.fail(out, @errorName(err));
+    const raw = lib.fsList("state/sessions") catch |err| return lib.failErr(out, err, "listing state/sessions");
     const names = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{});
 
     var metas: std.ArrayList(SessionMeta) = .empty;
