@@ -171,7 +171,7 @@ Tools are discovered by the registry (`src/tools/registry.zig`) from the configu
 
 | Command | What it does |
 |---------|--------------|
-| `zig build` | Build the `clanker` binary (native, x86_64-linux-musl) |
+| `zig build` | Build the `clanker` binary for the host (musl ABI on linux); `-Dtarget=` cross-compiles |
 | `zig build tools` | Compile `tools/zig/*.zig` to `zig-out/tools/*.wasm` |
 | `zig build test` | Run the unit and integration tests |
 | `zig fmt --check src/ tools/zig/` | Verify formatting |
