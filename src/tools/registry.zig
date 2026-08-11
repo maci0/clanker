@@ -30,6 +30,9 @@ pub const Tool = struct {
     /// Never runs on the parallel worker pool (host-shared state, e.g. the
     /// chatroom log): each tool call waits its turn on the main thread.
     sequential: bool = false,
+    /// Contributes a segment to the REPL status line. Pair with
+    /// `"internal": true` so the model never calls it.
+    statusline: bool = false,
     /// Free-form per-plugin settings from the descriptor's `config` object,
     /// handed to the guest verbatim via `ck_config`. The harness only reads the
     /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
@@ -247,6 +250,12 @@ pub const Registry = struct {
         if (obj.get("sequential")) |sv| {
             switch (sv) {
                 .bool => |b| t.sequential = b,
+                else => {},
+            }
+        }
+        if (obj.get("statusline")) |sv| {
+            switch (sv) {
+                .bool => |b| t.statusline = b,
                 else => {},
             }
         }
