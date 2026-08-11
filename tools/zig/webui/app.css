@@ -527,7 +527,7 @@ h2 {
    the composer's Task label does — otherwise one wraps above and the other
    lands beside its field. */
 .run-picker label { margin: 0; flex-basis: 100%; }
-.session-actions { display: flex; gap: 0.5rem; }
+.session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
 select, #run-filter {
   flex: 0 1 auto; max-width: 100%; min-height: 44px; padding: 0.4rem 0.6rem;
   font-family: var(--mono); font-size: var(--step-0);
@@ -889,10 +889,10 @@ button:active:not(:disabled) { transform: scale(0.97); }
 .more { position: relative; }
 .more > summary {
   list-style: none; cursor: pointer; user-select: none;
-  display: inline-flex; align-items: center; min-height: 32px;
-  padding: 0 var(--space-4); border: 1px solid var(--border);
+  display: inline-flex; align-items: center; min-height: 44px;
+  padding: 0.45rem 0.85rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: transparent;
-  font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
+  font-family: var(--sans); font-size: var(--step-0); color: var(--fg);
 }
 .more > summary::-webkit-details-marker { display: none; }
 .more > summary:hover { color: var(--fg); }
@@ -908,7 +908,14 @@ button:active:not(:disabled) { transform: scale(0.97); }
 .params-grid { align-items: center; }
 .params-grid label { color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); }
 .params-grid input[type="number"] { width: 6rem; }
-.checkbox-row { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; min-width: 0; }
+.checkbox-row {
+  display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer;
+  min-width: 0; min-height: 32px;
+}
+.checkbox-row input[type="checkbox"] {
+  flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
+  accent-color: var(--accent);
+}
 
 .transcript-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
