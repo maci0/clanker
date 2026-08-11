@@ -7,6 +7,9 @@
     "properties": {
       "args": {
         "type": "string"
+      },
+      "write": {
+        "type": "object"
       }
     }
   },
