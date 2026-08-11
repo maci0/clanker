@@ -3556,7 +3556,11 @@ function postGoal(payload, status) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
     })
-    .catch(function (err) { el.goalsStatus.textContent = "Goal failed: " + err.message; });
+    .then(function () { return true; })
+    .catch(function (err) {
+      el.goalsStatus.textContent = "Goal failed: " + err.message;
+      return false;
+    });
 }
 
 el.goalForm.addEventListener("submit", function (e) {
@@ -3564,7 +3568,10 @@ el.goalForm.addEventListener("submit", function (e) {
   var objective = el.goalObjective.value.trim();
   var criterion = el.goalCriterion.value.trim();
   if (!objective || !criterion) return;
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function () {
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (ok) {
+    // A refused goal keeps what was typed: the criterion is the field most
+    // likely to be refused, and retyping the objective to fix it is a tax.
+    if (!ok) return;
     el.goalObjective.value = "";
     el.goalCriterion.value = "";
   });
@@ -3846,7 +3853,11 @@ function postBoard(payload, status) {
       if (status) el.boardStatus.textContent = status;
       return d;
     })
-    .catch(function (err) { el.boardStatus.textContent = "Board: " + err.message; });
+    .then(function () { return true; })
+    .catch(function (err) {
+      el.boardStatus.textContent = "Board: " + err.message;
+      return false;
+    });
 }
 
 function cardById(id) {
@@ -4260,7 +4271,13 @@ function showCardDetail(id) {
     box.checked = !!s.done;
     box.id = "sub-" + s.id;
     box.addEventListener("change", function () {
-      postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: box.checked }, null);
+      var wanted = box.checked;
+      postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: wanted }, null)
+        .then(function (ok) {
+          // The click already moved the box; put it back rather than leave a
+          // state the server refused on screen.
+          if (!ok) box.checked = !wanted;
+        });
     });
     var lab = document.createElement("label");
     lab.htmlFor = box.id;
@@ -4389,8 +4406,8 @@ el.cardForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var title = el.cardTitle.value.trim();
   if (!title) return;
-  postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function () {
-    el.cardTitle.value = "";
+  postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function (ok) {
+    if (ok) el.cardTitle.value = "";
   });
 });
 
@@ -4595,7 +4612,12 @@ function renderWebuiPlugins(list) {
           // misdescribe what is running.
           el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload to remove it from this page.";
         })
-        .catch(function (err) { el.webuiPluginsStatus.textContent = "Plugin: " + err.message; })
+        .catch(function (err) {
+          // Same reason as the subtask box: the click moved it, the server did
+          // not agree, so it goes back.
+          box.checked = !box.checked;
+          el.webuiPluginsStatus.textContent = "Plugin: " + err.message;
+        })
         .then(function () { box.disabled = false; });
     });
 
