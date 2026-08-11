@@ -499,6 +499,7 @@ function railRowFor(s, current) {
   var row = T.button({
     type: "button",
     class: "rail-item",
+    title: title,
     onclick: function () { switchSession(s.id); closeRailOnNarrow(); }
   }, T.span({ class: "rail-item-title" }, title), T.span({ class: "rail-item-meta" }, meta));
   if (open) row.setAttribute("aria-current", "true");
@@ -586,7 +587,9 @@ bind(el.railList, railState, function (s) {
 
 function renderSessionTitle() {
   var meta = currentSessionMeta();
-  el.sessionTitle.textContent = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
+  var label = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
+  el.sessionTitle.textContent = label;
+  el.sessionTitle.title = label;
   renderContextMeter();
 }
 
@@ -3956,6 +3959,7 @@ function renderPromptList() {
     var label = document.createElement("span");
     label.className = "palette-label";
     label.textContent = text;
+    label.title = text;
     li.appendChild(label);
     li.addEventListener("mousedown", function (e) {
       e.preventDefault();
@@ -5195,6 +5199,7 @@ function renderPalette() {
     var label = document.createElement("span");
     label.className = "palette-label";
     label.textContent = entry.label;
+    label.title = entry.label;
     li.appendChild(kind);
     li.appendChild(label);
     li.addEventListener("click", function () { runPalette(i); });

@@ -939,6 +939,14 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         .headers = .{ .user_agent = .{ .override = "clanker-tool/" ++ build_options.version } },
         .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
         .response_writer = &w,
+        // network_allow only checks `hostname` above, once, against the
+        // requested URL. std.http.Client auto-follows redirects by default,
+        // and a redirect target is never re-checked against that allowlist —
+        // an allowed host could 302 the sandboxed tool to an internal address
+        // (e.g. a cloud metadata IP) the allowlist exists to block. Refusing
+        // redirects outright keeps every request confined to the host that
+        // was actually checked.
+        .redirect_behavior = .not_allowed,
     }) catch return Err.network;
 
     const response = resp_buf[0..w.end];
