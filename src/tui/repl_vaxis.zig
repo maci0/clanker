@@ -461,6 +461,70 @@ const Model = struct {
         try ctx.tick(50, self.widget());
     }
 
+    /// Writes the conversation to `state/sessions/<id>.json` so a later
+    /// `--session <id>` or `--continue` resumes it. Called once when the app
+    /// is about to return (every quit path — /quit, Ctrl-C while idle — ends
+    /// in `app.run` returning). A fresh conversation gets an id minted here;
+    /// a resumed one keeps the id it was loaded under. Nothing is written
+    /// when the sessions module is off, the id is invalid, or there is no
+    /// conversation yet.
+    fn saveConversation(self: *Model) void {
+        if (!self.cfg.modules.sessions) return;
+        var has_turn = false;
+        for (self.messages.items) |m| {
+            if (m.role != .system) {
+                has_turn = true;
+                break;
+            }
+        }
+        // A freshly opened REPL quit before its first turn has nothing worth
+        // persisting (at most the injected system prompt).
+        if (!has_turn) return;
+
+        const id = self.session_id orelse (mintSessionId(self.io, self.arena) catch {
+            log.log(.warn, "repl: could not mint a session id; conversation not saved", .{});
+            return;
+        });
+        if (!validSessionId(id)) {
+            log.log(.warn, "repl: refusing to save under invalid session id '{s}'", .{id});
+            return;
+        }
+
+        // The system prompt and the tool-call plumbing are internal; the
+        // saved transcript is the user/assistant conversation, the same shape
+        // `clanker run` writes and `loadSession` reads back (tool-call records
+        // stay so a resumed session replays them into the model's history).
+        var transcript: std.ArrayList(types.Message) = .empty;
+        for (self.messages.items) |m| {
+            if (m.role == .system) continue;
+            transcript.append(self.arena, m) catch {};
+        }
+        const title = if (self.session_title.len > 0) self.session_title else blk: {
+            var t: []const u8 = "";
+            for (transcript.items) |m| {
+                if (m.role == .user) {
+                    if (m.content) |c| {
+                        t = std.mem.trim(u8, c[0..@min(c.len, 60)], " \t\r\n");
+                        break;
+                    }
+                }
+            }
+            break :blk t;
+        };
+        const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
+        session.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
+            .id = id,
+            .title = title,
+            .messages = transcript.items,
+            .created = if (self.session_created != 0) self.session_created else updated,
+            .updated = updated,
+        }) catch |err| {
+            log.log(.warn, "repl: session '{s}' not saved: {s}", .{ id, @errorName(err) });
+            return;
+        };
+        self.session_id = id;
+    }
+
     /// The full command set is exactly what `submit` recognizes, so this is
     /// hand-maintained rather than generated — unlike the deleted REPL's
     /// `cmd_*` catalog (docs/tui-feature-checklist.md item 4), there is no
@@ -1137,18 +1201,80 @@ fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
     return if (out) |o| o else text;
 }
 
-/// The subset of `cli.Options` the REPL honors. `clanker repl` declared
-/// `--provider`/`--model`/`--session` in its usage spec but never received
-/// them (docs/ROADMAP.md "flag gap"): cli.zig's dispatch passed only `init`.
-/// Passing this narrow struct instead of all of `cli.Options` keeps the
-/// REPL from importing all of cli.zig (which would pull the whole CLI into
-/// this module) while making every declared flag real.
+/// The subset of `cli.Options` the REPL honors. `--provider`/`--model` pick
+/// the starting provider/model, `--session <id>` resumes a saved conversation
+/// and `--continue` resumes the most recently touched one. Passing this narrow
+/// struct instead of all of `cli.Options` keeps the REPL from importing all of
+/// cli.zig (which would pull the whole CLI into this module) while making
+/// every declared flag real.
 pub const ReplOptions = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     session: ?[]const u8 = null,
     continue_last: bool = false,
 };
+
+/// Session ids become path fragments under `state/sessions/`, so only the
+/// same slug shape the rest of clanker accepts is allowed here (alphanumeric,
+/// `-`, `_`, length 1..64). Anything with a separator or a dot is refused
+/// before it could walk out of the store — this mirrors `cli.zig`'s
+/// `validSessionId`, restated locally because the REPL deliberately does not
+/// import cli.zig.
+fn validSessionId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 64) return false;
+    for (id) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+    return true;
+}
+
+/// The id `--continue` means: the saved session touched most recently.
+/// Returns null when there are none, so a first `--continue` starts a fresh
+/// session rather than failing at someone who has not made one yet.
+fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
+    const metas = session.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
+    var best: ?session.SessionMeta = null;
+    for (metas) |m| {
+        if (best == null or m.updated > best.?.updated) best = m;
+    }
+    return if (best) |b| b.id else null;
+}
+
+/// A fresh conversation's id, minted the first time it is saved. The
+/// nanosecond suffix keeps rapid successive sessions distinct and stays
+/// within the slug alphabet `validSessionId` accepts, like the server's
+/// `sess-<base36>` fallback.
+fn mintSessionId(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
+    return try std.fmt.allocPrint(arena, "sess-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+}
+
+test "validSessionId refuses path traversal and accepts the minted shape" {
+    try std.testing.expect(validSessionId("sess-123"));
+    try std.testing.expect(validSessionId("7f3a1c2e-0b44-4a91-9d3e-1c2b3a4d5e6f"));
+    try std.testing.expect(validSessionId("sess-m1x2y3_ab12cd"));
+    try std.testing.expect(!validSessionId("../../etc/passwd"));
+    try std.testing.expect(!validSessionId("a/b"));
+    try std.testing.expect(!validSessionId("a.json"));
+    try std.testing.expect(!validSessionId(""));
+    try std.testing.expect(!validSessionId("x" ** 65));
+}
+
+test "mintSessionId produces a distinct valid id each call" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const a = try mintSessionId(io, arena);
+    const b = try mintSessionId(io, arena);
+    try std.testing.expect(validSessionId(a));
+    try std.testing.expect(validSessionId(b));
+    try std.testing.expect(std.mem.startsWith(u8, a, "sess-"));
+    // Nanosecond-resolution ids of two consecutive mints are not equal.
+    try std.testing.expect(!std.mem.eql(u8, a, b));
+}
 
 pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const io = init.io;
@@ -1235,5 +1361,53 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     defer model.text_field.deinit();
 
-    try app.run(model.widget(), .{});
+    // Session persistence: `--session <id>` resumes that conversation, else
+    // `--continue` resumes the most recently touched one, else a fresh
+    // conversation whose id is minted on its first save. The id becomes a
+    // path fragment under state/sessions/, so it is validated before either
+    // load or save.
+    model.session_created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var session_id = opts.session;
+    if (session_id == null and opts.continue_last) session_id = latestSessionId(io, arena);
+    if (session_id) |sid| {
+        if (!validSessionId(sid)) {
+            log.log(.warn, "repl: ignoring invalid --session id '{s}'", .{sid});
+            session_id = null;
+        }
+    }
+    model.session_id = session_id;
+    if (cfg.modules.sessions) {
+        if (session_id) |sid| {
+            const loaded = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => blk: {
+                    log.log(.warn, "repl: could not load session '{s}': {s}", .{ sid, @errorName(err) });
+                    break :blk null;
+                },
+            };
+            if (loaded) |s| {
+                model.session_created = s.created;
+                model.session_title = s.title;
+                var loaded_count: usize = 0;
+                for (s.messages) |m| {
+                    if (m.role == .system) continue;
+                    model.messages.append(arena, m) catch {};
+                    loaded_count += 1;
+                }
+                model.lines.append(arena, .{
+                    .text = std.fmt.allocPrint(arena, "[resumed session {s}: {d} messages]", .{ sid, loaded_count }) catch "[resumed session]",
+                    .dim = true,
+                }) catch {};
+            } else {
+                log.log(.info, "repl: no existing session '{s}', starting fresh", .{sid});
+            }
+        }
+    }
+
+    // Save on every exit path: app.run returns for /quit and for Ctrl-C while
+    // idle alike, so persisting here (rather than in submit) is what makes the
+    // conversation survive. Save even if the run loop errored out.
+    const run_result = app.run(model.widget(), .{});
+    model.saveConversation();
+    try run_result;
 }
