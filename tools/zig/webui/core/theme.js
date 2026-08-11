@@ -36,7 +36,7 @@ export function cycleTheme(opts) {
   return next;
 }
 
-// Backward compat for classic app.js global (kept duplicated there for now).
 if (typeof window !== "undefined") {
   window.THEMES = window.THEMES || THEMES;
+  window.ckTheme = { THEMES: THEMES, loadTheme: loadTheme, getTheme: getTheme, applyTheme: applyTheme, cycleTheme: cycleTheme, setTheme: setTheme };
 }
