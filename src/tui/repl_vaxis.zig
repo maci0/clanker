@@ -549,7 +549,7 @@ const Model = struct {
         }
         var it = std.mem.splitScalar(u8, text.string, '\n');
         while (it.next()) |line| {
-            const trimmed = std.mem.trimEnd(u8, line, " \t\r\n");
+            const trimmed = std.mem.trim(u8, line, " \t\r");
             self.lines.append(self.arena, .{ .text = self.arena.dupe(u8, trimmed) catch trimmed, .dim = true }) catch {};
         }
         return true;
