@@ -4033,7 +4033,7 @@ function runGoal(g, opts) {
     el.goalsStatus.textContent = "A run for this goal is already in progress; wait for it to finish.";
     return;
   }
-  var task = opts.task || ("Work on this goal until the completion criterion is met.\n\nObjective: " +
+  var task = opts.task || ("Work on this goal until the completion criterion is met. When the work is done, land it in the repository so the goal is genuinely complete: create a branch, commit your changes to it, push the branch, open a pull request, and merge it. Do not leave the finished work uncommitted.\n\nObjective: " +
     (g.objective || "") + "\nDone when: " + (g.completion_criterion || ""));
   var controller = new AbortController();
   goalRuns[g.id] = { controller: controller, status: "running", text: "" };

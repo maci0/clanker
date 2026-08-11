@@ -1436,9 +1436,14 @@ fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]c
     const body = if (std.mem.trim(u8, task, " \t\r\n").len > 0)
         task
     else
+        // A goal run that finishes its work must land it in the repository, or
+        // the web UI shows "done" while the change sits uncommitted in the
+        // working tree. git_remote_ops / exec_pattern_allow gate the verbs;
+        // the instruction makes the agent actually run them so a finished goal
+        // is really in the repo (branch -> commit -> push -> PR -> merge).
         try std.fmt.allocPrint(
             arena,
-            "Work on this goal until the completion criterion is met.\n\nObjective: {s}\nDone when: {s}\n",
+            "Work on this goal until the completion criterion is met. When the work is done, land it in the repository so the goal is genuinely complete: create a branch, commit your changes to it (staging by explicit path), push the branch, open a pull request, and merge it. Do not leave the finished work uncommitted.\n\nObjective: {s}\nDone when: {s}\n",
             .{ g.objective, g.completion_criterion },
         );
     return try std.fmt.allocPrint(arena, "{s}{s}", .{ g.section, body });
