@@ -1,12 +1,18 @@
-//! cmd_graph: read execution graphs (state/runs/*.json).
+//! cmd_graph: read and persist execution graphs (state/runs/*.json).
 //! Input:  {"args": "" | "list" | "<run-id>" | "json" | "json <run-id>"}
-//! Output: {"ok": true, "text": "..."}
+//!         {"write": {run_id, task, provider, ...}}
+//! Output: {"ok": true, "text": "..."}  |  {"ok": true}
 //!
 //! `""` renders the latest run, `<run-id>` renders that one, `list` prints one
 //! line per run. The `json` modes put machine-readable text in the same field:
 //! `json` is an array of run summaries and `json <run-id>` is a whole graph.
 //! The web UI serves those two through `GET /api/runs` so the harness never
 //! reads `state/runs/` itself.
+//!
+//! `write` persists a finished run: the agent loop accumulates nodes natively
+//! (that part runs once per tool call, too hot for a WASM round-trip) and
+//! hands the assembled graph here only once, at the end of the run, to become
+//! JSON on disk.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -30,6 +36,7 @@ const GraphFile = struct {
     run_id: []const u8 = "",
     task: []const u8 = "",
     provider: []const u8 = "",
+    started_at: i64 = 0,
     duration_ms: u64 = 0,
     total_prompt_tokens: u64 = 0,
     total_completion_tokens: u64 = 0,
@@ -43,6 +50,9 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
+    if (parsed == .object) {
+        if (parsed.object.get("write")) |g| return writeGraph(out, alloc, g);
+    }
     var args: []const u8 = "";
     if (parsed == .object) {
         if (parsed.object.get("args")) |a| {
@@ -276,4 +286,25 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
 
 fn writeText(out: *lib.Out, text: []const u8) !void {
     return lib.okText(out, text);
+}
+
+/// `{"write": {run_id, task, provider, started_at, duration_ms, ...,
+/// nodes: [...]}}`: persists a finished run's graph to
+/// `state/runs/<run_id>.json`. The agent loop assembles the graph natively
+/// (one call per LLM/tool step, too hot for a WASM round-trip) and hands the
+/// whole thing here exactly once, at the end of the run.
+fn writeGraph(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !void {
+    const g = std.json.parseFromValueLeaky(GraphFile, alloc, value, .{ .ignore_unknown_fields = true }) catch
+        return lib.fail(out, "write needs a graph object");
+    if (g.run_id.len == 0 or std.mem.indexOfAny(u8, g.run_id, "/\\") != null)
+        return lib.fail(out, "run_id must be non-empty and contain no path separators");
+
+    var buf: [1 << 20]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(g);
+
+    const path = try std.fmt.allocPrint(alloc, "state/runs/{s}.json", .{g.run_id});
+    lib.fsWrite(path, buf[0..w.end]) catch |err| return lib.failErr(out, err, "writing the run graph");
+    try out.writeAll("{\"ok\":true}");
 }
