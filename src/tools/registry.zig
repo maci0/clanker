@@ -235,11 +235,7 @@ pub const Registry = struct {
             const t = kv.value_ptr;
             if (t.statusline and t.enabled) try out.append(arena, t);
         }
-        std.mem.sort(*const Tool, out.items, {}, struct {
-            fn lt(_: void, a: *const Tool, b: *const Tool) bool {
-                return std.mem.order(u8, a.name, b.name) == .lt;
-            }
-        }.lt);
+        std.mem.sort(*const Tool, out.items, {}, toolNameLt);
         return out.toOwnedSlice(arena);
     }
 
@@ -255,12 +251,12 @@ pub const Registry = struct {
             const t = kv.value_ptr;
             if (t.turn_hook and t.enabled) try out.append(arena, t);
         }
-        std.mem.sort(*const Tool, out.items, {}, struct {
-            fn lt(_: void, a: *const Tool, b: *const Tool) bool {
-                return std.mem.order(u8, a.name, b.name) == .lt;
-            }
-        }.lt);
+        std.mem.sort(*const Tool, out.items, {}, toolNameLt);
         return out.toOwnedSlice(arena);
+    }
+
+    fn toolNameLt(_: void, a: *const Tool, b: *const Tool) bool {
+        return std.mem.order(u8, a.name, b.name) == .lt;
     }
 
     /// Converts registry tools into LLM ToolDefs (in the given arena).

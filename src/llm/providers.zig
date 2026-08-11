@@ -27,6 +27,13 @@ pub const RequestParams = struct {
 
 pub const BuildError = error{OutOfMemory} || std.Io.Writer.Error;
 
+/// Clamps the requested output budget to fit the model's context window:
+/// never ask for more completion tokens than half the window.
+fn clampedMaxTokens(params: RequestParams) u32 {
+    const active = params.provider.activeModel();
+    return @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
+}
+
 /// The body grows to fit. It used to be capped at 1 MiB, which was ample for
 /// tool schemas and then became a ceiling on how much source the
 /// self-improvement engine could send: a context near the cap failed the whole
@@ -184,10 +191,7 @@ fn buildOpenAI(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8 {
     }
 
     try writeSamplingParams(&s, params);
-    // Clamp the requested output budget to fit the model's context window:
-    // never ask for more completion tokens than half the window.
-    const active = params.provider.activeModel();
-    const max_tokens = @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
+    const max_tokens = clampedMaxTokens(params);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
     try s.objectField("stream");
@@ -372,10 +376,7 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
         try s.objectField("stream");
         try s.write(true);
     }
-    // Clamp the requested output budget to fit the model's context window:
-    // never ask for more completion tokens than half the window.
-    const active = params.provider.activeModel();
-    const max_tokens = @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
+    const max_tokens = clampedMaxTokens(params);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});
 

@@ -13,32 +13,35 @@
   color-scheme: light dark;
 
   /* --- paper (default) --- */
-  --paper: #e8e2d6;
-  --bg: #ddd6c7;
+  --paper: #edf1f2;
+  --bg: #d3dde1;
   --surface: var(--paper);
-  --surface-2: #ded7c8;
+  --surface-2: #e2e8ea;
   /* Printed rules: the heavy rule divides a section, the hairline rules a row. */
-  --border: #b3a992;
-  --rule: #c8bfab;
-  --fg: #241f1a;
-  --fg-muted: #58503f;
+  --border: #9fb0b8;
+  --rule: #c6d0d4;
+  --fg: #15191b;
+  --fg-muted: #46626e;
 
-  /* Oxide pencil: the active mark, the thing being deposited now. */
-  --accent: #b4531f;
-  --accent-dim: #b4531f1f;
-  /* Oxide as a mark is #b4531f; as body text on paper it measures 3.88:1 and
-     on the desk 3.46:1, so text takes a darker cut that clears 4.5:1 on every
-     ground the page has. */
-  --accent-text: #8f3e12;
-  --on-accent: #f7f3ea;
+  /* The mascot's palette: galvanised steel body, rust where the paint has
+     gone, a lime panel and a violet one, a yellow antenna lamp, black ink
+     outlines. Fill colours are taken from the drawing; the text cuts of the
+     same hues are darkened until they clear 4.5:1 on every ground here. */
+  --accent: #bb5225;
+  --accent-dim: #bb52251f;
+  --accent-text: #963f18;
+  --on-accent: #f7fafb;
   /* Lichen: a gate that held. */
-  --ok: #4a6741;
+  --ok: #476a11;
   /* Grease pencil: a gate that did not. */
+  --ok-fill: #8dc339;
+  --violet: #813597;
+  --violet-text: #6b2a7d;
   --danger: #9b2c1f;
-  --on-danger: #f7f3ea;
+  --on-danger: #f7fafb;
   /* Sun-bleached ochre: a limit approaching, not yet crossed. */
-  --warn: #8a6414;
-  --warn-text: #6f4f0d;
+  --warn: #7a5c00;
+  --warn-text: #6a5000;
 
   /* Prose is set in the text face; every measurement is set in mono, because
      a logged quantity is a measurement and columns of them must align. */
@@ -73,76 +76,85 @@
 
   /* Paper sits on the desk and casts a real shadow: offset and blur, never a
      zero-offset halo. */
-  --lift: 0 1px 2px rgba(36, 31, 26, 0.10), 0 6px 18px -8px rgba(36, 31, 26, 0.30);
-  --lift-high: 0 2px 4px rgba(36, 31, 26, 0.12), 0 20px 44px -16px rgba(36, 31, 26, 0.40);
+  --lift: 0 1px 2px rgba(21, 25, 27, 0.10), 0 6px 18px -8px rgba(21, 25, 27, 0.30);
+  --lift-high: 0 2px 4px rgba(21, 25, 27, 0.12), 0 20px 44px -16px rgba(21, 25, 27, 0.40);
 }
 
 /* --- drafting film: the same log, read at night --- */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #221d18;
-    --bg: #171310;
+    --paper: #1a2226;
+    --bg: #10161a;
     --surface: var(--paper);
-    --surface-2: #2a241e;
-    --border: #4a4034;
-    --rule: #362f27;
-    --fg: #ece5d8;
-    --fg-muted: #a2988a;
+    --surface-2: #232d33;
+    --border: #3e4d55;
+    --rule: #2b363c;
+    --fg: #e7eef1;
+    --fg-muted: #9fb4bd;
     --accent: #e07a3f;
     --accent-dim: #e07a3f26;
-    --accent-text: #e07a3f;
-    --on-accent: #1a1410;
-    --ok: #8fae7f;
+    --accent-text: #e8905c;
+    --on-accent: #12181b;
+    --ok: #a8d65c;
+  --ok-fill: #8dc339;
+  --violet: #b06fc4;
+  --violet-text: #c08ad2;
     --danger: #e5705c;
-    --on-danger: #1a1410;
-    --warn: #d2a24c;
-    --warn-text: #d2a24c;
+    --on-danger: #12181b;
+    --warn: #e8c34a;
+    --warn-text: #e8c34a;
     --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
     --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
   }
 }
 :root[data-theme="light"] {
-  --paper: #e8e2d6;
-  --bg: #ddd6c7;
+  --paper: #edf1f2;
+  --bg: #d3dde1;
   --surface: var(--paper);
-  --surface-2: #ded7c8;
-  --border: #b3a992;
-  --rule: #c8bfab;
-  --fg: #241f1a;
-  --fg-muted: #58503f;
-  --accent: #b4531f;
-  --accent-dim: #b4531f1f;
+  --surface-2: #e2e8ea;
+  --border: #9fb0b8;
+  --rule: #c6d0d4;
+  --fg: #15191b;
+  --fg-muted: #46626e;
+  --accent: #bb5225;
+  --accent-dim: #bb52251f;
   /* Oxide as a mark is #b4531f; as body text on paper it measures 3.88:1 and
      on the desk 3.46:1, so text takes a darker cut that clears 4.5:1 on every
      ground the page has. */
-  --accent-text: #8f3e12;
-  --on-accent: #f7f3ea;
-  --ok: #4a6741;
+  --accent-text: #963f18;
+  --on-accent: #f7fafb;
+  --ok: #476a11;
+  --ok-fill: #8dc339;
+  --violet: #813597;
+  --violet-text: #6b2a7d;
   --danger: #9b2c1f;
-  --on-danger: #f7f3ea;
-  --warn: #8a6414;
-  --warn-text: #6f4f0d;
-  --lift: 0 1px 2px rgba(36, 31, 26, 0.10), 0 6px 18px -8px rgba(36, 31, 26, 0.30);
-  --lift-high: 0 2px 4px rgba(36, 31, 26, 0.12), 0 20px 44px -16px rgba(36, 31, 26, 0.40);
+  --on-danger: #f7fafb;
+  --warn: #7a5c00;
+  --warn-text: #6a5000;
+  --lift: 0 1px 2px rgba(21, 25, 27, 0.10), 0 6px 18px -8px rgba(21, 25, 27, 0.30);
+  --lift-high: 0 2px 4px rgba(21, 25, 27, 0.12), 0 20px 44px -16px rgba(21, 25, 27, 0.40);
 }
 :root[data-theme="dark"] {
-  --paper: #221d18;
-  --bg: #171310;
+  --paper: #1a2226;
+  --bg: #10161a;
   --surface: var(--paper);
-  --surface-2: #2a241e;
-  --border: #4a4034;
-  --rule: #362f27;
-  --fg: #ece5d8;
-  --fg-muted: #a2988a;
+  --surface-2: #232d33;
+  --border: #3e4d55;
+  --rule: #2b363c;
+  --fg: #e7eef1;
+  --fg-muted: #9fb4bd;
   --accent: #e07a3f;
   --accent-dim: #e07a3f26;
-  --accent-text: #e07a3f;
-  --on-accent: #1a1410;
-  --ok: #8fae7f;
+  --accent-text: #e8905c;
+  --on-accent: #12181b;
+  --ok: #a8d65c;
+  --ok-fill: #8dc339;
+  --violet: #b06fc4;
+  --violet-text: #c08ad2;
   --danger: #e5705c;
-  --on-danger: #1a1410;
-  --warn: #d2a24c;
-  --warn-text: #d2a24c;
+  --on-danger: #12181b;
+  --warn: #e8c34a;
+  --warn-text: #e8c34a;
   --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
   --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
 }
@@ -522,7 +534,7 @@ select, #run-filter {
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius);
 }
-#run-filter { flex: 1 1 100%; min-width: 12rem; }
+#run-filter, #tool-filter, #turn-filter { flex: 1 1 24rem; min-width: 14rem; max-width: 34rem; }
 /* The two that genuinely span their row: the model picker names a long model
    string, and the run picker is the only control on its line. */
 #model, #run-picker { flex: 1 1 16rem; min-width: 12rem; }
@@ -779,6 +791,7 @@ button.tool-name:hover { color: var(--accent); }
 /* ---- goals: what the agent is steering toward ---- */
 .goal {
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
+  background: var(--surface-2);
   padding: 0.75rem 0.9rem; margin-top: 0.75rem;
 }
 .goal-objective { max-width: var(--measure); font-family: var(--sans); font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
@@ -985,19 +998,24 @@ mark {
 
 .shell { display: flex; align-items: flex-start; }
 
-/* The sheet: main content sits on paper lifted off the desk, with the ruled
-   depth column down its left edge. */
-main {
-  /* The ruled column runs the whole sheet. It was scoped to .turn, so it
-     started and stopped with the transcript and the composer sat at the foot
-     of nothing. */
+/* The depth rule belongs to the transcript, which is the only thing measured
+   against it. Painted on the sheet it ran the height of every view and struck
+   a line through each row of Tools and each goal; scoped here it runs the
+   chat column and stops. The offset drops --space-5 because this sits inside
+   main's padding rather than on it. */
+#view-chat {
   background:
     repeating-linear-gradient(180deg,
       var(--fg-muted) 0 1px, transparent 1px 9px)
-      calc(var(--space-5) + var(--gutter) - 1.5rem) 0 / 3px 100% no-repeat,
+      calc(var(--gutter) - 1.5rem) 0 / 3px 100% no-repeat,
     linear-gradient(var(--border), var(--border))
-      calc(var(--space-5) + var(--gutter) - 1.5rem) 0 / 1px 100% no-repeat,
-    var(--paper);
+      calc(var(--gutter) - 1.5rem) 0 / 1px 100% no-repeat;
+}
+
+/* The sheet: main content sits on paper lifted off the desk, with the ruled
+   depth column down its left edge. */
+main {
+  background: var(--paper);
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
   box-shadow: var(--lift);
