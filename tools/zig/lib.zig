@@ -43,7 +43,7 @@ const host_arena_cap = 1024 * 1024;
 /// .bss pages in linear memory (capped at 16 MiB, see runtime.zig) and add
 /// nothing to the .wasm on disk. The host reads the result straight out of
 /// linear memory and imposes no size limit of its own.
-pub const out_cap = 256 * 1024;
+pub const out_cap = 2 * 1024 * 1024;
 
 var scratch_buf: [scratch_cap]u8 align(16) = undefined;
 var host_arena_buf: [host_arena_cap]u8 align(16) = undefined;
@@ -80,6 +80,24 @@ pub const Out = struct {
 
     pub fn reset(self: *Out) void {
         self.len = 0;
+    }
+
+    /// A writer straight onto the output buffer. Building a response in a
+    /// local array first costs a second copy of it on the wasm stack, which
+    /// is a megabyte at most: a tool that returns a whole file traps on the
+    /// stack long before it fills its output.
+    pub fn writer(self: *Out) std.Io.Writer {
+        return .{
+            .buffer = self.buf,
+            .end = self.len,
+            .vtable = &.{ .drain = drainFull },
+        };
+    }
+
+    /// The buffer is the destination, so there is nowhere to drain to:
+    /// reaching here means the response outgrew out_cap.
+    fn drainFull(_: *std.Io.Writer, _: []const []const u8, _: usize) std.Io.Writer.Error!usize {
+        return error.WriteFailed;
     }
 };
 

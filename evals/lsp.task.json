@@ -1,0 +1,14 @@
+{
+  "name": "lsp",
+  "kind": "task",
+  "description": "The lsp tool must send a whole source file to zls, which means pulling it through the host arena in one read. src/agent/loop.zig is over 100 KB; when the guest arena was 64 KiB this failed with 'could not read the file' while every build gate stayed green. Deliberately not position-sensitive: the assertion is that the tool answered at all, so the case survives the file being edited. Needs zls on PATH.",
+  "prompt": "Use the lsp tool with action \"definition\" on file src/agent/loop.zig at line 100, character 4. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "lsp",
+  "criteria": [
+    {
+      "includes": [
+        "true"
+      ]
+    }
+  ]
+}

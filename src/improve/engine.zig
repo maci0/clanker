@@ -43,6 +43,10 @@ pub const Options = struct {
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
 const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "README.md", "build.zig", "build.zig.zon", "config.json" };
 
+/// Copied into staging when present, so the staged binary can actually run.
+/// Never promoted back: neither path passes validatePath.
+const staging_runtime_files = [_][]const u8{ "config.local.json", ".env" };
+
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
 const surface_rules =
@@ -321,6 +325,32 @@ pub const Engine = struct {
             return .failed;
         }
 
+        if (self.cfg.improve.capability_gate) {
+            var cap = try self.capabilityGate(staging, staged_dir);
+            defer cap.deinit(self.ctx.gpa);
+            if (!cap.ok) {
+                // A task eval is an agent run, and an agent run is not
+                // deterministic: one model turn that skips a tool call fails a
+                // case that passed a minute earlier. Rejecting a good patch on
+                // that would stall every improvement, so a failure has to
+                // happen twice to count.
+                log.log(.warn, "capability evals failed; retrying once before rejecting", .{});
+                const retry = try self.capabilityGate(staging, staged_dir);
+                cap.deinit(self.ctx.gpa);
+                cap = retry;
+                if (cap.ok) log.log(.info, "capability evals: PASS on retry", .{});
+            }
+            if (!cap.ok) {
+                const tail = errorTail(self.arena, cap.detail);
+                log.log(.error_, "staged tree failed its own capability evals:", .{});
+                log.log(.error_, "{s}", .{tail});
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+                feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                return .failed;
+            }
+            log.log(.info, "capability evals: PASS", .{});
+        }
+
         // ---- 6. promote ----
         log.log(.info, "gates green — promoting {d} file(s)", .{proposal.changes.len});
         const files = changedPaths(self.ctx.gpa, proposal.changes);
@@ -426,6 +456,36 @@ pub const Engine = struct {
         }
         if (buf.items.len == 0) return "all gates pass";
         return buf.toOwnedSlice(self.arena);
+    }
+
+    /// Runs the staged tree's own task evals with the staged binary. The
+    /// build gates only prove the patch compiles and its unit tests pass;
+    /// nothing there notices a change that keeps everything green while
+    /// breaking a tool an agent depends on, which is how a promotion once cut
+    /// the worker stack down to a segfault. This is the check that fails.
+    fn capabilityGate(self: *Engine, staging: []const u8, staged_dir: std.Io.Dir) !gate_checks.GateResult {
+        // Relative to the child's own cwd, which is the staging tree: the
+        // binary under test has to be the staged one, not the one running now.
+        const exe = "./zig-out/bin/clanker";
+        const probe = try std.fmt.allocPrint(self.ctx.gpa, "{s}/zig-out/bin/clanker", .{staging});
+        defer self.ctx.gpa.free(probe);
+        std.Io.Dir.cwd().access(self.ctx.io, probe, .{}) catch |err| {
+            log.log(.warn, "capability gate skipped: no staged binary ({s})", .{@errorName(err)});
+            return .{ .ok = true, .label = "capability evals" };
+        };
+
+        const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
+            .argv = &.{ exe, "eval", "--tasks" },
+            .cwd = .{ .dir = staged_dir },
+            .stdout_limit = .limited(1 << 20),
+            .stderr_limit = .limited(1 << 20),
+        });
+        const ok = switch (result.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        const detail: []const u8 = if (ok) "" else if (result.stdout.len > 0) result.stdout else result.stderr;
+        return .{ .ok = ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
     }
 
     // ------------------------------------------------------------ context --
@@ -630,6 +690,14 @@ pub const Engine = struct {
         try dir.createDirPath(self.ctx.io, staging);
         for (staging_roots) |root| {
             try copyTreeInto(self.ctx.io, self.ctx.gpa, dir, root, staging);
+        }
+        // Machine-local runtime context, not source: the capability gate runs
+        // the staged binary, and without these it has no provider and fails
+        // every proposal on missing credentials rather than on its merits.
+        // Neither is in the modifiable surface, so nothing can be promoted
+        // back out of them.
+        for (staging_runtime_files) |f| {
+            copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch {};
         }
     }
 };

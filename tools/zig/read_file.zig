@@ -16,9 +16,10 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
-// The host returns results through a 64 KiB arena, so a window has to fit
-// inside it with room for the JSON envelope around the text.
-const default_limit: usize = 48 * 1024;
+// A whole file in one call for anything normal-sized; pagination is for the
+// genuinely huge, not for ordinary source. Bounded by the host arena a read
+// comes through, with room left for the JSON envelope around the text.
+const default_limit: usize = 768 * 1024;
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const path = jsonString(input, "path") orelse return lib.fail(out, "missing required field: path");
@@ -36,8 +37,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else => "read failed",
     });
 
-    var buf: [lib.out_cap]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
+    // Straight into the output buffer: a local array of this size would be a
+    // megabyte-plus on the wasm stack, which traps.
+    var w = out.writer();
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
     try s.objectField("ok");
@@ -52,7 +54,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.write(offset + slice.len);
     }
     try s.endObject();
-    try out.writeAll(buf[0..w.end]);
+    out.len = w.end;
 }
 
 /// Minimal field readers: the guest has no allocator, and the arguments object

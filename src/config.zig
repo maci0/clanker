@@ -116,6 +116,10 @@ pub const Improve = struct {
     /// model's own window. A fixed number here overrides that, and a stale one
     /// silently keeps a 1M-window model on a 64 KiB diet.
     max_context_bytes: ?usize = null,
+    /// Run the staged tree's task evals before promoting. They cost one agent
+    /// run each, which is the price of noticing a patch that compiles, passes
+    /// every unit test, and breaks a tool an agent depends on.
+    capability_gate: bool = true,
     max_staged_bytes: usize = 256 * 1024,
     max_tool_source_bytes: usize = 64 * 1024,
     max_skill_bytes: usize = 32 * 1024,
@@ -498,6 +502,10 @@ pub const Config = struct {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
         }
+        if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
+            .bool => |b| b,
+            else => im.capability_gate,
+        };
         if (obj.get("max_staged_bytes")) |k| im.max_staged_bytes = @intCast(try jsonInt(k, "max_staged_bytes"));
         if (obj.get("max_tool_source_bytes")) |k| im.max_tool_source_bytes = @intCast(try jsonInt(k, "max_tool_source_bytes"));
         if (obj.get("max_skill_bytes")) |k| im.max_skill_bytes = @intCast(try jsonInt(k, "max_skill_bytes"));
