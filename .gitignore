@@ -13,6 +13,9 @@ state/
 # User-local configuration (API keys live in env vars anyway)
 config.local.json
 
+# User-local project agent instructions
+.agents/
+
 # Editor / OS junk
 .DS_Store
 *.swp

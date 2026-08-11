@@ -2,7 +2,8 @@
 //! + tool catalog + persistent learnings.
 //!
 //! Also folds in device-global operator instructions (default
-//! `$HOME/.agents/AGENTS.md`) and project-root `AGENTS.md` as distinct sections.
+//! `$HOME/.agents/AGENTS.md`), project-root `AGENTS.md`, and project-local
+//! `.agents/AGENTS.md` as distinct sections.
 
 const std = @import("std");
 const types = @import("../llm/types.zig");
@@ -28,6 +29,10 @@ pub const PromptParts = struct {
     /// Project conventions file (default cwd AGENTS.md). Injectable so tests
     /// do not depend on the repo's real AGENTS.md.
     project_agents_file: []const u8 = "AGENTS.md",
+    /// User-local additions for this checkout. This is deliberately separate
+    /// from the shared project conventions so a developer can keep personal
+    /// workflow instructions out of the repository.
+    local_instructions_file: []const u8 = ".agents/AGENTS.md",
 };
 
 /// Prefixed to the Skills and Learnings sections, both of which the agent
@@ -118,6 +123,18 @@ pub fn build(
     if (agents_md) |content| {
         if (content.len > 0) {
             try buf.appendSlice(arena, "## Project conventions (AGENTS.md)\n\n");
+            try buf.appendSlice(arena, content);
+            try buf.appendSlice(arena, "\n\n");
+        }
+    }
+
+    // Project-local operator additions (.agents/AGENTS.md). This gitignored
+    // file lets a developer add checkout-specific workflow rules without
+    // replacing the repository's shared AGENTS.md.
+    const local_md = std.Io.Dir.cwd().readFileAlloc(io, parts.local_instructions_file, arena, .limited(64 * 1024)) catch null;
+    if (local_md) |content| {
+        if (std.mem.trim(u8, content, " \t\r\n").len > 0) {
+            try buf.appendSlice(arena, "## Project-local operator instructions (.agents/AGENTS.md)\n\n");
             try buf.appendSlice(arena, content);
             try buf.appendSlice(arena, "\n\n");
         }
@@ -240,6 +257,9 @@ test "resolveGlobalInstructionsPath: override wins, home default, empty is null"
 
     const none = try resolveGlobalInstructionsPath(arena, "", "");
     try std.testing.expect(none == null);
+
+    const parts = PromptParts{ .system_prompt_file = "", .skills_dir = "", .learnings_file = "" };
+    try std.testing.expectEqualStrings(".agents/AGENTS.md", parts.local_instructions_file);
 }
 
 /// Path under cwd into a testing.tmpDir (matches sandbox runtime tests).
@@ -247,7 +267,7 @@ fn tmpRel(allocator: std.mem.Allocator, tmp: *const std.testing.TmpDir, name: []
     return std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, name });
 }
 
-test "build includes global and project AGENTS.md as distinct sections" {
+test "build includes global, project, and local AGENTS.md sections" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -260,6 +280,7 @@ test "build includes global and project AGENTS.md as distinct sections" {
     try tmp.dir.createDirPath(io, "skills");
     try tmp.dir.writeFile(io, .{ .sub_path = "project-agents.md", .data = "PROJECT_AGENTS_MARKER_xyz" });
     try tmp.dir.writeFile(io, .{ .sub_path = "global-agents.md", .data = "GLOBAL_AGENTS_MARKER_abc" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "local-agents.md", .data = "LOCAL_AGENTS_MARKER_def" });
 
     const base_path = try tmpRel(std.testing.allocator, &tmp, "SYSTEM.md");
     defer std.testing.allocator.free(base_path);
@@ -267,6 +288,8 @@ test "build includes global and project AGENTS.md as distinct sections" {
     defer std.testing.allocator.free(project_path);
     const global_path = try tmpRel(std.testing.allocator, &tmp, "global-agents.md");
     defer std.testing.allocator.free(global_path);
+    const local_path = try tmpRel(std.testing.allocator, &tmp, "local-agents.md");
+    defer std.testing.allocator.free(local_path);
     const skills_path = try tmpRel(std.testing.allocator, &tmp, "skills");
     defer std.testing.allocator.free(skills_path);
     const learnings_path = try tmpRel(std.testing.allocator, &tmp, "missing-learnings.md");
@@ -282,6 +305,7 @@ test "build includes global and project AGENTS.md as distinct sections" {
         .learnings_file = learnings_path,
         .global_instructions_file = global_path,
         .project_agents_file = project_path,
+        .local_instructions_file = local_path,
     }, &.{});
 
     try std.testing.expect(std.mem.indexOf(u8, prompt, "BASE_PROMPT_MARKER") != null);
@@ -289,14 +313,19 @@ test "build includes global and project AGENTS.md as distinct sections" {
     try std.testing.expect(std.mem.indexOf(u8, prompt, "GLOBAL_AGENTS_MARKER_abc") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project conventions (AGENTS.md)") != null);
     try std.testing.expect(std.mem.indexOf(u8, prompt, "PROJECT_AGENTS_MARKER_xyz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project-local operator instructions (.agents/AGENTS.md)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prompt, "LOCAL_AGENTS_MARKER_def") != null);
 
-    // Global section appears before project conventions.
+    // Instructions progress from device-wide through shared project rules to
+    // local additions for this checkout.
     const gpos = std.mem.indexOf(u8, prompt, "GLOBAL_AGENTS_MARKER_abc").?;
     const ppos = std.mem.indexOf(u8, prompt, "PROJECT_AGENTS_MARKER_xyz").?;
+    const lpos = std.mem.indexOf(u8, prompt, "LOCAL_AGENTS_MARKER_def").?;
     try std.testing.expect(gpos < ppos);
+    try std.testing.expect(ppos < lpos);
 }
 
-test "build omits global section when file missing or empty; project still included" {
+test "build omits unavailable or empty instruction layers; project still included" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -308,6 +337,7 @@ test "build omits global section when file missing or empty; project still inclu
     try tmp.dir.createDirPath(io, "skills");
     try tmp.dir.writeFile(io, .{ .sub_path = "project-agents.md", .data = "PROJECT_ONLY_MARKER" });
     try tmp.dir.writeFile(io, .{ .sub_path = "empty-global.md", .data = "   \n\t  " });
+    try tmp.dir.writeFile(io, .{ .sub_path = "empty-local.md", .data = "   \n\t  " });
 
     const base_path = try tmpRel(std.testing.allocator, &tmp, "SYSTEM.md");
     defer std.testing.allocator.free(base_path);
@@ -315,10 +345,14 @@ test "build omits global section when file missing or empty; project still inclu
     defer std.testing.allocator.free(project_path);
     const empty_global = try tmpRel(std.testing.allocator, &tmp, "empty-global.md");
     defer std.testing.allocator.free(empty_global);
+    const empty_local = try tmpRel(std.testing.allocator, &tmp, "empty-local.md");
+    defer std.testing.allocator.free(empty_local);
     const skills_path = try tmpRel(std.testing.allocator, &tmp, "skills");
     defer std.testing.allocator.free(skills_path);
     const missing_global = try tmpRel(std.testing.allocator, &tmp, "does-not-exist.md");
     defer std.testing.allocator.free(missing_global);
+    const missing_local = try tmpRel(std.testing.allocator, &tmp, "does-not-exist-local.md");
+    defer std.testing.allocator.free(missing_local);
     const learnings_path = try tmpRel(std.testing.allocator, &tmp, "no-learnings.md");
     defer std.testing.allocator.free(learnings_path);
 
@@ -327,6 +361,7 @@ test "build omits global section when file missing or empty; project still inclu
     const arena = arena_state.allocator();
 
     const heading = "## Global operator instructions (~/.agents/AGENTS.md)";
+    const local_heading = "## Project-local operator instructions (.agents/AGENTS.md)";
 
     // Missing file: soft skip.
     const p_missing = try build(arena, io, .{
@@ -335,8 +370,10 @@ test "build omits global section when file missing or empty; project still inclu
         .learnings_file = learnings_path,
         .global_instructions_file = missing_global,
         .project_agents_file = project_path,
+        .local_instructions_file = missing_local,
     }, &.{});
     try std.testing.expect(std.mem.indexOf(u8, p_missing, heading) == null);
+    try std.testing.expect(std.mem.indexOf(u8, p_missing, local_heading) == null);
     try std.testing.expect(std.mem.indexOf(u8, p_missing, "PROJECT_ONLY_MARKER") != null);
 
     // Empty / whitespace-only file: soft skip.
@@ -346,8 +383,10 @@ test "build omits global section when file missing or empty; project still inclu
         .learnings_file = learnings_path,
         .global_instructions_file = empty_global,
         .project_agents_file = project_path,
+        .local_instructions_file = empty_local,
     }, &.{});
     try std.testing.expect(std.mem.indexOf(u8, p_empty, heading) == null);
+    try std.testing.expect(std.mem.indexOf(u8, p_empty, local_heading) == null);
     try std.testing.expect(std.mem.indexOf(u8, p_empty, "PROJECT_ONLY_MARKER") != null);
 
     // Empty path string: no global load attempted.
@@ -357,7 +396,9 @@ test "build omits global section when file missing or empty; project still inclu
         .learnings_file = learnings_path,
         .global_instructions_file = "",
         .project_agents_file = project_path,
+        .local_instructions_file = "",
     }, &.{});
     try std.testing.expect(std.mem.indexOf(u8, p_none, heading) == null);
+    try std.testing.expect(std.mem.indexOf(u8, p_none, local_heading) == null);
     try std.testing.expect(std.mem.indexOf(u8, p_none, "PROJECT_ONLY_MARKER") != null);
 }
