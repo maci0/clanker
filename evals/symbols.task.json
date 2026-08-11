@@ -1,0 +1,14 @@
+{
+  "name": "symbols",
+  "kind": "task",
+  "description": "symbols must find a declaration site, not just any occurrence — that distinction from search_code is its whole reason to exist. The answer asserted is a path, following search_code_symbol's lesson that a count is a substring of other counts. scoreAnswer is declared exactly once, in the eval harness itself, so moving it means editing the file this eval scores with — a deliberate change, not drift. Needs rg on PATH, the same dependency the search_code_symbol eval already carries.",
+  "prompt": "Use the symbols tool with name \"scoreAnswer\" and path \"src\". Reply with only the file path of the declaration site, exactly as the tool reports it.",
+  "requires_tool": "symbols",
+  "criteria": [
+    {
+      "includes": [
+        "src/evals/scorers.zig"
+      ]
+    }
+  ]
+}

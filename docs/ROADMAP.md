@@ -31,6 +31,8 @@
 
 - **Confirm before write** — Kimi's permission model, riding the ask bridge (webui-plan 1.2): with `agent.confirm_writes` opted in (`browser`, or `always` for the REPL too; default `never`), a call to a write-capable tool — exec or filesystem access in its descriptor, both of which grant writes, or an explicit `"confirm": true` like `subagent`'s, whose nested run is itself ungated — blocks in the dispatch loop until the human allows or denies it. The question travels as a `\x01{"type":"confirm",…}` stream event with a 400-byte argument preview, answered through the same `POST /api/ask` slot machinery with fixed `allow`/`deny` options; read-only tools carry `"confirm": false` so reads keep running free. Anything short of an explicit allow (deny, timeout, closed tab, piped stdin) refuses the call and tells the model the user declined. Headless runs, the improve loop, and nested sub-agents never install a channel, so no config value can gate them on an answer nobody is there to give.
 
+- **Eval definitions under the gate** — `evals/` grew cases for the self-review tools (`std_api`, `zig_check`, `symbols`), each asserting the shape of the answer rather than toolchain- or content-sensitive text. And the definitions themselves are now tested: `Eval.loadAll` skips a file it cannot parse (`catch continue`), so a malformed eval silently stopped being run — `zig build test` now parses every shipped `*.task.json`, rejects a task eval with no prompt or no criteria, and cross-checks each `requires_tool` against the shipped manifests so a tool rename can no longer strand an eval at a permanent score of 0.
+
 ## Planned
 
 - **Plugin manifest SDK** — a formal manifest format for third-party tool packaging and distribution.
