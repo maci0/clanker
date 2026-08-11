@@ -1253,11 +1253,76 @@ fn resolveProvider(cfg: *const config.Config, opts: Options) !config.Provider {
     return provider;
 }
 
-/// Looks up `goal_id` in state/goals.json and formats its objective,
-/// completion criterion and boundaries as a task-prompt preamble. Returns
-/// null if the file, the entry, or the JSON shape isn't there.
+/// One goal loaded from `state/goals.json` and ready to steer a run.
+const GoalContext = struct {
+    id: []const u8,
+    objective: []const u8,
+    completion_criterion: []const u8,
+    boundaries: []const u8,
+    /// Task-prompt preamble (`## Active goal` …). Arena-owned.
+    section: []const u8,
+};
+
+/// Formats goal fields as the preamble prepended to a run task.
+fn formatGoalSection(
+    arena: std.mem.Allocator,
+    objective: []const u8,
+    completion: []const u8,
+    boundaries: []const u8,
+) ![]const u8 {
+    return try std.fmt.allocPrint(
+        arena,
+        "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n",
+        .{ objective, completion, boundaries },
+    );
+}
+
+fn goalField(obj: std.json.ObjectMap, key: []const u8) []const u8 {
+    if (obj.get(key)) |v| if (v == .string) return v.string;
+    return "";
+}
+
+fn goalUpdated(obj: std.json.ObjectMap) i64 {
+    if (obj.get("updated")) |v| switch (v) {
+        .integer => |n| return n,
+        .float => |f| return @intFromFloat(f),
+        // Web UI / goal tool write timestamps as JSON numbers that may arrive
+        // as strings when the file was hand-edited.
+        .string => |s| return std.fmt.parseInt(i64, s, 10) catch 0,
+        else => {},
+    };
+    return 0;
+}
+
+fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalContext {
+    const idv = obj.get("id") orelse return null;
+    if (idv != .string or idv.string.len == 0) return null;
+    const objective = goalField(obj, "objective");
+    if (objective.len == 0) return null;
+    const completion = goalField(obj, "completion_criterion");
+    const boundaries = goalField(obj, "boundaries");
+    return .{
+        .id = idv.string,
+        .objective = objective,
+        .completion_criterion = completion,
+        .boundaries = boundaries,
+        .section = try formatGoalSection(arena, objective, completion, boundaries),
+    };
+}
+
+/// Looks up `goal_id` in `dir`/`state/goals.json`. Returns null if the file,
+/// the entry, or the JSON shape is missing.
+fn findGoalSectionIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?[]const u8 {
+    const g = try loadGoalById(arena, io, dir, goal_id) orelse return null;
+    return g.section;
+}
+
 fn findGoalSection(arena: std.mem.Allocator, io: std.Io, goal_id: []const u8) !?[]const u8 {
-    const goals_raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
+    return findGoalSectionIn(arena, io, std.Io.Dir.cwd(), goal_id);
+}
+
+fn loadGoalById(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?GoalContext {
+    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
     const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
     if (root != .array) return null;
     for (root.array.items) |item| {
@@ -1265,12 +1330,81 @@ fn findGoalSection(arena: std.mem.Allocator, io: std.Io, goal_id: []const u8) !?
         const obj = item.object;
         const idv = obj.get("id") orelse continue;
         if (idv != .string or !std.mem.eql(u8, idv.string, goal_id)) continue;
-        const objective = if (obj.get("objective")) |v| if (v == .string) v.string else "" else "";
-        const completion = if (obj.get("completion_criterion")) |v| if (v == .string) v.string else "" else "";
-        const boundaries = if (obj.get("boundaries")) |v| if (v == .string) v.string else "" else "";
-        return try std.fmt.allocPrint(arena, "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n", .{ objective, completion, boundaries });
+        return try goalFromObject(arena, obj);
     }
     return null;
+}
+
+/// Newest `status=active` goal in `dir`/`state/goals.json`, by `updated`
+/// then array order. This is what "the goal most recently set is steering
+/// runs" means in the web UI copy.
+fn findNewestActiveGoalIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !?GoalContext {
+    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
+    if (root != .array) return null;
+    var best: ?GoalContext = null;
+    var best_updated: i64 = std.math.minInt(i64);
+    var best_index: usize = 0;
+    for (root.array.items, 0..) |item, i| {
+        if (item != .object) continue;
+        const obj = item.object;
+        const status = goalField(obj, "status");
+        // Default status is active when the field is missing (older files).
+        if (status.len > 0 and !std.mem.eql(u8, status, "active")) continue;
+        const g = try goalFromObject(arena, obj) orelse continue;
+        const updated = goalUpdated(obj);
+        if (best == null or updated > best_updated or (updated == best_updated and i >= best_index)) {
+            best = g;
+            best_updated = updated;
+            best_index = i;
+        }
+    }
+    return best;
+}
+
+fn findNewestActiveGoal(arena: std.mem.Allocator, io: std.Io) !?GoalContext {
+    return findNewestActiveGoalIn(arena, io, std.Io.Dir.cwd());
+}
+
+/// Prepends a goal preamble to `task`. When `task` is empty, builds a default
+/// work order from the goal's objective and completion criterion so a web UI
+/// "Work on this" click (or a goal-only POST) can execute without inventing text.
+fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]const u8 {
+    const body = if (std.mem.trim(u8, task, " \t\r\n").len > 0)
+        task
+    else
+        try std.fmt.allocPrint(
+            arena,
+            "Work on this goal until the completion criterion is met.\n\nObjective: {s}\nDone when: {s}\n",
+            .{ g.objective, g.completion_criterion },
+        );
+    return try std.fmt.allocPrint(arena, "{s}{s}", .{ g.section, body });
+}
+
+/// Resolves which goal steers this run: explicit id, else newest active when
+/// `auto` is true. Returns the task text with the preamble applied (or the
+/// original task when no goal applies).
+fn resolveRunTask(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    task: []const u8,
+    goal_id: ?[]const u8,
+    auto: bool,
+) ![]const u8 {
+    if (goal_id) |id| {
+        if (try loadGoalById(arena, io, dir, id)) |g| {
+            return try taskWithGoal(arena, task, g);
+        }
+        log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{id});
+        return task;
+    }
+    if (!auto) return task;
+    if (try findNewestActiveGoalIn(arena, io, dir)) |g| {
+        log.log(.info, "steering run with active goal {s}", .{g.id});
+        return try taskWithGoal(arena, task, g);
+    }
+    return task;
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -1315,14 +1449,17 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         }
     }
-    var task_text = opts.task.?;
-    if (opts.goal) |goal_id| {
-        if (try findGoalSection(arena, io, goal_id)) |goal_section| {
-            task_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ goal_section, opts.task.? });
-        } else {
-            log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
-        }
-    }
+    // Explicit `--goal <id>` wins; otherwise the newest active goal steers
+    // the run automatically when the goal module is on (same rule the web UI
+    // describes: the goal most recently set is what runs are steered toward).
+    const task_text = try resolveRunTask(
+        arena,
+        io,
+        std.Io.Dir.cwd(),
+        opts.task.?,
+        opts.goal,
+        cfg.modules.goal and opts.goal == null,
+    );
     compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
 
@@ -2879,6 +3016,11 @@ const RunRequestBody = struct {
     /// saved after, so the web UI can hold a real multi-turn conversation
     /// instead of one-shot, context-free requests.
     session: []const u8 = "",
+    /// Optional goal id from `state/goals.json`. When set, that goal's
+    /// preamble is prepended and an empty `task` becomes a work order for
+    /// the goal. When empty and the goal module is on, the newest active
+    /// goal steers the run automatically.
+    goal: []const u8 = "",
     /// Images the composer attached to this task (multimodal runs).
     images: []const RunImage = &.{},
     /// Optional per-run overrides, the request-shaped equivalent of
@@ -3577,7 +3719,6 @@ fn pluginAssetType(file: []const u8) ?[]const u8 {
     // bytes and writes them through verbatim, so nothing else has to change;
     // the page's CSP allows img-src 'self'.
     if (std.mem.eql(u8, file, "sprites.png")) return "image/png";
-    if (std.mem.eql(u8, file, "characters.png")) return "image/png";
     return null;
 }
 
@@ -3585,7 +3726,6 @@ test pluginAssetType {
     try std.testing.expect(pluginAssetType("app.js") != null);
     try std.testing.expect(pluginAssetType("app.css") != null);
     try std.testing.expectEqualStrings("image/png", pluginAssetType("sprites.png").?);
-    try std.testing.expectEqualStrings("image/png", pluginAssetType("characters.png").?);
     try std.testing.expect(pluginAssetType("plugin.json") == null);
     try std.testing.expect(pluginAssetType("../app.js") == null);
     try std.testing.expect(pluginAssetType("secrets.env") == null);
@@ -4561,7 +4701,25 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
         return;
     };
-    if (req.task.len == 0) {
+    // A goal-only POST is enough to start work: taskWithGoal fills the body.
+    if (req.task.len == 0 and req.goal.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");
+        return;
+    }
+
+    const goal_id: ?[]const u8 = if (req.goal.len > 0) req.goal else null;
+    const task_text = resolveRunTask(
+        arena,
+        io,
+        std.Io.Dir.cwd(),
+        req.task,
+        goal_id,
+        cfg.modules.goal and goal_id == null,
+    ) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
+        return;
+    };
+    if (std.mem.trim(u8, task_text, " \t\r\n").len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");
         return;
     }
@@ -4678,7 +4836,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
         const t0 = std.Io.Timestamp.now(io, .awake);
-        const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+        const resp = a.run(&messages, task_text, &err_detail) catch |err| {
             const detail = err_detail orelse @errorName(err);
             writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
             return;
@@ -4690,7 +4848,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
         }
         if (has_session) {
-            const title = req.task[0..@min(req.task.len, 60)];
+            const title_src = if (req.task.len > 0) req.task else task_text;
+            const title = title_src[0..@min(title_src.len, 60)];
             const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
             session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
                 .id = req.session,
@@ -4713,7 +4872,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+    const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         const detail = err_detail orelse @errorName(err);
         // Escape `detail` through the JSON stringifier: provider error text
         // can contain quotes, backslashes, or newlines that plain bufPrint
@@ -4735,7 +4894,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     };
 
     if (has_session) {
-        const title = req.task[0..@min(req.task.len, 60)];
+        const title_src = if (req.task.len > 0) req.task else task_text;
+        const title = title_src[0..@min(title_src.len, 60)];
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
             .id = req.session,
@@ -5233,6 +5393,62 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expect(!bare.plan);
     const plan = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"plan\":true}", .{ .ignore_unknown_fields = true });
     try std.testing.expect(plan.plan);
+
+    // Goal id is optional and empty by default so older clients keep working.
+    try std.testing.expectEqualStrings("", bare.goal);
+    const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("g1", with_goal.goal);
+}
+
+test "resolveRunTask attaches explicit and newest-active goals from real goals.json" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    // Two active goals; the higher `updated` must win auto-steer. One done
+    // goal must never be selected.
+    const goals_json =
+        \\[
+        \\  {"id":"old","objective":"old objective","completion_criterion":"old done","status":"active","updated":10},
+        \\  {"id":"done","objective":"finished work","completion_criterion":"done when","status":"done","updated":99},
+        \\  {"id":"new","objective":"ship the feature","completion_criterion":"tests green","boundaries":"docs only","status":"active","updated":50}
+        \\]
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+
+    // Explicit id: that goal only, even if not the newest.
+    const explicit = try resolveRunTask(arena, io, tmp.dir, "do the thing", "old", false);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "## Active goal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "old objective") != null);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "do the thing") != null);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "ship the feature") == null);
+
+    // Auto: newest active (updated=50), not the done goal with updated=99.
+    const auto = try resolveRunTask(arena, io, tmp.dir, "chat task", null, true);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "ship the feature") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "tests green") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "chat task") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "finished work") == null);
+
+    // Goal-only: empty task becomes a work order for that goal.
+    const goal_only = try resolveRunTask(arena, io, tmp.dir, "", "new", false);
+    try std.testing.expect(std.mem.indexOf(u8, goal_only, "Work on this goal until the completion criterion is met.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, goal_only, "ship the feature") != null);
+
+    // Missing id leaves the task alone (warns on stderr via log).
+    const missing = try resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false);
+    try std.testing.expectEqualStrings("plain", missing);
+
+    // Auto with no active goals leaves the task alone.
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
+    const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    try std.testing.expectEqualStrings("plain", none);
 }
 
 test "an ask accepts only its own options and hands the pick to the waiter" {

@@ -1788,11 +1788,14 @@ el.form.addEventListener("submit", function (e) {
     else syncScrollButton();
   });
 
+  var goalId = pendingGoalId || "";
+  pendingGoalId = "";
   fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       task: task,
+      goal: goalId,
       stream: true,
       session: sessionId,
       images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
@@ -3048,6 +3051,12 @@ function goalCard(g) {
 
   var actions = [];
   if (g.id) {
+    /* Active goals are meant to be worked: without this, adding a goal only
+       wrote state/goals.json and never started a run. */
+    if ((g.status || "active") === "active") {
+      actions.push(UI.button("Work on this", function () { workOnGoal(g); },
+        { label: "Work on goal: " + (g.objective || g.id) }));
+    }
     [["Mark done", "done", "Goal marked done."],
      ["Abandon", "abandoned", "Goal abandoned."],
      ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
@@ -3996,8 +4005,29 @@ if (window.MutationObserver) {
 
 /* ---------- goals ---------- */
 
-/* The view could only read. Every goal in the file was put there by the
-   `goal` tool or the CLI, so setting one from the page meant leaving it. */
+/* Goal id for the next /api/run. Set by workOnGoal so the server attaches that
+   goal's preamble (and can fill an empty task). Cleared when the request goes
+   out so a later chat turn does not keep reusing it. */
+var pendingGoalId = "";
+
+/* Starts a run that executes an active goal: switches to Chat, fills a work
+   order, and submits through the same path as the composer. */
+function workOnGoal(g) {
+  if (!g || !g.id) return;
+  if (busy) {
+    el.goalsStatus.textContent = "A run is already in progress; wait for it to finish.";
+    return;
+  }
+  pendingGoalId = g.id;
+  showView("chat", true);
+  var task = "Work on this goal until the completion criterion is met.\n\nObjective: " +
+    (g.objective || "") + "\nDone when: " + (g.completion_criterion || "");
+  el.task.value = task;
+  el.goalsStatus.textContent = "Starting work on goal…";
+  syncControls();
+  el.form.requestSubmit();
+}
+
 function postGoal(payload, status) {
   return fetch("/api/goals", {
     method: "POST",
@@ -4008,11 +4038,11 @@ function postGoal(payload, status) {
     .then(function (d) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
+      return d;
     })
-    .then(function () { return true; })
     .catch(function (err) {
       el.goalsStatus.textContent = "Goal failed: " + err.message;
-      return false;
+      return null;
     });
 }
 
@@ -4021,12 +4051,23 @@ el.goalForm.addEventListener("submit", function (e) {
   var objective = el.goalObjective.value.trim();
   var criterion = el.goalCriterion.value.trim();
   if (!objective || !criterion) return;
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (ok) {
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (d) {
     // A refused goal keeps what was typed: the criterion is the field most
     // likely to be refused, and retyping the objective to fix it is a tax.
-    if (!ok) return;
+    if (!d) return;
     el.goalObjective.value = "";
     el.goalCriterion.value = "";
+    // Newest first after renderGoals — start work so defining a goal is not
+    // just writing state/goals.json.
+    var goals = goalState.val || [];
+    var created = null;
+    for (var i = 0; i < goals.length; i++) {
+      if ((goals[i].status || "active") === "active" && goals[i].objective === objective) {
+        created = goals[i];
+        break;
+      }
+    }
+    if (created) workOnGoal(created);
   });
 });
 
