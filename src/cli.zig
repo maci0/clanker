@@ -1872,17 +1872,27 @@ fn replDelta(delta: []const u8) void {
     w.interface.flush() catch {};
 }
 
-/// Prints a compact status line naming the tool(s) about to run, covering
-/// the silent gap while WASM tools execute between LLM calls.
+/// Prints a compact status line per tool call about to run, showing the
+/// tool name and a truncated preview of its arguments so the user can see
+/// what is being searched / read / written.
 fn replToolCall(calls: []const types.ToolCall) void {
     replClearThinking();
     const w = repl_out orelse return;
-    w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
-    for (calls, 0..) |tc, i| {
-        if (i > 0) w.interface.writeAll(", ") catch {};
+    const arg_preview_cap = 80;
+    for (calls) |tc| {
+        w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
         w.interface.writeAll(tc.name) catch {};
+        if (tc.arguments.len > 0 and !std.mem.eql(u8, tc.arguments, "{}")) {
+            w.interface.writeAll("\x1b[0m\x1b[2m  ") catch {};
+            if (tc.arguments.len <= arg_preview_cap) {
+                w.interface.writeAll(tc.arguments) catch {};
+            } else {
+                w.interface.writeAll(tc.arguments[0..arg_preview_cap]) catch {};
+                w.interface.writeAll("\xe2\x80\xa6") catch {};
+            }
+        }
+        w.interface.writeAll("\x1b[0m\n") catch {};
     }
-    w.interface.writeAll("\x1b[0m\n") catch return;
     w.interface.flush() catch {};
     replShowThinking();
 }
