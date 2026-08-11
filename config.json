@@ -102,7 +102,8 @@
           "reasoning_effort": "high",
           "cost_per_1m_input": 3.0,
           "cost_per_1m_output": 15.0,
-          "temperature": 0.2
+          "temperature": 0.2,
+          "display": "moonshotai/kimi-k3"
         },
         "kimi-k2.7-code": {
           "context_window": 262144,

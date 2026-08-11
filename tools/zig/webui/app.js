@@ -2554,7 +2554,27 @@ function fmtCost(n) {
   return "$" + (typeof n === "number" ? n : 0).toFixed(4);
 }
 
+var allUsage = [];
+
+/* What a model is called here, which is not always what is sent on the wire:
+   kimi-k3 goes out bare because that is what api.moonshot.ai accepts, and is
+   read as moonshotai/kimi-k3, the way an OpenRouter-routed model is written.
+   Renaming the wire id to match would have broken every call to the default
+   provider. */
+function modelLabel(provider, model) {
+  for (var i = 0; i < providerCache.length; i++) {
+    if (providerCache[i].name !== provider) continue;
+    var models = providerCache[i].models || [];
+    for (var k = 0; k < models.length; k++) {
+      if (models[k].name === model) return models[k].display || model;
+    }
+  }
+  return model;
+}
+
 function renderUsage(rows) {
+  allUsage = rows || allUsage;
+  rows = allUsage;
   el.usage.textContent = "";
   if (!rows.length) {
     var none = document.createElement("p");
@@ -2590,12 +2610,14 @@ function renderUsage(rows) {
 
     var tr = document.createElement("tr");
     var name = document.createElement("td");
-    // provider and model are often the same string; showing it twice is noise.
-    name.textContent = r.provider === r.model ? r.provider : r.provider + " / ";
-    if (r.provider !== r.model) {
+    // Provider and model are often the same string, and showing it twice is
+    // noise — unless the model has a name of its own to be shown by.
+    var shown = modelLabel(r.provider, r.model);
+    name.textContent = shown === r.provider ? r.provider : r.provider + " / ";
+    if (shown !== r.provider) {
       var m = document.createElement("span");
       m.className = "model";
-      m.textContent = r.model;
+      m.textContent = shown;
       name.appendChild(m);
     }
     tr.appendChild(name);
@@ -3216,6 +3238,8 @@ function loadProviders() {
     .then(readJson)
     .then(function (d) {
       providerCache = d.providers || [];
+      // Usage may have rendered before this arrived; its labels come from here.
+      if (allUsage.length) renderUsage(null);
       el.modelSelect.textContent = "";
       (d.providers || []).forEach(function (prov) {
         var group = document.createElement("optgroup");
@@ -3223,7 +3247,7 @@ function loadProviders() {
         (prov.models || []).forEach(function (m) {
           var opt = document.createElement("option");
           opt.value = prov.name + " " + m.name;
-          opt.textContent = m.name + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+          opt.textContent = (m.display || m.name) + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
           if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
           group.appendChild(opt);
         });

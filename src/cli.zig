@@ -25,6 +25,7 @@ const tui_region = @import("tui/region.zig");
 const tui_statusbar = @import("tui/statusbar.zig");
 const tui_transcript = @import("tui/transcript.zig");
 const tui_palette = @import("tui/palette.zig");
+const tui_approval = @import("tui/approval.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const room_todos = @import("peers/todos.zig");
 const token_stats = @import("stats/tokens.zig");
@@ -955,7 +956,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
             editor.remember(trimmed);
             saveReplHistory(io, gpa, &editor);
             const owned = try arena.dupe(u8, trimmed);
-            if (try replHandleLine(io, gpa, arena, &out_w, &a, &messages, &cfg, init.environ_map, &reg, owned, created, sid)) return;
+            if (try replHandleLine(io, gpa, arena, &out_w, &a, &messages, &cfg, init.environ_map, &reg, owned, &created, &sid)) return;
         }
         try out_w.interface.writeAll("\n");
         try out_w.interface.flush();
@@ -1118,12 +1119,12 @@ fn replHandleLine(
     environ_map: *std.process.Environ.Map,
     reg: *registry.Registry,
     line: []const u8,
-    created: i64,
-    sid: []const u8,
+    created: *i64,
+    sid: *[]const u8,
 ) !bool {
     if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) return true;
     if (std.mem.eql(u8, line, ":help")) {
-        try out_w.interface.writeAll(":quit  :help  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete; Tab completes a slash command.\n");
+        try out_w.interface.writeAll(":quit  :help  /goal <intent>  /session switch <id>  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete; Tab completes a slash command.\n");
         const text = try tui_palette.helpText(arena, repl_palette);
         try out_w.interface.writeAll(text);
         try out_w.interface.flush();
@@ -1139,10 +1140,42 @@ fn replHandleLine(
                 return false;
             }
             const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
-            const quit = try replRunTurn(io, out_w, a, messages, task, created, sid);
+            const quit = try replRunTurn(io, out_w, a, messages, task, created.*, sid.*);
             refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
             runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
             return quit;
+        }
+        if (std.mem.startsWith(u8, line, "/session")) {
+            const rest = std.mem.trim(u8, line["/session".len..], " \t");
+            const target = if (std.mem.startsWith(u8, rest, "switch "))
+                std.mem.trim(u8, rest["switch ".len..], " \t")
+            else
+                "";
+            if (target.len == 0) {
+                try out_w.interface.writeAll("usage: /session switch <id>  (see /sessions for the list)\n");
+                try out_w.interface.flush();
+                return false;
+            }
+            const loaded = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), target) catch {
+                try out_w.interface.writeAll("no such session\n");
+                try out_w.interface.flush();
+                return false;
+            };
+            messages.clearRetainingCapacity();
+            for (loaded.messages) |m| {
+                if (m.role == .system) continue;
+                try messages.append(arena, m);
+            }
+            created.* = loaded.created;
+            sid.* = try arena.dupe(u8, target);
+            // Token totals belong to a run, not a transcript: switching
+            // sessions starts a fresh count rather than carrying over
+            // whatever the previous session had spent.
+            a.session_stats = .{};
+            try out_w.interface.print("\x1b[2mswitched to session {s} ({d} message(s))\x1b[0m\n", .{ target, messages.items.len });
+            try out_w.interface.flush();
+            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
+            return false;
         }
         const toggled = std.mem.startsWith(u8, line, "/plugins ");
         try replSlashTool(io, gpa, arena, cfg, environ_map, reg, line, out_w);
@@ -1170,7 +1203,7 @@ fn replHandleLine(
             }
         }
     }
-    const quit = try replRunTurn(io, out_w, a, messages, task, created, sid);
+    const quit = try replRunTurn(io, out_w, a, messages, task, created.*, sid.*);
     refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
     runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
     return quit;
@@ -1343,42 +1376,18 @@ var ask_stdin: ?std.Io.File = null;
 var ask_gpa: ?std.mem.Allocator = null;
 var ask_interactive = false;
 
-/// ask_user's terminal side: print the question, wait for a number, return the
-/// chosen option. The returned slice is gpa-owned; ckAsk frees it.
+/// ask_user's terminal side: print the question, collect a pick through the
+/// inline approval widget (re-prompts on bad input instead of defaulting),
+/// return the chosen option. The returned slice is gpa-owned; ckAsk frees it.
 fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
     const gpa = ask_gpa orelse return error.NoUser;
     const out_w = ask_out orelse return error.NoUser;
     const stdin_file = ask_stdin orelse return error.NoUser;
 
     replClearThinking();
-    try out_w.interface.print("\n\x1b[1;33m? \x1b[0m{s}\n", .{question});
-    for (options, 1..) |o, n| {
-        try out_w.interface.print("  \x1b[1;36m{d}\x1b[0m \x1b[2m·\x1b[0m {s}\n", .{ n, o });
-    }
-    try out_w.interface.writeAll("  \x1b[2mpick a number\x1b[0m ");
-    try out_w.interface.flush();
-
-    // Read the pick directly: the agent is mid-turn, so the REPL's own input
-    // loop is not running to do it for us.
-    var buf: [64]u8 = undefined;
-    var len: usize = 0;
-    while (len < buf.len) {
-        var byte: [1]u8 = undefined;
-        const n = std.posix.read(stdin_file.handle, &byte) catch break;
-        if (n == 0) break;
-        if (byte[0] == '\n' or byte[0] == '\r') break;
-        buf[len] = byte[0];
-        len += 1;
-    }
-    const typed = std.mem.trim(u8, buf[0..len], " \t\r\n.)");
-    const idx = std.fmt.parseInt(usize, typed, 10) catch 0;
-    // An unreadable or out-of-range answer takes the first option rather than
-    // failing the tool call: the model asked because it needed *an* answer.
-    const chosen = if (idx >= 1 and idx <= options.len) options[idx - 1] else options[0];
-    try out_w.interface.print("\x1b[2m\xe2\x86\x92 {s}\x1b[0m\n", .{chosen});
-    try out_w.interface.flush();
+    const chosen = try tui_approval.ask(gpa, out_w, stdin_file, question, options);
     replShowThinking();
-    return gpa.dupe(u8, chosen);
+    return chosen;
 }
 
 /// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
@@ -3608,6 +3617,10 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
             s.beginObject() catch return;
             s.objectField("name") catch return;
             s.write(m.key_ptr.*) catch return;
+            if (m.value_ptr.display) |disp| {
+                s.objectField("display") catch return;
+                s.write(disp) catch return;
+            }
             s.objectField("context_window") catch return;
             s.write(m.value_ptr.context_window) catch return;
             s.objectField("max_tokens") catch return;

@@ -35,6 +35,12 @@ pub const Model = struct {
     /// Keeps reasoning models' chain-of-thought short so `content` stays
     /// populated (e.g. DeepSeek v4: "low" | "medium").
     reasoning_effort: ?[]const u8 = null,
+    /// What to call this model in the UI, when the wire id is not what a
+    /// person calls it. `kimi-k3` on api.moonshot.ai is sent bare because that
+    /// is what the vendor's own API accepts, but it is read as
+    /// `moonshotai/kimi-k3`, the way an OpenRouter-routed model is written.
+    /// Display only: never sent.
+    display: ?[]const u8 = null,
     /// Estimated USD per 1M input tokens (for run cost accounting).
     cost_per_1m_input: ?f64 = null,
     /// Estimated USD per 1M output tokens (for run cost accounting).
@@ -401,6 +407,7 @@ pub const Config = struct {
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
         if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
         if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
+        if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
         return m;
