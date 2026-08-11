@@ -609,6 +609,13 @@ pub const History = struct {
             try buf.appendSlice(arena, e.id);
             try buf.appendSlice(arena, "): ");
             try buf.appendSlice(arena, firstLine(e.summary, 160));
+            // How many individual edits the attempt contained.
+            if (e.changes.len > 0) {
+                var cbuf: [64]u8 = undefined;
+                var cw: std.Io.Writer = .fixed(&cbuf);
+                cw.print(" [{d} change(s)]", .{e.changes.len}) catch {};
+                try buf.appendSlice(arena, cbuf[0..cw.end]);
+            }
             // Which files were touched: helps the model see what area was
             // already attempted so it can vary its approach or target.
             if (e.files.len > 0) {
