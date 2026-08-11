@@ -55,12 +55,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const ev = std.json.parseFromSliceLeaky(Event, alloc, l, .{ .ignore_unknown_fields = true }) catch continue;
             if (std.mem.eql(u8, ev.type, "unknown_tool")) {
                 const gop = try unknown.getOrPut(alloc, ev.tool);
-                if (!gop.found_existing) gop.value_ptr.* = .{ .detail = ev.detail };
+                if (!gop.found_existing) gop.value_ptr.* = .{};
                 gop.value_ptr.n += 1;
+                // The item renders as "last: <detail>", so the newest
+                // non-empty detail wins (events are appended in order).
+                if (ev.detail.len > 0) gop.value_ptr.detail = ev.detail;
             } else if (std.mem.eql(u8, ev.type, "tool_error")) {
                 const gop = try errors.getOrPut(alloc, ev.tool);
-                if (!gop.found_existing) gop.value_ptr.* = .{ .detail = ev.detail };
+                if (!gop.found_existing) gop.value_ptr.* = .{};
                 gop.value_ptr.n += 1;
+                if (ev.detail.len > 0) gop.value_ptr.detail = ev.detail;
             } else if (std.mem.eql(u8, ev.type, "run")) {
                 run_count += 1;
                 cache_hit += ev.cache_hit;

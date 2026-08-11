@@ -650,6 +650,51 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
     try std.testing.expect(std.mem.indexOf(u8, all, "## Done") != null);
 }
 
+test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Two failures for the same tool: the item renders "last: <detail>", so
+    // the second detail must win, and events recorded before detail existed
+    // (empty string) must not blank out a real one that follows.
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.createDirPath(io, "docs");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/autolearn.jsonl", .data =
+        \\{"ts":1,"type":"tool_error","tool":"git","detail":"git exited 1: usage"}
+        \\{"ts":2,"type":"tool_error","tool":"git","detail":""}
+        \\{"ts":3,"type":"tool_error","tool":"git","detail":"git exited 128: not a git repository"}
+        \\
+    });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "state/autolearn.jsonl", "docs/ROADMAP.md" },
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/cmd_autolearn.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const out = try mod.executeTool("{}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "3 failure(s), last: git exited 128: not a git repository") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "last: git exited 1: usage") == null);
+}
+
 test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
