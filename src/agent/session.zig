@@ -646,3 +646,37 @@ test "a workspace survives a save and load" {
     const loose = try loadSession(io, allocator, arena, tmp.dir, "ws-none");
     try std.testing.expectEqualStrings("", loose.workspace);
 }
+
+test "compactMessages keeps system messages and drops the oldest non-system ones" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+
+    // Three non-system messages of 12 chars each estimate 3 tokens (chars/4),
+    // plus one system message that must survive compaction.
+    try messages.append(std.testing.allocator, .{ .role = .system, .content = "sys" });
+    try messages.append(std.testing.allocator, .{ .role = .user, .content = "abcdefghijkl" });
+    try messages.append(std.testing.allocator, .{ .role = .user, .content = "abcdefghijkl" });
+    try messages.append(std.testing.allocator, .{ .role = .assistant, .content = "abcdefghijkl" });
+
+    // Estimated total = 9 tokens; budget 4 drops the two oldest non-system
+    // messages (6 tokens) and leaves system + the newest assistant message.
+    compactMessages(&messages, 4);
+
+    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+    try std.testing.expectEqual(types.Role.assistant, messages.items[1].role);
+    try std.testing.expectEqualStrings("abcdefghijkl", messages.items[1].content.?);
+}
+
+test "compactMessages under a tiny budget still never drops the system message" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+
+    try messages.append(std.testing.allocator, .{ .role = .system, .content = "sys" });
+    try messages.append(std.testing.allocator, .{ .role = .user, .content = "abcdefghijkl" });
+
+    compactMessages(&messages, 0);
+    // Only the system message can survive a zero budget.
+    try std.testing.expectEqual(@as(usize, 1), messages.items.len);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+}
