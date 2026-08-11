@@ -485,7 +485,7 @@ test "MdStream leaves fenced code untouched" {
     // on them corrupted every snippet containing * or `.
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
+    var md: MdStream = .{ .theme = Theme.mono };
     md.feed(&w, "```zig\nconst p: *u8 = x; // **not bold**\n```\nafter\n");
     md.flush(&w);
     const out = buf[0..w.end];
@@ -498,7 +498,7 @@ test "MdStream leaves fenced code untouched" {
 test "MdStream consumes the fence language tag instead of printing it" {
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
+    var md: MdStream = .{ .theme = Theme.mono };
     md.feed(&w, "```python\nprint(1)\n```\n");
     md.flush(&w);
     const out = buf[0..w.end];
@@ -535,7 +535,12 @@ test "MdStream strips C0 controls and DEL from prose, keeping newline and tab" {
 
 test "MdStream strips controls inside a fence too" {
     const allocator = std.testing.allocator;
-    const out = try mdStreamRender(allocator, &.{"```\nx\x1b[2Jy\n```\n"});
+    var w: std.Io.Writer.Allocating = .init(allocator);
+    defer w.deinit();
+    var md: MdStream = .{ .theme = Theme.mono };
+    md.feed(&w.writer, "```\nx\x1b[2Jy\n```\n");
+    md.flush(&w.writer);
+    const out = try allocator.dupe(u8, w.written());
     defer allocator.free(out);
     try std.testing.expect(std.mem.indexOf(u8, out, "x[2Jy") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2J") == null);

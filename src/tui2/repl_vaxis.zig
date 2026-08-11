@@ -16,7 +16,7 @@
 //! the old REPL.
 //!
 //! Deliberately not yet built (documented gaps, not oversights): slash
-//! command palette/tab-complete (only a hardcoded `/quit` is handled),
+//! command palette/tab-complete (the exit aliases are handled directly),
 //! inline ask_user/approval prompts (falls back to the same "nobody
 //! attached" default a headless run gets), manual scroll-back (the
 //! transcript always shows its tail), and the left-bar tool-card styling
@@ -225,7 +225,11 @@ const Model = struct {
         if (task.len == 0) return;
         self.text_field.reset();
 
-        if (std.mem.eql(u8, task, "/quit")) {
+        // A quit command has to set `ctx.quit`, rather than merely stop the
+        // input handler: App.run returns on that flag and its caller's defer
+        // then restores the alternate screen, raw input, mouse mode, and
+        // bracketed paste before the shell regains the terminal.
+        if (isExitCommand(task)) {
             ctx.quit = true;
             return;
         }
@@ -345,7 +349,7 @@ const Model = struct {
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /quit or Ctrl-C to exit", .{
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s} \xc2\xb7 /exit, exit, or Ctrl-C to exit", .{
             self.provider.name,
             self.provider.activeModelName(),
             activity,
@@ -415,6 +419,17 @@ const Model = struct {
         writeWrapped(surface, row, bottom, surface.size.width, text, .{});
     }
 };
+
+/// Exit is a local REPL action, never a task for the agent. Trim whitespace
+/// so pasting a command with a trailing newline has the same result as typing
+/// it, while deliberately keeping the recognized spellings exact.
+fn isExitCommand(input: []const u8) bool {
+    const command = std.mem.trim(u8, input, " \t\r\n");
+    return std.mem.eql(u8, command, "/quit") or
+        std.mem.eql(u8, command, "/exit") or
+        std.mem.eql(u8, command, "/q") or
+        std.mem.eql(u8, command, "exit");
+}
 
 /// How many trailing entries of `lines` to start from so the transcript
 /// shows its tail, not its head, once history exceeds the visible height.
@@ -581,4 +596,16 @@ pub fn cmdReplVaxis(init: std.process.Init) !void {
     defer model.text_field.deinit();
 
     try app.run(model.widget(), .{});
+}
+
+test "vaxis REPL recognizes every documented exit command" {
+    for ([_][]const u8{ "/quit", "/exit", "/q", "exit", "  /exit\r\n" }) |command| {
+        try std.testing.expect(isExitCommand(command));
+    }
+}
+
+test "vaxis REPL does not turn ordinary tasks into exits" {
+    for ([_][]const u8{ "", "/", "quit", "exit now", "/exits", "EXIT" }) |task| {
+        try std.testing.expect(!isExitCommand(task));
+    }
 }

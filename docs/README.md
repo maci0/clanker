@@ -349,7 +349,7 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
 | `/status` | `cmd_status` | Show instance and peers |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
-| `/quit`, `/exit`, `/q` | in-process | Leave the REPL |
+| `/quit`, `/exit`, `/q`, `exit` | in-process | Leave the REPL |
 
 ### `/graph`
 
