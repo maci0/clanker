@@ -646,7 +646,7 @@ const Model = struct {
             break :blk t;
         };
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
-        session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
+        session_mod_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
             .id = id,
             .title = title,
             .messages = transcript.items,
@@ -1366,8 +1366,8 @@ fn validSessionId(id: []const u8) bool {
 /// Returns null when there are none, so a first `--continue` starts a fresh
 /// session rather than failing at someone who has not made one yet.
 fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    const metas = session_mod.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
-    var best: ?session_mod.SessionMeta = null;
+    const metas = session_mod_mod.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
+    var best: ?session_mod_mod.SessionMeta = null;
     for (metas) |m| {
         if (best == null or m.updated > best.?.updated) best = m;
     }
@@ -1500,23 +1500,51 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         if (m.role == .system) continue;
         try model.messages.append(arena, m);
     }
-    if (session_id) |sid| {
-        // Say which conversation was resumed, so re-entering `--continue` is
-        // not indistinguishable from a fresh REPL. Only when it actually
-        // loaded something — a brand-new minted id has nothing to announce.
-        var non_system: usize = 0;
-        for (model.messages.items) |m| {
-            if (m.role != .system) non_system += 1;
-        }
-        if (non_system > 0) {
-            model.lines.append(arena, .{
-                .text = std.fmt.allocPrint(arena, "[resumed session {s}: {d} messages]", .{ sid, non_system }) catch "[resumed session]",
-                .dim = true,
-            }) catch {};
-        }
-    }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
     defer model.text_field.deinit();
+
+    // Session persistence: `--session <id>` resumes that conversation, else
+    // `--continue` resumes the most recently touched one, else a fresh
+    // conversation whose id is minted on its first save. The id becomes a
+    // path fragment under state/sessions/, so it is validated before either
+    // load or save.
+    model.session_created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var exit_session_id = opts.session;
+    if (exit_session_id == null and opts.continue_last) exit_session_id = latestSessionId(io, arena);
+    if (exit_session_id) |sid| {
+        if (!validSessionId(sid)) {
+            log.log(.warn, "repl: ignoring invalid --session id '{s}'", .{sid});
+            exit_session_id = null;
+        }
+    }
+    model.session_id = exit_session_id;
+    if (cfg.modules.sessions) {
+        if (exit_session_id) |sid| {
+            const loaded = session_mod.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => blk: {
+                    log.log(.warn, "repl: could not load session '{s}': {s}", .{ sid, @errorName(err) });
+                    break :blk null;
+                },
+            };
+            if (loaded) |s| {
+                model.session_created = s.created;
+                model.session_title = s.title;
+                var loaded_count: usize = 0;
+                for (s.messages) |m| {
+                    if (m.role == .system) continue;
+                    model.messages.append(arena, m) catch {};
+                    loaded_count += 1;
+                }
+                model.lines.append(arena, .{
+                    .text = std.fmt.allocPrint(arena, "[resumed session {s}: {d} messages]", .{ sid, loaded_count }) catch "[resumed session]",
+                    .dim = true,
+                }) catch {};
+            } else {
+                log.log(.info, "repl: no existing session '{s}', starting fresh", .{sid});
+            }
+        }
+    }
 
     // Save on every exit path: app.run returns for /quit and for Ctrl-C while
     // idle alike, so persisting here (rather than in submit) is what makes the
