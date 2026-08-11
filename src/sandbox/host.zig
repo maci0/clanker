@@ -15,7 +15,6 @@ const types = @import("../llm/types.zig");
 const config_mod = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
-const cards_mod = @import("../peers/cards.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const filelock = @import("../util/filelock.zig");
 const token_stats = @import("../stats/tokens.zig");
@@ -783,89 +782,15 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.endArray() catch return Err.too_large;
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
-    } else if (std.mem.eql(u8, op, "todo_add")) {
-        const room = parsed.room orelse return Err.invalid;
-        const title = parsed.title orelse return Err.invalid;
-        if (room.len == 0 or title.len == 0 or title.len > todos_mod.max_title_len) return Err.invalid;
-        const text = todos_mod.encodeAdd(arena, title) catch return Err.too_large;
-        const msg = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
-            log.log(.warn, "[chat] todo_add failed: {s}", .{@errorName(err)});
-            return Err.invalid;
-        };
-        s.beginObject() catch return Err.too_large;
-        s.objectField("ok") catch return Err.too_large;
-        s.write(true) catch return Err.too_large;
-        s.objectField("todo") catch return Err.too_large;
-        s.write(msg.id) catch return Err.too_large;
-        s.objectField("ts") catch return Err.too_large;
-        s.print("{d}", .{msg.ts}) catch return Err.too_large;
-        s.endObject() catch return Err.too_large;
-        return h.writeResult(bytes, out_buf[0..w.end]);
-    } else if (std.mem.eql(u8, op, "todo_claim") or std.mem.eql(u8, op, "todo_close")) {
-        const room = parsed.room orelse return Err.invalid;
-        const id = parsed.todo orelse return Err.invalid;
-        if (room.len == 0 or id.len == 0) return Err.invalid;
-        const before = todos_mod.load(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room) catch return Err.invalid;
-        if (todos_mod.get(before, id) == null) {
-            // Guests pass host JSON through verbatim, so an ok:false body is
-            // a friendlier answer than a bare error code here.
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"unknown todo id in this room; call todo_list first\"}");
-        }
-        const is_claim = std.mem.eql(u8, op, "todo_claim");
-        const text = (if (is_claim) todos_mod.encodeClaim(arena, id) else todos_mod.encodeClose(arena, id)) catch return Err.too_large;
-        _ = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
-            log.log(.warn, "[chat] {s} failed: {s}", .{ op, @errorName(err) });
-            return Err.invalid;
-        };
-        // Re-derive: a concurrent claim already in the log may have won, so
-        // report the actual outcome instead of assuming ours took effect.
-        const after_todos = todos_mod.load(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room) catch return Err.invalid;
-        const t = todos_mod.get(after_todos, id) orelse return Err.invalid;
-        s.beginObject() catch return Err.too_large;
-        s.objectField("ok") catch return Err.too_large;
-        s.write(true) catch return Err.too_large;
-        s.objectField("todo") catch return Err.too_large;
-        s.write(id) catch return Err.too_large;
-        s.objectField("status") catch return Err.too_large;
-        s.write(t.status()) catch return Err.too_large;
-        s.objectField("claimed_by") catch return Err.too_large;
-        s.write(t.claimed_by) catch return Err.too_large;
-        s.objectField("closed_by") catch return Err.too_large;
-        s.write(t.closed_by) catch return Err.too_large;
-        if (is_claim) {
-            s.objectField("yours") catch return Err.too_large;
-            s.write(std.mem.eql(u8, t.claimed_by, cfg.instance.name)) catch return Err.too_large;
-        }
-        s.endObject() catch return Err.too_large;
-        return h.writeResult(bytes, out_buf[0..w.end]);
-    } else if (std.mem.eql(u8, op, "todo_list")) {
-        const room = parsed.room orelse return Err.invalid;
-        if (room.len == 0) return Err.invalid;
-        const todos = todos_mod.load(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room) catch return Err.invalid;
-        s.beginObject() catch return Err.too_large;
-        s.objectField("ok") catch return Err.too_large;
-        s.write(true) catch return Err.too_large;
-        s.objectField("todos") catch return Err.too_large;
-        s.beginArray() catch return Err.too_large;
-        for (todos) |t| {
-            s.beginObject() catch return Err.too_large;
-            s.objectField("todo") catch return Err.too_large;
-            s.write(t.id) catch return Err.too_large;
-            s.objectField("title") catch return Err.too_large;
-            s.write(t.title) catch return Err.too_large;
-            s.objectField("status") catch return Err.too_large;
-            s.write(t.status()) catch return Err.too_large;
-            s.objectField("created_by") catch return Err.too_large;
-            s.write(t.created_by) catch return Err.too_large;
-            s.objectField("claimed_by") catch return Err.too_large;
-            s.write(t.claimed_by) catch return Err.too_large;
-            s.objectField("ts") catch return Err.too_large;
-            s.print("{d}", .{t.ts}) catch return Err.too_large;
-            s.endObject() catch return Err.too_large;
-        }
-        s.endArray() catch return Err.too_large;
-        s.endObject() catch return Err.too_large;
-        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.startsWith(u8, op, "todo_")) {
+        // A room todo was a second, thinner copy of a board card: a title, a
+        // claim, a closed flag, folded out of the same room log the board now
+        // folds. One concept, so one implementation, and it is the board tool —
+        // folding a log is application logic, while this host's job is the
+        // append, the fan-out and the subscription filter. The branch near the
+        // top of this function still handles a todo_* op with no room, which is
+        // the run's own private list and genuinely a different thing.
+        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"room todo lists are board cards now: use board_add, board_move, board_claim or board_list. They fold the same room log, so nothing was lost, and a card also carries subtasks, dependencies, a work log and a cost.\"}");
     }
     log.log(.warn, "[chat] unknown op '{s}'", .{op});
     return Err.invalid;
