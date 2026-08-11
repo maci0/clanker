@@ -2066,6 +2066,8 @@ var fmtCost = window.ckUtil.fmtCost;
 var allUsage = [];
 
 /* modelLabel lives in core/labels.js (bridged above). */
+var goalSortKey = window.ckGoals.goalSortKey;
+var goalFields = window.ckGoals.goalFields;
 
 var usageState = van.state([]);
 
@@ -2141,15 +2143,11 @@ var goalState = van.state([]);
 
 /* Newest first: the goal most recently set is the one steering runs now. */
 function renderGoals(goals) {
-  goalState.val = (goals || []).slice().sort(function (a, b) {
-    return (b.updated || 0) - (a.updated || 0);
-  });
+  goalState.val = (goals || []).slice().sort(goalSortKey);
 }
 
 function goalCard(g) {
-  var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
-    ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]]
-    .filter(function (pair) { return !!pair[1]; });
+  var fields = goalFields(g);
 
   var actions = [];
   if (g.id) {
