@@ -2698,6 +2698,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             target = it.next() orelse "";
         }
         const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui") or
+            std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
             std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, target, "/webui/vendor/hljs.min.js");
         const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify");
@@ -2726,6 +2727,11 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, stream);
+        } else if (std.mem.eql(u8, method, "GET") and
+            (std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js")))
+        {
+            // Same tool, same comptime size guard, one file per language.
+            handleWebuiAsset(io, gpa, cfg, environ_map, target, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js")) {
             respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw));
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/hljs.min.js")) {
@@ -3324,22 +3330,29 @@ fn runStreamToolResult(ms: u64) void {
 
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
 /// resulting HTML page.
-fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
+/// Renders one of the page's files through the webui tool. Returns the body,
+/// or responds with the failure and returns null: the caller only has to
+/// decide how a successful body is sent.
+fn renderWebui(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    path: []const u8,
+    stream: std.Io.net.Stream,
+) ?[]const u8 {
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
-        return;
+        return null;
     };
     const tool = reg.get("webui") orelse {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found (run zig build tools)\"}");
-        return;
+        return null;
     };
     const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui wasm missing (run zig build tools)\"}");
-        return;
+        return null;
     };
     defer gpa.free(wasm_bytes);
 
@@ -3352,27 +3365,81 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
     };
     const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui load failed\"}");
-        return;
+        return null;
     };
     defer mod.deinit();
-    const out = mod.executeTool("{\"path\":\"/\"}") catch {
+
+    // The path is one of this server's own route literals, never anything a
+    // request supplied, so it needs no escaping to sit inside this JSON.
+    const req = std.fmt.allocPrint(arena, "{{\"path\":\"{s}\"}}", .{path}) catch {
+        respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+        return null;
+    };
+    const out = mod.executeTool(req) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui render failed\"}");
-        return;
+        return null;
     };
     defer gpa.free(out);
 
-    // Output: {"ok":true,"content_type":"text/html","body":"..."}
+    // Output: {"ok":true,"content_type":"...","body":"..."}
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{ .ignore_unknown_fields = true }) catch {
         respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
-        return;
+        return null;
     };
     const body = switch (parsed) {
         .object => |o| if (o.get("body")) |b| switch (b) {
             .string => |s| s,
-            else => return respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad body\"}"),
-        } else return respond(stream, 500, "Internal Server Error", "{\"error\":\"webui no body\"}"),
-        else => return respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}"),
+            else => {
+                respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad body\"}");
+                return null;
+            },
+        } else {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui no body\"}");
+            return null;
+        },
+        else => {
+            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
+            return null;
+        },
     };
+    // Copied into the arena: `parsed` borrows from `out`, which is freed on
+    // the way out of this function.
+    return arena.dupe(u8, body) catch null;
+}
+
+/// The page's stylesheet and script. Same tool, same sandbox, same size guard
+/// as the markup; only the content type and the caching differ.
+fn handleWebuiAsset(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    target: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const body = renderWebui(io, gpa, arena, cfg, environ_map, target, stream) orelse return;
+    const content_type = if (std.mem.endsWith(u8, target, ".css"))
+        "text/css; charset=utf-8"
+    else
+        "text/javascript; charset=utf-8";
+    var hbuf: [512]u8 = undefined;
+    // no-store for the same reason the page has it: these are compiled into
+    // the binary and change with every rebuild.
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, body.len }) catch return;
+    writeAllFd(stream.socket.handle, hdr);
+    writeAllFd(stream.socket.handle, body);
+}
+
+fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const body = renderWebui(io, gpa, arena, cfg, environ_map, "/", stream) orelse return;
     respondHtml(stream, 200, "OK", body);
 }
 
@@ -4842,7 +4909,11 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 /// allows inline styles and scripts but no external origin: a page fronting
 /// `/api/run` (which executes agent tools) must never be able to pull code from
 /// a third party.
-const webui_csp = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// No inline script or style survives in the page, so neither needs
+// 'unsafe-inline'. style-src-attr keeps the one thing that still sets styles
+// from script (the composer's auto-grow) working without reopening inline
+// <style> blocks.
+const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 fn respondHtml(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
     var hbuf: [4096]u8 = undefined;

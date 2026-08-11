@@ -1,0 +1,4271 @@
+document.addEventListener("DOMContentLoaded", function () {
+"use strict";
+
+var el = {
+  form: document.getElementById("task-form"),
+  task: document.getElementById("task"),
+  attachments: document.getElementById("attachments"),
+  submit: document.getElementById("submit"),
+  cancel: document.getElementById("cancel"),
+  refresh: document.getElementById("refresh"),
+  hint: document.getElementById("hint"),
+  transcript: document.getElementById("transcript"),
+  instance: document.getElementById("instance"),
+  instanceChip: document.getElementById("instance-chip"),
+  peers: document.getElementById("peers"),
+  peersChip: document.getElementById("peers-chip"),
+  sessionChip: document.getElementById("session-chip"),
+  newChat: document.getElementById("new-chat"),
+  themeToggle: document.getElementById("theme-toggle"),
+  runsRefresh: document.getElementById("runs-refresh"),
+  runFilter: document.getElementById("run-filter"),
+  runStatus: document.getElementById("run-status"),
+  rail: document.getElementById("rail"),
+  railList: document.getElementById("rail-list"),
+  railContext: document.getElementById("rail-context"),
+  railToggle: document.getElementById("rail-toggle"),
+  sessionTitle: document.getElementById("session-title"),
+  railScrim: document.getElementById("rail-scrim"),
+  promptList: document.getElementById("prompt-list"),
+  promptSave: document.getElementById("prompt-save"),
+  contextMeter: document.getElementById("context-meter"),
+  sessionStatus: document.getElementById("session-status"),
+  sessionFork: document.getElementById("session-fork"),
+  sessionRename: document.getElementById("session-rename"),
+  sessionDelete: document.getElementById("session-delete"),
+  chatRoom: document.getElementById("chat-room"),
+  chatLog: document.getElementById("chat-log"),
+  chatForm: document.getElementById("chat-form"),
+  chatText: document.getElementById("chat-text"),
+  chatSend: document.getElementById("chat-send"),
+  chatRefresh: document.getElementById("chat-refresh"),
+  chatStatus: document.getElementById("chat-status"),
+  goals: document.getElementById("goals"),
+  goalsRefresh: document.getElementById("goals-refresh"),
+  goalForm: document.getElementById("goal-form"),
+  goalObjective: document.getElementById("goal-objective"),
+  goalCriterion: document.getElementById("goal-criterion"),
+  goalsStatus: document.getElementById("goals-status"),
+  usage: document.getElementById("usage"),
+  usageRefresh: document.getElementById("usage-refresh"),
+  tools: document.getElementById("tools"),
+  toolFilter: document.getElementById("tool-filter"),
+  toolsRefresh: document.getElementById("tools-refresh"),
+  toolsStatus: document.getElementById("tools-status"),
+  toolDetail: document.getElementById("tool-detail"),
+  runSelect: document.getElementById("run-select"),
+  runGraph: document.getElementById("run-graph"),
+  runDetail: document.getElementById("run-detail"),
+  sessionFilter: document.getElementById("session-filter"),
+  sessionCompact: document.getElementById("session-compact"),
+  sessionExport: document.getElementById("session-export"),
+  sessionCopy: document.getElementById("session-copy"),
+  runCopy: document.getElementById("run-copy"),
+  board: document.getElementById("board"),
+  cardForm: document.getElementById("card-form"),
+  cardTitle: document.getElementById("card-title"),
+  cardColumn: document.getElementById("card-column"),
+  cardDetail: document.getElementById("card-detail"),
+  boardMine: document.getElementById("board-mine"),
+  boardRefresh: document.getElementById("board-refresh"),
+  boardStatus: document.getElementById("board-status"),
+  logSelect: document.getElementById("log-select"),
+  logView: document.getElementById("log-view"),
+  logsRefresh: document.getElementById("logs-refresh"),
+  logsStatus: document.getElementById("logs-status"),
+  palette: document.getElementById("palette"),
+  paletteOpen: document.getElementById("palette-open"),
+  paletteInput: document.getElementById("palette-input"),
+  paletteList: document.getElementById("palette-list"),
+  help: document.getElementById("help"),
+  helpOpen: document.getElementById("help-open"),
+  helpClose: document.getElementById("help-close"),
+  shortcuts: document.getElementById("shortcuts"),
+  transcriptEmpty: document.getElementById("transcript-empty"),
+  suggestions: document.getElementById("suggestions"),
+  modelSelect: document.getElementById("model-select"),
+  paramTemp: document.getElementById("param-temp"),
+  paramTopP: document.getElementById("param-topp"),
+  enterSends: document.getElementById("enter-sends"),
+  turnFilter: document.getElementById("turn-filter"),
+  turnFilterCount: document.getElementById("turn-filter-count"),
+  scrollBottom: document.getElementById("scroll-bottom"),
+  sessionExportJson: document.getElementById("session-export-json")
+};
+
+/* Fetches a vendored library on first use and caches the promise, so the
+   ~200 KB of d3-dag + highlight.js stays off the initial load of a page
+   whose common visit needs neither. Every caller must tolerate rejection:
+   the graph falls back to an error line, code blocks stay unhighlighted. */
+var vendorLoads = {};
+function loadVendor(file, ready) {
+  if (vendorLoads[file]) return vendorLoads[file];
+  vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
+    var s = document.createElement("script");
+    s.src = "/webui/vendor/" + file;
+    s.onload = function () {
+      if (ready()) resolve();
+      else reject(new Error(file + " loaded but exported nothing"));
+    };
+    s.onerror = function () { reject(new Error("could not load " + file)); };
+    document.head.appendChild(s);
+  });
+  return vendorLoads[file];
+}
+
+function loadD3() {
+  return loadVendor("d3-dag.min.js", function () { return !!(window.d3 && window.d3.dagStratify); });
+}
+
+var tomlRegistered = false;
+function loadHljs() {
+  return loadVendor("hljs.min.js", function () { return !!window.hljs; }).then(registerToml);
+}
+
+// highlight.js doesn't ship a TOML grammar in any of its distributed
+// bundles (it lives in a separate, unpublished third-party repo) — a
+// small hand-written one is simpler and more honest than pulling in a
+// whole extra vendored file for one language. className values match the
+// .hljs-* tokens already themed above (attr/string/number/literal/
+// comment/meta), so no new CSS is needed.
+function registerToml() {
+  if (tomlRegistered) return;
+  tomlRegistered = true;
+  window.hljs.registerLanguage("toml", function (hljs) {
+    return {
+      name: "TOML",
+      case_insensitive: false,
+      contains: [
+        hljs.COMMENT("#", "$"),
+        { className: "section", begin: /^\s*\[+/, end: /\]+/ },
+        { className: "attr", begin: /^\s*[A-Za-z0-9_.-]+(?=\s*=)/ },
+        { className: "meta", begin: /\b\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?\b/ },
+        { className: "literal", begin: /\b(true|false)\b/ },
+        hljs.QUOTE_STRING_MODE,
+        hljs.APOS_STRING_MODE,
+        hljs.C_NUMBER_MODE
+      ]
+    };
+  });
+}
+
+/* Motion the CSS can't reach: scrollIntoView's smooth behavior is a JS
+   argument, so the @media blocks above never see it. */
+var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+function scrollTo(node, block) {
+  node.scrollIntoView({ block: block, behavior: reducedMotion.matches ? "auto" : "smooth" });
+}
+
+/* The async clipboard API is undefined outside a secure context, which is
+   exactly what `clanker serve` is when reached over a LAN address rather
+   than localhost. Failing silently there left a dead button, so the text
+   gets selected instead and the label says what to press. */
+function copyText(text, btn, restoreLabel, selectTarget) {
+  function restore() {
+    window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
+  }
+  function selectInstead() {
+    var sel = window.getSelection && window.getSelection();
+    if (selectTarget && sel && document.createRange) {
+      var range = document.createRange();
+      range.selectNodeContents(selectTarget);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      btn.textContent = "Selected — press Ctrl+C";
+    } else {
+      btn.textContent = "Copy unavailable";
+    }
+    restore();
+  }
+  if (!navigator.clipboard || !window.isSecureContext) return selectInstead();
+  navigator.clipboard.writeText(text).then(function () {
+    btn.textContent = "Copied";
+    restore();
+  }, selectInstead);
+}
+
+var busy = false;
+var controller = null;
+var elapsedTimer = null;
+var sessionId = loadSession();
+
+function newSessionId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return "sess-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+function loadSession() {
+  var id = null;
+  try { id = window.localStorage.getItem("clanker.session"); } catch (e) {}
+  if (!id) id = newSessionId();
+  try { window.localStorage.setItem("clanker.session", id); } catch (e) {}
+  return id;
+}
+
+function renderSessionChip() {
+  el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+}
+
+var THEMES = ["system", "light", "dark"];
+
+function loadTheme() {
+  var t = null;
+  try { t = window.localStorage.getItem("clanker.theme"); } catch (e) {}
+  return THEMES.indexOf(t) === -1 ? "system" : t;
+}
+
+function applyTheme(theme) {
+  if (theme === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  el.themeToggle.textContent = "theme: " + theme;
+}
+
+var theme = loadTheme();
+applyTheme(theme);
+
+el.themeToggle.addEventListener("click", function () {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  try { window.localStorage.setItem("clanker.theme", theme); } catch (e) {}
+  applyTheme(theme);
+});
+
+el.newChat.addEventListener("click", function () {
+  if (busy) return;
+  sessionId = newSessionId();
+  try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+  el.transcript.textContent = "";
+  renderSessionChip();
+  // The new conversation has no server-side record until its first turn is
+  // saved, so it is offered as a pending option rather than waiting for a
+  // reload to make it selectable.
+  renderSessionOptions(knownSessions);
+  el.sessionStatus.textContent = "Started a new conversation.";
+  el.task.focus();
+});
+
+// ---- conversations: switch between saved sessions ----------------------
+
+var knownSessions = [];
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function sessionLabel(s) {
+  var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+  if (title.length > 56) title = title.slice(0, 55) + "…";
+  var label = title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
+  // Transcript weight, because agent.compact_threshold_bytes is measured in
+  // exactly these bytes and compaction is otherwise invisible until it fires.
+  if (typeof s.bytes === "number" && s.bytes > 0) label += "  ·  " + fmtBytes(s.bytes);
+  return label;
+}
+
+/* The live session is always selectable even when the server has never seen
+   it — a brand new chat has no saved file until its first turn completes,
+   and dropping it from the list would make the picker disagree with what the
+   composer is actually continuing. */
+/* Conversations group by when they were last touched, because that is how
+   you look for one: "the thing I was doing this morning", not an id. */
+function recencyGroup(updated) {
+  if (!updated) return "Undated";
+  var day = 24 * 60 * 60;
+  var now = Math.floor(Date.now() / 1000);
+  var age = now - updated;
+  if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return "Today";
+  if (age < 2 * day) return "Yesterday";
+  if (age < 7 * day) return "Previous 7 days";
+  if (age < 30 * day) return "Previous 30 days";
+  return "Older";
+}
+
+function railRow(s, title, meta, selected) {
+  var b = document.createElement("button");
+  b.type = "button";
+  b.className = "rail-item";
+  // aria-current, not aria-selected: this is the conversation you are in,
+  // not one of several selected in a listbox.
+  if (selected) b.setAttribute("aria-current", "true");
+  var t = document.createElement("span");
+  t.className = "rail-item-title";
+  t.textContent = title;
+  var m = document.createElement("span");
+  m.className = "rail-item-meta";
+  m.textContent = meta;
+  b.appendChild(t);
+  b.appendChild(m);
+  if (s) b.addEventListener("click", function () { switchSession(s.id); closeRailOnNarrow(); });
+  return b;
+}
+
+/* Pinning lives in this browser rather than on the server: which few
+   conversations you keep to hand is a property of how you are working right
+   now, not of the conversation. */
+function loadPins() {
+  try { return JSON.parse(window.localStorage.getItem("clanker.pins") || "[]"); } catch (e) { return []; }
+}
+var pins = loadPins();
+
+function isPinned(id) { return pins.indexOf(id) !== -1; }
+
+function togglePin(id) {
+  var at = pins.indexOf(id);
+  if (at === -1) pins.push(id); else pins.splice(at, 1);
+  try { window.localStorage.setItem("clanker.pins", JSON.stringify(pins)); } catch (e) {}
+  renderSessionOptions(null);
+}
+
+function renderSessionOptions(sessions) {
+  if (sessions) knownSessions = sessions;
+  var q = el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "";
+  el.railList.textContent = "";
+  var seen = false;
+  var lastGroup = "";
+  var shown = 0;
+  var ordered = knownSessions.slice().sort(function (a, b) {
+    var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    return 0;
+  });
+  ordered.forEach(function (s) {
+    if (s.id === sessionId) seen = true;
+    if (q && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
+    var group = isPinned(s.id) ? "Pinned" : recencyGroup(s.updated);
+    if (group !== lastGroup) {
+      var head = document.createElement("li");
+      head.className = "rail-group";
+      head.setAttribute("role", "presentation");
+      head.textContent = group;
+      el.railList.appendChild(head);
+      lastGroup = group;
+    }
+    var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+    var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
+      (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
+    var row = document.createElement("li");
+    row.className = "rail-row";
+    row.appendChild(railRow(s, title, meta, s.id === sessionId));
+    var pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "rail-pin";
+    pin.textContent = isPinned(s.id) ? "★" : "☆";
+    pin.setAttribute("aria-pressed", String(isPinned(s.id)));
+    pin.setAttribute("aria-label", (isPinned(s.id) ? "Unpin " : "Pin ") + title);
+    pin.addEventListener("click", function () { togglePin(s.id); });
+    row.appendChild(pin);
+    el.railList.appendChild(row);
+    shown += 1;
+  });
+  /* A brand new chat has no file on disk until its first turn completes;
+     without this row the rail would show nothing selected while the
+     composer was plainly pointed at something. */
+  if (!seen && !q) {
+    var pendingRow = document.createElement("li");
+    pendingRow.className = "rail-row";
+    pendingRow.appendChild(railRow(null, "New conversation", "unsaved", true));
+    el.railList.insertBefore(pendingRow, el.railList.firstChild);
+  }
+  if (!shown && q) {
+    var none = document.createElement("li");
+    none.className = "rail-empty";
+    none.textContent = "No conversation matches.";
+    el.railList.appendChild(none);
+  }
+  renderSessionTitle();
+}
+
+function renderSessionTitle() {
+  var meta = currentSessionMeta();
+  el.sessionTitle.textContent = meta ? sessionLabel(meta) : "New conversation  ·  unsaved";
+  renderContextMeter();
+}
+
+function setRailOpen(open) {
+  el.rail.setAttribute("data-open", String(open));
+  el.railScrim.setAttribute("data-open", String(open));
+  el.railToggle.setAttribute("aria-expanded", String(open));
+  if (open) el.sessionFilter.focus();
+}
+
+function closeRailOnNarrow() {
+  if (window.matchMedia && window.matchMedia("(max-width: 60rem)").matches) setRailOpen(false);
+}
+
+el.railToggle.addEventListener("click", function () {
+  setRailOpen(el.rail.getAttribute("data-open") !== "true");
+});
+el.railScrim.addEventListener("click", function () { setRailOpen(false); });
+
+function railItems() {
+  return Array.prototype.slice.call(el.railList.querySelectorAll(".rail-item"));
+}
+
+function moveRailFocus(from, step) {
+  var items = railItems();
+  if (!items.length) return;
+  var at = items.indexOf(from);
+  var next = at === -1 ? (step > 0 ? 0 : items.length - 1) : at + step;
+  if (next < 0) {
+    el.sessionFilter.focus();
+    return;
+  }
+  if (next >= items.length) next = items.length - 1;
+  items[next].focus();
+}
+
+el.railList.addEventListener("keydown", function (e) {
+  var item = e.target.closest ? e.target.closest(".rail-item") : null;
+  if (!item) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    moveRailFocus(item, e.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (e.key === "Home" || e.key === "End") {
+    e.preventDefault();
+    var items = railItems();
+    if (items.length) items[e.key === "Home" ? 0 : items.length - 1].focus();
+  }
+});
+
+el.sessionFilter.addEventListener("keydown", function (e) {
+  if (e.key !== "ArrowDown") return;
+  e.preventDefault();
+  var items = railItems();
+  if (items.length) items[0].focus();
+});
+
+el.newChat.addEventListener("click", closeRailOnNarrow);
+
+/* The transcript is either turns or a line saying there are none; it used to
+   be turns or nothing at all, which looked identical to a failed load. */
+function syncTranscriptEmpty() {
+  el.transcriptEmpty.hidden = el.transcript.querySelector(".turn") !== null;
+}
+
+function loadSessions() {
+  return fetch("/api/sessions")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      renderSessionOptions(data.sessions || []);
+    })
+    .catch(function () {
+      // Sessions may simply be disabled; the picker still has to describe
+      // the conversation the composer is using.
+      renderSessionOptions([]);
+    });
+}
+
+/* Replays a saved conversation into the transcript. Reuses the same turn
+   card the live stream builds, so history and a just-finished turn are the
+   same object rather than two renderings of the same thing that drift. */
+function renderSessionHistory(messages) {
+  el.transcript.textContent = "";
+  var pendingTurn = null;
+  messages.forEach(function (m) {
+    if (m.role === "user") {
+      // A question with no reply before the next one: close it off rather
+      // than letting the next answer attach to the wrong question.
+      if (pendingTurn) markTurnUnanswered(pendingTurn);
+      pendingTurn = createTurn(m.content);
+      return;
+    }
+    if (!pendingTurn) {
+      pendingTurn = createTurn("(question not in this transcript)");
+      pendingTurn.querySelector(".turn-you").setAttribute("data-orphan", "true");
+    }
+    appendText(pendingTurn, m.content, false);
+    finalizeAnswer(pendingTurn);
+    renderStats(pendingTurn, {}, null);
+    pendingTurn = null;
+  });
+  if (pendingTurn) markTurnUnanswered(pendingTurn);
+}
+
+/* Appends a note about the turn's outcome into the answer itself. Inside the
+   answer rather than beside it for two reasons: an empty answer otherwise
+   triggers the streaming placeholder (a pulsing ellipsis that says "still
+   thinking" about a turn that finished long ago), and Copy answer reads
+   `textContent`, so anything outside it is silently dropped from what the
+   reader pastes. */
+function markTurn(turn, text) {
+  var note = document.createElement("span");
+  note.className = "turn-note";
+  note.textContent = text;
+  turn.answer.appendChild(note);
+}
+
+function markTurnUnanswered(turn) {
+  markTurn(turn, "No answer was recorded for this turn.");
+}
+
+function switchSession(id) {
+  if (id === sessionId) return;
+  if (busy) {
+    // Refused mid-run, so put the control back on the conversation that is
+    // actually still running rather than leaving it pointing at one the
+    // composer is not using.
+    renderSessionOptions(null);
+    el.sessionStatus.textContent = "Finish or stop the current run before switching conversation.";
+    return;
+  }
+  sessionId = id;
+  try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+  renderSessionChip();
+  renderSessionOptions(null);
+  el.transcript.textContent = "";
+  el.sessionStatus.textContent = "Loading conversation…";
+  fetch("/api/sessions/" + encodeURIComponent(id))
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      renderSessionHistory(data.messages || []);
+      syncTranscriptEmpty();
+      var n = (data.messages || []).length;
+      el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
+    })
+    .catch(function (err) {
+      var p = document.createElement("p");
+      p.className = "run-empty";
+      p.textContent = "Could not load that conversation: " + err.message;
+      el.transcript.appendChild(p);
+      el.sessionStatus.textContent = p.textContent;
+    });
+}
+
+
+
+/* A conversation's title is otherwise the first 60 characters of whatever
+   task opened it, which makes a picker full of them read like a list of
+   prefixes. Both actions refuse to touch a conversation that has never been
+   saved, since there is nothing on disk to act on yet. */
+function currentSessionMeta() {
+  for (var i = 0; i < knownSessions.length; i++) {
+    if (knownSessions[i].id === sessionId) return knownSessions[i];
+  }
+  return null;
+}
+
+/* A fork is a branch you can abandon: the same messages under a new id, so
+   trying a different direction never costs the conversation it came from.
+   The server answers with the new id and this switches to it, because the
+   point of forking is to continue in the copy. */
+el.sessionFork.addEventListener("click", function () {
+  if (!currentSessionMeta()) {
+    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    return;
+  }
+  el.sessionFork.disabled = true;
+  fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/fork", { method: "POST" })
+    .then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok || !data.ok || !data.id) throw new Error(data.error || ("HTTP " + r.status));
+        return data.id;
+      });
+    })
+    .then(function (newId) {
+      sessionId = newId;
+      try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+      renderSessionChip();
+      el.sessionStatus.textContent = "Forked. You are now in the copy.";
+      return loadSessions();
+    })
+    .catch(function (err) {
+      el.sessionStatus.textContent = "Could not fork: " + err.message;
+    })
+    .finally(function () { el.sessionFork.disabled = false; });
+});
+
+el.sessionRename.addEventListener("click", function () {
+  var meta = currentSessionMeta();
+  if (!meta) {
+    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    return;
+  }
+  var next = window.prompt("Rename this conversation", meta.title || "");
+  if (next === null) return;
+  next = next.trim();
+  if (!next) {
+    el.sessionStatus.textContent = "A conversation needs a title.";
+    return;
+  }
+  el.sessionRename.disabled = true;
+  fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: next })
+  }).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    el.sessionStatus.textContent = "Renamed to " + next + ".";
+    return loadSessions();
+  }).catch(function (err) {
+    el.sessionStatus.textContent = "Could not rename: " + err.message;
+  }).finally(function () { el.sessionRename.disabled = false; });
+});
+
+el.sessionDelete.addEventListener("click", function () {
+  var meta = currentSessionMeta();
+  if (!meta) {
+    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    return;
+  }
+  // Deleting a transcript cannot be undone from here, so it is confirmed.
+  // The run graphs survive it: they record runs that really happened and are
+  // addressed by run id, not by session.
+  if (!window.confirm("Delete \"" + (meta.title || sessionId) + "\"? Its recorded runs are kept.")) return;
+  el.sessionDelete.disabled = true;
+  fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      el.sessionStatus.textContent = "Deleted. Started a new conversation.";
+      sessionId = newSessionId();
+      try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+      el.transcript.textContent = "";
+      renderSessionChip();
+      return loadSessions();
+    }).catch(function (err) {
+      el.sessionStatus.textContent = "Could not delete: " + err.message;
+    }).finally(function () { el.sessionDelete.disabled = false; });
+});
+
+function syncControls() {
+  el.submit.disabled = busy || el.task.value.trim() === "";
+  el.refresh.disabled = busy;
+  el.newChat.disabled = busy;
+  el.task.readOnly = busy;
+  el.cancel.hidden = !busy;
+  if (busy) el.submit.textContent = "Running…";
+  else syncSubmitLabel();
+  document.title = busy ? "Running… · clanker" : "clanker";
+}
+
+function setBusy(next) {
+  busy = next;
+  syncControls();
+}
+
+function startElapsed(startedAt) {
+  stopElapsed();
+  elapsedTimer = window.setInterval(function () {
+    el.hint.textContent = "running… " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
+  }, 200);
+}
+
+function stopElapsed() {
+  if (elapsedTimer) { window.clearInterval(elapsedTimer); elapsedTimer = null; }
+}
+
+/* Each submitted task gets its own turn card, appended below the last —
+   a real conversation history instead of one box that forgets the past
+   answer as soon as you ask another question. */
+function createTurn(task) {
+  if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
+  var turn = document.createElement("div");
+  turn.className = "turn";
+
+  var you = document.createElement("div");
+  you.className = "turn-you";
+  you.textContent = task;
+
+  var body = document.createElement("div");
+  body.className = "turn-body";
+
+  var events = document.createElement("div");
+  events.className = "turn-events";
+
+  var answer = document.createElement("div");
+  answer.className = "turn-answer";
+  // aria-live rather than role="status": status carries an implicit
+  // aria-atomic="true", which made every streamed chunk re-announce the
+  // whole answer from the top. Explicitly atomic-false announces only the
+  // new text.
+  answer.setAttribute("aria-live", "polite");
+  answer.setAttribute("aria-atomic", "false");
+
+  var foot = document.createElement("div");
+  foot.className = "turn-foot";
+
+  body.appendChild(events);
+  body.appendChild(answer);
+  body.appendChild(foot);
+  turn.appendChild(you);
+  turn.appendChild(body);
+  el.transcript.appendChild(turn);
+
+  return { root: turn, events: events, answer: answer, foot: foot };
+}
+
+function appendText(turn, text, failed) {
+  /* The rendered answer is not the answer: finalizeAnswer replaces the
+     source with elements, so the fences, hashes, hyphens and pipes are gone
+     from textContent by the time anything reads it back. Copy answer handed
+     over code with no fences and Export .md produced a file that was not
+     markdown. The source is kept here instead of recovered later. */
+  if (!failed) turn.root.markdownSource = (turn.root.markdownSource || "") + text;
+  var caret = turn.answer.querySelector(".caret");
+  // Content streams in a line at a time. Extending the trailing text node
+  // keeps a long answer at one node instead of one per line, which across a
+  // session's worth of turns is the difference between a flat DOM and one
+  // that grows with every line the agent has ever written. Failed text is
+  // excluded: it needs its own <span> to stay red.
+  if (!failed) {
+    var tail = caret ? caret.previousSibling : turn.answer.lastChild;
+    if (tail && tail.nodeType === 3) {
+      tail.appendData(text);
+      return;
+    }
+  }
+  var node = document.createTextNode(text);
+  if (failed) {
+    var span = document.createElement("span");
+    span.className = "failed";
+    span.appendChild(node);
+    node = span;
+  }
+  if (caret) turn.answer.insertBefore(node, caret);
+  else turn.answer.appendChild(node);
+}
+
+function showCaret(turn, on) {
+  var caret = turn.answer.querySelector(".caret");
+  if (on && !caret) {
+    caret = document.createElement("span");
+    caret.className = "caret";
+    caret.setAttribute("aria-hidden", "true");
+    turn.answer.appendChild(caret);
+  } else if (!on && caret) {
+    caret.remove();
+  }
+}
+
+/* Once a turn finishes cleanly, promote ```fenced``` code inside the plain
+   answer text into <pre> blocks with their own copy button — the common
+   case for a coding agent's replies. Skipped for failed/stopped turns so
+   the red [error] styling already in the DOM is never flattened back to
+   plain text. */
+
+/* ---------- markdown ----------
+   Answers arrive as Markdown and used to render as one flat wall of
+   monospace: headings, lists and tables were literal "##" and "|" characters.
+   Everything below is built with createElement and textContent, never
+   innerHTML, so markup a model writes lands as visible characters and is
+   never parsed as markup. */
+
+var INLINE_RE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+
+function inlineInto(parent, text) {
+  while (text.length) {
+    var m = INLINE_RE.exec(text);
+    if (!m) { parent.appendChild(document.createTextNode(text)); return; }
+    if (m.index > 0) parent.appendChild(document.createTextNode(text.slice(0, m.index)));
+    var tok = m[0], node;
+    if (tok.charAt(0) === "`") {
+      node = document.createElement("code");
+      node.textContent = tok.slice(1, -1);
+    } else if (tok.slice(0, 2) === "**") {
+      node = document.createElement("strong");
+      inlineInto(node, tok.slice(2, -2));
+    } else if (tok.charAt(0) === "*" || tok.charAt(0) === "_") {
+      var before = m.index > 0 ? text.charAt(m.index - 1) : " ";
+      var after = text.charAt(m.index + tok.length) || " ";
+      // Intra-word underscores are identifiers, not emphasis: snake_case
+      // names in an answer used to render as italics with the underscores
+      // eaten.
+      if (tok.charAt(0) === "_" && (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(after))) {
+        parent.appendChild(document.createTextNode(tok));
+        text = text.slice(m.index + tok.length);
+        continue;
+      }
+      node = document.createElement("em");
+      inlineInto(node, tok.slice(1, -1));
+    } else if (tok.charAt(0) === "[") {
+      var split = tok.indexOf("](");
+      node = document.createElement("a");
+      node.href = tok.slice(split + 2, -1);
+      node.rel = "noreferrer noopener";
+      inlineInto(node, tok.slice(1, split));
+    } else {
+      node = document.createElement("a");
+      node.href = tok;
+      node.rel = "noreferrer noopener";
+      node.textContent = tok;
+    }
+    parent.appendChild(node);
+    text = text.slice(m.index + tok.length);
+  }
+}
+
+/* A single newline inside a paragraph is kept as a line break rather than
+   collapsed to a space: agent output leans on hard-wrapped lines, and
+   joining them reflows tables of numbers into prose. */
+function paragraphInto(parent, lines) {
+  lines.forEach(function (line, i) {
+    if (i) parent.appendChild(document.createElement("br"));
+    inlineInto(parent, line);
+  });
+}
+
+function tableRow(tr, cells, cellTag) {
+  cells.forEach(function (c) {
+    var cell = document.createElement(cellTag);
+    inlineInto(cell, c.trim());
+    tr.appendChild(cell);
+  });
+}
+
+function splitRow(line) {
+  var t = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return t.split("|");
+}
+
+function renderMarkdown(text) {
+  var frag = document.createDocumentFragment();
+  var lines = text.split("\n");
+  var i = 0;
+  function flushList(ordered) {
+    var list = document.createElement(ordered ? "ol" : "ul");
+    while (i < lines.length) {
+      var m = ordered ? /^\s*\d+[.)]\s+(.*)$/.exec(lines[i]) : /^\s*[-*+]\s+(.*)$/.exec(lines[i]);
+      if (!m) break;
+      var li = document.createElement("li");
+      inlineInto(li, m[1]);
+      list.appendChild(li);
+      i += 1;
+    }
+    frag.appendChild(list);
+  }
+  while (i < lines.length) {
+    var line = lines[i];
+    if (!line.trim()) { i += 1; continue; }
+    var head = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (head) {
+      // Answers live under the page's own h2, so the smallest heading a
+      // model writes still nests below it rather than competing with it.
+      var h = document.createElement("h" + Math.min(6, head[1].length + 2));
+      h.className = "md-h";
+      inlineInto(h, head[2]);
+      frag.appendChild(h);
+      i += 1;
+      continue;
+    }
+    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) {
+      frag.appendChild(document.createElement("hr"));
+      i += 1;
+      continue;
+    }
+    if (/^\s*>\s?/.test(line)) {
+      var quote = document.createElement("blockquote");
+      var qlines = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        qlines.push(lines[i].replace(/^\s*>\s?/, ""));
+        i += 1;
+      }
+      paragraphInto(quote, qlines);
+      frag.appendChild(quote);
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) { flushList(false); continue; }
+    if (/^\s*\d+[.)]\s+/.test(line)) { flushList(true); continue; }
+    // A table needs its separator row to be a table at all, which keeps a
+    // line that merely contains a pipe from becoming one.
+    if (line.indexOf("|") !== -1 && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+      var table = document.createElement("table");
+      table.className = "md-table";
+      var thead = document.createElement("thead");
+      var htr = document.createElement("tr");
+      tableRow(htr, splitRow(line), "th");
+      thead.appendChild(htr);
+      table.appendChild(thead);
+      var tbody = document.createElement("tbody");
+      i += 2;
+      while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
+        var btr = document.createElement("tr");
+        tableRow(btr, splitRow(lines[i]), "td");
+        tbody.appendChild(btr);
+        i += 1;
+      }
+      table.appendChild(tbody);
+      var wrap = document.createElement("div");
+      wrap.className = "md-table-wrap";
+      wrap.appendChild(table);
+      frag.appendChild(wrap);
+      continue;
+    }
+    var para = [];
+    while (i < lines.length && lines[i].trim() &&
+           !/^(#{1,6})\s|^\s*[-*+]\s|^\s*\d+[.)]\s|^\s*>/.test(lines[i])) {
+      para.push(lines[i]);
+      i += 1;
+    }
+    var p2 = document.createElement("p");
+    p2.className = "md-p";
+    paragraphInto(p2, para);
+    frag.appendChild(p2);
+  }
+  return frag;
+}
+
+function finalizeAnswer(turn) {
+  if (turn.answer.querySelector(".failed")) return;
+  var raw = turn.root.markdownSource || turn.answer.textContent;
+  if (!raw) return;
+  var frag = document.createDocumentFragment();
+  var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
+  var last = 0, m;
+  while ((m = re.exec(raw))) {
+    if (m.index > last) frag.appendChild(renderMarkdown(raw.slice(last, m.index)));
+    frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
+    last = re.lastIndex;
+  }
+  if (last < raw.length) frag.appendChild(renderMarkdown(raw.slice(last)));
+  turn.answer.textContent = "";
+  // Block elements do their own wrapping; leaving the container on pre-wrap
+  // would add the source's newlines on top of the markup's.
+  turn.answer.className = "turn-answer md";
+  turn.answer.appendChild(frag);
+}
+
+/* JSON-shaped text (a tool result, most often) is unreadable as one line
+   and hljs has no way to know it's JSON without a fence's language tag.
+   Only untagged text is tried against JSON.parse: reformatting a block the
+   author explicitly fenced as something else overrides a stated intent, and
+   bare `42` or `"a"` parses as JSON too. */
+function prettyJsonIfPossible(text) {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch (e) {
+    return null;
+  }
+}
+
+/* Fills codeEl with the text to display and kicks off highlighting once
+   hljs has loaded. Returns what it decided, because the language is needed
+   for the label and cannot be read back off codeEl.className afterwards —
+   hljs appends its own "hljs" class there. */
+function highlightInto(codeEl, lang, rawText) {
+  var pretty = lang ? null : prettyJsonIfPossible(rawText);
+  var text = pretty !== null ? pretty : rawText;
+  var effectiveLang = pretty !== null ? "json" : (lang || "");
+  codeEl.textContent = text;
+  if (effectiveLang) {
+    codeEl.className = "language-" + effectiveLang;
+    loadHljs().then(function () {
+      try { window.hljs.highlightElement(codeEl); } catch (e) {}
+    }).catch(function () {});
+  }
+  return { text: text, lang: effectiveLang };
+}
+
+function buildCodeBlock(lang, code) {
+  var wrap = document.createElement("div");
+  wrap.className = "code-block";
+
+  var pre = document.createElement("pre");
+  var codeEl = document.createElement("code");
+  var shown = highlightInto(codeEl, lang, code);
+  pre.appendChild(codeEl);
+
+  var head = document.createElement("div");
+  head.className = "code-head";
+  var langTag = document.createElement("span");
+  langTag.className = "code-lang";
+  langTag.textContent = shown.lang;
+  head.appendChild(langTag);
+
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "copy-code-btn";
+  copyBtn.textContent = "Copy";
+  // Copies what's actually shown (prettified JSON, not the original
+  // one-line source) — that's what a person just read and expects to paste.
+  copyBtn.addEventListener("click", function () {
+    copyText(shown.text, copyBtn, "Copy", codeEl);
+  });
+  head.appendChild(copyBtn);
+
+  wrap.appendChild(head);
+  wrap.appendChild(pre);
+  return wrap;
+}
+
+function addToolEvent(turn, names) {
+  var row = document.createElement("div");
+  row.className = "event-tool";
+  var spin = document.createElement("span");
+  spin.className = "spin";
+  spin.setAttribute("aria-hidden", "true");
+  var label = document.createElement("span");
+  label.textContent = "⚙ " + names;
+  // Shown only under prefers-reduced-motion, where the spinner is hidden.
+  var state = document.createElement("span");
+  state.className = "run-state";
+  state.textContent = "running…";
+  row.appendChild(spin);
+  row.appendChild(label);
+  row.appendChild(state);
+  turn.events.appendChild(row);
+  return row;
+}
+
+function settleLastToolEvent(turn, ms) {
+  var rows = turn.events.querySelectorAll(".event-tool");
+  if (rows.length === 0) return;
+  var row = rows[rows.length - 1];
+  var spin = row.querySelector(".spin");
+  if (spin) spin.remove();
+  var state = row.querySelector(".run-state");
+  if (state) state.remove();
+  var dur = document.createElement("span");
+  dur.className = "dur";
+  dur.textContent = ms + "ms";
+  row.appendChild(dur);
+}
+
+function renderStats(turn, stats, task) {
+  turn.foot.textContent = "";
+  var parts = [];
+  if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
+    parts.push(stats.prompt_tokens + " prompt + " + stats.completion_tokens + " completion");
+  }
+  if (typeof stats.ms === "number") parts.push(stats.ms + "ms");
+  if (typeof stats.cost === "number") parts.push("$" + stats.cost.toFixed(4));
+  var span = document.createElement("span");
+  span.textContent = parts.join(" · ");
+  turn.foot.appendChild(span);
+
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "secondary";
+  copyBtn.textContent = "Copy answer";
+  copyBtn.addEventListener("click", function () {
+    copyText(turn.root.markdownSource || turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
+  });
+  turn.foot.appendChild(copyBtn);
+
+  if (task) {
+    var regenBtn = document.createElement("button");
+    regenBtn.type = "button";
+    regenBtn.className = "secondary";
+    regenBtn.textContent = "Run again";
+    regenBtn.title = "Resubmit this task as a new turn";
+    regenBtn.addEventListener("click", function () {
+      if (busy) return;
+      el.task.value = task;
+      el.form.requestSubmit();
+    });
+    turn.foot.appendChild(regenBtn);
+
+    var editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "secondary";
+    editBtn.textContent = "Edit & resend";
+    editBtn.title = "Put this task back in the composer to change it";
+    editBtn.addEventListener("click", function () {
+      el.task.value = task;
+      el.task.focus();
+      el.task.setSelectionRange(task.length, task.length);
+      syncControls();
+      scrollTo(el.task, "center");
+    });
+    turn.foot.appendChild(editBtn);
+  }
+}
+
+/* Streamed bytes are content by default; a line prefixed with 0x01 is an
+   out-of-band event (tool started, tool finished, error, turn done) —
+   see stream_event_prefix in the server. Buffering on "\n" means a
+   control line split across two network chunks is never misread as
+   content. */
+function makeLineSplitter(onLine) {
+  var buffer = "";
+  return {
+    push: function (chunk) {
+      buffer += chunk;
+      // A control event is introduced by \x01 and terminated by a newline,
+      // but the answer text before it need not end in one. Without this the
+      // two share a line, the \x01 test fails because it is not at index 0,
+      // and the raw {"type":"done"} JSON lands in the answer while the
+      // turn's stats never render. JSON escapes control characters, so a
+      // literal \x01 only ever appears as this marker.
+      buffer = buffer.replace(/([^\n])\u0001/g, "$1\n\u0001");
+      var lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (var i = 0; i < lines.length; i++) onLine(lines[i], true);
+    },
+    flush: function () {
+      if (buffer) onLine(buffer, false);
+      buffer = "";
+    }
+  };
+}
+
+function renderStatus(status) {
+  if (!status) {
+    el.instanceChip.textContent = "disconnected";
+    el.instanceChip.dataset.state = "down";
+    el.peersChip.hidden = true;
+    el.instance.textContent = "unreachable (is `clanker serve` still running?)";
+    el.peers.textContent = "unknown";
+    return;
+  }
+  var peers = status.peers || [];
+  // Chat needs both: the name to mark this instance's own messages and to
+  // derive DM room names, the peer list to offer a DM per peer.
+  instanceName = status.instance.name;
+  knownPeers = peers;
+  el.instanceChip.textContent = status.instance.name;
+  el.instanceChip.dataset.state = "live";
+  el.peersChip.hidden = peers.length === 0;
+  el.peersChip.textContent = peers.length + (peers.length === 1 ? " peer" : " peers");
+  el.instance.textContent = status.instance.name + " (" + status.instance.id + ")";
+
+  el.peers.textContent = "";
+  if (peers.length === 0) {
+    el.peers.textContent = "none configured";
+    return;
+  }
+  var list = document.createElement("ul");
+  peers.forEach(function (p) {
+    var item = document.createElement("li");
+    var name = document.createElement("b");
+    name.textContent = p.name;
+    item.appendChild(name);
+    item.appendChild(document.createTextNode(": "));
+    /* Peer URLs come from config.json; only http(s) becomes a live link so a
+       hand-edited javascript: URL cannot be clicked into execution. */
+    if (/^https?:\/\//i.test(p.url)) {
+      var link = document.createElement("a");
+      link.href = p.url;
+      link.textContent = p.url;
+      item.appendChild(link);
+    } else {
+      item.appendChild(document.createTextNode(p.url));
+    }
+    list.appendChild(item);
+  });
+  el.peers.appendChild(list);
+}
+
+function loadStatus() {
+  return fetch("/api/status")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(renderStatus)
+    .catch(function () { renderStatus(null); });
+}
+
+// ---- image attachments -------------------------------------------------
+
+/* The harness has been multimodal for a while — the agent loop attaches
+   ImageParts — but the composer was a text box, so the one thing you most
+   want to show an agent (a screenshot of the thing you are asking about)
+   could not be sent. Encoded here and posted with the run. */
+var pendingImages = [];
+var max_image_bytes = 4 * 1024 * 1024;
+
+function renderAttachments() {
+  el.attachments.textContent = "";
+  el.attachments.hidden = pendingImages.length === 0;
+  pendingImages.forEach(function (img, i) {
+    var wrap = document.createElement("div");
+    wrap.className = "attachment";
+    var thumb = document.createElement("img");
+    thumb.src = "data:" + img.mime + ";base64," + img.b64;
+    thumb.alt = "Attached image " + (i + 1) + ", " + fmtBytes(img.bytes);
+    wrap.appendChild(thumb);
+    var rm = document.createElement("button");
+    rm.type = "button";
+    rm.textContent = "×";
+    rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
+    rm.addEventListener("click", function () {
+      pendingImages.splice(i, 1);
+      renderAttachments();
+      el.hint.textContent = "";
+    });
+    wrap.appendChild(rm);
+    el.attachments.appendChild(wrap);
+  });
+}
+
+function addImageFile(file) {
+  if (!file || file.type.indexOf("image/") !== 0) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    // Split on the comma: a data: URL is "data:<mime>;base64,<payload>" and
+    // only the payload travels.
+    var comma = String(reader.result).indexOf(",");
+    if (comma === -1) return;
+    var b64 = String(reader.result).slice(comma + 1);
+    // The server enforces the same cap on the decoded size, so measure the
+    // decoded size here rather than the base64 length, which is a third larger.
+    var bytes = Math.floor(b64.length * 3 / 4);
+    if (bytes > max_image_bytes) {
+      el.hint.textContent = "That image is " + fmtBytes(bytes) + "; the limit is " + fmtBytes(max_image_bytes) + ".";
+      return;
+    }
+    pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
+    renderAttachments();
+    el.hint.textContent = pendingImages.length + (pendingImages.length === 1 ? " image attached." : " images attached.");
+  };
+  reader.readAsDataURL(file);
+}
+
+el.task.addEventListener("paste", function (e) {
+  var items = (e.clipboardData && e.clipboardData.items) || [];
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].kind === "file") addImageFile(items[i].getAsFile());
+  }
+});
+
+["dragenter", "dragover"].forEach(function (evt) {
+  el.form.addEventListener(evt, function (e) {
+    if (!e.dataTransfer) return;
+    e.preventDefault();
+    el.form.classList.add("dragging");
+  });
+});
+["dragleave", "drop"].forEach(function (evt) {
+  el.form.addEventListener(evt, function () { el.form.classList.remove("dragging"); });
+});
+el.form.addEventListener("drop", function (e) {
+  if (!e.dataTransfer || !e.dataTransfer.files) return;
+  e.preventDefault();
+  for (var i = 0; i < e.dataTransfer.files.length; i++) addImageFile(e.dataTransfer.files[i]);
+});
+
+el.task.addEventListener("input", syncControls);
+
+el.task.addEventListener("keydown", function (e) {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    el.form.requestSubmit();
+  }
+});
+
+el.refresh.addEventListener("click", function () {
+  el.refresh.disabled = true;
+  loadStatus().finally(function () { el.refresh.disabled = busy; });
+});
+
+el.cancel.addEventListener("click", function () {
+  if (controller) controller.abort();
+});
+
+el.form.addEventListener("submit", function (e) {
+  e.preventDefault();
+  var task = el.task.value.trim();
+  if (busy || task === "") return;
+
+  var turn = createTurn(task);
+  scrollTo(turn.root, "start");
+
+  // Submit is about to be disabled. If it holds focus, focus would fall to
+  // <body> and a keyboard user would have to tab the whole page to reach
+  // Stop; hand it over deliberately instead.
+  var handOffFocus = document.activeElement === el.submit;
+  setBusy(true);
+  if (handOffFocus) el.cancel.focus();
+  el.hint.textContent = "";
+  showCaret(turn, true);
+  var startedAt = Date.now();
+  startElapsed(startedAt);
+  controller = new AbortController();
+
+  var opts = runOptions();
+  var statsRendered = false;
+  var splitter = makeLineSplitter(function (line) {
+    if (line.charCodeAt(0) === 1) {
+      var evt;
+      try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
+      if (evt.type === "tool_call") addToolEvent(turn, evt.names);
+      else if (evt.type === "tool_result") settleLastToolEvent(turn, evt.ms);
+      else if (evt.type === "error") appendText(turn, "\n[" + evt.message + "]\n", true);
+      else if (evt.type === "done") {
+        renderStats(turn, evt, task);
+        statsRendered = true;
+      }
+      return;
+    }
+    var stick = nearBottom();
+    appendText(turn, line + "\n", false);
+    if (stick) window.scrollTo(0, document.body.scrollHeight);
+    else syncScrollButton();
+  });
+
+  fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      task: task,
+      stream: true,
+      session: sessionId,
+      images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
+      provider: opts.provider || "",
+      model: opts.model || "",
+      temperature: typeof opts.temperature === "number" ? opts.temperature : null,
+      top_p: typeof opts.top_p === "number" ? opts.top_p : null
+    }),
+    signal: controller.signal
+  }).then(function (resp) {
+    if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    return (function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) return;
+        splitter.push(decoder.decode(chunk.value, { stream: true }));
+        return pump();
+      });
+    })();
+  }).then(function () {
+    splitter.flush();
+    finalizeAnswer(turn);
+    el.task.value = "";
+    // Attachments belong to the turn that just went out, not the next one.
+    pendingImages = [];
+    renderAttachments();
+    // The turn just gave this session its title and a newer timestamp, and a
+    // first turn created it server-side at all — so the picker is refreshed
+    // rather than left describing the conversation as it was before.
+    loadSessions();
+  }).catch(function (err) {
+    splitter.flush();
+    if (err && err.name === "AbortError") {
+      // Was a CSS ::after on a `stopped` class, which meant Copy answer
+      // handed back a truncated answer with nothing saying it had been cut
+      // short, and left the state to generated content that screen readers
+      // expose inconsistently.
+      markTurn(turn, "\n[stopped]");
+    } else {
+      appendText(turn, "\n[run failed: " + err.message + "]\n", true);
+    }
+  }).finally(function () {
+    showCaret(turn, false);
+    // A run that errored or was stopped never emits `done`, so the turn
+    // would end with no way to copy what did arrive and no way to retry the
+    // task that just failed — the two things most wanted after a failure.
+    // renderStats omits any number it wasn't given, so an empty stats object
+    // yields just the buttons.
+    if (!statsRendered) renderStats(turn, {}, task);
+    stopElapsed();
+    el.hint.textContent = "";
+    controller = null;
+    // Stop is about to be hidden; take focus back to the composer rather
+    // than letting it drop to <body>.
+    var focusWasOnStop = document.activeElement === el.cancel;
+    setBusy(false);
+    if (focusWasOnStop) el.task.focus();
+  });
+});
+
+
+// ---- runs: pick a recorded run, draw its execution graph ----------------
+
+function runLabel(r) {
+  var task = (r.task || "").replace(/\s+/g, " ").trim();
+  if (task.length > 60) task = task.slice(0, 59) + "…";
+  return r.run_id + "  ·  " + (task || "(no task)");
+}
+
+var allRuns = [];
+
+/* Rebuilds the <select>'s actual option list from allRuns filtered by
+   substring match on task text or run id — kept as a real native <select>
+   (free keyboard nav, native mobile picker) rather than a custom dropdown;
+   hiding <option>s with CSS isn't reliably respected by every browser's
+   native combobox rendering, but replacing the option list outright always
+   works. */
+function renderRunOptions(filterText) {
+  var q = (filterText || "").trim().toLowerCase();
+  var matches = !q ? allRuns : allRuns.filter(function (r) {
+    return (r.task || "").toLowerCase().indexOf(q) !== -1 || r.run_id.toLowerCase().indexOf(q) !== -1;
+  });
+  var previous = el.runSelect.value;
+  el.runSelect.textContent = "";
+  matches.forEach(function (r) {
+    var opt = document.createElement("option");
+    opt.value = r.run_id;
+    opt.textContent = runLabel(r);
+    el.runSelect.appendChild(opt);
+  });
+  if (!matches.length) {
+    el.runSelect.disabled = true;
+    el.runGraph.textContent = "";
+    // The open node detail belongs to a run that is no longer listed or
+    // drawn; leaving it up would attribute one run's output to whatever is
+    // selected next.
+    closeNodeDetail();
+    var none = document.createElement("p");
+    none.className = "run-empty";
+    none.textContent = q ? "No recorded runs match “" + filterText.trim() + "”." : "No runs recorded yet. Run a task and it appears here.";
+    el.runGraph.appendChild(none);
+    announceRunMatches(q, 0);
+    return null;
+  }
+  el.runSelect.disabled = false;
+  var wanted = matches.some(function (r) { return r.run_id === previous; }) ? previous : matches[0].run_id;
+  el.runSelect.value = wanted;
+  announceRunMatches(q, matches.length);
+  return wanted;
+}
+
+/* The filter's whole result — how many runs matched, which one is now shown —
+   is conveyed by the option list and the graph redrawing, both silent. Says
+   it out loud for anyone who can't see either. Left empty while unfiltered,
+   so simply loading the page announces nothing. */
+function announceRunMatches(query, count) {
+  if (!query) {
+    el.runStatus.textContent = "";
+    return;
+  }
+  el.runStatus.textContent = count === 0
+    ? "No runs match " + query + "."
+    : count + (count === 1 ? " run matches " : " runs match ") + query + ". Showing the first.";
+}
+
+function loadRuns() {
+  return fetch("/api/runs")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (runs) {
+      allRuns = runs;
+      var wanted = renderRunOptions(el.runFilter.value);
+      if (wanted) return loadRun(wanted);
+    })
+    .catch(function (err) {
+      showRunsError("Could not load runs: " + err.message);
+    });
+}
+
+/* Failures land in #run-graph, which is a plain group — nothing would say
+   them out loud. Routed through the status region so a failed Refresh is
+   not silence. */
+function showRunsError(message) {
+  el.runGraph.textContent = "";
+  var p = document.createElement("p");
+  p.className = "run-empty";
+  p.textContent = message;
+  el.runGraph.appendChild(p);
+  el.runStatus.textContent = message;
+}
+
+function loadRun(id) {
+  return fetch("/api/runs/" + encodeURIComponent(id))
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(drawRun)
+    .catch(function (err) {
+      showRunsError("Could not load that run: " + err.message);
+    });
+}
+
+function metricsFor(n) {
+  if (n.kind === "llm") {
+    return n.prompt_tokens + "/" + n.completion_tokens + " tok · " + n.duration_ms + "ms";
+  }
+  if (n.kind === "tool") {
+    return n.result_bytes + " B · " + n.duration_ms + "ms";
+  }
+  return "answer " + n.result_bytes + " B";
+}
+
+/* The run is a chain of iterations: one llm node decides, then zero or
+   more tool nodes run (in parallel when the model asked for several at
+   once), then the next llm node picks up from there — until an llm node
+   decides it's done and a final node closes the run. Group the flat node
+   list back into that shape so it can be drawn as boxes and arrows instead
+   of a bar chart pretending to be a timeline. */
+function buildStages(nodes) {
+  var stages = [];
+  var final = null;
+  nodes.forEach(function (n) {
+    if (n.kind === "llm") stages.push({ iteration: n.iteration, llm: n, tools: [] });
+    else if (n.kind === "tool" && stages.length) stages[stages.length - 1].tools.push(n);
+    else if (n.kind === "final") final = n;
+  });
+  return { stages: stages, final: final };
+}
+
+var lastGraph = null;
+var lastBuilt = null;
+var resizeTimer = null;
+window.addEventListener("resize", function () {
+  if (resizeTimer) window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(function () {
+    if (lastGraph) drawRun(lastGraph);
+  }, 150);
+});
+
+function drawRun(g) {
+  // Redraws also happen on window resize (same run, new layout) — only
+  // close the detail panel when the run itself actually changed, not on
+  // every resize while someone's mid-read of a node's output.
+  if (!lastGraph || lastGraph.run_id !== g.run_id) {
+    el.runDetail.hidden = true;
+    el.runDetail.textContent = "";
+  }
+  lastGraph = g;
+  el.runGraph.textContent = "";
+  var nodes = g.nodes || [];
+
+  var head = document.createElement("p");
+  head.className = "run-head";
+  head.textContent = g.run_id + " · " + (g.provider || "?") + " · " + g.duration_ms + "ms · " +
+    g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion tok\n" + (g.task || "");
+  el.runGraph.appendChild(head);
+
+  if (!nodes.length) {
+    var empty = document.createElement("p");
+    empty.className = "run-empty";
+    empty.textContent = "This run recorded no nodes.";
+    el.runGraph.appendChild(empty);
+    return;
+  }
+
+  var built = buildStages(nodes);
+  lastBuilt = built;
+  // Duration bars are scaled against the slowest node, not the run total:
+  // one long LLM call would otherwise flatten every tool call to an
+  // invisible sliver.
+  var slowest = nodes.reduce(function (m, n) {
+    return n.kind === "final" ? m : Math.max(m, n.duration_ms || 0);
+  }, 0) || 1;
+
+  // The SVG arrows that show branching/convergence are aria-hidden (each
+  // node's own aria-label already covers its kind/name/metrics); without
+  // this, a screen-reader user gets a flat list of nodes with no sense of
+  // which tool calls ran in parallel or what fed into what.
+  var summary = document.createElement("p");
+  summary.className = "sr-only";
+  summary.textContent = graphSummaryText(built);
+  el.runGraph.appendChild(summary);
+
+  var canvas = document.createElement("div");
+  canvas.className = "run-canvas";
+  // Focusable so a graph wider than the viewport can be scrolled with arrow
+  // keys even when it holds nothing focusable (a run that recorded only the
+  // "did not finish" marker); node boxes are buttons and reachable on their
+  // own.
+  canvas.tabIndex = 0;
+  canvas.setAttribute("aria-label", "Scrollable execution graph diagram");
+  el.runGraph.appendChild(canvas);
+
+  // d3-dag is fetched on demand, so the first graph of a session draws one
+  // network round-trip later than the rest of the page.
+  loadD3().then(function () {
+    // A newer run may have been requested while the library was in flight.
+    if (canvas.isConnected) layoutGraph(canvas, built, slowest);
+  }).catch(function (err) {
+    var errEl = document.createElement("p");
+    errEl.className = "run-empty";
+    errEl.textContent = "Could not load the graph layout library: " + err.message;
+    canvas.appendChild(errEl);
+    el.runStatus.textContent = errEl.textContent;
+  });
+}
+
+function graphSummaryText(built) {
+  var parts = ["Execution graph:"];
+  built.stages.forEach(function (stage) {
+    var seg = "iteration " + stage.iteration + " called the model";
+    if (stage.tools.length === 1) {
+      seg += ", then ran 1 tool (" + stage.tools[0].label + ")";
+    } else if (stage.tools.length > 1) {
+      seg += ", then ran " + stage.tools.length + " tools in parallel (" +
+        stage.tools.map(function (t) { return t.label; }).join(", ") + ")";
+    }
+    parts.push(seg + ".");
+  });
+  parts.push(built.final ? "The run ended with a final answer." : "The run ended without a final answer.");
+  return parts.join(" ");
+}
+
+/* Turns the stage list into d3-dag's flat {id, parentIds} input: each llm
+   node's parents are whatever fed it (the previous llm directly, or that
+   iteration's tool cluster), each tool's parent is its iteration's llm,
+   and a synthetic "incomplete" node closes off a run that ended without a
+   final node (hit the iteration cap or the token budget) instead of
+   leaving the chain dangling with no visible outcome. */
+function toDagInput(built) {
+  var data = [];
+  var parents = [];
+  built.stages.forEach(function (stage, si) {
+    var llmId = "n" + data.length;
+    data.push({ id: llmId, parentIds: parents, kind: "llm", node: stage.llm, iteration: stage.iteration });
+    if (stage.tools.length) {
+      parents = stage.tools.map(function (tn) {
+        var tid = "n" + data.length;
+        data.push({ id: tid, parentIds: [llmId], kind: "tool", node: tn });
+        return tid;
+      });
+    } else {
+      parents = [llmId];
+    }
+  });
+  if (data.length) {
+    data.push(built.final
+      ? { id: "n" + data.length, parentIds: parents, kind: "final", node: built.final }
+      : { id: "n" + data.length, parentIds: parents, kind: "incomplete", node: null });
+  }
+  return data;
+}
+
+/* Lays the DAG out with d3-dag's Sugiyama layered algorithm (proper
+   crossing minimization instead of hand-rolled fan-out math — this is the
+   same layered-graph technique tools like dagre/Airflow's DAG view use)
+   and draws the result as accessible DOM boxes with an SVG arrow layer
+   behind them. A layer wider than the viewport scrolls horizontally
+   inside .run-canvas rather than wrapping or shrinking nodes. */
+function layoutGraph(canvas, built, slowest) {
+  var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
+  // The iteration-number tag hangs left of each llm node's own box (see
+  // .run-iter-tag placement below), so the left edge needs extra room or
+  // it clips into an unnecessary scrollbar.
+  var tagPad = 42;
+  var containerW = canvas.clientWidth || el.runGraph.clientWidth || 320;
+
+  var data = toDagInput(built);
+  if (!data.length) return;
+
+  /* Build every box first and measure it. A box's height depends on its
+     kind (a final node has no duration bar) and on whether its metrics line
+     wraps, so it ranges from roughly 60 to 90px. The layout used to assume
+     one constant instead, which put consecutive layers on top of each other
+     and left every arrowhead buried under the box it pointed at. */
+  data.forEach(function (d) {
+    d.el = d.kind === "incomplete" ? buildIncompleteNode(nodeW) : buildNodeBox(d, slowest, nodeW);
+    d.el.style.visibility = "hidden";
+    canvas.appendChild(d.el);
+  });
+  var nodeH = 0;
+  data.forEach(function (d) {
+    d.h = d.el.offsetHeight;
+    nodeH = Math.max(nodeH, d.h);
+  });
+
+  var dag;
+  try {
+    dag = window.d3.dagStratify()(data);
+  } catch (e) {
+    canvas.textContent = "";
+    var errEl = document.createElement("p");
+    errEl.className = "run-empty";
+    errEl.textContent = "Could not lay out this run's graph: " + e.message;
+    canvas.appendChild(errEl);
+    el.runStatus.textContent = errEl.textContent;
+    return;
+  }
+  // The tallest box sets the layer pitch, so no pair of layers can collide
+  // however the shorter boxes in between are sized.
+  window.d3.sugiyama().nodeSize([nodeW + hGap, nodeH + vGap])(dag);
+
+  var xs = [], ys = [];
+  for (var dn0 of dag.idescendants()) { xs.push(dn0.x); ys.push(dn0.y); }
+  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+  var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+  var graphW = maxX - minX + nodeW;
+  var graphH = maxY - minY + nodeH;
+  var offsetX = pad + tagPad + nodeW / 2 - minX + Math.max(0, (containerW - pad * 2 - tagPad - graphW) / 2);
+  var offsetY = pad + nodeH / 2 - minY;
+
+  var totalW = Math.max(containerW, graphW + pad * 2 + tagPad);
+  var totalH = graphH + pad * 2;
+  canvas.style.height = totalH + "px";
+  // No canvas.style.minWidth here on purpose: absolutely-positioned nodes
+  // and the SVG edge layer (sized to totalW) create scrollable overflow
+  // inside .run-canvas on their own once they exceed its box. Forcing the
+  // box itself to totalW via min-width would make the *page* that wide
+  // instead of scrolling inside this container.
+
+  var svgNS = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("class", "run-edges");
+  svg.setAttribute("width", totalW);
+  svg.setAttribute("height", totalH);
+  svg.setAttribute("aria-hidden", "true");
+
+  var defs = document.createElementNS(svgNS, "defs");
+  var marker = document.createElementNS(svgNS, "marker");
+  marker.setAttribute("id", "run-arrow");
+  marker.setAttribute("viewBox", "0 0 8 8");
+  marker.setAttribute("refX", "7");
+  marker.setAttribute("refY", "4");
+  marker.setAttribute("markerWidth", "6");
+  marker.setAttribute("markerHeight", "6");
+  marker.setAttribute("orient", "auto-start-reverse");
+  var arrowPath = document.createElementNS(svgNS, "path");
+  arrowPath.setAttribute("d", "M0,0 L8,4 L0,8 z");
+  arrowPath.setAttribute("fill", "var(--border)");
+  marker.appendChild(arrowPath);
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  /* Sugiyama hands back centre-to-centre polylines. Drawing them as-is put
+     the arrowhead inside the opaque target box, so no arrow was ever
+     visible: clip the ends back to each box's edge instead. */
+  for (var link of dag.ilinks()) {
+    var pts = link.points.map(function (p) { return [p.x + offsetX, p.y + offsetY]; });
+    pts[0][1] = link.source.y + offsetY + link.source.data.h / 2;
+    pts[pts.length - 1][1] = link.target.y + offsetY - link.target.data.h / 2 - 3;
+    var d = "M" + pts[0][0] + "," + pts[0][1];
+    for (var pi = 1; pi < pts.length; pi++) d += " L" + pts[pi][0] + "," + pts[pi][1];
+    var path = document.createElementNS(svgNS, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("marker-end", "url(#run-arrow)");
+    svg.appendChild(path);
+  }
+  // Behind the boxes, which are already in the canvas from the measuring pass.
+  canvas.insertBefore(svg, canvas.firstChild);
+
+  for (var dn of dag.idescendants()) {
+    var cx = dn.x + offsetX, cy = dn.y + offsetY;
+    let kind = dn.data.kind, node = dn.data.node, box = dn.data.el;
+
+    // Each box is centred on its own height, not on a shared constant.
+    box.style.left = (cx - nodeW / 2) + "px";
+    box.style.top = (cy - dn.data.h / 2) + "px";
+    box.style.visibility = "";
+
+    if (kind === "incomplete") continue;
+
+    if (kind === "llm") {
+      var tag = document.createElement("span");
+      tag.className = "run-iter-tag";
+      tag.textContent = dn.data.iteration;
+      tag.style.left = (cx - nodeW / 2 - 20) + "px";
+      tag.style.top = (cy - 11) + "px";
+      tag.setAttribute("aria-hidden", "true");
+      canvas.appendChild(tag);
+    }
+
+    box.addEventListener("click", function () {
+      el.runGraph.querySelectorAll(".run-node.selected").forEach(function (n) { n.classList.remove("selected"); });
+      box.classList.add("selected");
+      showNodeDetail(kind, node);
+    });
+  }
+}
+
+function buildIncompleteNode(nodeW) {
+  var stop = document.createElement("div");
+  stop.className = "run-node-incomplete";
+  stop.style.width = nodeW + "px";
+  stop.textContent = "did not finish";
+  // Real text, not aria-label: this is a plain <div> with no role, where
+  // aria-label is ignored by most screen readers — so the reason, the only
+  // place the *why* is stated, never reached assistive tech at all.
+  var why = document.createElement("span");
+  why.className = "sr-only";
+  why.textContent = " — the run ended without a final answer, most likely hitting the iteration limit or the token budget.";
+  stop.appendChild(why);
+  return stop;
+}
+
+function buildNodeBox(d, slowest, nodeW) {
+  var kind = d.kind, node = d.node;
+  var box = document.createElement("button");
+  box.type = "button";
+  box.className = "run-node";
+  box.dataset.kind = kind;
+  if (node.ok === false) box.dataset.ok = "false";
+  box.style.width = nodeW + "px";
+
+  var kindEl = document.createElement("span");
+  kindEl.className = "run-node-kind";
+  kindEl.textContent = (node.ok === false ? "✕ " : "") + kind;
+  box.appendChild(kindEl);
+
+  var label = document.createElement("span");
+  label.className = "run-node-label";
+  label.textContent = node.label || node.detail || kind;
+  // The box ellipsises a long tool name; without this only a screen-reader
+  // user (via aria-label below) could find out what it was.
+  label.title = label.textContent;
+  box.appendChild(label);
+
+  var metrics = document.createElement("span");
+  metrics.className = "run-node-metrics";
+  metrics.textContent = metricsFor(node);
+  box.appendChild(metrics);
+
+  if (kind !== "final") {
+    var bar = document.createElement("span");
+    bar.className = "run-node-bar";
+    var barFill = document.createElement("span");
+    barFill.style.width = Math.max(2, Math.round((node.duration_ms || 0) / slowest * 100)) + "%";
+    bar.appendChild(barFill);
+    box.appendChild(bar);
+  }
+
+  // The bar and the ✕ mark are decorative; the label already carries
+  // kind, name, and every number a screen reader needs.
+  box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
+  return box;
+}
+
+/* A collapsible tree for JSON-shaped node output — most tool results are
+   JSON, and a flat highlighted blob makes a large payload (a big file
+   listing, a nested API response) a wall of text with no way to collapse
+   the part you don't care about. <details>/<summary> gives keyboard
+   toggle and correct semantics for free, no custom ARIA needed. */
+function buildJsonTree(value, keyLabel, depth) {
+  if (value === null) return jsonLeaf(keyLabel, "null", "hljs-literal");
+  if (typeof value === "boolean") return jsonLeaf(keyLabel, String(value), "hljs-literal");
+  if (typeof value === "number") return jsonLeaf(keyLabel, String(value), "hljs-number");
+  if (typeof value === "string") return jsonLeaf(keyLabel, JSON.stringify(value), "hljs-string");
+  if (Array.isArray(value)) {
+    var items = value.map(function (v, i) { return [String(i), v]; });
+    return jsonBranch(keyLabel, items, "[", "]", items.length + (items.length === 1 ? " item" : " items"), depth);
+  }
+  var entries = Object.keys(value).map(function (k) { return [k, value[k]]; });
+  return jsonBranch(keyLabel, entries, "{", "}", entries.length + (entries.length === 1 ? " key" : " keys"), depth);
+}
+
+function jsonLeaf(keyLabel, text, valueClass) {
+  var row = document.createElement("div");
+  // .json-row's ::before reserves the same width as a branch's disclosure
+  // triangle, so a leaf key and a branch key at one level start at the same
+  // x. Without it the left edge jitters by 1em with no relation to nesting,
+  // which is the one thing a tree's left edge is supposed to encode.
+  row.className = "json-row";
+  if (keyLabel !== null) {
+    var k = document.createElement("span");
+    k.className = "json-key";
+    k.textContent = keyLabel + ": ";
+    row.appendChild(k);
+  }
+  var v = document.createElement("span");
+  v.className = valueClass;
+  v.textContent = text;
+  row.appendChild(v);
+  return row;
+}
+
+function jsonBranch(keyLabel, entries, open, close, countLabel, depth) {
+  if (!entries.length) return jsonLeaf(keyLabel, open + close, "json-empty");
+  var details = document.createElement("details");
+  details.className = "json-node";
+  // Root and its immediate children open, everything below collapsed: a tree
+  // that arrives fully expanded is the wall of text it was built to replace.
+  // A closed branch still says what it holds ("{ 3 keys }"), so nothing is
+  // hidden that the reader can't see they are choosing not to open.
+  details.open = depth < 1;
+  var summary = document.createElement("summary");
+  if (keyLabel !== null) {
+    var k = document.createElement("span");
+    k.className = "json-key";
+    k.textContent = keyLabel + ": ";
+    summary.appendChild(k);
+  }
+  var brace = document.createElement("span");
+  brace.className = "json-brace";
+  brace.textContent = open + " " + countLabel + " " + close;
+  summary.appendChild(brace);
+  details.appendChild(summary);
+  var body = document.createElement("div");
+  body.className = "json-children";
+  entries.forEach(function (pair) { body.appendChild(buildJsonTree(pair[1], pair[0], depth + 1)); });
+  details.appendChild(body);
+  return details;
+}
+
+/* Populates the persistent detail panel below the graph with whatever a
+   clicked node recorded: not just its size, but the actual truncated tool
+   result or model output (graph.zig's Node.output; earlier versions of
+   recorded runs won't have it, hence the empty-state in the CSS). */
+function showNodeDetail(kind, node) {
+  el.runDetail.textContent = "";
+  el.runDetail.hidden = false;
+
+  var head = document.createElement("div");
+  head.className = "run-detail-head";
+
+  var titleWrap = document.createElement("span");
+  var title = document.createElement("span");
+  title.className = "run-detail-title";
+  title.textContent = (node.ok === false ? "✕ " : "") + kind + " · " + (node.label || node.detail || kind);
+  titleWrap.appendChild(title);
+  var meta = document.createElement("span");
+  meta.className = "run-detail-meta";
+  meta.textContent = "  " + metricsFor(node) + (node.detail ? "  ·  " + node.detail : "");
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+
+  var closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "secondary run-detail-close";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", closeNodeDetail);
+  head.appendChild(closeBtn);
+
+  el.runDetail.appendChild(head);
+
+  /* The server records only the first `output_preview_cap` bytes of a node's
+     result (graph.zig), and a JSON document cut mid-structure no longer
+     parses — so the tree below silently never appears for exactly the large
+     payloads it exists to make readable. Saying so beats letting the view
+     quietly degrade into a wall of text with no explanation.
+
+     Derived rather than flagged by the server: `result_bytes` is the full
+     byte length and `output` is the capped preview, so comparing them is
+     exact. Both sides are byte counts, so multi-byte content cannot fake it
+     the way comparing against a UTF-16 string length would. */
+  var shownBytes = node.output ? new TextEncoder().encode(node.output).length : 0;
+  var truncated = typeof node.result_bytes === "number" && node.result_bytes > shownBytes;
+  if (truncated) {
+    var note = document.createElement("p");
+    note.className = "run-detail-note";
+    note.textContent = "Showing the first " + shownBytes + " of " + node.result_bytes +
+      " bytes — the rest was not recorded, so this is raw text rather than a parsed tree.";
+    el.runDetail.appendChild(note);
+  }
+
+  // A div, not a <pre>: the JSON-tree branch fills this with interactive
+  // <details> elements, and <pre> implies preformatted text content, not a
+  // widget tree. .run-detail-output already sets white-space: pre-wrap
+  // itself, so nothing about the flat-text case depends on the tag.
+  var out = document.createElement("div");
+  out.className = "run-detail-output";
+  // Left truly empty (no child) when there's nothing recorded, so the
+  // :empty CSS placeholder still fires.
+  if (node.output) {
+    var parsed;
+    // Not attempted on a truncated preview: it cannot parse, and the note
+    // above has already explained why the tree is missing.
+    if (!truncated) {
+      try { parsed = JSON.parse(node.output); } catch (e) { parsed = undefined; }
+    }
+    if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
+      var tree = document.createElement("div");
+      tree.className = "json-tree";
+      tree.appendChild(buildJsonTree(parsed, null, 0));
+      out.appendChild(tree);
+    } else {
+      var outCode = document.createElement("code");
+      highlightInto(outCode, null, node.output);
+      out.appendChild(outCode);
+    }
+  }
+  el.runDetail.appendChild(out);
+
+  scrollTo(el.runDetail, "nearest");
+  // Without this, focus stays on the node button that was just activated;
+  // a keyboard user tabbing onward would walk through every remaining
+  // node in the graph before ever reaching this panel's Close button,
+  // instead of landing on the thing that just appeared.
+  closeBtn.focus();
+}
+
+/* Hides the panel and clears the graph's selection. Shared by the Close
+   button and by anything that removes the run the panel is describing. */
+function closeNodeDetail() {
+  el.runDetail.hidden = true;
+  el.runDetail.textContent = "";
+  el.runGraph.querySelectorAll(".run-node.selected").forEach(function (n) { n.classList.remove("selected"); });
+}
+
+el.runSelect.addEventListener("change", function () {
+  loadRun(el.runSelect.value);
+});
+
+var runFilterTimer = null;
+el.runFilter.addEventListener("input", function () {
+  if (runFilterTimer) window.clearTimeout(runFilterTimer);
+  runFilterTimer = window.setTimeout(function () {
+    var wanted = renderRunOptions(el.runFilter.value);
+    // Narrowing a filter usually leaves the same run on top. Refetching and
+    // relaying out the graph it is already showing costs a round trip and a
+    // full remeasure of every node box for no visible change.
+    if (wanted && (!lastGraph || lastGraph.run_id !== wanted)) loadRun(wanted);
+  }, 120);
+});
+
+el.runsRefresh.addEventListener("click", function () {
+  el.runsRefresh.disabled = true;
+  loadRuns().finally(function () { el.runsRefresh.disabled = false; });
+});
+
+// ---- chat: shared rooms and direct messages between clankers -----------
+
+/* A direct message is a room, not a second mechanism: both sides derive the
+   same name from the two instance names sorted, so `dm:a|b` is the same
+   channel whichever end opens it. That means DMs inherit the whole existing
+   room pipeline — history, subscription, the agent's inbox — for free. */
+function dmRoom(a, b) {
+  return "dm:" + [dmSafeName(a), dmSafeName(b)].sort().join("|");
+}
+
+/* `|` separates the two halves of the room name, so a name containing one
+   would split into three parts and make each side read the wrong partner
+   out of it. Instance names are free-form config, so this is reachable. */
+function dmSafeName(name) {
+  return String(name).replace(/\|/g, "-");
+}
+
+/* Whichever half is not this instance. Written as "the part that isn't me"
+   rather than an index so a malformed room name degrades to showing
+   something plausible instead of `undefined`. */
+function dmPartner(room) {
+  var parts = room.slice("dm:".length).split("|");
+  var mine = dmSafeName(instanceName);
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] !== mine) return parts[i];
+  }
+  return parts[parts.length - 1] || room;
+}
+
+function isDm(room) {
+  return room.indexOf("dm:") === 0;
+}
+
+var instanceName = "";
+var knownPeers = [];
+var subscribedRooms = [];
+var chatPoll = null;
+var chatLastTs = 0;
+var chatSeen = {};
+var chatSeenOrder = [];
+var chat_seen_cap = 500;
+// Mirrors chatrooms.max_text_len in the server.
+var chat_max_bytes = 4096;
+var chat_poll_base_ms = 5000;
+var chat_poll_max_ms = 60000;
+var chatBackoff = chat_poll_base_ms;
+var chatFailing = false;
+
+function chatRoomLabel(r) {
+  if (!isDm(r.room)) return "# " + r.room;
+  var who = dmPartner(r.room);
+  return clankerMark(who) + " " + who;
+}
+
+/* Rooms the server knows about, plus a DM entry per configured peer even
+   when that conversation has no messages yet — otherwise the only way to
+   start a DM would be to have already started one. */
+function renderChatRooms(rooms) {
+  var previous = el.chatRoom.value;
+  el.chatRoom.textContent = "";
+
+  var shared = rooms.filter(function (r) { return !isDm(r.room); });
+  var dms = rooms.filter(function (r) { return isDm(r.room); });
+  knownPeers.forEach(function (p) {
+    if (p.name === instanceName) return;
+    var room = dmRoom(instanceName, p.name);
+    if (!dms.some(function (d) { return d.room === room; })) dms.push({ room: room, messages: 0 });
+  });
+
+  [["Rooms", shared], ["Direct", dms]].forEach(function (pair) {
+    if (!pair[1].length) return;
+    var group = document.createElement("optgroup");
+    group.label = pair[0];
+    pair[1].forEach(function (r) {
+      var opt = document.createElement("option");
+      opt.value = r.room;
+      opt.textContent = chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : "");
+      group.appendChild(opt);
+    });
+    el.chatRoom.appendChild(group);
+  });
+
+  var options = el.chatRoom.querySelectorAll("option");
+  if (!options.length) {
+    el.chatRoom.disabled = true;
+    el.chatText.disabled = true;
+    el.chatSend.disabled = true;
+    el.chatStatus.textContent = "No rooms and no peers configured.";
+    return null;
+  }
+  el.chatRoom.disabled = false;
+  var wanted = Array.prototype.some.call(options, function (o) { return o.value === previous; })
+    ? previous : options[0].value;
+  el.chatRoom.value = wanted;
+  return wanted;
+}
+
+function loadChatRooms() {
+  return fetch("/api/chat/rooms")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      subscribedRooms = data.subscribed || [];
+      var wanted = renderChatRooms(data.rooms || []);
+      if (wanted) return openChatRoom(wanted);
+    })
+    .catch(function (err) {
+      el.chatRoom.disabled = true;
+      el.chatText.disabled = true;
+      el.chatSend.disabled = true;
+      el.chatStatus.textContent = "Could not load rooms: " + err.message;
+    });
+}
+
+function openChatRoom(room) {
+  stopChatPoll();
+  el.chatLog.textContent = "";
+  chatLastTs = 0;
+  chatSeen = {};
+  chatSeenOrder = [];
+  chatBackoff = chat_poll_base_ms;
+  el.chatText.disabled = false;
+  el.chatSend.disabled = false;
+  el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
+  // Opening a room fills the log with its history, and a live region would
+  // read every one of those out as if it had just arrived. Announcements
+  // start once the backlog is in place.
+  el.chatLog.setAttribute("aria-live", "off");
+  return joinIfNeeded(room)
+    .then(function () { return pollChat(room); })
+    .then(function () {
+      el.chatLog.setAttribute("aria-live", "polite");
+      startChatPoll(room);
+    });
+}
+
+/* A peer's message is only logged for rooms this instance has joined, so
+   opening a DM has to join it — otherwise the first reply would arrive at a
+   room the receiving side is refusing, and the conversation would look
+   one-sided from both ends. */
+function joinIfNeeded(room) {
+  if (subscribedRooms.indexOf(room) !== -1) return Promise.resolve();
+  return fetch("/api/chat/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ room: room, on: true })
+  }).then(function (r) {
+    if (r.ok) subscribedRooms.push(room);
+  }).catch(function () {
+    // Reading still works unsubscribed; only inbound delivery is affected,
+    // and the next Refresh retries the join.
+  });
+}
+
+/* Fetches only what arrived after the newest message already shown. The id
+   check is belt and braces: two messages can share a timestamp at
+   one-second resolution, and `after` is inclusive of neither side reliably
+   once that happens. */
+function pollChat(room) {
+  return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      chatBackoff = chat_poll_base_ms;
+      // Leaving the failure notice up after recovery would keep promising a
+      // retry that already happened.
+      if (chatFailing) {
+        chatFailing = false;
+        el.chatStatus.textContent = "Reconnected.";
+      }
+      // The log is returned newest-first (it is read backwards to honour the
+      // 50-message limit); a conversation reads downwards, so it is flipped
+      // before appending.
+      var fresh = (data.messages || [])
+        .filter(function (m) { return !chatSeen[m.id]; })
+        .sort(function (a, b) { return a.ts - b.ts; });
+      // Measured before anything is appended: whether to follow the
+      // conversation depends on where the reader was, not where they end up.
+      var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
+      fresh.forEach(function (m) {
+        rememberChatId(m.id);
+        if (m.ts > chatLastTs) chatLastTs = m.ts;
+        el.chatLog.appendChild(buildChatMessage(m));
+      });
+      // Only chase the bottom for someone already at it. Scrolling a reader
+      // away from the message they are part-way through is worse than making
+      // them scroll down for themselves.
+      if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
+    })
+    .catch(function (err) {
+      // Backs off rather than giving up. Stopping outright meant one
+      // transient 500 — a server restart, say — silently ended live updates
+      // for the rest of the session, with only a stale error line to show
+      // for it.
+      chatFailing = true;
+      chatBackoff = Math.min(chatBackoff * 3, chat_poll_max_ms);
+      el.chatStatus.textContent = "Could not load messages: " + err.message +
+        " — retrying in " + Math.round(chatBackoff / 1000) + "s.";
+    });
+}
+
+/* Bounded so a room left open all day does not accumulate an id per message
+   forever. Only the recent window matters: `after` already keeps the server
+   from resending anything older, so the set exists to catch the overlap at
+   the boundary, not to remember the whole room. */
+function rememberChatId(id) {
+  chatSeen[id] = true;
+  chatSeenOrder.push(id);
+  while (chatSeenOrder.length > chat_seen_cap) {
+    delete chatSeen[chatSeenOrder.shift()];
+  }
+}
+
+/* A stable emoji per instance, so a busy room is scannable by shape before
+   you read a single name. Derived from the name rather than assigned, so
+   every clanker independently agrees on who is who with no shared state and
+   no registry — the same reasoning as the DM room name. Collisions are
+   possible with enough peers; the name is still right there next to it. */
+var CLANKER_MARKS = [
+  "🐙", "🦊", "🦉", "🐢", "🦋", "🐝", "🦔", "🦦",
+  "🦭", "🐬", "🦅", "🦩", "🐸", "🦎", "🐿️", "🦡",
+  "🪼", "🦑", "🐳", "🦌", "🐺", "🦂", "🕷️", "🦜"
+];
+
+function clankerMark(name) {
+  var h = 5381;
+  for (var i = 0; i < name.length; i++) {
+    // djb2, kept in 32-bit range so the result does not drift with length.
+    h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
+  }
+  return CLANKER_MARKS[h % CLANKER_MARKS.length];
+}
+
+function buildChatMessage(m) {
+  var wrap = document.createElement("div");
+  wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
+
+  var meta = document.createElement("div");
+  meta.className = "chat-meta";
+  var mark = document.createElement("span");
+  mark.className = "chat-mark";
+  mark.textContent = clankerMark(m.from || "");
+  // Decorative: the name follows it and says the same thing.
+  mark.setAttribute("aria-hidden", "true");
+  meta.appendChild(mark);
+  var from = document.createElement("span");
+  from.className = "chat-from";
+  from.textContent = m.from;
+  meta.appendChild(from);
+  var time = document.createElement("span");
+  time.className = "chat-time";
+  time.textContent = formatChatTime(m.ts);
+  meta.appendChild(time);
+  wrap.appendChild(meta);
+
+  var text = document.createElement("div");
+  text.className = "chat-text";
+  text.textContent = m.text;
+  wrap.appendChild(text);
+  return wrap;
+}
+
+function formatChatTime(ts) {
+  if (!ts) return "";
+  var d = new Date(ts * 1000);
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/* Polling rather than a socket: the server closes every connection after one
+   response (see Connection: close in cli.zig), so there is nothing to hold
+   open. Stopped whenever the tab is hidden so a backgrounded page is not
+   waking the agent's HTTP server every few seconds for nothing. */
+/* A self-rescheduling timeout rather than a fixed interval: the delay has to
+   be read fresh after each attempt, because a failure widens it and the next
+   success narrows it straight back. An interval would keep firing at the
+   rate it was created with. */
+function startChatPoll(room) {
+  stopChatPoll();
+  if (document.hidden) return;
+  chatPoll = window.setTimeout(function () {
+    pollChat(room).finally(function () {
+      // Only reschedule if this poll is still the current one — switching
+      // rooms mid-flight clears it, and reviving it here would leave two
+      // chains running against different rooms.
+      if (chatPoll !== null) startChatPoll(room);
+    });
+  }, chatBackoff);
+}
+
+function stopChatPoll() {
+  if (chatPoll) { window.clearTimeout(chatPoll); chatPoll = null; }
+}
+
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden) stopChatPoll();
+  else if (el.chatRoom.value) startChatPoll(el.chatRoom.value);
+});
+
+el.chatRoom.addEventListener("change", function () {
+  openChatRoom(el.chatRoom.value);
+});
+
+el.chatRefresh.addEventListener("click", function () {
+  el.chatRefresh.disabled = true;
+  loadChatRooms().finally(function () { el.chatRefresh.disabled = false; });
+});
+
+el.chatForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  var text = el.chatText.value.trim();
+  var room = el.chatRoom.value;
+  if (!text || !room) return;
+  // maxlength on the input counts UTF-16 units while the server counts
+  // bytes, so multi-byte text passes the browser's check and comes back as a
+  // bare HTTP 400. Checked here in the same units the server uses.
+  var bytes = new TextEncoder().encode(text).length;
+  if (bytes > chat_max_bytes) {
+    el.chatStatus.textContent = "Message is " + bytes + " bytes; the limit is " + chat_max_bytes + ".";
+    return;
+  }
+  el.chatSend.disabled = true;
+  // /api/chat/send, not /api/chat/message: the latter is the inbound
+  // endpoint peers post to, which only logs rooms this instance has already
+  // joined. Sending appends locally and fans out to every peer, and joins
+  // the room first when it is one this instance has not been in before.
+  fetch("/api/chat/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ room: room, text: text })
+  }).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    el.chatText.value = "";
+    return pollChat(room);
+  }).catch(function (err) {
+    el.chatStatus.textContent = "Could not send: " + err.message;
+  }).finally(function () {
+    el.chatSend.disabled = false;
+    el.chatText.focus();
+  });
+});
+
+// ---- usage: what the model calls have cost -----------------------------
+
+function fmtInt(n) {
+  return (typeof n === "number" ? n : 0).toLocaleString();
+}
+
+/* Cost is the reading people actually come here for, so it gets four
+   decimals rather than a rounded currency format: a single run is often
+   worth less than a cent, and rounding it to $0.00 would say nothing. */
+function fmtCost(n) {
+  return "$" + (typeof n === "number" ? n : 0).toFixed(4);
+}
+
+function renderUsage(rows) {
+  el.usage.textContent = "";
+  if (!rows.length) {
+    var none = document.createElement("p");
+    none.className = "usage-empty";
+    none.textContent = "No completions recorded yet. Run a task and the totals appear here.";
+    el.usage.appendChild(none);
+    return;
+  }
+  var wrap = document.createElement("div");
+  wrap.className = "usage-wrap";
+  var table = document.createElement("table");
+  table.className = "usage";
+
+  var head = document.createElement("thead");
+  var hrow = document.createElement("tr");
+  [["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"], ["Completion", "num"],
+   ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]].forEach(function (h) {
+    var th = document.createElement("th");
+    th.textContent = h[0];
+    if (h[1]) th.className = h[1];
+    hrow.appendChild(th);
+  });
+  head.appendChild(hrow);
+  table.appendChild(head);
+
+  var body = document.createElement("tbody");
+  var totals = { calls: 0, prompt: 0, completion: 0, cost: 0 };
+  rows.forEach(function (r) {
+    totals.calls += r.calls || 0;
+    totals.prompt += r.prompt_tokens || 0;
+    totals.completion += r.completion_tokens || 0;
+    totals.cost += r.cost || 0;
+
+    var tr = document.createElement("tr");
+    var name = document.createElement("td");
+    // provider and model are often the same string; showing it twice is noise.
+    name.textContent = r.provider === r.model ? r.provider : r.provider + " / ";
+    if (r.provider !== r.model) {
+      var m = document.createElement("span");
+      m.className = "model";
+      m.textContent = r.model;
+      name.appendChild(m);
+    }
+    tr.appendChild(name);
+    [fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
+     (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)]
+      .forEach(function (v) {
+        var td = document.createElement("td");
+        td.className = "num";
+        td.textContent = v;
+        tr.appendChild(td);
+      });
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+
+  var foot = document.createElement("tfoot");
+  var frow = document.createElement("tr");
+  [rows.length + (rows.length === 1 ? " model" : " models"), fmtInt(totals.calls),
+   fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
+    .forEach(function (v, i) {
+      var td = document.createElement("td");
+      if (i > 0) td.className = "num";
+      td.textContent = v;
+      frow.appendChild(td);
+    });
+  foot.appendChild(frow);
+  table.appendChild(foot);
+
+  wrap.appendChild(table);
+  el.usage.appendChild(wrap);
+}
+
+function loadUsage() {
+  return fetch("/api/stats")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) { renderUsage(data.stats || []); })
+    .catch(function (err) {
+      el.usage.textContent = "";
+      var p = document.createElement("p");
+      p.className = "usage-empty";
+      p.textContent = "Could not load usage: " + err.message;
+      el.usage.appendChild(p);
+    });
+}
+
+// ---- goals: what runs are being steered toward -------------------------
+
+function renderGoals(goals) {
+  el.goals.textContent = "";
+  if (!goals.length) {
+    var none = document.createElement("p");
+    none.className = "usage-empty";
+    none.textContent = "No goals set. Add one above, or run `clanker goal \"<intent>\"`.";
+    el.goals.appendChild(none);
+    return;
+  }
+  // Newest first: the goal most recently set is the one steering runs now.
+  goals.slice().sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); }).forEach(function (g) {
+    var card = document.createElement("div");
+    card.className = "goal";
+    card.dataset.status = g.status || "";
+
+    var obj = document.createElement("div");
+    obj.className = "goal-objective";
+    obj.textContent = g.objective || "(no objective recorded)";
+    card.appendChild(obj);
+
+    var meta = document.createElement("div");
+    meta.className = "goal-meta";
+    var status = document.createElement("span");
+    status.className = "goal-status";
+    status.textContent = g.status || "unknown";
+    meta.appendChild(status);
+    if (g.id) {
+      var id = document.createElement("span");
+      id.textContent = "id " + String(g.id).slice(0, 10);
+      meta.appendChild(id);
+    }
+    card.appendChild(meta);
+
+    if (g.id) {
+      var actions = document.createElement("div");
+      actions.className = "goal-actions";
+      [["Mark done", "done"], ["Abandon", "abandoned"], ["Reactivate", "active"]].forEach(function (pair) {
+        if ((g.status || "active") === pair[1]) return;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "secondary";
+        b.textContent = pair[0];
+        b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[0] + ": done."); });
+        actions.appendChild(b);
+      });
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "secondary danger";
+      del.textContent = "Delete";
+      del.setAttribute("aria-label", "Delete goal: " + (g.objective || g.id));
+      del.addEventListener("click", function () {
+        if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
+        postGoal({ id: g.id, remove: true }, "Goal deleted.");
+      });
+      actions.appendChild(del);
+      card.appendChild(actions);
+    }
+
+    // Only the fields that were actually filled in: an empty criterion is a
+    // real state of a goal, and printing an empty label would imply
+    // otherwise.
+    var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
+      ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]].filter(function (p) { return !!p[1]; });
+
+    if (fields.length) {
+      // A well-specified goal runs to several paragraphs, and there are
+      // usually a handful of them. Expanded by default they push everything
+      // below this section off the page, so the objective and status stay
+      // visible and the specification is one click away — same disclosure
+      // the node-output tree uses.
+      var details = document.createElement("details");
+      details.className = "json-node";
+      var summary = document.createElement("summary");
+      summary.textContent = fields.length + (fields.length === 1 ? " detail" : " details");
+      details.appendChild(summary);
+      var bodyEl = document.createElement("div");
+      bodyEl.className = "json-children";
+      fields.forEach(function (pair) {
+        var row = document.createElement("div");
+        row.className = "goal-field";
+        var label = document.createElement("b");
+        label.textContent = pair[0] + ": ";
+        row.appendChild(label);
+        row.appendChild(document.createTextNode(pair[1]));
+        bodyEl.appendChild(row);
+      });
+      details.appendChild(bodyEl);
+      card.appendChild(details);
+    }
+
+    el.goals.appendChild(card);
+  });
+}
+
+function loadGoals() {
+  return fetch("/api/goals")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) { renderGoals(data.goals || []); })
+    .catch(function (err) {
+      el.goals.textContent = "";
+      var p = document.createElement("p");
+      p.className = "usage-empty";
+      p.textContent = "Could not load goals: " + err.message;
+      el.goals.appendChild(p);
+    });
+}
+
+// ---- tools: every WASM plugin, and a switch for the optional ones ------
+
+var allTools = [];
+
+function renderTools(filterText) {
+  var q = (filterText || "").trim().toLowerCase();
+  var matches = !q ? allTools : allTools.filter(function (t) {
+    return t.name.toLowerCase().indexOf(q) !== -1 ||
+      (t.description || "").toLowerCase().indexOf(q) !== -1;
+  });
+  el.tools.textContent = "";
+  if (!matches.length) {
+    var none = document.createElement("p");
+    none.className = "usage-empty";
+    none.textContent = q ? "No tools match “" + filterText.trim() + "”." : "No tools registered.";
+    el.tools.appendChild(none);
+    return;
+  }
+  matches.forEach(function (t) { el.tools.appendChild(buildToolRow(t)); });
+}
+
+function buildToolRow(t) {
+  var row = document.createElement("div");
+  row.className = "tool-row";
+
+  var name = document.createElement("button");
+  name.type = "button";
+  name.className = "tool-name";
+  name.textContent = t.name;
+  name.setAttribute("aria-label", "Show details for " + t.name);
+  name.addEventListener("click", function () { showToolDetail(t); });
+  row.appendChild(name);
+
+  // Core tools back the REPL and the HTTP routes, so the harness refuses to
+  // switch them off. Showing a dead button would invite the click anyway.
+  if (t.core) {
+    var tag = document.createElement("span");
+    tag.className = "tool-tag";
+    tag.textContent = "core";
+    row.appendChild(tag);
+  } else {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tool-toggle";
+    btn.dataset.on = String(!!t.enabled);
+    btn.textContent = t.enabled ? "on" : "off";
+    btn.setAttribute("aria-pressed", String(!!t.enabled));
+    btn.setAttribute("aria-label", (t.enabled ? "Disable " : "Enable ") + t.name);
+    btn.addEventListener("click", function () { toggleTool(t, btn); });
+    row.appendChild(btn);
+  }
+
+  if (t.transform) {
+    var tr = document.createElement("span");
+    tr.className = "tool-tag";
+    tr.textContent = "transform " + t.transform.phase;
+    row.appendChild(tr);
+  }
+  if (t.llm) {
+    var llm = document.createElement("span");
+    llm.className = "tool-tag";
+    llm.textContent = "llm";
+    row.appendChild(llm);
+  }
+
+  if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
+
+  var desc = document.createElement("span");
+  desc.className = "tool-desc";
+  // Descriptions are written for the model and run long; the first sentence
+  // is what a person scanning the list needs.
+  var text = (t.description || "").trim();
+  var stop = text.indexOf(". ");
+  desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : text.slice(0, 160);
+  desc.title = text;
+  row.appendChild(desc);
+
+  return row;
+}
+
+/* The settings a plugin's descriptor opted in to runtime editing. Only those
+   keys appear: the rest of a config object is the tool's own structure (the
+   chat_* tools select their behaviour with a `op` key), and the server
+   refuses a write to anything unlisted anyway. Collapsed by default so 45
+   rows do not become 45 open forms. */
+function buildToolConfig(t) {
+  var details = document.createElement("details");
+  details.className = "tool-config";
+
+  var summary = document.createElement("summary");
+  summary.textContent = "settings";
+  details.appendChild(summary);
+
+  var body = document.createElement("div");
+  body.className = "tool-config-body";
+  var inputs = {};
+
+  t.config_editable.forEach(function (key) {
+    var current = (t.config || {})[key];
+    var field = document.createElement("div");
+    field.className = "tool-field";
+
+    var id = "cfg-" + t.name + "-" + key;
+    var label = document.createElement("label");
+    label.setAttribute("for", id);
+    label.textContent = key;
+    field.appendChild(label);
+
+    var input = document.createElement("input");
+    input.id = id;
+    // A number stays a number on the way back: the manifest declares the
+    // type by what it holds, and sending "3" where 3 was expected would
+    // quietly change it.
+    input.type = typeof current === "number" ? "number" : "text";
+    input.value = current === undefined || current === null ? "" : String(current);
+    input.dataset.kind = typeof current;
+    field.appendChild(input);
+    inputs[key] = input;
+
+    body.appendChild(field);
+  });
+
+  var save = document.createElement("button");
+  save.type = "button";
+  save.className = "tool-config-save";
+  save.textContent = "Save";
+  save.addEventListener("click", function () { saveToolConfig(t, inputs, save); });
+  body.appendChild(save);
+
+  details.appendChild(body);
+  return details;
+}
+
+function saveToolConfig(t, inputs, btn) {
+  var next = {};
+  var bad = null;
+  Object.keys(inputs).forEach(function (key) {
+    var input = inputs[key];
+    if (input.dataset.kind === "number") {
+      var n = Number(input.value);
+      if (input.value.trim() === "" || !isFinite(n)) { bad = key; return; }
+      next[key] = n;
+    } else if (input.dataset.kind === "boolean") {
+      next[key] = input.value.trim().toLowerCase() === "true";
+    } else {
+      next[key] = input.value;
+    }
+  });
+  if (bad) {
+    el.toolsStatus.textContent = t.name + ": " + bad + " must be a number.";
+    return;
+  }
+  btn.disabled = true;
+  fetch("/api/plugins/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: t.name, config: next })
+  }).then(function (r) {
+    return r.json().then(function (data) {
+      if (!r.ok || !data.ok) throw new Error(data.error || ("HTTP " + r.status));
+      return data;
+    });
+  }).then(function () {
+    t.config = next;
+    el.toolsStatus.textContent = "Saved settings for " + t.name + ".";
+  }).catch(function (err) {
+    el.toolsStatus.textContent = "Could not save " + t.name + ": " + err.message;
+  }).finally(function () {
+    btn.disabled = false;
+  });
+}
+
+/* What a tool accepts and what it is allowed to reach. The sandbox policy is
+   the headline: a descriptor's network, filesystem and exec allowances are
+   the real answer to "what can this thing do", and they were previously only
+   readable by opening the manifest. */
+function showToolDetail(t) {
+  el.toolDetail.textContent = "";
+  el.toolDetail.hidden = false;
+
+  var head = document.createElement("div");
+  head.className = "run-detail-head";
+  var titleWrap = document.createElement("span");
+  var title = document.createElement("span");
+  title.className = "run-detail-title";
+  title.textContent = t.name;
+  titleWrap.appendChild(title);
+  var meta = document.createElement("span");
+  meta.className = "run-detail-meta";
+  var tags = [];
+  if (t.core) tags.push("core");
+  if (t.category) tags.push(t.category);
+  if (t.llm) tags.push("calls the model");
+  if (t.sequential) tags.push("sequential");
+  if (t.check) tags.push("check");
+  if (t.transform) tags.push("transform " + t.transform.phase + " (order " + t.transform.order + ")");
+  tags.push(t.enabled ? "enabled" : "disabled");
+  meta.textContent = "  " + tags.join("  ·  ");
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+
+  var closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "secondary run-detail-close";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", function () {
+    el.toolDetail.hidden = true;
+    el.toolDetail.textContent = "";
+  });
+  head.appendChild(closeBtn);
+  el.toolDetail.appendChild(head);
+
+  // Full text, not the first sentence the row shows.
+  var desc = document.createElement("p");
+  desc.className = "tool-detail-desc";
+  desc.textContent = t.description || "(no description)";
+  el.toolDetail.appendChild(desc);
+
+  // Actions: every parameter the tool accepts, with the required ones named.
+  var schema = t.input_schema;
+  var props = schema && schema.properties ? Object.keys(schema.properties) : [];
+  if (props.length) {
+    var required = (schema.required || []);
+    var list = document.createElement("dl");
+    list.className = "tool-params";
+    props.forEach(function (key) {
+      var spec = schema.properties[key] || {};
+      var dt = document.createElement("dt");
+      dt.textContent = key;
+      if (required.indexOf(key) !== -1) {
+        var req = document.createElement("span");
+        req.className = "tool-req";
+        req.textContent = " required";
+        dt.appendChild(req);
+      }
+      list.appendChild(dt);
+      var dd = document.createElement("dd");
+      dd.textContent = (spec.type || "any") + (spec.description ? " — " + spec.description : "");
+      list.appendChild(dd);
+    });
+    el.toolDetail.appendChild(sectionTitle("Accepts"));
+    el.toolDetail.appendChild(list);
+  }
+
+  // Sandbox policy. An empty allowance is a real answer, so it is stated
+  // rather than omitted: "no network" is the thing worth knowing.
+  el.toolDetail.appendChild(sectionTitle("Sandbox"));
+  var policy = document.createElement("dl");
+  policy.className = "tool-params";
+  [["Network", t.network_allow, "no network"],
+   ["Filesystem", t.fs_prefixes, "no filesystem access"],
+   ["Commands", t.exec_allow, "the harness default set"]].forEach(function (row) {
+    var dt = document.createElement("dt");
+    dt.textContent = row[0];
+    policy.appendChild(dt);
+    var dd = document.createElement("dd");
+    dd.textContent = row[1] && row[1].length ? row[1].join(", ") : row[2];
+    if (!(row[1] && row[1].length)) dd.className = "tool-none";
+    policy.appendChild(dd);
+  });
+  el.toolDetail.appendChild(policy);
+
+  scrollTo(el.toolDetail, "nearest");
+  closeBtn.focus();
+}
+
+function sectionTitle(text) {
+  var h = document.createElement("h3");
+  h.className = "tool-detail-h";
+  h.textContent = text;
+  return h;
+}
+
+function toggleTool(t, btn) {
+  var want = !t.enabled;
+  btn.disabled = true;
+  fetch("/api/plugins", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: t.name, on: want })
+  }).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function (reply) {
+    t.enabled = want;
+    btn.dataset.on = String(want);
+    btn.textContent = want ? "on" : "off";
+    btn.setAttribute("aria-pressed", String(want));
+    btn.setAttribute("aria-label", (want ? "Disable " : "Enable ") + t.name);
+    // The harness answers in words ("enabled: git", "core tool, cannot be
+    // switched off: …"); it is the authority on what happened, so it is
+    // what gets announced.
+    el.toolsStatus.textContent = String(reply).trim();
+  }).catch(function (err) {
+    el.toolsStatus.textContent = "Could not switch " + t.name + ": " + err.message;
+  }).finally(function () {
+    btn.disabled = false;
+  });
+}
+
+function loadTools() {
+  return fetch("/api/plugins")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      allTools = data.plugins || [];
+      renderTools(el.toolFilter.value);
+    })
+    .catch(function (err) {
+      el.tools.textContent = "";
+      var p = document.createElement("p");
+      p.className = "usage-empty";
+      p.textContent = "Could not load tools: " + err.message;
+      el.tools.appendChild(p);
+      el.toolsStatus.textContent = p.textContent;
+    });
+}
+
+var toolFilterTimer = null;
+el.toolFilter.addEventListener("input", function () {
+  if (toolFilterTimer) window.clearTimeout(toolFilterTimer);
+  toolFilterTimer = window.setTimeout(function () {
+    renderTools(el.toolFilter.value);
+    var shown = el.tools.querySelectorAll(".tool-row").length;
+    el.toolsStatus.textContent = el.toolFilter.value.trim()
+      ? shown + (shown === 1 ? " tool matches." : " tools match.")
+      : "";
+  }, 120);
+});
+
+el.goalsRefresh.addEventListener("click", function () {
+  el.goalsRefresh.disabled = true;
+  loadGoals().finally(function () { el.goalsRefresh.disabled = false; });
+});
+el.usageRefresh.addEventListener("click", function () {
+  el.usageRefresh.disabled = true;
+  loadUsage().finally(function () { el.usageRefresh.disabled = false; });
+});
+el.toolsRefresh.addEventListener("click", function () {
+  el.toolsRefresh.disabled = true;
+  loadTools().finally(function () { el.toolsRefresh.disabled = false; });
+});
+
+// ---- views: one section visible at a time -----------------------------
+
+var VIEWS = ["chat", "board", "goals", "runs", "rooms", "tools", "system"];
+/* Each view's data is fetched the first time it is opened rather than all of
+   it at load. The page used to fire seven requests before showing anything,
+   several of which execute a WASM tool. */
+var viewLoaded = {};
+var viewLoaders = {
+  runs: loadRuns,
+  rooms: function () { return loadStatus().then(loadChatRooms); },
+  goals: loadGoals,
+  board: loadBoard,
+  tools: loadTools,
+  system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList()]); }
+};
+
+function showView(name, focusPanel) {
+  if (VIEWS.indexOf(name) === -1) name = "chat";
+  VIEWS.forEach(function (v) {
+    var tab = document.getElementById("tab-" + v);
+    var panel = document.getElementById("view-" + v);
+    var on = v === name;
+    panel.hidden = !on;
+    tab.setAttribute("aria-selected", String(on));
+    // Roving tabindex: the tablist is one stop, arrows move within it.
+    tab.tabIndex = on ? 0 : -1;
+  });
+  if (window.location.hash !== "#" + name) {
+    try { window.history.replaceState(null, "", "#" + name); } catch (e) {}
+  }
+  el.railContext.hidden = name !== "chat";
+  if (focusPanel) document.getElementById("view-" + name).focus();
+  if (!viewLoaded[name] && viewLoaders[name]) {
+    viewLoaded[name] = true;
+    viewLoaders[name]();
+  }
+}
+
+VIEWS.forEach(function (v, i) {
+  var tab = document.getElementById("tab-" + v);
+  tab.addEventListener("click", function () { showView(v, false); });
+  tab.addEventListener("keydown", function (e) {
+    // The tablist is a column now, so it answers to Up and Down. Left and
+    // Right keep working: a tablist that ignored them would be a regression
+    // for anyone who learned them here.
+    var step = (e.key === "ArrowDown" || e.key === "ArrowRight") ? 1 :
+      (e.key === "ArrowUp" || e.key === "ArrowLeft") ? -1 : 0;
+    if (step) {
+      e.preventDefault();
+      var next = VIEWS[(i + step + VIEWS.length) % VIEWS.length];
+      showView(next, false);
+      document.getElementById("tab-" + next).focus();
+      return;
+    }
+    if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      var edge = e.key === "Home" ? VIEWS[0] : VIEWS[VIEWS.length - 1];
+      showView(edge, false);
+      document.getElementById("tab-" + edge).focus();
+    }
+  });
+});
+
+window.addEventListener("hashchange", function () {
+  showView(window.location.hash.replace("#", ""), false);
+});
+
+/* A digit jumps straight to a view, but never while someone is typing into
+   the composer or a filter. */
+document.addEventListener("keydown", function (e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  var t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  var n = parseInt(e.key, 10);
+  if (n >= 1 && n <= VIEWS.length) {
+    showView(VIEWS[n - 1], false);
+    document.getElementById("tab-" + VIEWS[n - 1]).focus();
+  }
+});
+
+function setTabCount(view, n) {
+  var tab = document.getElementById("tab-" + view);
+  if (!tab) return;
+  var el0 = tab.querySelector(".tab-count");
+  if (!el0) {
+    el0 = document.createElement("span");
+    el0.className = "tab-count";
+    tab.appendChild(el0);
+  }
+  el0.textContent = n ? String(n) : "";
+}
+
+
+
+/* ---------- model picker and sampling ---------- */
+
+/* The CLI has --provider and config.json has temperature and top_p; the
+   composer had neither, so every run through the page used the default. */
+var providerCache = [];
+
+function loadProviders() {
+  return fetch("/api/providers")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      providerCache = d.providers || [];
+      el.modelSelect.textContent = "";
+      (d.providers || []).forEach(function (prov) {
+        var group = document.createElement("optgroup");
+        group.label = prov.name;
+        (prov.models || []).forEach(function (m) {
+          var opt = document.createElement("option");
+          opt.value = prov.name + " " + m.name;
+          opt.textContent = m.name + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+          if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
+          group.appendChild(opt);
+        });
+        el.modelSelect.appendChild(group);
+      });
+      var saved = null;
+      try { saved = window.localStorage.getItem("clanker.model"); } catch (e) {}
+      if (saved && el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
+        el.modelSelect.value = saved;
+      }
+    })
+    .catch(function () {
+      // Providers are informational: a failure here must not stop a run,
+      // which then simply uses whatever the config says.
+      var opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "config default";
+      el.modelSelect.appendChild(opt);
+    });
+}
+
+el.modelSelect.addEventListener("change", function () {
+  try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
+  renderContextMeter();
+});
+
+/* Everything the composer adds to a run, in one place, so the submit handler
+   and any future caller cannot disagree about it. */
+function runOptions() {
+  var out = {};
+  var pair = (el.modelSelect.value || "").split(" ");
+  if (pair[0]) out.provider = pair[0];
+  if (pair[1]) out.model = pair[1];
+  var t = parseFloat(el.paramTemp.value);
+  if (!isNaN(t)) out.temperature = t;
+  var tp = parseFloat(el.paramTopP.value);
+  if (!isNaN(tp)) out.top_p = tp;
+  return out;
+}
+
+/* Enter-to-send is the habit every other chat UI trains, but it also throws
+   away a half-written multi-line task, so it is opt-in and remembered. */
+try { el.enterSends.checked = window.localStorage.getItem("clanker.entersends") === "1"; } catch (e) {}
+el.enterSends.addEventListener("change", function () {
+  try { window.localStorage.setItem("clanker.entersends", el.enterSends.checked ? "1" : "0"); } catch (e) {}
+  syncSubmitLabel();
+});
+
+function syncSubmitLabel() {
+  el.submit.textContent = el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)";
+}
+
+el.task.addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!el.enterSends.checked) return;
+  e.preventDefault();
+  if (!busy && el.task.value.trim()) el.form.requestSubmit();
+});
+
+/* ---------- search inside the conversation ---------- */
+
+function clearMarks(root) {
+  var marks = root.querySelectorAll("mark");
+  Array.prototype.forEach.call(marks, function (m) {
+    var text = document.createTextNode(m.textContent);
+    m.parentNode.replaceChild(text, m);
+  });
+  // Splitting a text node to highlight leaves neighbours behind; rejoining
+  // them keeps repeated searches from fragmenting the answer into hundreds
+  // of nodes.
+  if (root.normalize) root.normalize();
+}
+
+function markMatches(root, needle) {
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  var targets = [];
+  var node;
+  while ((node = walker.nextNode())) {
+    if (node.nodeValue.toLowerCase().indexOf(needle) !== -1) targets.push(node);
+  }
+  var hits = 0;
+  targets.forEach(function (text) {
+    var value = text.nodeValue;
+    var frag = document.createDocumentFragment();
+    var at = 0;
+    var idx = value.toLowerCase().indexOf(needle, at);
+    while (idx !== -1) {
+      if (idx > at) frag.appendChild(document.createTextNode(value.slice(at, idx)));
+      var mark = document.createElement("mark");
+      mark.textContent = value.substr(idx, needle.length);
+      frag.appendChild(mark);
+      hits += 1;
+      at = idx + needle.length;
+      idx = value.toLowerCase().indexOf(needle, at);
+    }
+    if (at < value.length) frag.appendChild(document.createTextNode(value.slice(at)));
+    text.parentNode.replaceChild(frag, text);
+  });
+  return hits;
+}
+
+function applyTurnFilter() {
+  var q = el.turnFilter.value.trim().toLowerCase();
+  var turns = el.transcript.querySelectorAll(".turn");
+  clearMarks(el.transcript);
+  if (!q) {
+    Array.prototype.forEach.call(turns, function (t) { t.hidden = false; });
+    el.turnFilterCount.textContent = "";
+    return;
+  }
+  var shown = 0, hits = 0;
+  Array.prototype.forEach.call(turns, function (t) {
+    var match = t.textContent.toLowerCase().indexOf(q) !== -1;
+    t.hidden = !match;
+    if (match) {
+      shown += 1;
+      hits += markMatches(t, q);
+    }
+  });
+  el.turnFilterCount.textContent = shown
+    ? hits + (hits === 1 ? " match in " : " matches in ") + shown + (shown === 1 ? " turn" : " turns")
+    : "No turns match.";
+}
+
+el.turnFilter.addEventListener("input", applyTurnFilter);
+
+/* ---------- keeping up with a streaming answer ---------- */
+
+function nearBottom() {
+  return window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function syncScrollButton() {
+  el.scrollBottom.hidden = nearBottom() || !el.transcript.querySelector(".turn");
+}
+
+el.scrollBottom.addEventListener("click", function () {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  el.task.focus();
+});
+
+window.addEventListener("scroll", syncScrollButton, { passive: true });
+window.addEventListener("resize", syncScrollButton);
+
+/* ---------- export ---------- */
+
+el.sessionExportJson.addEventListener("click", function () {
+  fetch("/api/sessions/" + encodeURIComponent(sessionId))
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      downloadText("clanker-" + sessionId.slice(0, 8) + ".json", JSON.stringify(data, null, 2), "application/json");
+      el.sessionStatus.textContent = "Exported as JSON.";
+    })
+    .catch(function (err) { el.sessionStatus.textContent = "Export failed: " + err.message; });
+});
+
+/* ---------- first-run suggestions ---------- */
+
+var SUGGESTIONS = [
+  "Summarise what this repository does, in five sentences.",
+  "List the tools you have and what each one is for.",
+  "Read src/agent/loop.zig and explain the agent loop.",
+  "What did the last recorded run do?"
+];
+
+SUGGESTIONS.forEach(function (text) {
+  var b = document.createElement("button");
+  b.type = "button";
+  b.className = "suggestion";
+  b.textContent = text;
+  b.addEventListener("click", function () {
+    el.task.value = text;
+    el.task.focus();
+    syncControls();
+  });
+  el.suggestions.appendChild(b);
+});
+
+
+/* ---------- status, said out loud and shown ---------- */
+
+/* Every view writes progress and failures into its own sr-only live region.
+   Fifty call sites did that and none of them were visible: clicking Compact
+   or Export or Save prompt produced no sign anything had happened unless you
+   were using a screen reader. Rather than change fifty call sites and leave
+   the two able to drift, the regions are observed and mirrored here. */
+var toasts = document.getElementById("toasts");
+
+function showToast(text) {
+  if (!text) return;
+  var node = document.createElement("p");
+  node.className = "toast";
+  // The word "failed" is the one distinction worth colour: everything else
+  // is progress, and progress does not need to shout.
+  if (/fail|error|could not|refus|denied|no such/i.test(text)) node.setAttribute("data-kind", "bad");
+  node.textContent = text;
+  node.addEventListener("click", function () { node.remove(); });
+  toasts.appendChild(node);
+  while (toasts.children.length > 3) toasts.removeChild(toasts.firstChild);
+  window.setTimeout(function () { node.remove(); }, 5000);
+}
+
+if (window.MutationObserver) {
+  var statusObserver = new MutationObserver(function (records) {
+    var seen = {};
+    records.forEach(function (r) {
+      var el0 = r.target.nodeType === 3 ? r.target.parentNode : r.target;
+      if (!el0 || !el0.textContent) return;
+      var text = el0.textContent.trim();
+      // The same message written twice in one tick is one event.
+      if (!text || seen[text]) return;
+      seen[text] = true;
+      showToast(text);
+    });
+  });
+  ["session-status", "run-status", "chat-status", "board-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+    var node = document.getElementById(id);
+    if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
+  });
+}
+
+/* ---------- goals ---------- */
+
+/* The view could only read. Every goal in the file was put there by the
+   `goal` tool or the CLI, so setting one from the page meant leaving it. */
+function postGoal(payload, status) {
+  return fetch("/api/goals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(function (d) {
+      renderGoals(d.goals || []);
+      el.goalsStatus.textContent = status;
+    })
+    .catch(function (err) { el.goalsStatus.textContent = "Goal failed: " + err.message; });
+}
+
+el.goalForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  var objective = el.goalObjective.value.trim();
+  var criterion = el.goalCriterion.value.trim();
+  if (!objective || !criterion) return;
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function () {
+    el.goalObjective.value = "";
+    el.goalCriterion.value = "";
+  });
+});
+
+/* ---------- saved prompts ---------- */
+
+/* Every one of these UIs has a prompt library, and the reason is the same:
+   the tasks worth repeating are long, and retyping them is where the habit
+   of using the tool dies. */
+function loadPrompts() {
+  try { return JSON.parse(window.localStorage.getItem("clanker.prompts") || "[]"); } catch (e) { return []; }
+}
+var prompts = loadPrompts();
+
+function savePrompts() {
+  try { window.localStorage.setItem("clanker.prompts", JSON.stringify(prompts)); } catch (e) {}
+}
+
+el.promptSave.addEventListener("click", function () {
+  var text = el.task.value.trim();
+  if (!text) {
+    el.sessionStatus.textContent = "Write the prompt in the composer first.";
+    return;
+  }
+  if (prompts.indexOf(text) === -1) prompts.push(text);
+  savePrompts();
+  el.sessionStatus.textContent = "Saved " + prompts.length + (prompts.length === 1 ? " prompt." : " prompts.");
+});
+
+var promptIndex = 0;
+
+function promptQuery() {
+  var v = el.task.value;
+  return v.charAt(0) === "/" ? v.slice(1).toLowerCase() : null;
+}
+
+function renderPromptList() {
+  var q = promptQuery();
+  if (q === null || !prompts.length) {
+    el.promptList.hidden = true;
+    el.promptList.textContent = "";
+    return;
+  }
+  var matches = prompts.filter(function (t) { return fuzzyMatch(q, t); });
+  el.promptList.textContent = "";
+  if (!matches.length) {
+    el.promptList.hidden = true;
+    return;
+  }
+  if (promptIndex >= matches.length) promptIndex = 0;
+  matches.forEach(function (text, i) {
+    var li = document.createElement("li");
+    li.className = "palette-item";
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === promptIndex));
+    var label = document.createElement("span");
+    label.className = "palette-label";
+    label.textContent = text;
+    li.appendChild(label);
+    li.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      usePrompt(text);
+    });
+    var drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "rail-pin";
+    drop.textContent = "×";
+    drop.setAttribute("aria-label", "Forget this prompt");
+    drop.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      prompts.splice(prompts.indexOf(text), 1);
+      savePrompts();
+      renderPromptList();
+    });
+    li.appendChild(drop);
+    el.promptList.appendChild(li);
+  });
+  el.promptList.hidden = false;
+  el.promptList.setAttribute("data-count", String(matches.length));
+}
+
+function usePrompt(text) {
+  el.task.value = text;
+  el.promptList.hidden = true;
+  el.task.focus();
+  syncControls();
+}
+
+el.task.addEventListener("input", renderPromptList);
+el.task.addEventListener("blur", function () { window.setTimeout(function () { el.promptList.hidden = true; }, 120); });
+el.task.addEventListener("keydown", function (e) {
+  if (el.promptList.hidden) return;
+  var items = el.promptList.querySelectorAll(".palette-item");
+  if (!items.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    renderPromptList();
+    return;
+  }
+  if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+  }
+});
+
+/* ---------- composer height and context weight ---------- */
+
+/* Grows with what is being written, up to a third of the viewport, then
+   scrolls: a five-line task in a two-line box is a scroll bar you have to
+   fight while composing. */
+function autoGrow() {
+  el.task.style.height = "auto";
+  var cap = Math.round(window.innerHeight / 3);
+  el.task.style.height = Math.min(el.task.scrollHeight, cap) + "px";
+}
+el.task.addEventListener("input", autoGrow);
+window.addEventListener("resize", autoGrow);
+
+/* Compaction is driven by transcript bytes against the model's context, and
+   both numbers already exist; nothing was showing the ratio. */
+function renderContextMeter() {
+  var meta = currentSessionMeta();
+  if (!meta || typeof meta.bytes !== "number" || !meta.bytes) {
+    el.contextMeter.textContent = "";
+    return;
+  }
+  var pair = (el.modelSelect.value || "").split(" ");
+  var window_ = 0;
+  (providerCache || []).forEach(function (prov) {
+    if (prov.name !== pair[0]) return;
+    (prov.models || []).forEach(function (m) { if (m.name === pair[1]) window_ = m.context_window || 0; });
+  });
+  if (!window_) {
+    el.contextMeter.textContent = fmtBytes(meta.bytes) + " of history";
+    return;
+  }
+  // Four bytes to the token is the same rough conversion the improve loop
+  // budgets with; it is a gauge, not an accountant.
+  var pct = Math.round((meta.bytes / 4) / window_ * 100);
+  el.contextMeter.textContent = fmtBytes(meta.bytes) + " · about " + pct + "% of context";
+}
+
+/* ---------- conversation utilities ---------- */
+
+el.sessionFilter.addEventListener("input", function () { renderSessionOptions(null); });
+
+/* Compaction is otherwise a thing that happens to you: it fires on its own
+   once a transcript passes agent.compact_threshold_bytes. This runs the same
+   trim on demand, and reports the size it left behind. */
+el.sessionCompact.addEventListener("click", function () {
+  if (!currentSessionMeta()) {
+    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    return;
+  }
+  if (busy) {
+    el.sessionStatus.textContent = "Finish or stop the current run before compacting.";
+    return;
+  }
+  el.sessionCompact.disabled = true;
+  fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
+    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(function (d) {
+      el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
+      return loadSessions().then(function () {
+        el.transcript.textContent = "";
+        return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+          .then(function (r) { return r.json(); })
+          .then(function (data) { renderSessionHistory(data.messages || []); });
+      });
+    })
+    .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })
+    .then(function () { el.sessionCompact.disabled = false; });
+});
+
+/* One conversation as Markdown. Built from the transcript on screen rather
+   than refetched, so what downloads is what you are looking at. */
+function transcriptMarkdown() {
+  var meta = currentSessionMeta();
+  var lines = ["# " + ((meta && meta.title) || "clanker conversation"), "", "`" + sessionId + "`", ""];
+  var turns = el.transcript.querySelectorAll(".turn");
+  Array.prototype.forEach.call(turns, function (turn) {
+    var task = turn.querySelector(".turn-you");
+    var answer = turn.querySelector(".turn-answer");
+    if (task) lines.push("## " + task.textContent.trim(), "");
+    // turn.raw is the markdown as it arrived; textContent is what is left of
+    // it after rendering, which is the fallback for a turn that never had a
+    // buffer (a session replayed before this existed).
+    var body = turn.markdownSource || (answer ? answer.textContent : "");
+    if (body) lines.push(body.replace(/\s+$/, ""), "");
+  });
+  return lines.join("\n");
+}
+
+function downloadText(name, text, mime) {
+  var blob = new Blob([text], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick: revoking synchronously races the download in
+  // some browsers and produces an empty file.
+  window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+}
+
+el.sessionExport.addEventListener("click", function () {
+  var md = transcriptMarkdown();
+  if (!md.trim()) {
+    el.sessionStatus.textContent = "Nothing to export yet.";
+    return;
+  }
+  downloadText("clanker-" + sessionId.slice(0, 8) + ".md", md, "text/markdown");
+  el.sessionStatus.textContent = "Exported as Markdown.";
+});
+
+el.sessionCopy.addEventListener("click", function () {
+  copyText(transcriptMarkdown(), el.sessionCopy, "Copy all", el.transcript);
+});
+
+el.runCopy.addEventListener("click", function () {
+  if (!lastBuilt) {
+    el.runStatus.textContent = "No run is open.";
+    return;
+  }
+  copyText(graphSummaryText(lastBuilt), el.runCopy, "Copy summary", el.runGraph);
+});
+
+/* ---------- board ---------- */
+
+var board = { columns: [], cards: [] };
+var openCardId = null;
+
+function loadBoard() {
+  return fetch("/api/board")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) { renderBoard(d.board || { columns: [], cards: [] }); })
+    .catch(function (err) { el.boardStatus.textContent = "Could not load the board: " + err.message; });
+}
+
+function postBoard(payload, status) {
+  return fetch("/api/board", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(function (d) {
+      renderBoard(d.board || board);
+      if (status) el.boardStatus.textContent = status;
+      return d;
+    })
+    .catch(function (err) { el.boardStatus.textContent = "Board: " + err.message; });
+}
+
+function cardById(id) {
+  for (var i = 0; i < board.cards.length; i++) {
+    if (board.cards[i].id === id) return board.cards[i];
+  }
+  return null;
+}
+
+/* A card is blocked while anything it depends on has not reached the last
+   column. Said on the card, because "why can I not start this" is the
+   question a board exists to answer. */
+function doneColumn() {
+  return board.columns.length ? board.columns[board.columns.length - 1].id : "done";
+}
+
+function blockers(card) {
+  return (card.depends_on || []).filter(function (id) {
+    var dep = cardById(id);
+    return dep && dep.column !== doneColumn();
+  });
+}
+
+function dueState(card) {
+  if (!card.deadline) return "";
+  var left = card.deadline - Math.floor(Date.now() / 1000);
+  if (left < 0) return "late";
+  if (left < 2 * 24 * 60 * 60) return "soon";
+  return "ok";
+}
+
+function fmtDeadline(ts) {
+  if (!ts) return "";
+  var d = new Date(ts * 1000);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function renderBoard(next) {
+  board = next;
+  // The "new card" column choice follows the board rather than a fixed list.
+  var keepCol = el.cardColumn.value;
+  el.cardColumn.textContent = "";
+  board.columns.forEach(function (c) {
+    var opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = c.title;
+    el.cardColumn.appendChild(opt);
+  });
+  if (keepCol) el.cardColumn.value = keepCol;
+
+  var mineOnly = el.boardMine.checked;
+  var me = (el.instanceChip.textContent || "").trim();
+  el.board.textContent = "";
+  var openTotal = 0;
+
+  board.columns.forEach(function (col) {
+    var colEl = document.createElement("div");
+    colEl.className = "board-col";
+    colEl.setAttribute("data-column", col.id);
+
+    var head = document.createElement("div");
+    head.className = "board-col-head";
+    var title = document.createElement("span");
+    title.className = "board-col-title";
+    title.textContent = col.title;
+    var count = document.createElement("span");
+    count.className = "board-col-count";
+    head.appendChild(title);
+    head.appendChild(count);
+    colEl.appendChild(head);
+
+    var list = document.createElement("ul");
+    list.className = "board-cards";
+
+    var shown = board.cards
+      .filter(function (c) { return c.column === col.id; })
+      .filter(function (c) { return !mineOnly || c.assignee === me; })
+      .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+
+    count.textContent = shown.length + (col.wip ? " / " + col.wip : "");
+    if (col.wip && shown.length > col.wip) count.setAttribute("data-over", "true");
+    if (col.id !== doneColumn()) openTotal += shown.length;
+
+    shown.forEach(function (c) {
+      var li = document.createElement("li");
+      li.appendChild(cardNode(c));
+      list.appendChild(li);
+    });
+    colEl.appendChild(list);
+
+    // Pointer drop target. The keyboard equivalent lives on the card.
+    colEl.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      colEl.setAttribute("data-drop", "true");
+    });
+    colEl.addEventListener("dragleave", function () { colEl.removeAttribute("data-drop"); });
+    colEl.addEventListener("drop", function (e) {
+      e.preventDefault();
+      colEl.removeAttribute("data-drop");
+      var id = e.dataTransfer.getData("text/plain");
+      if (id) postBoard({ op: "move", id: id, column: col.id }, "Moved to " + col.title + ".");
+    });
+
+    el.board.appendChild(colEl);
+  });
+
+  setTabCount("board", openTotal);
+  if (openCardId && cardById(openCardId)) showCardDetail(openCardId);
+  else closeCardDetail();
+
+  if (!board.cards.length) {
+    var none = document.createElement("p");
+    none.className = "run-empty";
+    none.textContent = "No cards yet. Anything added here is in state/board.json, which every clanker can read.";
+    el.board.appendChild(none);
+  }
+}
+
+function cardNode(c) {
+  var b = document.createElement("button");
+  b.type = "button";
+  b.className = "card";
+  b.draggable = true;
+  b.setAttribute("data-card", c.id);
+  if (c.id === openCardId) b.setAttribute("aria-current", "true");
+
+  var title = document.createElement("span");
+  title.className = "card-title";
+  title.textContent = c.title;
+  b.appendChild(title);
+
+  var meta = document.createElement("span");
+  meta.className = "card-meta";
+
+  if (c.priority && c.priority !== "normal") {
+    var pr = document.createElement("span");
+    pr.className = "card-flag";
+    pr.setAttribute("data-priority", c.priority);
+    pr.textContent = c.priority;
+    meta.appendChild(pr);
+  }
+  if (c.deadline) {
+    var due = document.createElement("span");
+    due.className = "card-flag";
+    due.setAttribute("data-due", dueState(c));
+    due.textContent = "due " + fmtDeadline(c.deadline);
+    meta.appendChild(due);
+  }
+  var blocked = blockers(c);
+  if (blocked.length) {
+    var bl = document.createElement("span");
+    bl.className = "card-flag";
+    bl.setAttribute("data-blocked", "true");
+    bl.textContent = "blocked ×" + blocked.length;
+    meta.appendChild(bl);
+  }
+  if ((c.subtasks || []).length) {
+    var doneN = c.subtasks.filter(function (s) { return s.done; }).length;
+    var prog = document.createElement("span");
+    prog.className = "card-progress";
+    prog.textContent = doneN + "/" + c.subtasks.length;
+    meta.appendChild(prog);
+  }
+  if (c.assignee) {
+    var who = document.createElement("span");
+    who.textContent = c.assignee;
+    meta.appendChild(who);
+  }
+  if (c.usage && c.usage.cost) {
+    var cost = document.createElement("span");
+    cost.textContent = fmtCost(c.usage.cost);
+    meta.appendChild(cost);
+  }
+  if (meta.childNodes.length) b.appendChild(meta);
+
+  b.addEventListener("click", function () {
+    openCardId = openCardId === c.id ? null : c.id;
+    renderBoard(board);
+  });
+  b.addEventListener("dragstart", function (e) {
+    e.dataTransfer.setData("text/plain", c.id);
+    e.dataTransfer.effectAllowed = "move";
+    b.setAttribute("data-dragging", "true");
+  });
+  b.addEventListener("dragend", function () { b.removeAttribute("data-dragging"); });
+  /* Dragging is not available to a keyboard, so the same move is on the
+     arrow keys with a modifier, which is the only way this board is usable
+     without a mouse. */
+  b.addEventListener("keydown", function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    var ids = board.columns.map(function (col) { return col.id; });
+    var at = ids.indexOf(c.column);
+    var next = at + (e.key === "ArrowRight" ? 1 : -1);
+    if (next < 0 || next >= ids.length) return;
+    postBoard({ op: "move", id: c.id, column: ids[next] }, "Moved to " + board.columns[next].title + ".");
+  });
+  return b;
+}
+
+function closeCardDetail() {
+  el.cardDetail.hidden = true;
+  el.cardDetail.textContent = "";
+}
+
+function detailSection(parent, title) {
+  var head = document.createElement("p");
+  head.className = "detail-head";
+  head.textContent = title;
+  parent.appendChild(head);
+  var box = document.createElement("div");
+  box.className = "detail-body";
+  parent.appendChild(box);
+  return box;
+}
+
+function fieldRow(parent, label, control) {
+  var row = document.createElement("div");
+  row.className = "detail-row";
+  var l = document.createElement("label");
+  l.textContent = label;
+  l.htmlFor = control.id;
+  row.appendChild(l);
+  row.appendChild(control);
+  parent.appendChild(row);
+  return row;
+}
+
+function input(id, type, value, placeholder) {
+  var i = document.createElement("input");
+  i.type = type;
+  i.id = id;
+  i.value = value == null ? "" : value;
+  if (placeholder) i.placeholder = placeholder;
+  return i;
+}
+
+/* Everything about one card, in the order you ask about it: what it is, who
+   has it and when it is due, what it is waiting on, what is left to do,
+   what it has cost, and what has happened to it. */
+function showCardDetail(id) {
+  var c = cardById(id);
+  if (!c) return closeCardDetail();
+  el.cardDetail.textContent = "";
+  el.cardDetail.hidden = false;
+
+  var head = document.createElement("div");
+  head.className = "run-detail-head";
+  var title = document.createElement("span");
+  title.className = "run-detail-title";
+  title.textContent = c.title;
+  var close = document.createElement("button");
+  close.type = "button";
+  close.className = "secondary";
+  close.textContent = "Close";
+  close.addEventListener("click", function () { openCardId = null; renderBoard(board); });
+  head.appendChild(title);
+  head.appendChild(close);
+  el.cardDetail.appendChild(head);
+
+  // ---- fields ----
+  var fields = detailSection(el.cardDetail, "Card");
+  var titleIn = input("card-f-title", "text", c.title);
+  titleIn.maxLength = 500;
+  fieldRow(fields, "Title", titleIn);
+
+  var bodyIn = document.createElement("textarea");
+  bodyIn.id = "card-f-body";
+  bodyIn.rows = 3;
+  bodyIn.value = c.body || "";
+  fieldRow(fields, "Notes", bodyIn);
+
+  var assignIn = input("card-f-assignee", "text", c.assignee, "unassigned");
+  fieldRow(fields, "Assignee", assignIn);
+
+  var prioIn = document.createElement("select");
+  prioIn.id = "card-f-priority";
+  ["low", "normal", "high"].forEach(function (v) {
+    var o = document.createElement("option");
+    o.value = v;
+    o.textContent = v;
+    if ((c.priority || "normal") === v) o.selected = true;
+    prioIn.appendChild(o);
+  });
+  fieldRow(fields, "Priority", prioIn);
+
+  // A date input, because a deadline typed as a unix timestamp is not a
+  // deadline anyone will set twice.
+  var dueIn = input("card-f-deadline", "date", c.deadline ? new Date(c.deadline * 1000).toISOString().slice(0, 10) : "");
+  fieldRow(fields, "Deadline", dueIn);
+
+  var save = document.createElement("button");
+  save.type = "button";
+  save.className = "secondary";
+  save.textContent = "Save card";
+  save.addEventListener("click", function () {
+    var deadline = 0;
+    if (dueIn.value) {
+      var parsed = Date.parse(dueIn.value + "T23:59:59");
+      if (!isNaN(parsed)) deadline = Math.floor(parsed / 1000);
+    }
+    postBoard({
+      op: "update", id: c.id,
+      title: titleIn.value, body: bodyIn.value,
+      assignee: assignIn.value, priority: prioIn.value, deadline: deadline
+    }, "Card saved.");
+  });
+  fields.appendChild(save);
+
+  var takeIt = document.createElement("button");
+  takeIt.type = "button";
+  takeIt.className = "secondary";
+  takeIt.textContent = "Assign to me";
+  takeIt.addEventListener("click", function () {
+    postBoard({ op: "update", id: c.id, assignee: (el.instanceChip.textContent || "").trim() }, "Assigned.");
+  });
+  fields.appendChild(takeIt);
+
+  var del = document.createElement("button");
+  del.type = "button";
+  del.className = "secondary danger";
+  del.textContent = "Delete card";
+  del.addEventListener("click", function () {
+    if (!window.confirm("Delete \"" + c.title + "\"? Its log and usage go with it.")) return;
+    openCardId = null;
+    postBoard({ op: "delete", id: c.id }, "Card deleted.");
+  });
+  fields.appendChild(del);
+
+  // ---- subtasks ----
+  var subs = detailSection(el.cardDetail, "Subtasks");
+  (c.subtasks || []).forEach(function (s) {
+    var row = document.createElement("div");
+    row.className = "detail-row";
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!s.done;
+    box.id = "sub-" + s.id;
+    box.addEventListener("change", function () {
+      postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: box.checked }, null);
+    });
+    var lab = document.createElement("label");
+    lab.htmlFor = box.id;
+    lab.textContent = s.text;
+    lab.className = "subtask";
+    lab.setAttribute("data-done", String(!!s.done));
+    var drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "rail-pin";
+    drop.textContent = "×";
+    drop.setAttribute("aria-label", "Remove subtask: " + s.text);
+    drop.addEventListener("click", function () {
+      postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, null);
+    });
+    row.appendChild(box);
+    row.appendChild(lab);
+    row.appendChild(drop);
+    subs.appendChild(row);
+  });
+  var subIn = input("card-f-subtask", "text", "", "Add a subtask…");
+  subIn.maxLength = 500;
+  subIn.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || !subIn.value.trim()) return;
+    e.preventDefault();
+    postBoard({ op: "subtask_add", id: c.id, text: subIn.value.trim() }, null);
+  });
+  subs.appendChild(subIn);
+
+  // ---- dependencies ----
+  var deps = detailSection(el.cardDetail, "Waiting on");
+  (c.depends_on || []).forEach(function (depId) {
+    var dep = cardById(depId);
+    var row = document.createElement("div");
+    row.className = "detail-row";
+    var name = document.createElement("span");
+    name.textContent = dep ? dep.title + "  ·  " + dep.column : depId + " (missing)";
+    if (dep && dep.column !== doneColumn()) name.className = "dep-open";
+    var drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "rail-pin";
+    drop.textContent = "×";
+    drop.setAttribute("aria-label", "Stop waiting on " + (dep ? dep.title : depId));
+    drop.addEventListener("click", function () {
+      postBoard({ op: "depend_remove", id: c.id, depends_on: depId }, null);
+    });
+    row.appendChild(name);
+    row.appendChild(drop);
+    deps.appendChild(row);
+  });
+  var depPick = document.createElement("select");
+  depPick.id = "card-f-dep";
+  var blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Add a dependency…";
+  depPick.appendChild(blank);
+  board.cards.forEach(function (other) {
+    if (other.id === c.id || (c.depends_on || []).indexOf(other.id) !== -1) return;
+    var o = document.createElement("option");
+    o.value = other.id;
+    o.textContent = other.title;
+    depPick.appendChild(o);
+  });
+  depPick.addEventListener("change", function () {
+    if (!depPick.value) return;
+    postBoard({ op: "depend_add", id: c.id, depends_on: depPick.value }, null);
+  });
+  deps.appendChild(depPick);
+
+  // ---- usage ----
+  var usage = c.usage || {};
+  if (usage.prompt_tokens || usage.completion_tokens || usage.cost) {
+    var u = detailSection(el.cardDetail, "Cost so far");
+    var line = document.createElement("p");
+    line.className = "meta";
+    line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
+      " completion  ·  " + fmtCost(usage.cost || 0) +
+      ((usage.runs || []).length ? "  ·  " + usage.runs.length + (usage.runs.length === 1 ? " run" : " runs") : "");
+    u.appendChild(line);
+    (usage.runs || []).forEach(function (rid) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "secondary";
+      b.textContent = rid;
+      b.title = "Open this run's graph";
+      b.addEventListener("click", function () {
+        showView("runs", true);
+        el.runSelect.value = rid;
+        loadRun(rid);
+      });
+      u.appendChild(b);
+    });
+  }
+
+  // ---- log ----
+  var logBox = detailSection(el.cardDetail, "Activity");
+  var entries = (c.log || []).slice().reverse();
+  if (!entries.length) {
+    var empty = document.createElement("p");
+    empty.className = "meta";
+    empty.textContent = "Nothing recorded yet.";
+    logBox.appendChild(empty);
+  }
+  entries.forEach(function (e) {
+    var row = document.createElement("p");
+    row.className = "log-entry";
+    var when = document.createElement("span");
+    when.className = "log-when";
+    when.textContent = e.ts ? formatChatTime(e.ts) : "";
+    var who = document.createElement("span");
+    who.className = "log-who";
+    who.textContent = e.who || "someone";
+    var what = document.createElement("span");
+    what.textContent = e.what || "";
+    row.appendChild(when);
+    row.appendChild(who);
+    row.appendChild(what);
+    logBox.appendChild(row);
+  });
+  var noteIn = input("card-f-log", "text", "", "Record what you did…");
+  noteIn.maxLength = 2000;
+  noteIn.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || !noteIn.value.trim()) return;
+    e.preventDefault();
+    postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
+  });
+  logBox.appendChild(noteIn);
+}
+
+el.cardForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  var title = el.cardTitle.value.trim();
+  if (!title) return;
+  postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function () {
+    el.cardTitle.value = "";
+  });
+});
+
+el.boardRefresh.addEventListener("click", function () { loadBoard(); });
+el.boardMine.addEventListener("change", function () { renderBoard(board); });
+
+/* ---------- logs ---------- */
+
+function loadLogList() {
+  return fetch("/api/logs")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      var logs = (d.logs || []).slice().sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+      var keep = el.logSelect.value;
+      el.logSelect.textContent = "";
+      logs.forEach(function (l) {
+        var opt = document.createElement("option");
+        opt.value = l.name;
+        opt.textContent = l.name + "  ·  " + fmtBytes(l.bytes);
+        el.logSelect.appendChild(opt);
+      });
+      if (!logs.length) {
+        el.logView.textContent = "No logs yet. clanker writes them under state/logs/.";
+        return;
+      }
+      el.logSelect.value = keep && el.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
+      return loadLog(el.logSelect.value);
+    })
+    .catch(function (err) { el.logsStatus.textContent = "Could not list logs: " + err.message; });
+}
+
+function loadLog(name) {
+  if (!name) return Promise.resolve();
+  return fetch("/api/logs/" + encodeURIComponent(name))
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      el.logView.textContent = d.text || "(empty)";
+      // Newest lines are at the bottom, which is where a tail is read from.
+      el.logView.scrollTop = el.logView.scrollHeight;
+      el.logsStatus.textContent = "Showing the tail of " + d.name + " (" + fmtBytes(d.bytes) + " total).";
+    })
+    .catch(function (err) { el.logsStatus.textContent = "Could not read log: " + err.message; });
+}
+
+el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
+el.logsRefresh.addEventListener("click", function () { loadLogList(); });
+
+/* ---------- overlays: command palette and shortcut sheet ---------- */
+
+var lastFocus = null;
+
+function openOverlay(node, toFocus) {
+  lastFocus = document.activeElement;
+  node.hidden = false;
+  if (toFocus) toFocus.focus();
+}
+
+function closeOverlay(node) {
+  node.hidden = true;
+  if (lastFocus && lastFocus.focus) lastFocus.focus();
+  lastFocus = null;
+}
+
+var SHORTCUTS = [
+  ["Ctrl/⌘ + K", "Jump to a view, conversation, run, tool or action"],
+  ["?", "This list"],
+  ["1 – 7", "Go to a view by number"],
+  ["← →", "Move between tabs when one is focused"],
+  ["Ctrl/⌘ + Enter", "Run the task in the composer"],
+  ["Esc", "Close an overlay, or stop a running task"]
+];
+
+SHORTCUTS.forEach(function (pair) {
+  var dt = document.createElement("dt");
+  dt.textContent = pair[0];
+  var dd = document.createElement("dd");
+  dd.textContent = pair[1];
+  el.shortcuts.appendChild(dt);
+  el.shortcuts.appendChild(dd);
+});
+
+el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
+el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
+
+/* Everything reachable, in one list. Built fresh on open so it reflects the
+   conversations, runs and tools actually loaded rather than a stale copy. */
+function paletteEntries() {
+  var out = [];
+  VIEWS.forEach(function (v, i) {
+    out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + "  (" + (i + 1) + ")", run: function () { showView(v, true); } });
+  });
+  out.push({ kind: "action", label: "New chat", run: function () { el.newChat.click(); } });
+  out.push({ kind: "action", label: "Fork this conversation", run: function () { el.sessionFork.click(); } });
+  out.push({ kind: "action", label: "Compact this conversation", run: function () { el.sessionCompact.click(); } });
+  out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { el.sessionExport.click(); } });
+  out.push({ kind: "action", label: "Cycle theme", run: function () { el.themeToggle.click(); } });
+  out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { openOverlay(el.help, el.helpClose); } });
+  knownSessions.forEach(function (s) {
+    out.push({ kind: "chat", label: sessionLabel(s), run: function () { showView("chat", false); switchSession(s.id); } });
+  });
+  allRuns.forEach(function (r) {
+    out.push({ kind: "run", label: runLabel(r), run: function () { showView("runs", false); el.runSelect.value = r.run_id; loadRun(r.run_id); } });
+  });
+  board.cards.forEach(function (c) {
+    out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {
+      openCardId = c.id;
+      showView("board", true);
+      renderBoard(board);
+    } });
+  });
+  return out;
+}
+
+var paletteItems = [];
+var paletteIndex = 0;
+
+/* Subsequence matching, the same thing an editor's file finder does: "grp"
+   finds "run graph". Cheap, and it forgives the order you remember. */
+function fuzzyMatch(query, text) {
+  if (!query) return true;
+  var t = text.toLowerCase();
+  var qi = 0;
+  for (var i = 0; i < t.length && qi < query.length; i++) {
+    if (t.charAt(i) === query.charAt(qi)) qi += 1;
+  }
+  return qi === query.length;
+}
+
+function renderPalette() {
+  var q = el.paletteInput.value.trim().toLowerCase();
+  var all = paletteEntries();
+  paletteItems = [];
+  el.paletteList.textContent = "";
+  for (var i = 0; i < all.length && paletteItems.length < 40; i++) {
+    if (!fuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
+    paletteItems.push(all[i]);
+  }
+  if (paletteIndex >= paletteItems.length) paletteIndex = 0;
+  paletteItems.forEach(function (entry, i) {
+    var li = document.createElement("li");
+    li.className = "palette-item";
+    li.id = "palette-item-" + i;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === paletteIndex));
+    var kind = document.createElement("span");
+    kind.className = "palette-kind";
+    kind.textContent = entry.kind;
+    var label = document.createElement("span");
+    label.className = "palette-label";
+    label.textContent = entry.label;
+    li.appendChild(kind);
+    li.appendChild(label);
+    li.addEventListener("click", function () { runPalette(i); });
+    el.paletteList.appendChild(li);
+  });
+  if (!paletteItems.length) {
+    var empty = document.createElement("li");
+    empty.className = "palette-item";
+    empty.textContent = "Nothing matches.";
+    el.paletteList.appendChild(empty);
+  }
+  el.paletteInput.setAttribute("aria-activedescendant", paletteItems.length ? "palette-item-" + paletteIndex : "");
+}
+
+function runPalette(i) {
+  var entry = paletteItems[i];
+  closeOverlay(el.palette);
+  if (entry) entry.run();
+}
+
+function openPalette() {
+  el.paletteInput.value = "";
+  paletteIndex = 0;
+  openOverlay(el.palette, el.paletteInput);
+  renderPalette();
+}
+
+el.paletteOpen.addEventListener("click", openPalette);
+el.paletteInput.addEventListener("input", function () { paletteIndex = 0; renderPalette(); });
+el.paletteInput.addEventListener("keydown", function (e) {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!paletteItems.length) return;
+    var step = e.key === "ArrowDown" ? 1 : -1;
+    paletteIndex = (paletteIndex + step + paletteItems.length) % paletteItems.length;
+    renderPalette();
+    var sel = document.getElementById("palette-item-" + paletteIndex);
+    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    runPalette(paletteIndex);
+  }
+});
+
+/* Clicking the scrim closes; clicking the box does not. */
+[el.palette, el.help].forEach(function (node) {
+  node.addEventListener("mousedown", function (e) {
+    if (e.target === node) closeOverlay(node);
+  });
+});
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") {
+    if (!el.palette.hidden) { closeOverlay(el.palette); e.preventDefault(); return; }
+    if (el.rail.getAttribute("data-open") === "true") { setRailOpen(false); el.railToggle.focus(); e.preventDefault(); return; }
+    if (!el.help.hidden) { closeOverlay(el.help); e.preventDefault(); return; }
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    if (el.palette.hidden) openPalette(); else closeOverlay(el.palette);
+    return;
+  }
+  // "?" is a plain key, so it must never fire while something is being typed.
+  if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    e.preventDefault();
+    openOverlay(el.help, el.helpClose);
+  }
+});
+
+renderSessionChip();
+renderSessionOptions([]);
+setBusy(false);
+// Status is cheap and gives the header its identity chips, so it loads
+// regardless of which view opened. Rooms wait for it because they need the
+// instance name to tell this clanker's messages from a peer's.
+loadStatus();
+loadProviders();
+syncSubmitLabel();
+// Only the opening view's data is fetched now; the rest load when opened.
+showView(window.location.hash.replace("#", ""), false);
+/* Reopening the page used to show an empty transcript even when the picker
+   said the conversation had nine messages: nothing ever fetched them. The
+   conversation you were last in is replayed, so a reload resumes rather
+   than restarts. */
+loadSessions().then(function () {
+  if (!currentSessionMeta()) {
+    syncTranscriptEmpty();
+    return;
+  }
+  return fetch("/api/sessions/" + encodeURIComponent(sessionId))
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      renderSessionHistory(data.messages || []);
+      syncTranscriptEmpty();
+      applyTurnFilter();
+      syncScrollButton();
+    })
+    .catch(function () { syncTranscriptEmpty(); });
+});
+});

@@ -1,56 +1,80 @@
-//! webui: serves the clanker web UI — a single self-contained page with no
-//! external scripts, styles, or fonts, so it works on an offline host
-//! (webui/index.html, embedded at comptime via @embedFile) — from the sandbox.
+//! webui: serves the clanker web UI from the sandbox — markup, styles and
+//! behaviour, each its own file under webui/ and embedded at comptime.
 //! Third-party JS the page needs (graph layout, code highlighting) is vendored
 //! and served separately by the native HTTP server from webui/vendor/ — see
 //! handleWebui/handleWebuiVendor in cli.zig — rather than routed through this
-//! WASM tool, whose shared output buffer (lib.zig's out_cap, 64 KiB) is far
-//! smaller than those files.
+//! tool, because those files are not ours to edit and never change.
 //! Internal tool: it is never offered to the LLM; the `clanker serve` HTTP
-//! server calls it to render GET / and /webui.
-//! Input:  {"path": "/"}
+//! server calls it to render GET /, /webui, /webui/app.css and /webui/app.js.
+//! Input:  {"path": "/" | "/webui/app.css" | "/webui/app.js"}
 //! Output: {"ok": true, "content_type": "text/html", "body": "..."}
 
 const std = @import("std");
 const lib = @import("lib.zig");
 
-/// The page is kept as a separate asset (webui/index.html) so it can be
-/// edited independently of the tool code; embedded at comptime.
+/// One file per language, so each can be edited, searched and reviewed as
+/// what it is. They were a single 5,500-line index.html until the page needed
+/// three different kinds of change at once.
 const page = @embedFile("webui/index.html");
+const styles = @embedFile("webui/app.css");
+const script = @embedFile("webui/app.js");
 
-// The page reaches the browser JSON-encoded through lib.zig's shared output
-// buffer, so the buffer — not the raw file size — is the real ceiling on how
-// big index.html may get. Checked here at build time: outgrowing it silently
-// would otherwise surface as a 500 from `clanker serve` at request time.
-comptime {
-    // One branch per byte of the page, plus headroom.
-    @setEvalBranchQuota(4 * page.len);
-    // Matches std.json's default (escape_unicode = false): bytes 0x20-0x21,
-    // 0x23-0x5B and 0x5D-0xFF pass through, `"` `\` and the seven short
-    // control escapes take two bytes, every other control byte becomes \u00xx.
+/// Bytes this asset occupies once JSON-encoded into the response envelope.
+/// Matches std.json's default (escape_unicode = false): bytes 0x20-0x21,
+/// 0x23-0x5B and 0x5D-0xFF pass through, `"` `\` and the seven short control
+/// escapes take two bytes, every other control byte becomes \u00xx.
+fn encodedLen(comptime asset: []const u8) usize {
+    @setEvalBranchQuota(4 * asset.len);
     var encoded: usize = 2; // the enclosing quotes
-    for (page) |c| encoded += switch (c) {
+    for (asset) |c| encoded += switch (c) {
         '"', '\\', 0x08, 0x0C, '\n', '\r', '\t' => 2,
         0x00...0x07, 0x0B, 0x0E...0x1F => 6,
         else => 1,
     };
-    const envelope = "{\"ok\":true,\"content_type\":\"text/html\",\"body\":".len + encoded + "}".len;
-    if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
-        "webui/index.html JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink the page or raise out_cap.",
-        .{ envelope, lib.out_cap },
-    ));
+    return encoded;
+}
+
+// Each asset reaches the browser JSON-encoded through lib.zig's shared output
+// buffer, so the buffer — not the raw file size — is the real ceiling on how
+// big any of them may get. Checked at build time: outgrowing it silently would
+// otherwise surface as a 500 from `clanker serve` at request time. Each is
+// checked on its own, because each is sent in its own response.
+comptime {
+    const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
+    for ([_][]const u8{ page, styles, script }, [_][]const u8{ "index.html", "app.css", "app.js" }) |asset, name| {
+        const envelope = overhead + encodedLen(asset);
+        if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
+            "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
+            .{ name, envelope, lib.out_cap },
+        ));
+    }
 }
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
+const Asset = struct { body: []const u8, content_type: []const u8 };
+
+/// Which file a request wants. Anything else is the page, because the app
+/// routes its own paths client-side and a deep link must still load it.
+fn assetFor(path: []const u8) Asset {
+    if (std.mem.endsWith(u8, path, "/app.css")) return .{ .body = styles, .content_type = "text/css; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/app.js")) return .{ .body = script, .content_type = "text/javascript; charset=utf-8" };
+    return .{ .body = page, .content_type = "text/html; charset=utf-8" };
+}
+
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
-    _ = parsed;
-    // Any path serves the single-page app (client-side routing is handled in JS).
+    var path: []const u8 = "/";
+    if (parsed == .object) {
+        if (parsed.object.get("path")) |v| {
+            if (v == .string) path = v.string;
+        }
+    }
+    const asset = assetFor(path);
     // Encoded straight into the shared output buffer: an intermediate stack
-    // copy would duplicate the whole page and cap it at its own size rather
+    // copy would duplicate the whole asset and cap it at its own size rather
     // than at out_cap.
     var w: std.Io.Writer = .fixed(out.buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -58,9 +82,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.objectField("ok");
     try s.write(true);
     try s.objectField("content_type");
-    try s.write("text/html");
+    try s.write(asset.content_type);
     try s.objectField("body");
-    try s.write(page);
+    try s.write(asset.body);
     try s.endObject();
     out.len = w.end;
 }
