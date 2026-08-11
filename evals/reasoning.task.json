@@ -1,0 +1,19 @@
+{
+  "name": "reasoning",
+  "kind": "task",
+  "description": "reasoning must answer in one of its two documented shapes: ok:true with recent traces, or ok:false with 'no reasoning traces yet' when state/reasoning.jsonl does not exist. Same reasoning as the history and learnings evals — state/ is gitignored, so a fresh checkout legitimately has nothing recorded and the shape of the answer is the only environment-independent assertion. It goes red when the fs_prefixes policy or the read path breaks in a way that is neither content nor a clean 'nothing yet'.",
+  "prompt": "Use the reasoning tool with input {\"last\": 3}. Look at the tool's JSON result. If its ok field is true, or its ok field is false and its error field says there are no reasoning traces yet, reply with exactly SHAPE_OK. For any other result reply with exactly SHAPE_BAD.",
+  "requires_tool": "reasoning",
+  "criteria": [
+    {
+      "includes": [
+        "SHAPE_OK"
+      ]
+    },
+    {
+      "excludes": [
+        "SHAPE_BAD"
+      ]
+    }
+  ]
+}

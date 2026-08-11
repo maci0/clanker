@@ -1,0 +1,19 @@
+{
+  "name": "config_view",
+  "kind": "task",
+  "description": "config_view must dump the effective configuration through its fs_prefixes grant on config.json and config.local.json. config.json is committed and declares providers, so the assertion is environment-independent: with no section filter the text field carries the file's contents, which mention providers whatever the file says that week. It goes red when the fs grant or the read path breaks — the failure that would otherwise surface only as an agent flying blind about its own settings.",
+  "prompt": "Use the config_view tool with input {}. Look at the tool's JSON result. If its ok field is true and its text field is non-empty and mentions providers, reply with exactly CONFIG. Otherwise reply with exactly EMPTY.",
+  "requires_tool": "config_view",
+  "criteria": [
+    {
+      "includes": [
+        "CONFIG"
+      ]
+    },
+    {
+      "excludes": [
+        "EMPTY"
+      ]
+    }
+  ]
+}
