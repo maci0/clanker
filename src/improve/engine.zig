@@ -1882,3 +1882,42 @@ test "the type a compiler note names is looked up too" {
     try std.testing.expectEqualStrings("SET", first.sym);
     try std.testing.expectEqualStrings("SIG", second.sym);
 }
+
+test "a compile error about a std signature comes back with the declaration" {
+    // The whole point of this help is the case that kept repeating: a signal
+    // passed as an integer where SIG is an enum, five runs in a row.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    // Without a lib dir there is nothing to read, and saying so beats a
+    // confusing empty result.
+    const saved = sandbox_host.zig_lib_dir;
+    defer sandbox_host.zig_lib_dir = saved;
+    if (saved.len == 0) return error.SkipZigTest;
+
+    const err = try std.fmt.allocPrint(arena,
+        \\src/util/pidlock.zig:72:39: error: expected type 'os.linux.SIG__enum_1935', found 'comptime_int'
+        \\    const rc = std.os.linux.kill(pid, 0);
+        \\{s}/std/os/linux.zig:4036:8: note: enum declared here
+    , .{saved});
+
+    const help = engine.stdSymbolHelp(err);
+    try std.testing.expect(help.len > 0);
+    // The declaration the compiler pointed at, not a guess at which SIG.
+    try std.testing.expect(std.mem.indexOf(u8, help, "os/linux.zig") != null);
+}

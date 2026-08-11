@@ -24,6 +24,7 @@ const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const diskcap = @import("util/diskcap.zig");
+const runlock = @import("util/runlock.zig");
 const gate_checks = @import("gate/checks.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
@@ -2308,6 +2309,22 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
     std.Io.Dir.cwd().createDirPath(io, "state/staging") catch {};
+
+    // Before any staging or gate work: two runs against one tree gate each
+    // other's half-applied patches and promote over each other.
+    var holder: ?u32 = null;
+    var lock = runlock.acquire(io, gpa, std.Io.Dir.cwd(), "state/improve.lock", &holder) catch |err| switch (err) {
+        runlock.Error.Busy => {
+            if (holder) |pid| {
+                log.log(.warn, "another improve-self is already running (process {d}); nothing was changed", .{pid});
+            } else {
+                log.log(.warn, "another improve-self is already running; nothing was changed", .{});
+            }
+            return;
+        },
+        else => return err,
+    };
+    defer lock.release();
 
     if (cfg.improve.max_context_bytes) |n| log.log(.debug, "improve.max_context_bytes = {d} (config override)", .{n});
     var eng = improve.Engine{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg, .hist = undefined, .instructions = undefined };
