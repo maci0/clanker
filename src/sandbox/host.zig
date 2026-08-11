@@ -49,6 +49,7 @@ pub const Err = struct {
     pub const too_large: u32 = 3;
     pub const network: u32 = 4;
     pub const invalid: u32 = 5;
+    pub const mismatch: u32 = 6;
 };
 
 /// Per-tool sandbox policy, owned by the harness.
@@ -1534,6 +1535,73 @@ fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8
     return h.writeResult(mem_bytes, json);
 }
 
+/// ck_fs_write_if(path, expected_hash, data) — compare-and-swap file write.
+/// Acquires an exclusive lock on a separate .lock file, reads the current
+/// contents, hashes them to lowercase hex SHA-256, compares with
+/// expected_hash, and writes data only if they match. A file that does not
+/// exist matches an empty expected_hash so a guest can create one.
+/// Returns Err.ok on success, Err.mismatch if the hash does not match,
+/// or other Err codes for policy / I/O failures.
+pub fn ckFsWriteIf(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, expect_ptr: u32, expect_len: u32, data_ptr: u32, data_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    const expected_hex = sliceOf(bytes, expect_ptr, expect_len) orelse return Err.invalid;
+    const data = sliceOf(bytes, data_ptr, data_len) orelse return Err.invalid;
+    if (path.len == 0) return Err.invalid;
+    return fsWriteIfImpl(h.sandbox, std.Io.Dir.cwd(), path, expected_hex, data);
+}
+
+fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_hex: []const u8, data: []const u8) u32 {
+    if (data.len > sb.max_fs_bytes) return Err.too_large;
+    const full = safeJoin(sb, sub_path) catch return Err.denied;
+    defer sb.gpa.free(full);
+
+    // Lock on a separate file, not on the file being rewritten (a replace
+    // invalidates a lock held on the replaced inode).
+    const lock_path = std.fmt.allocPrint(sb.gpa, "{s}.ck_cas.lock", .{full}) catch return Err.invalid;
+    defer sb.gpa.free(lock_path);
+    const lock_file = base.createFile(sb.io, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
+        log.log(.warn, "[fs_write_if] could not acquire lock for '{s}': {s}", .{ sub_path, @errorName(err) });
+        return Err.invalid;
+    };
+    defer lock_file.close(sb.io);
+
+    // Read current contents (missing file -> empty).
+    const current = base.readFileAlloc(sb.io, full, sb.gpa, .limited(sb.max_fs_bytes)) catch |err| switch (err) {
+        error.FileNotFound => "",
+        error.StreamTooLong => return Err.too_large,
+        else => return Err.invalid,
+    };
+    const current_owned = current.len > 0;
+    defer if (current_owned) sb.gpa.free(@constCast(current));
+
+    // Hash current contents to lowercase hex SHA-256.
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(current);
+    const digest = hasher.finalResult();
+    const hex = std.fmt.bytesToHex(digest, .lower);
+
+    // Compare: empty expected matches empty file (FileNotFound above).
+    if (expected_hex.len == 0 and current.len == 0) {
+        // Creating a new file — hash matches (both empty).
+    } else if (expected_hex.len != hex.len or !std.mem.eql(u8, expected_hex, &hex)) {
+        return Err.mismatch;
+    }
+
+    // Create parent directories.
+    if (std.mem.lastIndexOfScalar(u8, full, '/')) |slash| {
+        if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
+    }
+
+    // Write (replace) the file.
+    base.writeFile(sb.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        else => return Err.invalid,
+    };
+    return Err.ok;
+}
+
 /// ck_getenv(name) — alias of ck_env, kept for modules linked against the
 /// older symbol name. Delegating keeps the validation contract (empty name
 /// -> Err.invalid) identical for both entry points.
@@ -2663,6 +2731,54 @@ test "a tool with no declared prefixes reaches no file at all" {
     const anywhere = try safeJoin(&sb, "src/main.zig");
     std.testing.allocator.free(anywhere);
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "../outside"));
+}
+
+test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Use "." prefix so safeJoin allows any relative path under root_dir.
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    // 1) Empty expected hash creates a missing file.
+    const rc1 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", "", "hello world");
+    try std.testing.expectEqual(Err.ok, rc1);
+    const after1 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    defer gpa.free(after1);
+    try std.testing.expectEqualStrings("hello world", after1);
+
+    // 2) Correct hash writes.
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update("hello world");
+    const digest = hasher.finalResult();
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    const rc2 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", &hex, "updated");
+    try std.testing.expectEqual(Err.ok, rc2);
+    const after2 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    defer gpa.free(after2);
+    try std.testing.expectEqualStrings("updated", after2);
+
+    // 3) Stale hash writes nothing and returns mismatch.
+    const rc3 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", &hex, "should not land");
+    try std.testing.expectEqual(Err.mismatch, rc3);
+    const after3 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    defer gpa.free(after3);
+    try std.testing.expectEqualStrings("updated", after3);
 }
 
 test "a tool may run only the commands its manifest names" {
