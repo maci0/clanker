@@ -1,0 +1,29 @@
+{
+  "name": "todo_add",
+  "description": "Add a todo to a chatroom's shared todo list. The todo is visible to every clanker subscribed to that room (it rides the chatroom log and peer fan-out). Returns the todo id; share it or use todo_list so others can claim or close it.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      },
+      "title": {
+        "type": "string",
+        "description": "Short description of the task (max 512 chars)"
+      }
+    },
+    "required": [
+      "room",
+      "title"
+    ]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "todo_add"
+  },
+  "category": "chat"
+}

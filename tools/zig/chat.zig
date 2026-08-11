@@ -1,13 +1,19 @@
-//! chat: clanker chatroom tools. One WASM module backs four descriptors
-//! (chat_send / chat_history / chat_rooms / chat_subscribe); each descriptor's
-//! `config` object pins the op, e.g. {"op":"send"}. All state, subscription
-//! filtering, and peer fan-out happen host-side in ck_chat; this module only
-//! reads its op, forwards the tool arguments, and passes the host JSON back.
+//! chat: clanker chatroom tools. One WASM module backs eight descriptors
+//! (chat_send / chat_history / chat_rooms / chat_subscribe and the shared
+//! todo-list tools todo_add / todo_claim / todo_close / todo_list); each
+//! descriptor's `config` object pins the op, e.g. {"op":"send"}. All state,
+//! subscription filtering, and peer fan-out happen host-side in ck_chat; this
+//! module only reads its op, forwards the tool arguments, and passes the host
+//! JSON back.
 //!
 //!   chat_send:      {"room":"dev","text":"hello"}
 //!   chat_history:   {"room":"dev","after":0}
 //!   chat_rooms:     {}
 //!   chat_subscribe: {"room":"dev","on":true}
+//!   todo_add:       {"room":"dev","title":"ship it"}
+//!   todo_claim:     {"room":"dev","todo":"<id>"}
+//!   todo_close:     {"room":"dev","todo":"<id>"}
+//!   todo_list:      {"room":"dev"}
 
 const std = @import("std");
 const lib = @import("lib.zig");

@@ -16,6 +16,7 @@ const config_mod = @import("../config.zig");
 const subagent_mod = @import("../agent/subagent.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
+const todos_mod = @import("../peers/todos.zig");
 const token_stats = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
 
@@ -544,17 +545,27 @@ const ChatOp = struct {
     text: ?[]const u8 = null,
     after: ?i64 = null,
     on: ?bool = null,
+    title: ?[]const u8 = null,
+    todo: ?[]const u8 = null,
 };
 
-/// ck_chat(op_json) — chatroom operations for the chat_* tools.
-/// Input:  {"op":"send|history|rooms|subscribe", "room":..., "text":...,
-///          "after":..., "on":...}
+/// ck_chat(op_json) — chatroom operations for the chat_* and todo_* tools.
+/// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
+///          "room":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
 /// Output (in the host arena):
 ///   send:      {"ok":true,"ts":...,"id":"..."}
 ///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...]}
 ///   rooms:     {"ok":true,"rooms":[{room,messages,last_ts,last_from,last_text}],
 ///               "subscribed":["dev"]}
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
+///   todo_add:  {"ok":true,"todo":"<id>","ts":...}
+///   todo_claim/todo_close: {"ok":true,"todo":"<id>","status":...,
+///               "claimed_by":...,"closed_by":...,"yours":bool}
+///   todo_list: {"ok":true,"todos":[{todo,title,status,created_by,claimed_by,ts},...]}
+/// Todo actions are plain chatroom messages (`@todo {...}` text, see
+/// src/peers/todos.zig), so they reuse the same log, fan-out, and
+/// subscription filter; a claim can lose to a concurrent claim already in
+/// the log, which is why todo_claim reports the winner.
 /// The fan-out, subscription filter, and persistence all live host-side so
 /// the WASM module stays thin; the descriptor config pins which op a tool is.
 pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
@@ -669,6 +680,89 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.objectField("rooms") catch return Err.too_large;
         s.beginArray() catch return Err.too_large;
         for (subs) |sub| s.write(sub) catch return Err.too_large;
+        s.endArray() catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "todo_add")) {
+        const room = parsed.room orelse return Err.invalid;
+        const title = parsed.title orelse return Err.invalid;
+        if (room.len == 0 or title.len == 0 or title.len > todos_mod.max_title_len) return Err.invalid;
+        const text = todos_mod.encodeAdd(arena, title) catch return Err.too_large;
+        const msg = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
+            log.log(.warn, "[chat] todo_add failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("todo") catch return Err.too_large;
+        s.write(msg.id) catch return Err.too_large;
+        s.objectField("ts") catch return Err.too_large;
+        s.print("{d}", .{msg.ts}) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "todo_claim") or std.mem.eql(u8, op, "todo_close")) {
+        const room = parsed.room orelse return Err.invalid;
+        const id = parsed.todo orelse return Err.invalid;
+        if (room.len == 0 or id.len == 0) return Err.invalid;
+        const before = todos_mod.load(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room) catch return Err.invalid;
+        if (todos_mod.get(before, id) == null) {
+            // Guests pass host JSON through verbatim, so an ok:false body is
+            // a friendlier answer than a bare error code here.
+            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"unknown todo id in this room; call todo_list first\"}");
+        }
+        const is_claim = std.mem.eql(u8, op, "todo_claim");
+        const text = (if (is_claim) todos_mod.encodeClaim(arena, id) else todos_mod.encodeClose(arena, id)) catch return Err.too_large;
+        _ = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
+            log.log(.warn, "[chat] {s} failed: {s}", .{ op, @errorName(err) });
+            return Err.invalid;
+        };
+        // Re-derive: a concurrent claim already in the log may have won, so
+        // report the actual outcome instead of assuming ours took effect.
+        const after_todos = todos_mod.load(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room) catch return Err.invalid;
+        const t = todos_mod.get(after_todos, id) orelse return Err.invalid;
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("todo") catch return Err.too_large;
+        s.write(id) catch return Err.too_large;
+        s.objectField("status") catch return Err.too_large;
+        s.write(t.status()) catch return Err.too_large;
+        s.objectField("claimed_by") catch return Err.too_large;
+        s.write(t.claimed_by) catch return Err.too_large;
+        s.objectField("closed_by") catch return Err.too_large;
+        s.write(t.closed_by) catch return Err.too_large;
+        if (is_claim) {
+            s.objectField("yours") catch return Err.too_large;
+            s.write(std.mem.eql(u8, t.claimed_by, cfg.instance.name)) catch return Err.too_large;
+        }
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "todo_list")) {
+        const room = parsed.room orelse return Err.invalid;
+        if (room.len == 0) return Err.invalid;
+        const todos = todos_mod.load(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room) catch return Err.invalid;
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("todos") catch return Err.too_large;
+        s.beginArray() catch return Err.too_large;
+        for (todos) |t| {
+            s.beginObject() catch return Err.too_large;
+            s.objectField("todo") catch return Err.too_large;
+            s.write(t.id) catch return Err.too_large;
+            s.objectField("title") catch return Err.too_large;
+            s.write(t.title) catch return Err.too_large;
+            s.objectField("status") catch return Err.too_large;
+            s.write(t.status()) catch return Err.too_large;
+            s.objectField("created_by") catch return Err.too_large;
+            s.write(t.created_by) catch return Err.too_large;
+            s.objectField("claimed_by") catch return Err.too_large;
+            s.write(t.claimed_by) catch return Err.too_large;
+            s.objectField("ts") catch return Err.too_large;
+            s.print("{d}", .{t.ts}) catch return Err.too_large;
+            s.endObject() catch return Err.too_large;
+        }
         s.endArray() catch return Err.too_large;
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);

@@ -1,0 +1,29 @@
+{
+  "name": "todo_close",
+  "description": "Close (complete) a todo on a chatroom's shared todo list. Every clanker subscribed to the room sees it move to closed. Close a todo when its work is done, whether or not you were the one who claimed it.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room name, e.g. \"dev\""
+      },
+      "todo": {
+        "type": "string",
+        "description": "Todo id from todo_add or todo_list"
+      }
+    },
+    "required": [
+      "room",
+      "todo"
+    ]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "todo_close"
+  },
+  "category": "chat"
+}

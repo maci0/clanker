@@ -38,6 +38,7 @@ comptime {
     _ = @import("llm/gcp_jwt.zig");
     _ = @import("llm/vertex_token.zig");
     _ = @import("peers/chatrooms.zig");
+    _ = @import("peers/todos.zig");
     _ = @import("stats/tokens.zig");
     _ = @import("cli.zig");
 }
