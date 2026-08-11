@@ -286,11 +286,11 @@ Every tool is a WASM plugin; the descriptor decides how much of the harness it g
 | `enabled` | Default on/off state; ships `false` for anything that spends tokens on its own |
 | `llm` | May call the model through `ck_llm`; forces sequential execution |
 | `config` | Free-form settings object, returned to the guest by `ck_config` |
-| `config.fuel` | Instruction budget for the tool's module (zwasm fuel). Unset = 10 billion; clamped to [1 million, 100 billion] so a typo'd `0` cannot brick the tool and an absurd value cannot switch the meter off |
 | `transform` | Marks the tool as a chain link: `{ "phase": "before"\|"after", "tools": ["*"], "order": 50 }` |
 | `network_from_config` | `"peers"` or `"providers"`: the harness adds those configured hosts to `network_allow` at load |
 | `exec_allow` | Commands this tool may run through `ck_exec`; replaces the harness default set |
 | `fs_prefixes` / `network_allow` | Filesystem and network authority |
+| `fuel` | Instruction budget for one call (wasm fuel). Tightens the sandbox default (10B); values above it are clamped down, so a descriptor can never raise its own ceiling |
 
 ### Switching plugins on and off
 
@@ -332,7 +332,7 @@ A descriptor with `"llm": true` may call `ck_llm(prompt)` and get completion tex
 "config": { "provider": "kimi-k3", "model": "kimi-k2.7-code", "max_tokens": 2048 }
 ```
 
-The harness reads `provider`, `model`, and `max_tokens` to build that call, and `fuel` (any tool, not just `llm` ones) to size the module's instruction budget; every other key is the plugin's own and reaches it verbatim through `ck_config`.
+The harness reads `provider`, `model`, and `max_tokens` to build that call; every other key is the plugin's own and reaches it verbatim through `ck_config`.
 
 The shipped `translate` plugin combines all of it: an `after` transform on every tool, off by default, that asks its configured model to translate the human-readable text in a tool result into `config.lang` before the next layer sees it. It validates that the answer is still JSON and declines rather than passing on corrupted output.
 

@@ -47,6 +47,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = exe_target,
             .optimize = optimize,
+            // Debug info embeds the absolute checkout path (DWARF comp-dir
+            // and per-file paths), so two clean builds of the same source
+            // from differently-named directories produce byte-different
+            // binaries. Debug builds keep symbols for local debugging;
+            // release builds strip them so the shipped artifact does not
+            // encode where it happened to be built.
+            .strip = optimize != .Debug,
             .imports = &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
                 .{ .name = "build_options", .module = build_options.createModule() },

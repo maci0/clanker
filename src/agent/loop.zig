@@ -377,8 +377,9 @@ pub const Agent = struct {
         // atomic-rename rebuild between the assistant's tool_calls message
         // and the tool results). Providers reject tool_calls with no matching
         // tool results, and strict providers (kimi-k3 et al.) also reject a
-        // partial exchange, so drop any dangling tail before continuing.
-        dropDanglingToolExchange(messages);
+        // partial exchange, so complete or drop any dangling tail before
+        // continuing.
+        try dropDanglingToolExchange(self.arena, messages);
         // Attachments queued by the caller ride on the task message itself,
         // the same ImagePart shape the tool-result image path uses.
         var task_images: ?[]types.ImagePart = null;
@@ -690,14 +691,23 @@ pub const Agent = struct {
         return error.MaxIterationsExceeded;
     }
 
-    /// Drops a dangling tool-call exchange from the tail of a resumed
-    /// transcript: either a trailing assistant message with tool_calls no
-    /// results ever answered, or trailing .tool results that do not exactly
-    /// match the tool_calls ids of their nearest preceding assistant message
-    /// (a crash mid-batch persists the assistant message and only some of the
-    /// results). Providers reject both shapes, so without this a resumed
-    /// session can never make progress. Repeats until the tail is clean.
-    fn dropDanglingToolExchange(messages: *std.ArrayList(types.Message)) void {
+    /// A crash (or atomic-rename rebuild) between the assistant's tool_calls
+    /// message and its tool results can persist a resumed session mid-batch:
+    /// either a trailing assistant message with no results ever answered, or
+    /// trailing .tool results that only partially answer the tool_calls of
+    /// their nearest preceding assistant message.
+    ///
+    /// A tool call that already has a persisted result already ran — possibly
+    /// with a real, non-idempotent side effect (a file write, a shell
+    /// command) — so its result is kept rather than discarded, which would
+    /// otherwise leave the model no record that the call happened and free to
+    /// blindly re-issue it. A call with no result yet is truly unknown (it
+    /// may have run and lost its result, or never run at all), so it gets a
+    /// synthetic "interrupted" result instead of being silently dropped and
+    /// invisibly retried. Only a batch with no results at all (nothing ever
+    /// executed) or an orphaned result matching no known call is dropped
+    /// outright. Repeats until the tail is clean.
+    fn dropDanglingToolExchange(arena: std.mem.Allocator, messages: *std.ArrayList(types.Message)) !void {
         while (messages.items.len > 0) {
             const last = messages.items[messages.items.len - 1];
             if (last.role == .assistant and last.tool_calls != null and last.tool_calls.?.len > 0) {
@@ -705,52 +715,60 @@ pub const Agent = struct {
                 continue;
             }
             if (last.role != .tool) break;
-            // One or more tool results at the tail: the exchange is complete
-            // only when those results answer exactly the tool_calls of the
-            // nearest preceding assistant message.
             var tail = messages.items.len;
             while (tail > 0 and messages.items[tail - 1].role == .tool) tail -= 1;
             const trailing = messages.items[tail..];
-            var complete = false;
-            if (tail > 0) {
-                const parent = messages.items[tail - 1];
-                if (parent.role == .assistant and parent.tool_calls != null and parent.tool_calls.?.len == trailing.len) {
-                    const calls = parent.tool_calls.?;
-                    complete = true;
-                    for (trailing) |tm| {
-                        const tid = tm.tool_call_id orelse {
-                            complete = false;
+            const parent = if (tail > 0) messages.items[tail - 1] else null;
+            const calls = if (parent) |p| (if (p.role == .assistant) p.tool_calls else null) else null;
+            if (calls == null or calls.?.len == 0) {
+                // No matching assistant tool_calls message to answer to: this
+                // tail cannot be salvaged.
+                messages.items.len = tail;
+                continue;
+            }
+            // Every trailing result must answer one of this batch's calls; a
+            // result that matches none of them is an orphan the batch cannot
+            // be trusted around, so the whole thing is dropped (the next pass
+            // pops the parent via the first branch above).
+            var orphaned = false;
+            for (trailing) |tm| {
+                const tid = tm.tool_call_id orelse {
+                    orphaned = true;
+                    break;
+                };
+                var found = false;
+                for (calls.?) |tc| {
+                    if (std.mem.eql(u8, tc.id, tid)) found = true;
+                }
+                if (!found) {
+                    orphaned = true;
+                    break;
+                }
+            }
+            if (orphaned) {
+                messages.items.len = tail;
+                continue;
+            }
+            if (trailing.len == calls.?.len) break; // already complete
+            for (calls.?) |tc| {
+                var found = false;
+                for (trailing) |tm| {
+                    if (tm.tool_call_id) |tid| {
+                        if (std.mem.eql(u8, tc.id, tid)) {
+                            found = true;
                             break;
-                        };
-                        var found = false;
-                        for (calls) |tc| {
-                            if (std.mem.eql(u8, tc.id, tid)) found = true;
-                        }
-                        if (!found) {
-                            complete = false;
-                            break;
-                        }
-                    }
-                    if (complete) {
-                        for (calls) |tc| {
-                            var found = false;
-                            for (trailing) |tm| {
-                                const tid = tm.tool_call_id orelse continue;
-                                if (std.mem.eql(u8, tc.id, tid)) found = true;
-                            }
-                            if (!found) {
-                                complete = false;
-                                break;
-                            }
                         }
                     }
                 }
+                if (!found) {
+                    try messages.append(arena, .{
+                        .role = .tool,
+                        .tool_call_id = tc.id,
+                        .content = "{\"ok\":false,\"error\":\"interrupted before this tool call finished (process restart); its outcome is unknown \\u2014 if it has side effects, check whether it already happened before repeating it\"}",
+                    });
+                }
             }
-            if (complete) break;
-            // Partial or orphaned: drop the trailing tool results; the next
-            // pass pops the parent assistant tool_calls message via the first
-            // branch above (or stops if there is no such parent).
-            messages.items.len = tail;
+            break;
         }
     }
 
@@ -2252,7 +2270,7 @@ const ToolWorker = struct {
             .cfg = self.cfg,
             .state_dir = self.cfg.agent.state_dir,
             .config_json = self.tool.config_json,
-            .fuel = host.pluginFuel(self.tool.config),
+            .fuel = self.tool.fuel,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args ({d} bytes)={s}", .{ self.tool.name, self.arguments.len, self.arguments[0..@min(self.arguments.len, 300)] });
@@ -2658,7 +2676,7 @@ test "compactionKeepStart returns null when the history is too short to compact"
     try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
 }
 
-test "resumed-session cleanup drops dangling and partial tool-call exchanges" {
+test "resumed-session cleanup completes partial tool-call exchanges instead of discarding executed results" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -2674,12 +2692,15 @@ test "resumed-session cleanup drops dangling and partial tool-call exchanges" {
         } });
         try messages.append(arena, .{ .role = .tool, .tool_call_id = "a", .content = "r1" });
         try messages.append(arena, .{ .role = .tool, .tool_call_id = "b", .content = "r2" });
-        Agent.dropDanglingToolExchange(&messages);
+        try Agent.dropDanglingToolExchange(arena, &messages);
         try std.testing.expectEqual(@as(usize, 5), messages.items.len);
     }
 
-    // (2) A partial exchange (only 1 of 2 results persisted) is dropped
-    // entirely, parent assistant message included.
+    // (2) A partial exchange (only 1 of 2 results persisted) keeps the real
+    // result — it already ran, possibly with a side effect — and gets a
+    // synthetic "interrupted" result for the call that never got one,
+    // instead of wiping the whole batch and leaving the model free to
+    // blindly re-issue an already-executed call.
     {
         var messages: std.ArrayList(types.Message) = .empty;
         try messages.append(arena, .{ .role = .system, .content = "sys" });
@@ -2689,9 +2710,11 @@ test "resumed-session cleanup drops dangling and partial tool-call exchanges" {
             .{ .id = "b", .name = "t2", .arguments = "{}" },
         } });
         try messages.append(arena, .{ .role = .tool, .tool_call_id = "a", .content = "r1" });
-        Agent.dropDanglingToolExchange(&messages);
-        try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-        try std.testing.expectEqual(types.Role.user, messages.items[1].role);
+        try Agent.dropDanglingToolExchange(arena, &messages);
+        try std.testing.expectEqual(@as(usize, 5), messages.items.len);
+        try std.testing.expectEqualStrings("r1", messages.items[3].content.?);
+        try std.testing.expectEqualStrings("b", messages.items[4].tool_call_id.?);
+        try std.testing.expect(std.mem.indexOf(u8, messages.items[4].content.?, "interrupted") != null);
     }
 
     // (3) An orphan tool result whose tool_call_id matches no call is dropped
@@ -2703,19 +2726,19 @@ test "resumed-session cleanup drops dangling and partial tool-call exchanges" {
             .{ .id = "a", .name = "t1", .arguments = "{}" },
         } });
         try messages.append(arena, .{ .role = .tool, .tool_call_id = "zzz", .content = "orphan" });
-        Agent.dropDanglingToolExchange(&messages);
+        try Agent.dropDanglingToolExchange(arena, &messages);
         try std.testing.expectEqual(@as(usize, 1), messages.items.len);
     }
 
     // (4) A trailing assistant tool_calls message with no results at all is
-    // popped (the pre-existing behavior).
+    // popped (nothing executed, so there is nothing to protect).
     {
         var messages: std.ArrayList(types.Message) = .empty;
         try messages.append(arena, .{ .role = .system, .content = "sys" });
         try messages.append(arena, .{ .role = .assistant, .tool_calls = &.{
             .{ .id = "a", .name = "t1", .arguments = "{}" },
         } });
-        Agent.dropDanglingToolExchange(&messages);
+        try Agent.dropDanglingToolExchange(arena, &messages);
         try std.testing.expectEqual(@as(usize, 1), messages.items.len);
     }
 }

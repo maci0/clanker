@@ -28,5 +28,6 @@
     }
   },
   "network_allow": [],
+  "fuel": 100000000,
   "category": "compute"
 }

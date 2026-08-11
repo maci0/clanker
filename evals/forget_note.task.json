@@ -1,0 +1,19 @@
+{
+  "name": "forget_note",
+  "kind": "task",
+  "description": "forget_note must answer in one of its two documented shapes without touching anything: ok:true with removed:0 when the match hits nothing, or ok:false with 'no learnings file yet' when state/learnings.md does not exist. The probe is read-only by construction — dry_run is set and the match string exists nowhere — so the eval can run forever without eroding persistent memory, which is why write_note has no eval: an eval that appends to the notes injects itself into the system prompt of every future run. It goes red when the fs grant on state/learnings.md or the match path breaks.",
+  "prompt": "Use the forget_note tool with input {\"match\": \"clanker-eval-nonexistent-marker\", \"dry_run\": true}. Look at the tool's JSON result. If its ok field is true and its removed field is 0, or its ok field is false and its error field says there is no learnings file yet, reply with exactly SHAPE_OK. For any other result reply with exactly SHAPE_BAD.",
+  "requires_tool": "forget_note",
+  "criteria": [
+    {
+      "includes": [
+        "SHAPE_OK"
+      ]
+    },
+    {
+      "excludes": [
+        "SHAPE_BAD"
+      ]
+    }
+  ]
+}

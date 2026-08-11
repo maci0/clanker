@@ -101,11 +101,16 @@ pub fn main(init: std.process.Init) !void {
     var args_it = init.minimal.args.iterate();
     while (args_it.next()) |arg| try arg_list.append(gpa, arg);
 
-    const opts = cli.parse(arg_list.items) catch |err| {
+    var diag: []const u8 = "";
+    const opts = cli.parse(arg_list.items, &diag) catch |err| {
         switch (err) {
             error.MissingTask => log.log(.error_, "`clanker run` needs a task text argument", .{}),
-            error.BadSubcommand => log.log(.error_, "usage: clanker providers check [name]", .{}),
-            else => log.log(.error_, "{s}", .{@errorName(err)}),
+            error.UnknownCommand => log.log(.error_, "unknown command '{s}' (see the command list below)", .{diag}),
+            error.UnknownArg => log.log(.error_, "unrecognized argument '{s}'", .{diag}),
+            error.MissingArg => log.log(.error_, "'{s}' needs a value", .{diag}),
+            error.BadIters => log.log(.error_, "--iters wants a non-negative integer, got '{s}'", .{diag}),
+            error.BadPort => log.log(.error_, "--port wants a 16-bit port number, got '{s}'", .{diag}),
+            error.BadSubcommand => log.log(.error_, "usage: clanker providers check [name] / clanker chat <send|history|rooms|subscribe> ...", .{}),
         }
         cli.printUsage(init.io);
         // Usage errors (bad/missing args) are the caller's fault, not
@@ -115,7 +120,16 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (opts.verbose) log.setLevel(.debug);
-    try cli.run(init, opts);
+    cli.run(init, opts) catch |err| {
+        // A command failed after argument parsing succeeded: this is a
+        // runtime/general error (exit 1), distinct from the usage errors
+        // above (exit 2). Report it the same way every other clanker error
+        // is reported (log.log(.error_, ...)) instead of letting it fall
+        // through to Zig's default top-level handler, which would dump a
+        // raw stack trace with source paths and memory addresses.
+        log.log(.error_, "{s}", .{@errorName(err)});
+        std.process.exit(1);
+    };
 }
 
 comptime {
