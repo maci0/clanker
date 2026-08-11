@@ -20,7 +20,6 @@ const runner_mod = @import("../evals/runner.zig");
 const builder = @import("../tools/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const history_mod = @import("history.zig");
-const patch_apply = @import("../patch/apply.zig");
 const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -405,7 +404,7 @@ pub const Engine = struct {
         const staged_dir = try std.Io.Dir.cwd().openDir(self.ctx.io, staging, .{});
         defer staged_dir.close(self.ctx.io);
 
-        patch_apply.apply(staged_dir, self.ctx.io, self.ctx.gpa, proposal.changes) catch |err| {
+        self.applyPatch(staging, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
             self.removeTree(staging);
             return .failed;
@@ -585,6 +584,44 @@ pub const Engine = struct {
         // Clean up the staging directory now that promotion is done.
         self.removeTree(staging);
         return .accepted;
+    }
+
+    /// Applies the proposal's changes under `staging` through the sandboxed
+    /// `patch_apply` WASM tool (fs_prefixes: ["state/staging"]) instead of a
+    /// native file-write path. The tool only performs the text edits; the
+    /// decision to gate and promote the result stays here, native.
+    fn applyPatch(self: *Engine, staging: []const u8, changes: []const proposal_mod.Change) !void {
+        var reg = try registry.Registry.load(self.ctx.io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
+        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, &reg, "patch_apply", null);
+        defer mod.deinit();
+
+        var enc: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+        try s.beginObject();
+        try s.objectField("changes");
+        try s.beginArray();
+        for (changes) |c| {
+            const rel = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ staging, c.file });
+            try s.beginObject();
+            try s.objectField("file");
+            try s.write(rel);
+            try s.objectField("old");
+            try s.write(c.old);
+            try s.objectField("new");
+            try s.write(c.new);
+            try s.endObject();
+        }
+        try s.endArray();
+        try s.endObject();
+
+        const raw = try mod.executeTool(enc.written());
+        defer self.ctx.gpa.free(raw);
+        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
+            return error.PatchApplyFailed;
+        if (!resp.ok) {
+            log.log(.error_, "patch_apply tool: {s}", .{resp.@"error"});
+            return error.PatchApplyFailed;
+        }
     }
 
     fn gitCommit(self: *Engine, id: []const u8, summary: []const u8, files: []const []const u8) void {
