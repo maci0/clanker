@@ -1,7 +1,7 @@
 {
   "name": "run_length",
   "description": "Run-length encode or decode text; every run is written as <count><char> (e.g. \"aaabbbbc\" -> \"3a4b1c\"), so decoding never confuses a literal digit in the input with a count (C++). WHEN TO USE: compressing sparse, repetitive text (simple bitmaps, padded data dumps). Input: {\"text\": \"...\", \"mode\": \"encode\"|\"decode\"} (mode defaults to encode; bare text may be passed unwrapped for encode).",
-  "wasm": "tools/bin/run_length.wasm",
+  "wasm": "zig-out/tools/run_length.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

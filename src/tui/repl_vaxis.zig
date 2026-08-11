@@ -418,6 +418,18 @@ const Model = struct {
             return;
         }
 
+        if (std.mem.eql(u8, task, "/autoresearch") or std.mem.startsWith(u8, task, "/autoresearch ")) {
+            const args = if (task.len > 14) std.mem.trim(u8, task[14..], " ") else "";
+            if (args.len == 0 or std.mem.eql(u8, args, "--help") or std.mem.eql(u8, args, "-h")) {
+                self.lines.append(self.arena, .{ .text = "usage: /autoresearch --target <file> --harness \"<cmd>\" [--iters N] [--dry-run]", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  runs the measurement loop; use --dry-run to validate without LLM", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "  example: /autoresearch --target tools/zig/calculator.zig --harness \"sh -c 'echo score: 1.0'\" --dry-run", .dim = true }) catch {};
+                return;
+            }
+            // Run as a normal agent task so /autoresearch benefits from the same streaming/history as any other task.
+            // The prompt tells the agent which CLI to invoke; the old stub just echoed a hint.
+        }
+
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
@@ -459,6 +471,7 @@ const Model = struct {
             \\commands:
             \\  /help, ?          show this help
             \\  /model [query]    switch provider/model (fuzzy picker; Enter picks, Esc cancels)
+            \\  /autoresearch ... measurement loop (see /autoresearch --help)
             \\  /quit, /exit, /q  leave the REPL (bare "exit"/"quit" also work)
             \\keys:
             \\  Up/Down           recall previous input

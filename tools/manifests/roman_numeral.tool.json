@@ -1,7 +1,7 @@
 {
   "name": "roman_numeral",
   "description": "Convert between an integer (1-3999) and a Roman numeral (C++). Input: {\"value\": 1994} to get the numeral, or {\"text\": \"MCMXCIV\"} to get the integer back (bare numeral text may also be passed unwrapped).",
-  "wasm": "tools/bin/roman_numeral.wasm",
+  "wasm": "zig-out/tools/roman_numeral.wasm",
   "input_schema": {
     "type": "object",
     "properties": {

@@ -1,0 +1,8 @@
+{
+  "name": "autoresearch_harness",
+  "kind": "task",
+  "prompt": "Read docs/prds/autoresearch.md and reply with the one-line harness contract (what a shell command must do). Keep it to one sentence mentioning metric extraction.",
+  "criteria": [
+    { "includes": ["metric"] }
+  ]
+}

@@ -65,6 +65,10 @@ comptime {
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
     _ = @import("janitor.zig");
+    _ = @import("research/engine.zig");
+    _ = @import("research/ledger.zig");
+    _ = @import("research/harness.zig");
+    _ = @import("research/autoresearch.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),
@@ -117,8 +121,9 @@ pub fn main(init: std.process.Init) !void {
             error.BadPort => log.log(.error_, "--port wants a 16-bit port number, got '{s}'", .{diag}),
             error.FlagNotForCommand => log.log(.error_, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
             error.BadSubcommand => log.log(.error_, "usage: clanker providers <check|models|catalog|fill> [name] / clanker chat <send|history|rooms|subscribe> ...", .{}),
+            error.OutOfMemory => log.log(.error_, "out of memory", .{}),
         }
-        cli.printUsage(init.io);
+        cli.printUsageHint(init.io);
         // Usage errors (bad/missing args) are the caller's fault, not
         // clanker's: exit nonzero so scripts and `&&` chains don't mistake a
         // rejected invocation for success.

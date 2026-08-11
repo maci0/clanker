@@ -1,7 +1,7 @@
 {
   "name": "crc32",
   "description": "CRC-32 (IEEE 802.3) checksum of text, as 8 lowercase hex digits (C). WHEN TO USE: a cheap integrity check or cache-busting key where a full cryptographic hash (ck_hash) is overkill. Input: {\"text\": \"...\"}; the text may also be passed bare, unwrapped.",
-  "wasm": "tools/bin/crc32.wasm",
+  "wasm": "zig-out/tools/crc32.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
