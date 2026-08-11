@@ -145,6 +145,28 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
 
         try s.endArray();
+        if (match_count >= max_matches) {
+            // Count remaining match-type lines so the agent knows how many were omitted.
+            var omitted: usize = 0;
+            var scan = rest;
+            while (scan.len > 0) {
+                const snl = std.mem.indexOfScalar(u8, scan, '\n');
+                const sline = if (snl) |n| scan[0..n] else scan;
+                scan = if (snl) |n| scan[n + 1 ..] else &[_]u8{};
+                if (sline.len == 0) continue;
+                // Quick check before full parse: line must contain "match".
+                if (std.mem.indexOf(u8, sline, "\"match\"") == null) continue;
+                const sp = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, sline, .{ .ignore_unknown_fields = true }) catch continue;
+                if (sp != .object) continue;
+                const st = sp.object.get("type") orelse continue;
+                if (st != .string) continue;
+                if (std.mem.eql(u8, st.string, "match")) omitted += 1;
+            }
+            try s.objectField("truncated");
+            try s.write(true);
+            try s.objectField("truncated_count");
+            try s.print("{d}", .{omitted});
+        }
         try s.endObject();
         lib.commit(out, &w);
         return;
