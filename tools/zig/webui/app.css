@@ -1411,7 +1411,10 @@ mark {
   color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0);
   padding: 0 var(--space-2); min-height: 32px; min-width: 32px;
 }
+.rail-pin:hover { color: var(--fg); }
+.rail-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
 .rail-pin[aria-pressed="true"] { color: var(--accent); }
+.rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .rail-row { display: flex; align-items: center; gap: var(--space-1); }
 .rail-row .rail-item { flex: 1; min-width: 0; }
 /* A scrim only exists on narrow screens, where the rail floats over the page
