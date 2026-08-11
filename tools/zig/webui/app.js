@@ -2336,40 +2336,42 @@ function chatRoomLabel(r) {
 /* Rooms the server knows about, plus a DM entry per configured peer even
    when that conversation has no messages yet — otherwise the only way to
    start a DM would be to have already started one. */
+/* The room picker derives from the rooms the server knows plus the peers this
+   instance could open a DM with. It returns the room that ends up selected,
+   because the caller polls it — a derivation that silently changed the
+   selection would leave the log showing one room and the composer sending to
+   another. */
 function renderChatRooms(rooms) {
   var previous = el.chatRoom.value;
-  el.chatRoom.textContent = "";
 
   var shared = rooms.filter(function (r) { return !isDm(r.room); });
   var dms = rooms.filter(function (r) { return isDm(r.room); });
   knownPeers.forEach(function (p) {
     if (p.name === instanceName) return;
     var room = dmRoom(instanceName, p.name);
+    // A peer with no history yet still needs somewhere to be spoken to.
     if (!dms.some(function (d) { return d.room === room; })) dms.push({ room: room, messages: 0 });
   });
 
-  [["Rooms", shared], ["Direct", dms]].forEach(function (pair) {
-    if (!pair[1].length) return;
-    var group = document.createElement("optgroup");
-    group.label = pair[0];
-    pair[1].forEach(function (r) {
-      var opt = document.createElement("option");
-      opt.value = r.room;
-      opt.textContent = chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : "");
-      group.appendChild(opt);
-    });
-    el.chatRoom.appendChild(group);
-  });
+  el.chatRoom.textContent = "";
+  van.add(el.chatRoom, [["Rooms", shared], ["Direct", dms]]
+    .filter(function (pair) { return pair[1].length; })
+    .map(function (pair) {
+      return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
+        return T.option({ value: r.room },
+          chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : ""));
+      }));
+    }));
 
   var options = el.chatRoom.querySelectorAll("option");
-  if (!options.length) {
-    el.chatRoom.disabled = true;
-    el.chatText.disabled = true;
-    el.chatSend.disabled = true;
+  var empty = options.length === 0;
+  el.chatRoom.disabled = empty;
+  el.chatText.disabled = empty;
+  el.chatSend.disabled = empty;
+  if (empty) {
     el.chatStatus.textContent = "No rooms and no peers configured.";
     return null;
   }
-  el.chatRoom.disabled = false;
   var wanted = Array.prototype.some.call(options, function (o) { return o.value === previous; })
     ? previous : options[0].value;
   el.chatRoom.value = wanted;
@@ -2657,83 +2659,60 @@ function modelLabel(provider, model) {
   return model;
 }
 
+var usageState = van.state([]);
+
 function renderUsage(rows) {
   allUsage = rows || allUsage;
-  rows = allUsage;
-  el.usage.textContent = "";
-  if (!rows.length) {
-    var none = document.createElement("p");
-    none.className = "usage-empty";
-    none.textContent = "No completions recorded yet. Run a task and the totals appear here.";
-    el.usage.appendChild(none);
-    return;
-  }
-  var wrap = document.createElement("div");
-  wrap.className = "usage-wrap";
-  var table = document.createElement("table");
-  table.className = "usage";
-
-  var head = document.createElement("thead");
-  var hrow = document.createElement("tr");
-  [["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"], ["Completion", "num"],
-   ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]].forEach(function (h) {
-    var th = document.createElement("th");
-    th.textContent = h[0];
-    if (h[1]) th.className = h[1];
-    hrow.appendChild(th);
-  });
-  head.appendChild(hrow);
-  table.appendChild(head);
-
-  var body = document.createElement("tbody");
-  var totals = { calls: 0, prompt: 0, completion: 0, cost: 0 };
-  rows.forEach(function (r) {
-    totals.calls += r.calls || 0;
-    totals.prompt += r.prompt_tokens || 0;
-    totals.completion += r.completion_tokens || 0;
-    totals.cost += r.cost || 0;
-
-    var tr = document.createElement("tr");
-    var name = document.createElement("td");
-    // Provider and model are often the same string, and showing it twice is
-    // noise — unless the model has a name of its own to be shown by.
-    var shown = modelLabel(r.provider, r.model);
-    name.textContent = shown === r.provider ? r.provider : r.provider + " / ";
-    if (shown !== r.provider) {
-      var m = document.createElement("span");
-      m.className = "model";
-      m.textContent = shown;
-      name.appendChild(m);
-    }
-    tr.appendChild(name);
-    [fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
-     (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)]
-      .forEach(function (v) {
-        var td = document.createElement("td");
-        td.className = "num";
-        td.textContent = v;
-        tr.appendChild(td);
-      });
-    body.appendChild(tr);
-  });
-  table.appendChild(body);
-
-  var foot = document.createElement("tfoot");
-  var frow = document.createElement("tr");
-  [rows.length + (rows.length === 1 ? " model" : " models"), fmtInt(totals.calls),
-   fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
-    .forEach(function (v, i) {
-      var td = document.createElement("td");
-      if (i > 0) td.className = "num";
-      td.textContent = v;
-      frow.appendChild(td);
-    });
-  foot.appendChild(frow);
-  table.appendChild(foot);
-
-  wrap.appendChild(table);
-  el.usage.appendChild(wrap);
+  usageState.val = allUsage.slice();
 }
+
+var USAGE_COLUMNS = [
+  ["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"],
+  ["Completion", "num"], ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]
+];
+
+/* Provider and model are often the same string, and showing it twice is
+   noise — unless the model has a name of its own to be shown by. */
+function usageName(r) {
+  var shown = modelLabel(r.provider, r.model);
+  if (shown === r.provider) return T.td(r.provider);
+  return T.td(r.provider + " / ", T.span({ class: "model" }, shown));
+}
+
+function usageRow(r) {
+  return T.tr(usageName(r), [
+    fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
+    (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)
+  ].map(function (v) { return T.td({ class: "num" }, v); }));
+}
+
+bind(el.usage, usageState, function (rows) {
+  if (!rows.length) {
+    return UI.empty("No completions recorded yet. Run a task and the totals appear here.");
+  }
+  var totals = rows.reduce(function (a, r) {
+    a.calls += r.calls || 0;
+    a.prompt += r.prompt_tokens || 0;
+    a.completion += r.completion_tokens || 0;
+    a.cost += r.cost || 0;
+    return a;
+  }, { calls: 0, prompt: 0, completion: 0, cost: 0 });
+
+  return T.div({ class: "usage-wrap" },
+    T.table({ class: "usage" },
+      T.thead(T.tr(USAGE_COLUMNS.map(function (col) {
+        var th = T.th({ class: col[1] || null }, col[0]);
+        // Set directly: van did not carry `scope` through as an attribute, and
+        // a header cell without it is not associated with its column.
+        th.setAttribute("scope", "col");
+        return th;
+      }))),
+      T.tbody(rows.map(usageRow)),
+      T.tfoot(T.tr(
+        T.td(rows.length + (rows.length === 1 ? " model" : " models")),
+        [fmtInt(totals.calls), fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
+          .map(function (v) { return T.td({ class: "num" }, v); })))));
+});
 
 function loadUsage() {
   return fetch("/api/stats")
