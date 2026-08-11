@@ -393,19 +393,42 @@ pub const Engine = struct {
                 // case that passed a minute earlier. Rejecting a good patch on
                 // that would stall every improvement, so a failure has to
                 // happen twice to count.
-                log.log(.warn, "capability evals failed; retrying once before rejecting", .{});
-                const retry = try self.capabilityGate(staging, staged_dir);
-                cap.deinit(self.ctx.gpa);
-                cap = retry;
-                if (cap.ok) log.log(.info, "capability evals: PASS on retry", .{});
-            }
-            if (!cap.ok) {
-                const tail = errorTail(self.arena, cap.detail);
-                log.log(.error_, "staged tree failed its own capability evals:", .{});
-                log.log(.error_, "{s}", .{tail});
-                try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-                feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
-                return .failed;
+                //
+                // Only re-run the cases that actually failed: each case is a
+                // full agent run, and re-running the whole suite for one flaky
+                // case costs N runs instead of 1.
+                const failed_names = try parseFailedEvalNames(self.arena, cap.detail);
+                if (failed_names.len > 0) {
+                    log.log(.warn, "capability evals: {d} case(s) failed; retrying only those", .{failed_names.len});
+                    var retry = try self.capabilityGateRetry(staged_dir, failed_names);
+                    defer retry.deinit(self.ctx.gpa);
+                    if (retry.ok) {
+                        log.log(.info, "capability evals: PASS on retry", .{});
+                    } else {
+                        const tail = errorTail(self.arena, retry.detail);
+                        log.log(.error_, "staged tree failed its own capability evals:", .{});
+                        log.log(.error_, "{s}", .{tail});
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+                        feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        return .failed;
+                    }
+                } else {
+                    // Could not parse any names; fall back to full retry.
+                    log.log(.warn, "capability evals failed; retrying all (no parseable FAIL lines)", .{});
+                    const retry = try self.capabilityGate(staging, staged_dir);
+                    cap.deinit(self.ctx.gpa);
+                    cap = retry;
+                    if (cap.ok) {
+                        log.log(.info, "capability evals: PASS on retry", .{});
+                    } else {
+                        const tail = errorTail(self.arena, cap.detail);
+                        log.log(.error_, "staged tree failed its own capability evals:", .{});
+                        log.log(.error_, "{s}", .{tail});
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+                        feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        return .failed;
+                    }
+                }
             }
             log.log(.info, "capability evals: PASS", .{});
         }
@@ -565,6 +588,37 @@ pub const Engine = struct {
         };
         const detail: []const u8 = if (ok) "" else if (result.stdout.len > 0) result.stdout else result.stderr;
         return .{ .ok = ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+    }
+
+    /// Re-runs only the named eval cases (the ones that failed on the first
+    /// pass). Returns a green gate when every retried case passes.
+    fn capabilityGateRetry(self: *Engine, staged_dir: std.Io.Dir, failed_names: []const []const u8) !gate_checks.GateResult {
+        const exe = "./zig-out/bin/clanker";
+        var all_ok = true;
+        var detail_buf: std.ArrayList(u8) = .empty;
+        defer detail_buf.deinit(self.ctx.gpa);
+        for (failed_names) |name| {
+            const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
+                .argv = &.{ exe, "eval", name },
+                .cwd = .{ .dir = staged_dir },
+                .stdout_limit = .limited(1 << 20),
+                .stderr_limit = .limited(1 << 20),
+            });
+            const case_ok = switch (result.term) {
+                .exited => |c| c == 0,
+                else => false,
+            };
+            if (!case_ok) {
+                all_ok = false;
+                const out = if (result.stdout.len > 0) result.stdout else result.stderr;
+                detail_buf.appendSlice(self.ctx.gpa, out) catch {};
+                detail_buf.append(self.ctx.gpa, '\n') catch {};
+            }
+            self.ctx.gpa.free(result.stdout);
+            self.ctx.gpa.free(result.stderr);
+        }
+        const detail: []const u8 = if (all_ok) "" else (self.arena.dupe(u8, detail_buf.items) catch "");
+        return .{ .ok = all_ok, .label = "capability evals", .detail = detail };
     }
 
     // ------------------------------------------------------------ context --
@@ -857,6 +911,24 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Parses eval names out of the capability gate output. The staged binary
+/// prints lines like `calculator: 0.00 FAIL` — one per case. Returns the
+/// names of every case that reported FAIL (arena-owned).
+fn parseFailedEvalNames(arena: std.mem.Allocator, detail: []const u8) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var lines = std.mem.splitScalar(u8, detail, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (!std.mem.endsWith(u8, line, "FAIL")) continue;
+        // Shape: "<name>: <score> FAIL"
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const name = std.mem.trim(u8, line[0..colon], " \t");
+        if (name.len == 0) continue;
+        try out.append(arena, name);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
     var s = content;
     if (std.mem.startsWith(u8, s, "```")) {
@@ -1023,6 +1095,45 @@ const improve_user_fmt =
     \\Produce the patch proposal JSON now. Your response must be ONLY the JSON
     \\object — no markdown fences, no prose.
 ;
+
+test "parseFailedEvalNames extracts names from FAIL lines" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const output =
+        \\calculator: 1.00 PASS
+        \\lsp: 0.00 FAIL
+        \\read_file: 0.00 FAIL
+        \\search_code_symbol: 1.00 PASS
+    ;
+    const names = try parseFailedEvalNames(arena, output);
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try std.testing.expectEqualStrings("lsp", names[0]);
+    try std.testing.expectEqualStrings("read_file", names[1]);
+}
+
+test "parseFailedEvalNames returns empty on no FAIL lines" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const output =
+        \\calculator: 1.00 PASS
+        \\search_code_symbol: 1.00 PASS
+    ;
+    const names = try parseFailedEvalNames(arena, output);
+    try std.testing.expectEqual(@as(usize, 0), names.len);
+}
+
+test "parseFailedEvalNames handles empty input" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const names = try parseFailedEvalNames(arena, "");
+    try std.testing.expectEqual(@as(usize, 0), names.len);
+}
 
 test "errorTail keeps the diagnosis, not the build-runner noise" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
