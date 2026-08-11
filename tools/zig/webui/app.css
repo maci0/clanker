@@ -435,6 +435,8 @@ label {
   font-size: var(--step--1); font-weight: 700;
   letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--fg-muted); margin-bottom: 0.4rem;
+  position: relative; background: var(--paper);
+  padding-right: var(--space-2); width: fit-content;
 }
 textarea {
   width: 100%; min-height: 5rem; padding: 0.75rem;
