@@ -252,7 +252,6 @@ Internal tools, never offered to the model:
 | `cmd_status` | `config.json`, `config.local.json` | Show this instance and its peers |
 | `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
 | `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
-| `format` | none | Markdown-to-ANSI transform (bold/italic/code/bullets); not currently called by the harness — the REPL and `clanker run` use an equivalent streaming implementation (`MdStream` in `src/cli.zig`) instead, since this tool's whole-string ABI can't handle a marker split across two stream deltas |
 | `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 
