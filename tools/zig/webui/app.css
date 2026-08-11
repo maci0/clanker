@@ -130,6 +130,10 @@ h1 {
 .chip[data-state="live"] { color: var(--ok); }
 button.chip-btn {
   font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
+  /* On a narrow screen the Menu chip is the only route to navigation, so the
+     header chips take the same 32px the dense rows take rather than the 22px
+     the padding alone gave them. */
+  min-height: 32px; display: inline-flex; align-items: center;
   padding: 0.15rem 0.6rem; border-radius: var(--radius-pill); cursor: pointer;
   background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
 }
@@ -156,20 +160,10 @@ main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--sp
 }
 .rail-context { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
 .rail-context[hidden] { display: none; }
-.tab {
-  min-height: 44px; padding: 0.4rem 0.9rem;
-  font-family: var(--mono); font-size: var(--step-0); font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase;
-  background: transparent; color: var(--fg-muted);
-  border: 0; border-bottom: 2px solid transparent; border-radius: 0;
-  cursor: pointer;
-}
-.tab:hover { color: var(--fg); }
-.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
 .tab-count { color: var(--fg-muted); font-weight: 400; margin-left: 0.4rem; }
-.tab[aria-selected="true"] .tab-count { color: var(--accent); }
+.rail-tab[aria-selected="true"] .tab-count { color: var(--accent); }
 .view[hidden] { display: none; }
 .view:focus { outline: none; }
 /* The first section inside a view has nothing above it to be separated from. */
@@ -184,10 +178,10 @@ main { flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--sp
   background: var(--surface-2); padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--rule);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.turn-you::before { content: "you  ·  "; color: var(--accent); font-weight: 700; }
+.turn-author { color: var(--fg-muted); font-weight: 700; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
-.turn-you[data-orphan="true"]::before { content: "clanker  ·  "; color: var(--fg-muted); }
+.turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
 .turn-body { padding: var(--space-4); }
 .turn-events { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
 .turn-events:empty { display: none; margin: 0; }
@@ -636,6 +630,18 @@ button:active:not(:disabled) { transform: scale(0.97); }
   .code-block, .code-head, .copy-code-btn, .run-node-incomplete { border: 1px solid ButtonText; }
   .run-edges path { stroke: CanvasText; }
   :focus-visible { outline: 2px solid Highlight; }
+  /* Selection is carried by an inset box-shadow everywhere, and forced-colors
+     drops box-shadow and overrides backgrounds, so "where am I" disappeared
+     entirely — worst in the palette, where the highlighted row is the only
+     clue what Enter will do. */
+  .rail-tab[aria-selected="true"],
+  .rail-item[aria-current="true"],
+  .palette-item[aria-selected="true"],
+  .card[aria-current="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
 }
 
 /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
@@ -776,7 +782,7 @@ mark {
 .rail-pin {
   flex: none; border: 0; background: transparent; cursor: pointer;
   color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0);
-  padding: 0 var(--space-2); min-height: 32px;
+  padding: 0 var(--space-2); min-height: 32px; min-width: 32px;
 }
 .rail-pin[aria-pressed="true"] { color: var(--accent); }
 .rail-row { display: flex; align-items: center; gap: var(--space-1); }
@@ -849,6 +855,10 @@ mark {
     max-height: none;
   }
   .rail[data-open="true"] { transform: none; }
+  /* Closed means gone: without this, tabbing from the header walked ten
+     controls that were translated off screen, with no visible focus anywhere. */
+  .rail:not([data-open="true"]) { visibility: hidden; }
+  .rail:not([data-open="true"]) * { visibility: hidden; }
   #rail-toggle { display: inline-flex; }
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }

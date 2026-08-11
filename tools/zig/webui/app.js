@@ -486,7 +486,9 @@ function renderSessionHistory(messages) {
     }
     if (!pendingTurn) {
       pendingTurn = createTurn("(question not in this transcript)");
-      pendingTurn.querySelector(".turn-you").setAttribute("data-orphan", "true");
+      var head = pendingTurn.root.querySelector(".turn-you");
+      head.setAttribute("data-orphan", "true");
+      head.querySelector(".turn-author").textContent = "clanker  ·  ";
     }
     appendText(pendingTurn, m.content, false);
     finalizeAnswer(pendingTurn);
@@ -681,7 +683,13 @@ function createTurn(task) {
 
   var you = document.createElement("div");
   you.className = "turn-you";
-  you.textContent = task;
+  // Real text, not generated content: a name in ::before is not announced,
+  // not selected, not copied and not exported.
+  var author = document.createElement("span");
+  author.className = "turn-author";
+  author.textContent = "you  ·  ";
+  you.appendChild(author);
+  you.appendChild(document.createTextNode(task));
 
   var body = document.createElement("div");
   body.className = "turn-body";
@@ -3324,20 +3332,20 @@ function promptQuery() {
 function renderPromptList() {
   var q = promptQuery();
   if (q === null || !prompts.length) {
-    el.promptList.hidden = true;
-    el.promptList.textContent = "";
+    hidePromptList();
     return;
   }
   var matches = prompts.filter(function (t) { return fuzzyMatch(q, t); });
   el.promptList.textContent = "";
   if (!matches.length) {
-    el.promptList.hidden = true;
+    hidePromptList();
     return;
   }
   if (promptIndex >= matches.length) promptIndex = 0;
   matches.forEach(function (text, i) {
     var li = document.createElement("li");
     li.className = "palette-item";
+    li.id = "prompt-item-" + i;
     li.setAttribute("role", "option");
     li.setAttribute("aria-selected", String(i === promptIndex));
     var label = document.createElement("span");
@@ -3348,33 +3356,30 @@ function renderPromptList() {
       e.preventDefault();
       usePrompt(text);
     });
-    var drop = document.createElement("button");
-    drop.type = "button";
-    drop.className = "rail-pin";
-    drop.textContent = "×";
-    drop.setAttribute("aria-label", "Forget this prompt");
-    drop.addEventListener("mousedown", function (e) {
-      e.preventDefault();
-      prompts.splice(prompts.indexOf(text), 1);
-      savePrompts();
-      renderPromptList();
-    });
-    li.appendChild(drop);
     el.promptList.appendChild(li);
   });
   el.promptList.hidden = false;
+  el.task.setAttribute("aria-expanded", "true");
+  el.task.setAttribute("aria-activedescendant", "prompt-item-" + promptIndex);
   el.promptList.setAttribute("data-count", String(matches.length));
+}
+
+function hidePromptList() {
+  el.promptList.hidden = true;
+  el.promptList.textContent = "";
+  el.task.setAttribute("aria-expanded", "false");
+  el.task.removeAttribute("aria-activedescendant");
 }
 
 function usePrompt(text) {
   el.task.value = text;
-  el.promptList.hidden = true;
+  hidePromptList();
   el.task.focus();
   syncControls();
 }
 
 el.task.addEventListener("input", renderPromptList);
-el.task.addEventListener("blur", function () { window.setTimeout(function () { el.promptList.hidden = true; }, 120); });
+el.task.addEventListener("blur", function () { window.setTimeout(hidePromptList, 120); });
 el.task.addEventListener("keydown", function (e) {
   if (el.promptList.hidden) return;
   var items = el.promptList.querySelectorAll(".palette-item");
@@ -3385,7 +3390,24 @@ el.task.addEventListener("keydown", function (e) {
     renderPromptList();
     return;
   }
-  if (e.key === "Enter" || e.key === "Tab") {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hidePromptList();
+    return;
+  }
+  // Delete removes the highlighted prompt, which was otherwise only possible
+  // with a pointer on a 32px glyph inside an option.
+  if (e.key === "Delete") {
+    e.preventDefault();
+    var doomed = items[promptIndex].querySelector(".palette-label").textContent;
+    prompts.splice(prompts.indexOf(doomed), 1);
+    savePrompts();
+    el.sessionStatus.textContent = "Forgot that prompt.";
+    renderPromptList();
+    return;
+  }
+  // Shift+Tab belongs to the page, not to this list.
+  if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
     e.preventDefault();
     usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
   }
@@ -3469,7 +3491,11 @@ function transcriptMarkdown() {
   Array.prototype.forEach.call(turns, function (turn) {
     var task = turn.querySelector(".turn-you");
     var answer = turn.querySelector(".turn-answer");
-    if (task) lines.push("## " + task.textContent.trim(), "");
+    if (task) {
+      var author = task.querySelector(".turn-author");
+      var said = author ? task.textContent.slice(author.textContent.length) : task.textContent;
+      lines.push("## " + said.trim(), "");
+    }
     // turn.raw is the markdown as it arrived; textContent is what is left of
     // it after rendering, which is the fallback for a turn that never had a
     // buffer (a session replayed before this existed).
@@ -3599,14 +3625,16 @@ function renderBoard(next) {
   var openTotal = 0;
 
   board.columns.forEach(function (col) {
-    var colEl = document.createElement("div");
+    var colEl = document.createElement("section");
     colEl.className = "board-col";
     colEl.setAttribute("data-column", col.id);
+    colEl.setAttribute("aria-labelledby", "board-col-" + col.id);
 
     var head = document.createElement("div");
     head.className = "board-col-head";
-    var title = document.createElement("span");
+    var title = document.createElement("h3");
     title.className = "board-col-title";
+    title.id = "board-col-" + col.id;
     title.textContent = col.title;
     var count = document.createElement("span");
     count.className = "board-col-count";
@@ -3623,7 +3651,13 @@ function renderBoard(next) {
       .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
     count.textContent = shown.length + (col.wip ? " / " + col.wip : "");
-    if (col.wip && shown.length > col.wip) count.setAttribute("data-over", "true");
+    // Over the limit is said in words as well as colour, because colour is
+    // the one thing forced-colors and colour blindness both take away.
+    if (col.wip && shown.length > col.wip) {
+      count.setAttribute("data-over", "true");
+      count.title = shown.length + " of " + col.wip + ", over the limit";
+    }
+    list.setAttribute("aria-label", col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards"));
     if (col.id !== doneColumn()) openTotal += shown.length;
 
     shown.forEach(function (c) {
@@ -3673,6 +3707,10 @@ function cardNode(c) {
   b.draggable = true;
   b.setAttribute("data-card", c.id);
   if (c.id === openCardId) b.setAttribute("aria-current", "true");
+  // The only way to move a card without a pointer, so it says so rather than
+  // living in a source comment.
+  b.setAttribute("aria-keyshortcuts", "Control+ArrowLeft Control+ArrowRight");
+  b.title = "Ctrl or Cmd with the arrow keys moves this card between columns";
 
   var title = document.createElement("span");
   title.className = "card-title";
@@ -4485,6 +4523,7 @@ var SHORTCUTS = [
   ["1 – 7", "Go to a view by number"],
   ["← →", "Move between tabs when one is focused"],
   ["Ctrl/⌘ + Enter", "Run the task in the composer"],
+  ["Ctrl/⌘ + ← →", "Move the focused board card between columns"],
   ["Esc", "Close an overlay, or stop a running task"]
 ];
 

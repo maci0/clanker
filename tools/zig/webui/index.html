@@ -72,6 +72,10 @@
     <!-- Conversations are persisted server-side per session id; this picks which
          one the composer below continues. Sits above the transcript because it
          names what the transcript is showing. -->
+    <section>
+    <div class="section-head">
+      <h2>Conversation</h2>
+    </div>
     <div class="run-picker" id="session-picker">
       <span class="session-title" id="session-title">…</span>
       <div class="session-actions">
@@ -109,11 +113,13 @@
       <div class="suggestions" id="suggestions"></div>
     </div>
     <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest ↓</button>
+    </section>
 
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
-      <textarea id="task" name="task" placeholder="Summarize the provider config…  (type / for saved prompts)" required rows="3"></textarea>
+      <textarea id="task" name="task" placeholder="Summarise the provider config…  (type / for saved prompts)" required rows="3"
+                role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
         <label for="model-select">Model</label>
@@ -173,7 +179,7 @@
   <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
     <section>
       <div class="section-head">
-        <h2>Chat</h2>
+        <h2>Rooms</h2>
         <button type="button" class="secondary" id="chat-refresh">Refresh</button>
       </div>
       <div class="runs">
@@ -183,7 +189,7 @@
                native select with two groups beats two parallel controls. -->
           <select id="chat-room"></select>
         </div>
-        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite"></div>
+        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite" tabindex="0"></div>
         <form class="chat-composer" id="chat-form">
           <label class="sr-only" for="chat-text">Message</label>
           <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
@@ -289,7 +295,7 @@
         <h2>Status</h2>
         <button type="button" class="secondary" id="refresh">Refresh</button>
       </div>
-      <dl role="status" aria-live="polite">
+      <dl>
         <dt>Instance</dt>
         <dd id="instance">…</dd>
         <dt>Peers</dt>
@@ -319,7 +325,7 @@
       </div>
       <!-- The tail only: the server sends the last 64 KB, cut at a line
            boundary, so a long-running improve log stays openable. -->
-      <pre class="log-view" id="log-view" tabindex="0" aria-label="Log tail"></pre>
+      <pre class="log-view" id="log-view" tabindex="0" role="region" aria-label="Log tail"></pre>
       <p class="sr-only" id="logs-status" role="status" aria-live="polite"></p>
     </section>
   </div>
