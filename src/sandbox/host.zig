@@ -1758,7 +1758,14 @@ pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     }
 
     const ask = h.sandbox.ask_fn orelse return Err.not_found;
-    const answer = ask(question, options.items) catch return Err.invalid;
+    // An installed ask_fn can still end up with nobody to answer — the serve
+    // bridge times out when the browser tab is gone. That is the same
+    // situation as no ask_fn at all, and not_found is what tells the tool to
+    // say "decide yourself" rather than "the ask was malformed".
+    const answer = ask(question, options.items) catch |err| return switch (err) {
+        error.NoUser => Err.not_found,
+        else => Err.invalid,
+    };
     defer h.sandbox.gpa.free(@constCast(answer));
     return h.writeResult(bytes, answer);
 }

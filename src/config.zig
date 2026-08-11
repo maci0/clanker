@@ -129,6 +129,11 @@ pub const Agent = struct {
     /// Commit promoted improvements with git (git_commit_after_improve).
     git_commit: bool = true,
     seed: u64 = 0,
+    /// How long a serve-side ask_user question waits for the browser before
+    /// giving up (seconds). The wait holds one of the server's connection
+    /// threads, so it must be bounded: on timeout the tool gets the same
+    /// "nobody attached" answer a headless run gets and the run proceeds.
+    ask_timeout_seconds: u32 = 120,
 };
 
 pub const Improve = struct {
@@ -523,6 +528,7 @@ pub const Config = struct {
             else => a.git_commit,
         };
         if (obj.get("seed")) |k| a.seed = @intCast(try jsonInt(k, "seed"));
+        if (obj.get("ask_timeout_seconds")) |k| a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
         return a;
     }
 
