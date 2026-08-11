@@ -36,7 +36,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // file:line, and an agent handed a byte offset for "line 603" cannot get
     // there. When start_line is given the file is addressed by line instead.
     if (jsonUintOpt(input, "start_line")) |start_line| {
-        return readByLine(out, path, start_line, jsonUint(input, "line_count", 200));
+        // Zero lines is never what the caller wanted, and answering with an
+        // empty string looks like an empty file.
+        const want = jsonUint(input, "line_count", 200);
+        return readByLine(out, path, start_line, if (want == 0) 200 else want);
     }
 
     // Read only the requested window. Reading the whole file first capped this
@@ -80,6 +83,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("text");
     try s.write(slice);
+    // Byte mode reads a window and never learns how big the file is, so an
+    // offset past the end came back as an empty string with nothing else at
+    // all: indistinguishable from an empty file.
+    if (slice.len == 0) {
+        try s.objectField("note");
+        try s.write("no bytes at that offset; the file is shorter than that, or empty");
+    }
     // Only when there is more to come: a caller that sees no next_offset knows
     // it has the whole file, without comparing byte counts itself. A short read
     // means end of file.
@@ -119,6 +129,7 @@ fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize) 
     if (start > end) start = end;
     const slice = data[start..end];
     const last_line = first + countLines(slice) -| 1;
+    const total = countLines(data);
 
     var w = out.writer();
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -131,9 +142,26 @@ fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize) 
     try s.write(first);
     try s.objectField("end_line");
     try s.write(last_line);
+    try s.objectField("lines");
+    try s.write(total);
     if (end < data.len) {
         try s.objectField("next_line");
         try s.write(last_line + 1);
+    }
+    // An empty result reads the same whether the file is empty, the line does
+    // not exist, or something went wrong. Say which.
+    if (slice.len == 0) {
+        try s.objectField("note");
+        if (first > total) {
+            // Built as a string first: print writes raw text, which is right
+            // for a number and produces an unquoted value for a message.
+            var nbuf: [160]u8 = undefined;
+            const msg = std.fmt.bufPrint(&nbuf, "the file has {d} line(s), so line {d} is past its end", .{ total, first }) catch
+                "that line is past the end of the file";
+            try s.write(msg);
+        } else {
+            try s.write("that range is empty");
+        }
     }
     try s.endObject();
     out.len = w.end;
