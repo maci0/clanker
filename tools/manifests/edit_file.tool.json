@@ -13,6 +13,7 @@
     "evals",
     "state",
     ".agents",
+    ".local",
     ".github",
     "Dockerfile",
     ".dockerignore",
