@@ -992,6 +992,50 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
+/// ck_fs_copy(src_path, dst_path) — copy a file under the sandbox root.
+/// Both paths must pass the same fs_prefixes policy as ck_fs_read / ck_fs_write.
+/// Creates parent directories for the destination automatically.
+/// Returns Err.not_found when the source does not exist, Err.too_large when
+/// the source exceeds max_fs_bytes.
+pub fn ckFsCopy(caller: *zwasm.Caller, src_ptr: u32, src_len: u32, dst_ptr: u32, dst_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const src_path = sliceOf(bytes, src_ptr, src_len) orelse return Err.invalid;
+    const dst_path = sliceOf(bytes, dst_ptr, dst_len) orelse return Err.invalid;
+    if (src_path.len == 0 or dst_path.len == 0) return Err.invalid;
+    return fsCopyImpl(h, bytes, src_path, dst_path);
+}
+
+fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u8) u32 {
+    const full_src = safeJoin(h.sandbox, src_sub) catch return Err.denied;
+    defer h.sandbox.gpa.free(full_src);
+    const full_dst = safeJoin(h.sandbox, dst_sub) catch return Err.denied;
+    defer h.sandbox.gpa.free(full_dst);
+
+    // Read the source file (up to max_fs_bytes).
+    const data = std.Io.Dir.cwd().readFileAlloc(h.sandbox.io, full_src, h.sandbox.gpa, .limited(h.sandbox.max_fs_bytes)) catch |err| switch (err) {
+        error.FileNotFound => return Err.not_found,
+        error.StreamTooLong => return Err.too_large,
+        else => return Err.invalid,
+    };
+    defer h.sandbox.gpa.free(data);
+
+    // Create parent directories for the destination.
+    if (std.mem.lastIndexOfScalar(u8, full_dst, '/')) |slash| {
+        if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full_dst[0..slash]) catch {};
+    }
+
+    // Write the destination file.
+    std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full_dst, .data = data }) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        else => return Err.invalid,
+    };
+
+    var buf: [64]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"bytes\":{d}}}", .{data.len}) catch return Err.too_large;
+    return h.writeResult(mem_bytes, json);
+}
+
 /// ck_fs_rename(old_path, new_path) — rename/move a file under the sandbox root.
 /// Both paths must pass the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 /// Returns Err.not_found when the source does not exist.
@@ -1609,6 +1653,34 @@ test "ckFsStat uses safeJoin policy" {
     // Traversal attempt
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
     // Empty path
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
+}
+
+test "ckFsCopy uses safeJoin policy for both paths" {
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = "/tmp/sandbox",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"data/"},
+        .environ_map = undefined,
+    };
+    // Both paths allowed
+    const ok_src = try safeJoin(&sb, "data/original.txt");
+    defer std.testing.allocator.free(ok_src);
+    const ok_dst = try safeJoin(&sb, "data/copy.txt");
+    defer std.testing.allocator.free(ok_dst);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/original.txt", ok_src);
+    try std.testing.expectEqualStrings("/tmp/sandbox/data/copy.txt", ok_dst);
+    // Source outside prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/original.txt"));
+    // Destination outside prefix
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/copy.txt"));
+    // Traversal in source
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
+    // Traversal in destination
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc/passwd"));
+    // Empty paths
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
