@@ -133,6 +133,49 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     try std.testing.expectEqualStrings("lint", dirty.label);
 }
 
+/// Runs `zig ast-check` on each changed `.zig` file individually. A syntax
+/// error caught here gives a precise file + line, whereas `zig build` reports
+/// the same error buried in a dependency trace. Short-circuits when no `.zig`
+/// files were changed.
+pub fn astCheckGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_files: []const []const u8) !GateResult {
+    var zig_files: std.ArrayList([]const u8) = .empty;
+    defer zig_files.deinit(gpa);
+    for (changed_files) |f| {
+        if (std.mem.endsWith(u8, f, ".zig")) try zig_files.append(gpa, f);
+    }
+    if (zig_files.items.len == 0) return .{ .ok = true, .label = "zig ast-check" };
+
+    for (zig_files.items) |f| {
+        var r = try runZigArgs(gpa, io, dir, &.{ "zig", "ast-check", f }, "zig ast-check");
+        if (!r.ok) {
+            r.label = "zig ast-check";
+            r.detail = if (r.stderr.len > 0) r.stderr else r.stdout;
+            return r;
+        }
+        r.deinit(gpa);
+    }
+    return .{ .ok = true, .label = "zig ast-check" };
+}
+
+test "astCheckGate short-circuits when there are no .zig files" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var empty_result = try astCheckGate(gpa, io, tmp.dir, &.{});
+    defer empty_result.deinit(gpa);
+    try std.testing.expect(empty_result.ok);
+    try std.testing.expectEqualStrings("zig ast-check", empty_result.label);
+
+    var non_zig_result = try astCheckGate(gpa, io, tmp.dir, &.{ "config.json", "README.md" });
+    defer non_zig_result.deinit(gpa);
+    try std.testing.expect(non_zig_result.ok);
+}
+
 test "fmtGate and formatFiles short-circuit when there is nothing to format" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
