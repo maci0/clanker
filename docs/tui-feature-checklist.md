@@ -65,7 +65,8 @@ in its manifest, not a `/plugins` command.
   exists and is ready for this; the missing piece is a `demo.zig` case and,
   ideally, a more reliable way to observe the post-resize reflow than
   scraping raw escape sequences by hand.
-- The piped (non-TTY) REPL fallback loop's own hardcoded ANSI literals
-  (`cli.zig`, the separate accumulator-based loop noted as a pre-existing
-  duplication wart) were not swept for theming — low-visibility edge case,
-  intentionally out of scope for this pass.
+- ~~The piped (non-TTY) REPL fallback loop's own hardcoded ANSI literals~~
+  Closed: the fallback loop now writes the themed `repl_prompt` and uses
+  `repl_theme.dim`/`reset` for the choice echo, so `NO_COLOR`/`--theme mono`
+  strips its SGR codes the same as raw mode. Structural cursor-control
+  escapes remain, as everywhere else.
