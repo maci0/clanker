@@ -21,6 +21,8 @@ const script = @embedFile("webui/app.js");
 /// Bridges VanJS's ES module into the global the classic scripts expect. Its
 /// own file because the policy forbids inline script.
 const van_boot = @embedFile("webui/van-boot.js");
+const fleet = @embedFile("webui/features/fleet.js");
+const utils = @embedFile("webui/core/utils.js");
 
 /// Bytes this asset occupies once JSON-encoded into the response envelope.
 /// Matches std.json's default (escape_unicode = false): bytes 0x20-0x21,
@@ -44,7 +46,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, van_boot }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, van_boot, fleet, utils }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/utils.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -65,6 +67,8 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/app.css")) return .{ .body = styles, .content_type = "text/css; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/app.js")) return .{ .body = script, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/van-boot.js")) return .{ .body = van_boot, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/utils.js")) return .{ .body = utils, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/features/fleet.js")) return .{ .body = fleet, .content_type = "text/javascript; charset=utf-8" };
     return .{ .body = page, .content_type = "text/html; charset=utf-8" };
 }
 

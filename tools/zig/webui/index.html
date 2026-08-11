@@ -64,6 +64,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
     <p class="rail-group" role="presentation">Watch</p>
     <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
@@ -206,6 +207,28 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
         <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-fleet" role="tabpanel" aria-labelledby="tab-fleet" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Fleet</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="fleet-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="runs">
+        <section aria-labelledby="fleet-roster-head">
+          <h3 id="fleet-roster-head" class="sr-only">Peers</h3>
+          <div id="fleet-roster"></div>
+        </section>
+        <section aria-labelledby="fleet-runs-head">
+          <h3 id="fleet-runs-head" class="sr-only">Runs</h3>
+          <div id="fleet-runs"></div>
+        </section>
+        <div id="fleet-detail" class="run-detail" role="region" aria-label="Fleet run detail" hidden></div>
+        <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
       </div>
     </section>
   </div>
@@ -412,6 +435,8 @@ lamps carry further). The seven named palettes ride the same tokens.
      app.js uses both. -->
 <script type="module" src="/webui/van-boot.js"></script>
 <script src="/webui/vendor/van-ui.js" defer></script>
+<script type="module" src="/webui/core/utils.js"></script>
+<script type="module" src="/webui/features/fleet.js"></script>
 <script src="/webui/app.js" defer></script>
 </body>
 </html>

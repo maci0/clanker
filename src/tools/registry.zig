@@ -6,6 +6,7 @@ const std = @import("std");
 const json = std.json;
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
+const strField = @import("../util/json.zig").strField;
 
 pub const Tool = struct {
     name: []const u8,
@@ -599,14 +600,6 @@ pub const Registry = struct {
             }
         }
         return out.toOwnedSlice(arena);
-    }
-
-    fn strField(obj: json.ObjectMap, key: []const u8) ![]const u8 {
-        const v = obj.get(key) orelse return error.MissingField;
-        return switch (v) {
-            .string => |s| s,
-            else => error.FieldNotString,
-        };
     }
 };
 

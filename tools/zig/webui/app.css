@@ -1612,6 +1612,37 @@ h2#session-title {
 }
 .turn-held[data-held="false"] { color: var(--danger); }
 
+/* ---- fleet: cross-agent roster + grouped runs ----
+   Inline styles are not used here so CSP can stay strict and the panel's
+   vocabulary (tokens, motion, borders) stays in one place. */
+#view-fleet .section-head { margin-bottom: var(--space-4); gap: var(--space-3) var(--space-4); }
+.fleet-roster-list { list-style: none; padding: 0; margin: var(--space-2) 0 0; }
+.fleet-card { transition: border-color 160ms ease, background 120ms ease, box-shadow 160ms ease; }
+.fleet-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fleet-card--accent { border-left: 3px solid var(--accent); padding-left: var(--space-3); }
+.fleet-card--plain { border-left: 3px solid transparent; padding-left: var(--space-3); }
+.fleet-card__main { flex: 1 1 18rem; min-width: 0; }
+.fleet-card:hover { background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%); }
+.fleet-children { margin-left: var(--space-4); border-left: 1px dashed var(--rule); padding-left: var(--space-3); }
+.fleet-child { padding: var(--space-1) 0; }
+.fleet-child__main { flex: 1 1 18rem; min-width: 0; }
+.fleet-note { margin-left: var(--space-4); }
+.fleet-extra-row { margin-left: var(--space-4); }
+.fleet-stage { margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
+.fleet-stage__tools { margin: var(--space-2) 0 0 1rem; }
+.fleet-fail { color: var(--danger); }
+.fleet-skeleton { height: 2.4rem; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 78%, var(--rule) 22%) 37%, var(--surface-2) 63%); background-size: 400% 100%; animation: fleet-shimmer 1.2s ease infinite; margin: var(--space-2) 0; }
+.fleet-skeleton--sm { height: 1.2rem; max-width: 18rem; }
+@keyframes fleet-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+/* alive polish: control-cabinet lamps and fleet accents fade rather than snap */
+.rail-tab[aria-selected="true"]::before { transition: box-shadow 180ms ease, opacity 180ms ease, background 180ms ease; }
+
 @media (prefers-reduced-motion: reduce) {
   .json-node > summary::before, .tool-config > summary::before { transition: none; }
+  .fleet-card, .rail-tab[aria-selected="true"]::before { transition: none; }
+  .fleet-skeleton { animation: none; }
+}
+@media (max-width: 40rem) {
+  .fleet-children, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }
 }

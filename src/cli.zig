@@ -755,7 +755,8 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
         },
         else => return err,
     };
-    dir.createDirPath(io, "state") catch {};
+    dir.createDirPath(io, "state") catch |err|
+        log.log(.warn, "init: mkdir 'state' failed: {s}", .{@errorName(err)});
     if (announce) log.log(.info, "clanker initialized. Run `clanker setup` to check it over.", .{});
 }
 
@@ -1418,7 +1419,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const provider = &provider_val;
 
     // Make sure the sandbox root exists.
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "cmdRun: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
 
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
@@ -1948,7 +1950,8 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "cmdEval: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
 
     const evals = try scorers.Eval.loadAll(arena, io, "evals");
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
@@ -1991,9 +1994,12 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    std.Io.Dir.cwd().createDirPath(io, "state/staging") catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "improve-self: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
+    std.Io.Dir.cwd().createDirPath(io, "state") catch |err|
+        log.log(.warn, "improve-self: mkdir 'state' failed: {s}", .{@errorName(err)});
+    std.Io.Dir.cwd().createDirPath(io, "state/staging") catch |err|
+        log.log(.warn, "improve-self: mkdir 'state/staging' failed: {s}", .{@errorName(err)});
 
     // Before any staging or gate work: two runs against one tree gate each
     // other's half-applied patches and promote over each other.
@@ -2311,7 +2317,7 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     const in_flight = connection_threads.fetchAdd(1, .acq_rel);
     if (in_flight >= max_connection_threads) {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        respond(stream, 503, "Service Unavailable", "{\"error\":\"too many concurrent connections\"}");
+        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
         stream.close(io);
         return;
     }
@@ -2386,12 +2392,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // (curl, or the raw API used directly) is not a browser cross-site
         // request and is let through.
         if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port)) {
-            respond(stream, 403, "Forbidden", "{\"error\":\"cross-origin request refused\"}");
+            respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
             return;
         }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
@@ -2417,15 +2424,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
-            respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
-            respond(stream, 404, "Not Found", "{\"error\":\"a2a module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"a2a module disabled\"}");
         } else if (is_notify and !cfg.modules.peers) {
-            respond(stream, 404, "Not Found", "{\"error\":\"peers module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"peers module disabled\"}");
         } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
-            respond(stream, 404, "Not Found", "{\"error\":\"chatrooms module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
-            respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van.js")) {
@@ -2434,7 +2441,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-                std.mem.eql(u8, path, "/webui/van-boot.js")))
+                std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or
+                std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
@@ -2496,7 +2504,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
-            respond(stream, 404, "Not Found", "{\"error\":\"not found\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         }
     } else {
         respond(stream, 400, "Bad Request", "{}");
@@ -2542,7 +2550,8 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at };
 
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
+    std.Io.Dir.cwd().createDirPath(io, "state") catch |err|
+        log.log(.warn, "notify: mkdir 'state' failed: {s}", .{@errorName(err)});
     const file_path = "state/notifications.jsonl";
     const maybe_existing = std.Io.Dir.cwd().readFileAlloc(io, file_path, gpa, .limited(1 << 20)) catch null;
     defer if (maybe_existing) |e| gpa.free(e);
@@ -2902,7 +2911,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     const arena = arena_state.allocator();
 
     const parsed = std.json.parseFromSliceLeaky(A2ARequest, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"error\":\"bad request\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const id = parsed.id orelse .null;
@@ -2929,29 +2938,30 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // it back. The agent card advertises real skills; echoing raw input
     // makes the peer receive its own message as the "answer".
     if (text.len == 0) {
-        respond(stream, 400, "Bad Request", "{\"error\":\"empty message\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
         return;
     }
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
     var provider = cfg.provider(null) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"provider unavailable\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"provider unavailable\"}");
         return;
     };
     var provider_copy = provider.*;
     provider = &provider_copy;
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "a2a: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
     var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
         log.log(.error_, "POST /api/a2a/message: registry load failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
         return;
     };
     const tool_defs = reg.toToolDefs(arena) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"tool defs failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tool defs failed\"}");
         return;
     };
     var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch |err| {
         log.log(.error_, "POST /api/a2a/message: agent init failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"agent init failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
     };
     defer a.deinit();
@@ -2961,7 +2971,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     const resp = a.run(&messages, text, &err_detail) catch |err| {
         const detail = err_detail orelse @errorName(err);
         log.log(.error_, "POST /api/a2a/message: agent run failed: {s}", .{detail});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"agent run failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent run failed\"}");
         return;
     };
     const content = resp.message.content orelse "";
@@ -3276,9 +3286,9 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     }
 }
 
-/// JSON `{"error":...}` body when the webui *descriptor* is absent from the
-/// tools registry (wrong/empty `tools_dir`, zero manifests). Distinct from a
-/// missing guest `.wasm`, which still wants `zig build tools`.
+/// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
+/// from the tools registry (wrong/empty `tools_dir`, zero manifests).
+/// Distinct from a missing guest `.wasm`, which still wants `zig build tools`.
 fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dir: []const u8) ![]const u8 {
     const detail = try std.fmt.allocPrint(
         allocator,
@@ -3290,6 +3300,8 @@ fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dir: []const u8
     errdefer out.deinit();
     var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
     try s.beginObject();
+    try s.objectField("ok");
+    try s.write(false);
     try s.objectField("error");
     try s.write(detail);
     try s.endObject();
@@ -3298,7 +3310,7 @@ fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dir: []const u8
 
 /// JSON body when the webui descriptor exists but its wasm module cannot be read.
 fn webuiMissingWasmError() []const u8 {
-    return "{\"error\":\"webui wasm missing (run zig build tools)\"}";
+    return "{\"ok\":false,\"error\":\"webui wasm missing (run zig build tools)\"}";
 }
 
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
@@ -3317,12 +3329,12 @@ fn renderWebui(
 ) ?[]const u8 {
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
         log.log(.error_, "renderWebui path={s}: registry load failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
         return null;
     };
     const tool = reg.get("webui") orelse {
         const body = webuiMissingRegistryError(arena, cfg.agent.tools_dir) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found in registry\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui tool not found in registry\"}");
             return null;
         };
         respond(stream, 500, "Internal Server Error", body);
@@ -3344,7 +3356,7 @@ fn renderWebui(
     };
     const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm load failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui load failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui load failed\"}");
         return null;
     };
     defer mod.deinit();
@@ -3352,34 +3364,34 @@ fn renderWebui(
     // The path is one of this server's own route literals, never anything a
     // request supplied, so it needs no escaping to sit inside this JSON.
     const req = std.fmt.allocPrint(arena, "{{\"path\":\"{s}\"}}", .{path}) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return null;
     };
     const out = mod.executeTool(req) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm exec failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui render failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui render failed\"}");
         return null;
     };
     defer gpa.free(out);
 
     // Output: {"ok":true,"content_type":"...","body":"..."}
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui bad output\"}");
         return null;
     };
     const body = switch (parsed) {
         .object => |o| if (o.get("body")) |b| switch (b) {
             .string => |s| s,
             else => {
-                respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad body\"}");
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui bad body\"}");
                 return null;
             },
         } else {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui no body\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui no body\"}");
             return null;
         },
         else => {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui bad output\"}");
             return null;
         },
     };
@@ -3437,8 +3449,10 @@ fn handleWebuiAsset(
 
     const is_css = std.mem.endsWith(u8, target, ".css");
     const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else &gzip_js;
+    const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
+    const is_utils = std.mem.endsWith(u8, target, "utils.js");
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -3488,7 +3502,7 @@ fn handleRuns(
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.graphs) {
-        respond(stream, 404, "Not Found", "{\"error\":\"graphs module disabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"graphs module disabled\"}");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -3499,30 +3513,34 @@ fn handleRuns(
     var args: []const u8 = "json";
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
-        // Run ids are `run-<digits>`; anything else is refused before it can
+        // Run ids are `run-<digits>` or `sub-<digits>` (nested runs; see
+        // src/agent/subagent.zig). Anything else is refused before it can
         // reach the filesystem as a path fragment.
-        if (!std.mem.startsWith(u8, id, "run-") or id.len > 64) {
-            respond(stream, 400, "Bad Request", "{\"error\":\"bad run id\"}");
+        const is_run = std.mem.startsWith(u8, id, "run-");
+        const is_sub = std.mem.startsWith(u8, id, "sub-");
+        if ((!is_run and !is_sub) or id.len > 64) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad run id\"}");
             return;
         }
-        for (id["run-".len..]) |c| {
+        const prefix_len: usize = if (is_run) "run-".len else "sub-".len;
+        for (id[prefix_len..]) |c| {
             if (!std.ascii.isDigit(c)) {
-                respond(stream, 400, "Bad Request", "{\"error\":\"bad run id\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad run id\"}");
                 return;
             }
         }
         args = std.fmt.allocPrint(arena, "json {s}", .{id}) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
     } else if (rest.len != 0) {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
     const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
         log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"graph read failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"graph read failed\"}");
         return;
     };
     respondCompressible(arena, stream, accepts_gzip, body);
@@ -3719,6 +3737,7 @@ fn pluginAssetType(file: []const u8) ?[]const u8 {
     // bytes and writes them through verbatim, so nothing else has to change;
     // the page's CSP allows img-src 'self'.
     if (std.mem.eql(u8, file, "sprites.png")) return "image/png";
+    if (std.mem.eql(u8, file, "characters.png")) return "image/png";
     return null;
 }
 
@@ -3726,6 +3745,7 @@ test pluginAssetType {
     try std.testing.expect(pluginAssetType("app.js") != null);
     try std.testing.expect(pluginAssetType("app.css") != null);
     try std.testing.expectEqualStrings("image/png", pluginAssetType("sprites.png").?);
+    try std.testing.expectEqualStrings("image/png", pluginAssetType("characters.png").?);
     try std.testing.expect(pluginAssetType("plugin.json") == null);
     try std.testing.expect(pluginAssetType("../app.js") == null);
     try std.testing.expect(pluginAssetType("secrets.env") == null);
@@ -3850,33 +3870,33 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
 
     const rest = target["/webui/plugins/".len..];
     const slash = std.mem.indexOfScalar(u8, rest, '/') orelse {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
     const name = rest[0..slash];
     const file = rest[slash + 1 ..];
     if (!validPluginName(name)) {
-        respond(stream, 400, "Bad Request", "{\"error\":\"bad plugin name\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
         return;
     }
     const content_type = pluginAssetType(file) orelse {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
 
     const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch "{}";
     const state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
     if (!pluginEnabled(state, name)) {
-        respond(stream, 404, "Not Found", "{\"error\":\"plugin is not enabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"plugin is not enabled\"}");
         return;
     }
 
     const path = std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ webui_plugins_dir, name, file }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
     // Re-read from disk on every request (see the comment above), so there is
@@ -4094,7 +4114,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
 
     if (rest.len > 1 and rest[0] == '/') {
         const want = percentDecode(arena, rest[1..]) catch {
-            respond(stream, 400, "Bad Request", "{\"error\":\"bad log name\"}");
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad log name\"}");
             return;
         };
         var it = dir.iterate();
@@ -4104,11 +4124,11 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
             if (std.mem.eql(u8, entry.name, want)) found = true;
         }
         if (!found) {
-            respond(stream, 404, "Not Found", "{\"error\":\"no such log\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such log\"}");
             return;
         }
         const raw = dir.readFileAlloc(io, want, arena, .limited(log_tail_bytes * 8)) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"log read failed\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"log read failed\"}");
             return;
         };
         // Tail only, cut at a line boundary so the view never opens mid-line.
@@ -4132,7 +4152,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
         return;
     }
     if (rest.len != 0) {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
@@ -4172,7 +4192,7 @@ fn handleSessions(
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.sessions) {
-        respond(stream, 404, "Not Found", "{\"error\":\"sessions module disabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"sessions module disabled\"}");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -4188,7 +4208,7 @@ fn handleSessions(
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/fork")) {
             const src_id = id[0 .. id.len - "/fork".len];
             if (!validSessionId(src_id)) {
-                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
             const new_id = session.forkSession(io, gpa, arena, std.Io.Dir.cwd(), src_id) catch {
@@ -4206,7 +4226,7 @@ fn handleSessions(
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/compact")) {
             const src_id = id[0 .. id.len - "/compact".len];
             if (!validSessionId(src_id)) {
-                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
             const bytes = compactSession(io, gpa, arena, src_id, cfg.agent.compact_threshold_bytes) catch {
@@ -4219,7 +4239,7 @@ fn handleSessions(
             return;
         }
         if (!validSessionId(id)) {
-            respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
             return;
         }
         if (std.mem.eql(u8, method, "DELETE")) {
@@ -4263,29 +4283,29 @@ fn handleSessions(
             return;
         }
         const s = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id) catch {
-            respond(stream, 404, "Not Found", "{\"error\":\"no such session\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
             return;
         };
         const one = sessionJSON(arena, s) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session encode failed\"}");
             return;
         };
         respondCompressible(arena, stream, accepts_gzip, one);
         return;
     }
     if (rest.len != 0) {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
     const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch |err| {
         log.log(.error_, "GET /api/sessions: list failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"session list failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session list failed\"}");
         return;
     };
     const listing = sessionListJSON(arena, list) catch |err| {
         log.log(.error_, "GET /api/sessions: encode failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session encode failed\"}");
         return;
     };
     respondCompressible(arena, stream, accepts_gzip, listing);
@@ -4627,7 +4647,7 @@ test validGoalStatus {
 
 fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!cfg.modules.goal) {
-        respond(stream, 404, "Not Found", "{\"error\":\"goal module disabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal module disabled\"}");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -4747,7 +4767,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         provider_copy.models.put(arena, provider_copy.default_model, m) catch {};
     }
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "run: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
     var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
         log.log(.error_, "POST /api/run: registry load failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
@@ -4803,7 +4824,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     var session_lock: filelock.Guard = .{ .io = io };
     defer session_lock.release();
     if (has_session) {
-        std.Io.Dir.cwd().createDirPath(io, "state/sessions") catch {};
+        std.Io.Dir.cwd().createDirPath(io, "state/sessions") catch |err|
+            log.log(.warn, "run: mkdir 'state/sessions' failed: {s}", .{@errorName(err)});
         session_lock = filelock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
             created = s.created;
@@ -5011,11 +5033,15 @@ var render_page: RenderCache = .{};
 var render_css: RenderCache = .{};
 var render_js: RenderCache = .{};
 var render_van_boot: RenderCache = .{};
+var render_fleet: RenderCache = .{};
+var render_utils: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
 var gzip_js: GzipCache = .{};
 var gzip_van_boot: GzipCache = .{};
+var gzip_fleet: GzipCache = .{};
+var gzip_utils: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};

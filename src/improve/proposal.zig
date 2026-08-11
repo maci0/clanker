@@ -4,6 +4,7 @@
 const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
+const strField = @import("../util/json.zig").strField;
 
 pub const Change = struct {
     file: []const u8,
@@ -189,14 +190,6 @@ fn textField(arena: std.mem.Allocator, obj: json.ObjectMap, key: []const u8) ![]
     const out = try arena.alloc(u8, len);
     decoder.decode(out, encoded) catch return error.BadBase64;
     return out;
-}
-
-fn strField(obj: json.ObjectMap, key: []const u8) ![]const u8 {
-    const v = obj.get(key) orelse return error.MissingField;
-    return switch (v) {
-        .string => |s| s,
-        else => error.FieldNotString,
-    };
 }
 
 // ------------------------------------------------------------------- tests --

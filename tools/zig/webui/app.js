@@ -3460,13 +3460,20 @@ el.toolsRefresh.addEventListener("click", function () {
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "rooms", "tools", "system"];
+var VIEWS = ["chat", "board", "goals", "runs", "fleet", "rooms", "tools", "system"];
 /* Each view's data is fetched the first time it is opened rather than all of
    it at load. The page used to fire seven requests before showing anything,
    several of which execute a WASM tool. */
 var viewLoaded = {};
 var viewLoaders = {
   runs: loadRuns,
+  fleet: function () {
+    // fleet.js is a self-contained module; call its initializer if present so hash nav works without duplicating fetch logic.
+    if (window.clankerFleet && typeof window.clankerFleet.refresh === "function") return window.clankerFleet.refresh();
+    var node = document.getElementById("fleet-status");
+    if (node) node.textContent = "";
+    return null;
+  },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
   board: function () { return loadBoardRooms(); },
@@ -3479,6 +3486,7 @@ var viewLoaders = {
    failure, so one line is enough. */
 var VIEW_CONTAINERS = {
   runs: "run-graph",
+  fleet: "fleet-runs",
   rooms: "chat-log",
   goals: "goals",
   board: "board",

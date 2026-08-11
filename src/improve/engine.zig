@@ -408,6 +408,12 @@ pub const Engine = struct {
 
         self.applyPatch(staging, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, @errorName(err), fingerprints);
+            feedback = try std.fmt.allocPrint(
+                self.arena,
+                "Your previous patch failed to apply: {s}. The \"old\" text of every change must match the current file byte for byte, including whitespace. Re-read the file content shown above and match it exactly, or propose a different change.",
+                .{@errorName(err)},
+            );
             self.removeTree(staging);
             return .failed;
         };
@@ -425,6 +431,7 @@ pub const Engine = struct {
         // one, and then never run again.
         if (try self.brokenInvariant(staged_dir, proposal.changes)) |bad| {
             log.log(.warn, "proposal rejected: it removes '{s}' from {s}", .{ bad.needle, bad.file });
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, bad.needle, fingerprints);
             feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your patch removed \"{s}\" from {s}. That call is part of the gate every improvement has to pass, including this one. Keep it and re-propose.",

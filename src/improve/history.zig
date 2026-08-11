@@ -105,8 +105,10 @@ pub const History = struct {
         detail: []const u8,
         changes: []const u64,
     ) !void {
-        self.base.createDirPath(self.io, self.state_dir) catch {};
-        self.base.createDirPath(self.io, self.history_dir) catch {};
+        self.base.createDirPath(self.io, self.state_dir) catch |err|
+            log.log(.warn, "mkdir {s} failed: {t}", .{ self.state_dir, err });
+        self.base.createDirPath(self.io, self.history_dir) catch |err|
+            log.log(.warn, "mkdir {s} failed: {t}", .{ self.history_dir, err });
 
         // Read-modify-write, so it has to be serialised: an improve run and
         // the staged evals a gate spawns are separate processes sharing this
