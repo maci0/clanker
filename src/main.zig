@@ -40,7 +40,7 @@ comptime {
     _ = @import("llm/gcp_jwt.zig");
     _ = @import("llm/vertex_token.zig");
     _ = @import("peers/chatrooms.zig");
-    _ = @import("peers/todos.zig");
+    _ = @import("peers/cards.zig");
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
     _ = @import("tui/term.zig");
