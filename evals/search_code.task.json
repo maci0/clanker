@@ -1,0 +1,19 @@
+{
+  "name": "search_code_ok",
+  "kind": "task",
+  "description": "search_code must answer with ok:true whenever a search runs, independent of how many matches a query returns — whether rg produces results or the host-side literal search falls back. This pins the exec/policy/serialization path without depending on any specific query outcome, so it stays green on any machine and goes red when the exec_allow policy or the JSON serialization breaks.",
+  "prompt": "Use the search_code tool with {\"engine\":\"rg\",\"query\":\"fn main\",\"path\":\".\"}. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "search_code",
+  "criteria": [
+    {
+      "includes": [
+        "true"
+      ]
+    },
+    {
+      "excludes": [
+        "false"
+      ]
+    }
+  ]
+}

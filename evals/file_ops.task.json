@@ -1,0 +1,19 @@
+{
+  "name": "file_ops_stat",
+  "kind": "task",
+  "description": "file_ops stat on a committed path must answer ok:true with a kind field. build.zig exists in every checkout and stat is read-only, so the assertion is the ok field alone — the same content-independent claim the policy-canary evals (config_view, providers_list) use. It goes red when the fs_prefixes policy stops covering the repo-root files or the host stat path breaks.",
+  "prompt": "Use the file_ops tool with {\"op\":\"stat\",\"path\":\"build.zig\"}. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "file_ops",
+  "criteria": [
+    {
+      "includes": [
+        "true"
+      ]
+    },
+    {
+      "excludes": [
+        "false"
+      ]
+    }
+  ]
+}
