@@ -206,6 +206,10 @@ pub const Engine = struct {
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            // Hand the failure to the next attempt. Without this the retry is
+            // blind: it re-proposed the same wrong import three times because
+            // nothing ever told it what the compiler said.
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tree did not compile", tail });
             return .failed;
         }
 
@@ -220,6 +224,10 @@ pub const Engine = struct {
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            // Hand the failure to the next attempt. Without this the retry is
+            // blind: it re-proposed the same wrong import three times because
+            // nothing ever told it what the compiler said.
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tools did not compile", tail });
             return .failed;
         }
 
@@ -230,6 +238,10 @@ pub const Engine = struct {
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            // Hand the failure to the next attempt. Without this the retry is
+            // blind: it re-proposed the same wrong import three times because
+            // nothing ever told it what the compiler said.
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
             return .failed;
         }
 
@@ -242,6 +254,10 @@ pub const Engine = struct {
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            // Hand the failure to the next attempt. Without this the retry is
+            // blind: it re-proposed the same wrong import three times because
+            // nothing ever told it what the compiler said.
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
             return .failed;
         }
 
@@ -251,6 +267,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
             return .failed;
         }
 
@@ -389,6 +406,18 @@ pub const Engine = struct {
         // succeed. Keyword scoring alone does not guarantee it lands in
         // context, so pin it: gather it if it was missed, then rank it first.
         try self.pinNamedFiles(instructions, keywords.items, &cands);
+
+        // Writing a new WASM tool means reproducing an ABI that is only
+        // visible in the existing guests: the entry point's exact signature
+        // and how lib.zig is imported. Keyword scoring will not surface those
+        // for an instruction about, say, an "lsp" tool, and the model then
+        // guesses — "../lib.zig" instead of "lib.zig", three attempts running.
+        if (std.mem.indexOf(u8, instructions, "tools/zig") != null or
+            std.mem.indexOf(u8, instructions, "WASM tool") != null or
+            std.mem.indexOf(u8, instructions, "wasm tool") != null)
+        {
+            try self.pinNamedFiles("tools/zig/lib.zig tools/zig/learnings.zig", keywords.items, &cands);
+        }
 
         std.mem.sort(Candidate, cands.items, {}, struct {
             fn lt(_: void, a: Candidate, b: Candidate) bool {
