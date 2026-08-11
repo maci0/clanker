@@ -1089,6 +1089,27 @@ button.tool-name:hover { color: var(--accent-text); }
 .goal[data-status="active"] .goal-status { color: var(--ok); font-weight: 700; }
 .goal-field { margin-top: 0.35rem; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 .goal-field b { color: var(--fg); font-weight: 700; }
+/* A goal run's own panel: streamed output, status and Stop, one per run, so
+   several goals can be worked at once without them sharing a transcript. */
+.goal-run {
+  margin-top: var(--space-4); border: 1px solid var(--rule);
+  border-radius: var(--radius); overflow: hidden;
+  background: var(--surface);
+}
+.goal-run-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--rule);
+}
+.goal-run-status { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); }
+.goal-run[data-status="running"] .goal-run-status { color: var(--accent-text); font-weight: 700; }
+.goal-run[data-status="finished"] .goal-run-status { color: var(--ok); font-weight: 700; }
+.goal-run[data-status="failed"] .goal-run-status { color: var(--danger); font-weight: 700; }
+.goal-run-output {
+  max-height: 18rem; overflow: auto; margin: 0; padding: var(--space-3) var(--space-4);
+  font-family: var(--mono); font-size: var(--step-0); line-height: 1.5;
+  color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.goal-run-output:empty::before { content: "…"; color: var(--fg-muted); }
 
 dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
 dd ul { list-style: none; margin: 0; padding: 0; }

@@ -1788,14 +1788,12 @@ el.form.addEventListener("submit", function (e) {
     else syncScrollButton();
   });
 
-  var goalId = pendingGoalId || "";
-  pendingGoalId = "";
   fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       task: task,
-      goal: goalId,
+      goal: "",
       stream: true,
       session: sessionId,
       images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
@@ -3083,6 +3081,7 @@ function goalCard(g) {
       T.dl(fields.map(function (pair) {
         return [T.dt(pair[0]), T.dd(pair[1])];
       }))) : null,
+    g.id ? renderGoalRunPanel(g.id) : null,
     actions.length ? T.div({ class: "goal-actions" }, actions) : null);
 }
 
@@ -4005,27 +4004,131 @@ if (window.MutationObserver) {
 
 /* ---------- goals ---------- */
 
-/* Goal id for the next /api/run. Set by workOnGoal so the server attaches that
-   goal's preamble (and can fill an empty task). Cleared when the request goes
-   out so a later chat turn does not keep reusing it. */
-var pendingGoalId = "";
+/* A goal run streams into its own panel on the goal card, independently of
+   the chat composer and of every other goal run. The server serves each
+   /api/run connection on its own thread, so concurrency is purely a
+   front-end shape: each run keeps its own AbortController, its own streamed
+   text and its own status. Starting a second goal while the first streams is
+   therefore accepted; only a second run of the *same* goal is refused. */
+var goalRuns = {};  // goal id -> { controller, status, text }
 
-/* Starts a run that executes an active goal: switches to Chat, fills a work
-   order, and submits through the same path as the composer. */
+function goalRunStatusLabel(status) {
+  if (status === "running") return "running…";
+  if (status === "stopped") return "stopped";
+  if (status === "failed") return "failed";
+  return "finished";
+}
+
+/* Appends a streamed line to a run's stored text and, if its panel is on
+   screen, to that panel's output node directly — streaming must not rebuild
+   the whole goals list on every chunk. */
+function appendGoalText(gid, text) {
+  var run = goalRuns[gid];
+  if (!run) return;
+  run.text += text;
+  var node = el.goals.querySelector('.goal-run-output[data-goal-output="' + gid + '"]');
+  if (node) node.textContent = run.text;
+}
+
+/* A run's status changed (finished / stopped / failed): update the stored
+   status and rebuild so the panel swaps its Stop button for the verdict. The
+   stored text survives, so the rebuild shows everything streamed so far. */
+function setGoalStatus(gid, status) {
+  var run = goalRuns[gid];
+  if (!run) return;
+  run.status = status;
+  renderGoals(goalState.val);
+}
+
+function abortGoalRun(gid) {
+  var run = goalRuns[gid];
+  if (run && run.controller) run.controller.abort();
+}
+
+/* The run panel drawn inside a goal card. Rebuilt from stored state whenever
+   the goal list re-renders, so a live run survives a reload or a status
+   refresh. */
+function renderGoalRunPanel(gid) {
+  var run = goalRuns[gid];
+  if (!run) return null;
+  return T.div({ class: "goal-run", "data-status": run.status, "data-goal-run": gid },
+    T.div({ class: "goal-run-head" },
+      T.span({ class: "goal-run-status" }, goalRunStatusLabel(run.status)),
+      run.status === "running"
+        ? UI.button("Stop", function () { abortGoalRun(gid); },
+            { kind: "danger", icon: "strike", label: "Stop this goal run" })
+        : null),
+    T.pre({ class: "goal-run-output", "data-goal-output": gid }, run.text || ""));
+}
+
+/* Starts a run that executes an active goal: switches to Goals and streams
+   the run into that goal's own panel. Runs are independent — the chat
+   composer's single busy guard does not apply, so several goals can be
+   worked at once. */
 function workOnGoal(g) {
   if (!g || !g.id) return;
-  if (busy) {
-    el.goalsStatus.textContent = "A run is already in progress; wait for it to finish.";
+  var existing = goalRuns[g.id];
+  if (existing && existing.status === "running") {
+    el.goalsStatus.textContent = "A run for this goal is already in progress; wait for it to finish.";
     return;
   }
-  pendingGoalId = g.id;
-  showView("chat", true);
   var task = "Work on this goal until the completion criterion is met.\n\nObjective: " +
     (g.objective || "") + "\nDone when: " + (g.completion_criterion || "");
-  el.task.value = task;
+  var controller = new AbortController();
+  goalRuns[g.id] = { controller: controller, status: "running", text: "" };
+  showView("goals", true);
+  renderGoals(goalState.val);
   el.goalsStatus.textContent = "Starting work on goal…";
-  syncControls();
-  el.form.requestSubmit();
+
+  var splitter = makeLineSplitter(function (line) {
+    if (line.charCodeAt(0) === 1) {
+      var evt;
+      try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
+      if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
+      return;
+    }
+    appendGoalText(g.id, line + "\n");
+  });
+
+  fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      task: task,
+      goal: g.id,
+      stream: true,
+      session: sessionId
+    }),
+    signal: controller.signal
+  }).then(function (resp) {
+    if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    return (function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) return;
+        splitter.push(decoder.decode(chunk.value, { stream: true }));
+        return pump();
+      });
+    })();
+  }).then(function () {
+    splitter.flush();
+    if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
+      setGoalStatus(g.id, "finished");
+      el.goalsStatus.textContent = "Goal run finished.";
+    }
+  }).catch(function (err) {
+    splitter.flush();
+    if (!goalRuns[g.id]) return;
+    if (err && err.name === "AbortError") {
+      setGoalStatus(g.id, "stopped");
+      el.goalsStatus.textContent = "Goal run stopped.";
+    } else {
+      appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
+      setGoalStatus(g.id, "failed");
+      el.goalsStatus.textContent = "Goal run failed: " + err.message;
+    }
+  });
 }
 
 function postGoal(payload, status) {
