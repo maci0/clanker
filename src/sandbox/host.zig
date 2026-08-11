@@ -2242,6 +2242,12 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const result = std.process.run(h.sandbox.gpa, h.sandbox.io, .{
         .argv = argv.items,
         .cwd = .{ .dir = exec_dir },
+        // Explicit, not left to the Io backend's own fallback: with this
+        // unset the child's env came from the Io instance's memoized copy
+        // rather than a live read, and `zig test`/`zig ast-check` failed with
+        // "unable to resolve zig cache directory: AppDataDirUnavailable"
+        // even though HOME was set and correct in the real process env.
+        .environ_map = h.sandbox.environ_map,
         // Generous, because the result is truncated with a marker below
         // rather than refused: a search that matches a lot should return what
         // it found and say it was cut, not fail with StreamTooLong and leave
@@ -2345,6 +2351,7 @@ fn execWithStdin(
     var child = std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .dir = exec_dir },
+        .environ_map = h.sandbox.environ_map,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
