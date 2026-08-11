@@ -2709,6 +2709,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         const is_plugins = std.mem.eql(u8, target, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_goals = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/goals");
+        const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
         const is_todos = std.mem.eql(u8, target, "/api/todos") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
@@ -2762,6 +2763,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, stream);
+        } else if (is_providers) {
+            handleProviders(cfg, stream);
         } else if (is_todos) {
             handleTodos(io, gpa, method, body, stream);
         } else if (is_logs) {
@@ -3241,6 +3244,13 @@ const RunRequestBody = struct {
     session: []const u8 = "",
     /// Images the composer attached to this task (multimodal runs).
     images: []const RunImage = &.{},
+    /// Optional per-run overrides, the request-shaped equivalent of
+    /// `--provider` and the model's sampling settings in config.json. Empty or
+    /// null means "use what the config says".
+    provider: []const u8 = "",
+    model: []const u8 = "",
+    temperature: ?f64 = null,
+    top_p: ?f64 = null,
 };
 
 /// The composer refuses images over 4 MB; the server enforces the same cap on
@@ -3485,6 +3495,56 @@ const Todo = struct {
 /// A shared checklist at `state/todos.json`, readable and writable by the page
 /// and by anything else that opens the file. One POST shape covers add, toggle
 /// and remove: which one it is follows from which fields are present.
+/// Every configured provider and its models, so the composer can offer the
+/// same choice `--provider` does instead of always running the default.
+fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var buf: [1 << 16]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("default") catch return;
+    s.write(cfg.default_provider) catch return;
+    s.objectField("providers") catch return;
+    s.beginArray() catch return;
+    var it = cfg.providers.iterator();
+    while (it.next()) |entry| {
+        const prov = entry.value_ptr;
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(entry.key_ptr.*) catch return;
+        s.objectField("default_model") catch return;
+        s.write(prov.default_model) catch return;
+        s.objectField("models") catch return;
+        s.beginArray() catch return;
+        var mit = prov.models.iterator();
+        while (mit.next()) |m| {
+            s.beginObject() catch return;
+            s.objectField("name") catch return;
+            s.write(m.key_ptr.*) catch return;
+            s.objectField("context_window") catch return;
+            s.write(m.value_ptr.context_window) catch return;
+            s.objectField("max_tokens") catch return;
+            s.write(m.value_ptr.max_tokens) catch return;
+            if (m.value_ptr.temperature) |t| {
+                s.objectField("temperature") catch return;
+                s.write(t) catch return;
+            }
+            if (m.value_ptr.top_p) |t| {
+                s.objectField("top_p") catch return;
+                s.write(t) catch return;
+            }
+            s.endObject() catch return;
+        }
+        s.endArray() catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
 fn handleTodos(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -4123,12 +4183,27 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
 
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    var provider = cfg.provider(null) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"no default provider\"}");
+    var provider = cfg.provider(if (req.provider.len > 0) req.provider else null) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"no such provider\"}");
         return;
     };
     var provider_copy = provider.*;
     provider = &provider_copy;
+    // A model the provider does not define is refused rather than silently
+    // falling back: running the wrong model quietly is worse than a 400.
+    if (req.model.len > 0) {
+        if (provider_copy.models.get(req.model) == null) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"no such model for that provider\"}");
+            return;
+        }
+        provider_copy.default_model = req.model;
+    }
+    if (req.temperature != null or req.top_p != null) {
+        var m = provider_copy.activeModel();
+        if (req.temperature) |t| m.temperature = std.math.clamp(t, 0.0, 2.0);
+        if (req.top_p) |t| m.top_p = std.math.clamp(t, 0.0, 1.0);
+        provider_copy.models.put(arena, provider_copy.default_model, m) catch {};
+    }
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {

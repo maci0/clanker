@@ -1668,6 +1668,16 @@ document.addEventListener("DOMContentLoaded", function () {
         node = document.createElement("strong");
         inlineInto(node, tok.slice(2, -2));
       } else if (tok.charAt(0) === "*" || tok.charAt(0) === "_") {
+        var before = m.index > 0 ? text.charAt(m.index - 1) : " ";
+        var after = text.charAt(m.index + tok.length) || " ";
+        // Intra-word underscores are identifiers, not emphasis: snake_case
+        // names in an answer used to render as italics with the underscores
+        // eaten.
+        if (tok.charAt(0) === "_" && (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(after))) {
+          parent.appendChild(document.createTextNode(tok));
+          text = text.slice(m.index + tok.length);
+          continue;
+        }
         node = document.createElement("em");
         inlineInto(node, tok.slice(1, -1));
       } else if (tok.charAt(0) === "[") {
@@ -1973,6 +1983,13 @@ document.addEventListener("DOMContentLoaded", function () {
     return {
       push: function (chunk) {
         buffer += chunk;
+        // A control event is introduced by \x01 and terminated by a newline,
+        // but the answer text before it need not end in one. Without this the
+        // two share a line, the \x01 test fails because it is not at index 0,
+        // and the raw {"type":"done"} JSON lands in the answer while the
+        // turn's stats never render. JSON escapes control characters, so a
+        // literal \x01 only ever appears as this marker.
+        buffer = buffer.replace(/([^\n])\u0001/g, "$1\n\u0001");
         var lines = buffer.split("\n");
         buffer = lines.pop();
         for (var i = 0; i < lines.length; i++) onLine(lines[i], true);

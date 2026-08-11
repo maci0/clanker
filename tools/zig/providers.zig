@@ -100,13 +100,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
         // A provider whose key is absent is reported as skipped rather than
         // failed: nothing is wrong with it, it just is not usable here.
+        //
+        // A tool may only read the variables its manifest names, and this one
+        // names none, so an unreadable key and an unset key look the same from
+        // here. Say that rather than assert it is unset.
         if (p.api_key_env) |env_name| {
             const key = lib.getenv(env_name) orelse "";
             if (key.len == 0) {
                 try s.objectField("status");
                 try s.write("skipped");
                 try s.objectField("error");
-                try s.write(try std.fmt.allocPrint(alloc, "{s} is not set", .{env_name}));
+                try s.write(try std.fmt.allocPrint(alloc, "{s} is unset, or not readable by this tool", .{env_name}));
                 try s.endObject();
                 continue;
             }

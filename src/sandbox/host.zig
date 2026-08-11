@@ -109,6 +109,8 @@ pub const Sandbox = struct {
     /// Commands allowed through ck_exec for this tool. Empty falls back to the
     /// harness default set below.
     exec_allow: []const []const u8 = &.{},
+    /// Environment variables a guest may read, from the tool's manifest.
+    env_allow: []const []const u8 = &.{},
     /// Directory (relative to `state_base_dir`) holding the harness state:
     /// chatroom logs, subscriptions, cursor. Defaults to "state".
     state_dir: []const u8 = "state",
@@ -191,6 +193,7 @@ pub fn sandboxFor(
         .network_allow = net,
         .llm = llm_access,
         .exec_allow = tool.exec_allow,
+        .env_allow = tool.env_allow,
         .fs_prefixes = tool.fs_prefixes,
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
@@ -436,8 +439,31 @@ pub fn ckEnv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
     const bytes = memBytes(caller) orelse return Err.invalid;
     const name = sliceOf(bytes, name_ptr, name_len) orelse return Err.invalid;
     if (name.len == 0) return Err.invalid;
+    if (!envAllowed(h.sandbox, name)) {
+        log.log(.warn, "[sandbox] refused to read environment variable '{s}'", .{name});
+        return Err.denied;
+    }
     const value = h.sandbox.environ_map.get(name) orelse return Err.not_found;
     return h.writeResult(bytes, value);
+}
+
+/// Variables any tool may read: where it is running, and how to format output.
+/// Everything else has to be named by the tool's manifest.
+const env_default_allow = [_][]const u8{ "PWD", "HOME", "PATH", "LANG", "LC_ALL", "TERM", "TZ", "USER" };
+
+/// The process environment holds this project's API keys, loaded from .env at
+/// startup. Handing a guest any variable it asks for made the env_allow field
+/// in a manifest decorative and put every key one getenv call away from a tool
+/// the improvement engine wrote by itself.
+fn envAllowed(sb: *const Sandbox, name: []const u8) bool {
+    for (sb.env_allow) |allowed| {
+        if (std.mem.eql(u8, allowed, name)) return true;
+    }
+    if (sb.env_allow.len > 0) return false;
+    for (env_default_allow) |allowed| {
+        if (std.mem.eql(u8, allowed, name)) return true;
+    }
+    return false;
 }
 
 pub fn ckResult(caller: *zwasm.Caller) u64 {
@@ -2428,4 +2454,31 @@ test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-type
     const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
     try std.testing.expect(pluginStr(bad, "provider") == null);
     try std.testing.expect(pluginU32(bad, "max_tokens") == null);
+}
+
+test "a tool cannot read an environment variable it was not allowed" {
+    // The process environment holds this project's API keys. Before this the
+    // env_allow field in a manifest was decorative and any guest could ask for
+    // any variable by name.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = undefined,
+    };
+
+    // No declaration: only the harmless defaults.
+    try std.testing.expect(envAllowed(&sb, "PWD"));
+    try std.testing.expect(envAllowed(&sb, "HOME"));
+    try std.testing.expect(!envAllowed(&sb, "ANTHROPIC_API_KEY"));
+    try std.testing.expect(!envAllowed(&sb, "KIMI_API_KEY"));
+
+    // A declaration is exact and replaces the defaults rather than adding to
+    // them, so a tool that asks for one variable cannot reach the others.
+    const allow = [_][]const u8{"MY_TOKEN"};
+    sb.env_allow = &allow;
+    try std.testing.expect(envAllowed(&sb, "MY_TOKEN"));
+    try std.testing.expect(!envAllowed(&sb, "PWD"));
+    try std.testing.expect(!envAllowed(&sb, "DEEPSEEK_API_KEY"));
 }
