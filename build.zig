@@ -171,26 +171,7 @@ pub fn build(b: *std.Build) void {
     // Every tool is built before any test runs, for the reason given where the
     // test step is declared.
     run_tests.step.dependOn(tools_step);
-
-    // -------------------------------------------------------------- tui tests
-    // Pty-driven integration tests (src/tui/testing/) spawn the real
-    // zig-out/bin/clanker binary over a hand-rolled pty and drive it like a
-    // human typing at a terminal. Kept out of `zig build test` deliberately:
-    // spawning a real process over a real pty is slower, POSIX-only, and more
-    // environment-sensitive (needs a working /dev/ptmx) than the in-process
-    // std.testing suite, so the fast always-green gate must not depend on it.
-    const tui_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/tui/testing/demo.zig"),
-        .target = test_target,
-        .optimize = optimize,
-    });
-    const tui_tests = b.addTest(.{ .root_module = tui_test_mod });
-    const run_tui_tests = b.addRunArtifact(tui_tests);
-    // Needs the real binary (b.getInstallStep(), already default-included by
-    // `zig build`) and its wasm tools (cmd_help etc. — the REPL's slash
-    // commands load from zig-out/tools/*.wasm at startup).
-    run_tui_tests.step.dependOn(b.getInstallStep());
-    run_tui_tests.step.dependOn(tools_step);
-    const tui_test_step = b.step("tui-test", "Run pty-driven TUI integration tests against zig-out/bin/clanker");
-    tui_test_step.dependOn(&run_tui_tests.step);
+    // The pty-driven `tui-test` step (src/tui/testing/) drove the old
+    // hand-rolled REPL (src/tui/*) over a real pty; removed with it when
+    // the REPL migrated to libvaxis (src/tui2/repl_vaxis.zig).
 }

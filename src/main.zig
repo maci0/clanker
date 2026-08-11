@@ -20,7 +20,6 @@ comptime {
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
     _ = @import("tools/registry.zig");
-    _ = @import("util/lineedit.zig");
     _ = @import("tools/builder.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
@@ -42,15 +41,10 @@ comptime {
     _ = @import("peers/chatrooms.zig");
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
-    _ = @import("tui/term.zig");
     _ = @import("tui/width.zig");
-    _ = @import("tui/input.zig");
-    _ = @import("tui/region.zig");
-    _ = @import("tui/statusbar.zig");
     _ = @import("tui/transcript.zig");
-    _ = @import("tui/palette.zig");
-    _ = @import("tui/approval.zig");
     _ = @import("tui/theme.zig");
+    _ = @import("tui2/repl_vaxis.zig");
     _ = @import("cli.zig");
 }
 

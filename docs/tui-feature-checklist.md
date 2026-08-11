@@ -1,13 +1,16 @@
-# REPL TUI feature checklist (src/tui/* — `clanker repl-legacy`)
+# REPL TUI feature checklist (the deleted hand-rolled REPL)
 
-**As of the libvaxis migration, `clanker repl` runs the new libvaxis-backed
-REPL (`src/tui2/repl_vaxis.zig`), not the implementation this checklist
-describes.** This file, and every item below, is about the original
-hand-rolled REPL (`src/tui/*`) — still shipped and still fully working,
-reachable as `clanker repl-legacy`, since it has real capabilities the
-vaxis REPL doesn't have yet (full markdown rendering, the slash-command
-palette, inline approval prompts, session resume). See `docs/ROADMAP.md`
-for the migration's own status and what the vaxis REPL covers so far.
+**This describes an implementation that no longer exists.** `src/tui/*`'s
+input, region, statusbar, palette, approval and term modules, `cmdRepl`, the
+pty `tui-test` suite and `util/lineedit.zig` were deleted when the REPL moved
+to libvaxis (`src/tui2/repl_vaxis.zig`). Only `transcript.zig`, `theme.zig`,
+`syntax.zig` and `width.zig` survive, because `clanker run` and the vaxis REPL
+render through them.
+
+It is kept as a specification, not a status report: every item below worked,
+and most of them do not work in the vaxis REPL yet. `docs/ROADMAP.md` tracks
+closing that gap. Read the "test that proves it" column as a record of what the
+behaviour was, not as a suite that still runs.
 
 Tracks each target item from the TUI rewrite against the code that
 implements it and the test that proves it. See

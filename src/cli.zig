@@ -18,16 +18,12 @@ const subagent = @import("agent/subagent.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
-const lineedit = @import("util/lineedit.zig");
 const rawhttp = @import("util/rawhttp.zig");
-const term = @import("tui/term.zig");
-const tui_input = @import("tui/input.zig");
-const tui_region = @import("tui/region.zig");
-const tui_statusbar = @import("tui/statusbar.zig");
+// tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
+// rest of tui/* (input, region, statusbar, palette, approval, term) was
+// exclusive to the REPL that's now src/tui2/repl_vaxis.zig, and was
+// removed with it.
 const tui_transcript = @import("tui/transcript.zig");
-const tui_palette = @import("tui/palette.zig");
-const tui_approval = @import("tui/approval.zig");
-const tui_theme = @import("tui/theme.zig");
 const repl_vaxis = @import("tui2/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
@@ -71,13 +67,8 @@ pub const Command = enum {
     stats,
     phonebook,
     serve,
-    /// The libvaxis-backed REPL (docs/ROADMAP.md migration) — the default
-    /// `clanker repl` since the migration finished. `src/tui2/repl_vaxis.zig`.
+    /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui2/repl_vaxis.zig`.
     repl,
-    /// The original hand-rolled REPL (src/tui/*), kept reachable but no
-    /// longer the default: real markdown rendering, slash palette, inline
-    /// approval prompts, and session resume the vaxis REPL doesn't have yet.
-    repl_legacy,
     graph,
     gate,
     autolearn,
@@ -271,8 +262,6 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 // Compatibility alias from when the vaxis REPL was a
                 // separate opt-in command; now `repl` itself.
                 opts.command = .repl;
-            } else if (std.mem.eql(u8, a, "repl-legacy")) {
-                opts.command = .repl_legacy;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else {
@@ -407,7 +396,6 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
         .repl => try repl_vaxis.cmdReplVaxis(init),
-        .repl_legacy => try cmdRepl(init, opts),
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
@@ -807,9 +795,30 @@ fn reportUnfinishedRun(
 
 /// The provider named by `--provider` (or the config default), with
 /// `--model` applied as a one-off override of its `default_model`.
+///
+/// `--model <provider>/<model>` picks both at once, so `--model zai/glm-5.2`
+/// needs no separate `--provider`. The prefix is only read as a provider when
+/// config actually has one by that name and `--provider` was not given: a
+/// model id can contain a slash of its own (`moonshotai/kimi-k3` is a model,
+/// served by the provider named `kimi-k3`), and splitting those would send a
+/// request for a model that does not exist to a provider that does not either.
 fn resolveProvider(cfg: *const config.Config, opts: Options) !config.Provider {
-    var provider = (try cfg.provider(opts.provider)).*;
-    if (opts.model) |m| provider.default_model = m;
+    var want_provider = opts.provider;
+    var want_model = opts.model;
+    if (want_provider == null) {
+        if (want_model) |m| {
+            if (std.mem.indexOfScalar(u8, m, '/')) |slash| {
+                const head = m[0..slash];
+                const tail = m[slash + 1 ..];
+                if (head.len > 0 and tail.len > 0 and cfg.providers.getPtr(head) != null) {
+                    want_provider = head;
+                    want_model = tail;
+                }
+            }
+        }
+    }
+    var provider = (try cfg.provider(want_provider)).*;
+    if (want_model) |m| provider.default_model = m;
     return provider;
 }
 
@@ -896,8 +905,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // a one-shot command that gets piped, redirected and read by scripts, so
     // it stays plain: streamed answer on stdout, log lines on stderr, no
     // animation to clean up out of a captured log.
-    repl_answer_started = false;
-    repl_md = .{};
+    run_answer_started = false;
+    run_md = .{};
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         // Running out of iterations or budget is an outcome, not a crash. The
         // run did real work — often minutes of it and a measurable amount of
@@ -945,692 +954,6 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
 }
 
-/// The REPL's opening banner. On a terminal it reuses the left-bar card
-/// style already established for tool calls and the input box (`╭─`/`│`/
-/// `╰─`, no right-hand border — transcript.zig's doc comment explains why a
-/// closed box was rejected); piped output degrades to one dense plain line,
-/// so scripts get a header without box art.
-fn printReplBanner(w: *std.Io.Writer, theme: *const tui_theme.Theme, provider_name: []const u8, model_name: []const u8, sid: []const u8, tty: bool) void {
-    if (!tty) {
-        w.print("{s}clanker repl \xc2\xb7 {s}/{s}{s}\n", .{ theme.dim, provider_name, model_name, theme.reset }) catch {};
-        return;
-    }
-    w.print("{s}\xe2\x95\xad\xe2\x94\x80 {s}{s}\xe2\x9a\xa1 clanker{s} {s}repl{s}\n", .{ theme.tool, theme.reset, theme.answer_marker, theme.reset, theme.dim, theme.reset }) catch {};
-    w.print("{s}\xe2\x94\x82{s}  {s}{s}/{s} \xc2\xb7 session {s}{s}\n", .{ theme.tool, theme.reset, theme.dim, provider_name, model_name, sid, theme.reset }) catch {};
-    w.print("{s}\xe2\x95\xb0\xe2\x94\x80{s} {s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n", .{ theme.tool, theme.reset, theme.dim, theme.reset }) catch {};
-}
-
-test "printReplBanner draws a left-bar card on a tty" {
-    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer out.deinit();
-    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", true);
-    const bytes = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad\xe2\x94\x80") != null); // ╭─
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x9a\xa1 clanker") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "openai/gpt-x") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "session repl-42") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xb0\xe2\x94\x80") != null); // ╰─
-}
-
-test "printReplBanner degrades to one dense line when piped" {
-    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer out.deinit();
-    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", false);
-    const bytes = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad") == null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "clanker repl \xc2\xb7 openai/gpt-x") != null);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\n"));
-}
-
-fn cmdRepl(init: std.process.Init, opts: Options) !void {
-    const gpa = init.gpa;
-    const io = init.io;
-    const arena = init.arena.allocator();
-    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
-
-    var provider_val = try resolveProvider(&cfg, opts);
-    const provider = &provider_val;
-
-    // Make sure the sandbox root exists.
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
-
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const tool_defs = try reg.toToolDefs(arena);
-
-    var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
-    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
-    var messages: std.ArrayList(types.Message) = .empty;
-
-    const exe_path = try std.process.executablePathAlloc(io, gpa);
-    defer gpa.free(exe_path);
-
-    var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var sid: []const u8 = undefined;
-    if (opts.session) |sid_arg| {
-        // Resuming a hot-reloaded session: load its transcript.
-        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid_arg)) |s| {
-            created = s.created;
-            for (s.messages) |m| {
-                if (m.role == .system) continue;
-                try messages.append(arena, m);
-            }
-        } else |_| {}
-        sid = sid_arg;
-    } else {
-        sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
-    }
-
-    // Hot-reload: a background thread watches the binary and re-execs into
-    // `repl --session <sid>` (resuming this exact session) once a rebuild
-    // lands and it's safe to do so (see HotReload doc comment).
-    if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildReplArgvTail(arena, sid, opts));
-    }
-
-    const stdin_file = std.Io.File.stdin();
-    var stdout_file = std.Io.File.stdout();
-    var out_buf: [4096]u8 = undefined;
-    var out_w = stdout_file.writerStreaming(io, &out_buf);
-
-    repl_theme = tui_theme.select(null, init.environ_map);
-    repl_md.theme = repl_theme;
-    repl_prompt = std.fmt.bufPrint(&repl_prompt_buf, "{s}clanker> {s}", .{ repl_theme.prompt, repl_theme.reset }) catch "clanker> ";
-
-    // Stream the model's tokens to stdout as they arrive.
-    repl_out = &out_w;
-    repl_io = io;
-    ask_out = &out_w;
-    ask_stdin = stdin_file;
-    ask_gpa = gpa;
-    // Only a terminal can answer; a piped session would block forever on a
-    // prompt nobody sees.
-    ask_interactive = stdin_file.isTty(io) catch false;
-    if (ask_interactive) a.ask_fn = &replAsk;
-    // Confirm-before-write reaches the terminal only at "always": "browser"
-    // means the web surface alone, and a piped session has nobody to answer.
-    if (ask_interactive and cfg.agent.confirm_writes == .always) a.confirm_fn = &replConfirm;
-    a.on_token = &replDelta;
-    a.on_tool_call = &replToolCall;
-    a.on_tool_results = &replToolResults;
-    a.on_tool_result = &replToolResult;
-
-    printReplBanner(&out_w.interface, &repl_theme, provider.name, provider.activeModelName(), sid, stdout_file.isTty(io) catch false);
-    try out_w.interface.flush();
-
-    // On a terminal, keystrokes go through the line editor: a cooked TTY hands
-    // over whole lines and leaves arrow keys as literal escape bytes in the
-    // buffer, which is why history recall did nothing. Piped input keeps the
-    // plain read loop below, so scripts and the improvement loop are
-    // unaffected by any of this.
-    var editor = lineedit.Editor{ .gpa = gpa };
-    defer editor.deinit();
-    var region = tui_region.BottomRegion{ .gpa = gpa };
-    defer region.deinit();
-    const interactive = (stdin_file.isTty(io) catch false) and (stdout_file.isTty(io) catch false);
-    if (interactive) {
-        term.installResizeHandler();
-        // A turn runs with the terminal back in cooked mode, where Ctrl-C is a
-        // real SIGINT: without this it killed clanker outright and took the
-        // unsaved turn with it. The agent loop reads the same flag and stops
-        // between iterations.
-        term.installInterruptHandler();
-        a.stop_flag = &term.interrupt_pending;
-        loadReplHistory(io, gpa, &editor);
-        refreshStatusline(io, gpa, arena, &cfg, init.environ_map, &reg);
-        repl_palette = tui_palette.index(arena, &reg) catch &.{};
-        while (true) {
-            const status = ReplStatus{
-                .model_name = provider.activeModelName(),
-                .session_id = sid,
-                .stats = &a.stats,
-                .session_stats = &a.session_stats,
-                .budget = cfg.agent.max_total_tokens,
-            };
-            const entered = readLineRaw(io, gpa, stdin_file, &out_w, &editor, &region, status) catch |err| {
-                if (err == error.EndOfStream) break;
-                log.log(.error_, "repl read error: {s}", .{@errorName(err)});
-                break;
-            } orelse break;
-            const trimmed = std.mem.trim(u8, entered, " \t\r\n");
-            if (trimmed.len == 0) continue;
-            editor.remember(trimmed);
-            saveReplHistory(io, gpa, &editor);
-            const owned = try arena.dupe(u8, trimmed);
-            if (try replHandleLine(io, gpa, arena, &out_w, &a, &messages, &cfg, init.environ_map, &reg, owned, &created, &sid)) return;
-        }
-        try out_w.interface.writeAll("\n");
-        try out_w.interface.flush();
-        return;
-    }
-
-    // Accumulate raw stdin and split on newlines: readSliceShort can return
-    // several lines at once (piped input), and each task line must be copied
-    // into the arena before the accumulator buffer is shifted (messages keep
-    // referencing it across turns).
-    var acc: std.ArrayList(u8) = .empty;
-    defer acc.deinit(gpa);
-    var tmp: [4096]u8 = undefined;
-
-    while (true) {
-        // repl_prompt already carries the theme (built in cmdRepl above), so
-        // NO_COLOR/--theme mono strips the piped prompt the same as raw mode.
-        try out_w.interface.writeAll(repl_prompt);
-        try out_w.interface.flush();
-
-        // Short read on the raw fd: readSliceShort blocks until the buffer is
-        // full or EOF, which never happens on an interactive TTY (it reads the
-        // first line, then blocks for more) — the REPL would silently swallow
-        // input. posix.read returns whatever is available (one canonical line
-        // on a TTY), retrying on EINTR.
-        const n = std.posix.read(stdin_file.handle, &tmp) catch |err| {
-            log.log(.error_, "repl read error: {s}", .{@errorName(err)});
-            return err;
-        };
-        if (n == 0) {
-            // EOF: flush a trailing partial line, then exit.
-            const last = std.mem.trim(u8, acc.items, " \t\r\n");
-            if (last.len > 0) {
-                const owned = try arena.dupe(u8, last);
-                const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
-                if (quit) return;
-            }
-            try out_w.interface.writeAll("\n");
-            try out_w.interface.flush();
-            return;
-        }
-        try acc.appendSlice(gpa, tmp[0..n]);
-        while (std.mem.indexOfScalar(u8, acc.items, '\n')) |nl| {
-            const line = std.mem.trim(u8, acc.items[0..nl], " \t\r\n");
-            // Use `line` only before the buffer is shifted below: it is a
-            // view into acc.items, so the copyForwards would overwrite it.
-            if (line.len == 0) {
-                const rest0 = acc.items[nl + 1 ..];
-                std.mem.copyForwards(u8, acc.items[0..rest0.len], rest0);
-                acc.items.len = rest0.len;
-                continue;
-            }
-            if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) {
-                try out_w.interface.writeAll("\n");
-                try out_w.interface.flush();
-                return;
-            }
-            if (std.mem.eql(u8, line, ":help")) {
-                try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\n");
-                try out_w.interface.flush();
-                const rest1 = acc.items[nl + 1 ..];
-                std.mem.copyForwards(u8, acc.items[0..rest1.len], rest1);
-                acc.items.len = rest1.len;
-                continue;
-            }
-            if (line[0] == '/') {
-                // Slash commands: /quit|/exit leave the REPL, /goal runs the
-                // agent (which persists via the goal WASM tool), everything
-                // else dispatches to an internal cmd_<name> WASM tool.
-                // NOTE: `line` is a view into acc.items and must be fully
-                // consumed BEFORE the buffer is shifted below.
-                if (std.mem.eql(u8, line, "/quit") or std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "/exit")) {
-                    try out_w.interface.writeAll("\n");
-                    try out_w.interface.flush();
-                    return;
-                }
-                if (std.mem.startsWith(u8, line, "/autolearn")) {
-                    const arg = std.mem.trimStart(u8, line["/autolearn".len..], " ");
-                    if (std.mem.eql(u8, arg, "on") or std.mem.eql(u8, arg, "off")) {
-                        const on = std.mem.eql(u8, arg, "on");
-                        cfg.modules.autolearn = on;
-                        persistModules(io, gpa, arena, &cfg);
-                        try out_w.interface.writeAll(if (on) "autolearn enabled\n" else "autolearn disabled\n");
-                        try out_w.interface.flush();
-                    } else {
-                        try out_w.interface.writeAll(if (cfg.modules.autolearn) "autolearn is ON\n" else "autolearn is OFF\n");
-                        try out_w.interface.flush();
-                    }
-                    const al_rest = acc.items[nl + 1 ..];
-                    std.mem.copyForwards(u8, acc.items[0..al_rest.len], al_rest);
-                    acc.items.len = al_rest.len;
-                    continue;
-                }
-                var goal_task: ?[]const u8 = null;
-                if (std.mem.startsWith(u8, line, "/goal")) {
-                    const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
-                    if (intent.len == 0) {
-                        try out_w.interface.writeAll("usage: /goal <intent>\n");
-                        try out_w.interface.flush();
-                    } else {
-                        goal_task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
-                    }
-                } else {
-                    const toggled = std.mem.startsWith(u8, line, "/plugins ");
-                    try replSlashTool(io, gpa, arena, &cfg, init.environ_map, &reg, line, &out_w);
-                    if (toggled) {
-                        // /plugins rewrote state/plugins.json; reload so the
-                        // next turn's tool catalog reflects it without a restart.
-                        reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-                        a.tool_defs = try reg.toToolDefs(arena);
-                    }
-                }
-                const slash_rest = acc.items[nl + 1 ..];
-                std.mem.copyForwards(u8, acc.items[0..slash_rest.len], slash_rest);
-                acc.items.len = slash_rest.len;
-                if (goal_task) |gt| {
-                    const owned = try arena.dupe(u8, gt);
-                    const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
-                    if (quit) return;
-                }
-                continue;
-            }
-            // A bare number answers the last multiple-choice question: send
-            // the option's own words, so the model reads an answer rather
-            // than a digit with no referent.
-            const picked: ?[]const u8 = blk: {
-                if (repl_choices.items.len == 0) break :blk null;
-                const digits = std.mem.trimEnd(u8, line, ".)");
-                const idx = std.fmt.parseInt(usize, digits, 10) catch break :blk null;
-                if (idx < 1 or idx > repl_choices.items.len) break :blk null;
-                break :blk repl_choices.items[idx - 1];
-            };
-            // Copy the task text into the arena BEFORE shifting the buffer:
-            // messages keep referencing it across turns.
-            const owned = try arena.dupe(u8, picked orelse line);
-            if (picked) |choice| {
-                a.pending_decision = .{ .question = repl_last_question, .answer = owned };
-                const echo = try std.fmt.allocPrint(arena, "{s}→ {s}{s}\n", .{ repl_theme.dim, choice, repl_theme.reset });
-                try out_w.interface.writeAll(echo);
-                try out_w.interface.flush();
-            }
-            const rest = acc.items[nl + 1 ..];
-            std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
-            acc.items.len = rest.len;
-            const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
-            if (quit) return;
-        }
-    }
-}
-
-/// One line typed at the interactive prompt. Returns true when the REPL should
-/// exit. The buffered (piped) path keeps its own inline handling; this covers
-/// the same commands for the raw-mode path.
-fn replHandleLine(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    out_w: *std.Io.File.Writer,
-    a: *agent.Agent,
-    messages: *std.ArrayList(types.Message),
-    cfg: *config.Config,
-    environ_map: *std.process.Environ.Map,
-    reg: *registry.Registry,
-    line: []const u8,
-    created: *i64,
-    sid: *[]const u8,
-) !bool {
-    if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) return true;
-    if (std.mem.eql(u8, line, ":help")) {
-        try out_w.interface.writeAll(":quit  :help  /goal <intent>  /session switch <id>  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete; Tab completes a slash command.\n");
-        const text = try tui_palette.helpText(arena, repl_palette);
-        try out_w.interface.writeAll(text);
-        try out_w.interface.flush();
-        return false;
-    }
-    if (line.len > 0 and line[0] == '/') {
-        if (std.mem.startsWith(u8, line, "/quit") or std.mem.startsWith(u8, line, "/exit")) return true;
-        if (std.mem.startsWith(u8, line, "/goal")) {
-            const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
-            if (intent.len == 0) {
-                try out_w.interface.writeAll("usage: /goal <intent>\n");
-                try out_w.interface.flush();
-                return false;
-            }
-            const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
-            const quit = try replRunTurn(io, out_w, a, messages, task, created.*, sid.*);
-            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-            runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
-            return quit;
-        }
-        if (std.mem.startsWith(u8, line, "/session")) {
-            const rest = std.mem.trim(u8, line["/session".len..], " \t");
-            const target = if (std.mem.startsWith(u8, rest, "switch "))
-                std.mem.trim(u8, rest["switch ".len..], " \t")
-            else
-                "";
-            if (target.len == 0) {
-                try out_w.interface.writeAll("usage: /session switch <id>  (see /sessions for the list)\n");
-                try out_w.interface.flush();
-                return false;
-            }
-            const loaded = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), target) catch {
-                try out_w.interface.writeAll("no such session\n");
-                try out_w.interface.flush();
-                return false;
-            };
-            messages.clearRetainingCapacity();
-            for (loaded.messages) |m| {
-                if (m.role == .system) continue;
-                try messages.append(arena, m);
-            }
-            created.* = loaded.created;
-            sid.* = try arena.dupe(u8, target);
-            // Token totals belong to a run, not a transcript: switching
-            // sessions starts a fresh count rather than carrying over
-            // whatever the previous session had spent.
-            a.session_stats = .{};
-            try out_w.interface.print("{s}switched to session {s} ({d} message(s)){s}\n", .{ repl_theme.dim, target, messages.items.len, repl_theme.reset });
-            try out_w.interface.flush();
-            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-            return false;
-        }
-        const toggled = std.mem.startsWith(u8, line, "/plugins ");
-        try replSlashTool(io, gpa, arena, cfg, environ_map, reg, line, out_w);
-        if (toggled) {
-            reg.* = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-            a.tool_defs = try reg.toToolDefs(arena);
-            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-            repl_palette = tui_palette.index(arena, reg) catch repl_palette;
-        }
-        return false;
-    }
-    // A bare number answers the last multiple-choice question.
-    var task = line;
-    if (repl_choices.items.len > 0) {
-        const digits = std.mem.trimEnd(u8, line, ".)");
-        if (std.fmt.parseInt(usize, digits, 10) catch null) |idx| {
-            if (idx >= 1 and idx <= repl_choices.items.len) {
-                task = try arena.dupe(u8, repl_choices.items[idx - 1]);
-                const echo = try std.fmt.allocPrint(arena, "{s}\xe2\x86\x92 {s}{s}\n", .{ repl_theme.dim, task, repl_theme.reset });
-                try out_w.interface.writeAll(echo);
-                try out_w.interface.flush();
-                // The run this starts exists because of that pick; the graph
-                // says so instead of showing a task with no visible cause.
-                a.pending_decision = .{ .question = repl_last_question, .answer = task };
-            }
-        }
-    }
-    const quit = try replRunTurn(io, out_w, a, messages, task, created.*, sid.*);
-    refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-    runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
-    return quit;
-}
-
-/// REPL history file: recall survives restarts, which is most of the point.
-const repl_history_path = "state/repl_history";
-
-fn loadReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *lineedit.Editor) void {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, repl_history_path, gpa, .limited(1 << 20)) catch return;
-    defer gpa.free(raw);
-    var it = std.mem.splitScalar(u8, raw, '\n');
-    while (it.next()) |l| {
-        const t = std.mem.trim(u8, l, " \t\r");
-        if (t.len > 0) editor.remember(t);
-    }
-    editor.reset();
-}
-
-fn saveReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *const lineedit.Editor) void {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(gpa);
-    for (editor.history.items) |h| {
-        buf.appendSlice(gpa, h) catch return;
-        buf.append(gpa, '\n') catch return;
-    }
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    atomic_write.writeFile(io, std.Io.Dir.cwd(), repl_history_path, buf.items) catch {};
-}
-
-/// What the status bar shows while `readLineRaw` waits for a line — read
-/// fresh on every redraw rather than snapshotted once, so token counts from
-/// a prior turn are already visible while typing the next one.
-pub const ReplStatus = struct {
-    model_name: []const u8,
-    session_id: []const u8,
-    stats: *const agent.RunStats,
-    session_stats: *const agent.RunStats,
-    budget: ?u32,
-};
-
-/// Reads one line in raw mode, redrawing as it is edited. Returns null on EOF
-/// or Ctrl-C, so the caller can leave. The line can span multiple rows (a
-/// bracketed paste, or a line longer than the terminal is wide); `region`
-/// repaints exactly the rows the status bar + input box occupy, diffing
-/// against its own previous frame rather than redrawing everything.
-fn readLineRaw(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    stdin_file: std.Io.File,
-    out_w: *std.Io.File.Writer,
-    editor: *lineedit.Editor,
-    region: *tui_region.BottomRegion,
-    status: ReplStatus,
-) !?[]const u8 {
-    const raw_guard = try term.enterRaw(stdin_file.handle);
-    defer raw_guard.exit();
-    // Bracketed paste: the terminal wraps a pasted block in ESC[200~/201~,
-    // which the line editor reads as literal newlines instead of submits, so
-    // a multi-line paste lands as one input rather than one turn per line.
-    try out_w.interface.writeAll("\x1b[?2004h");
-    try out_w.interface.flush();
-    defer {
-        out_w.interface.writeAll("\x1b[?2004l") catch {};
-        out_w.interface.flush() catch {};
-    }
-    _ = io;
-
-    editor.reset();
-    region.reset();
-    try redrawRegion(gpa, out_w, editor, region, status);
-
-    var key_reader = tui_input.KeyReader{};
-    while (true) {
-        const key = try key_reader.next(stdin_file) orelse return null;
-
-        switch (key) {
-            .interrupt => {
-                // Advance past whatever region rows still sit below the
-                // cursor (the input box's closing "╰─" line) before writing
-                // "^C" as its own clean line, same as the Enter handler
-                // below — otherwise "^C" lands glued onto the box's input
-                // row instead of visibly below the whole box.
-                const extra = region.lineCount() - 1 - region.cursorRow();
-                if (extra > 0) try out_w.interface.print("\x1b[{d}B", .{extra});
-                try out_w.interface.writeAll("\n^C\n");
-                try out_w.interface.flush();
-                editor.reset();
-                region.reset(); // the ^C line above is outside the region's own tracking
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            .eof => if (editor.len == 0) return null,
-            .tab => {
-                // Mid-paste, a tab byte is pasted content, not a completion
-                // request — leave it alone (matches lineedit.Editor.apply's
-                // existing no-op for .tab; nothing new to insert either way).
-                if (!editor.in_paste) tryComplete(gpa, editor, repl_palette);
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            .clear_screen => {
-                // Ctrl-L: wipe the screen and repaint the prompt with the
-                // line being edited, as every cooked shell does.
-                try out_w.interface.writeAll("\x1b[2J\x1b[H");
-                region.reset(); // the screen is blank; nothing to move up past
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            .resize => {
-                // A SIGWINCH wakeup while idle at the prompt: redrawRegion
-                // itself consumes term.resize_pending and resets the region
-                // at the new width, so there's nothing else to do here.
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            else => {},
-        }
-        const done = editor.apply(key);
-        try redrawRegion(gpa, out_w, editor, region, status);
-        if (done) {
-            // Advance past whatever region rows still sit below the
-            // cursor's row (e.g. the input box's closing "╰─" line) before
-            // moving one further row down, so a following print (spinner,
-            // response) doesn't land on top of and erase them.
-            const extra = region.lineCount() - 1 - region.cursorRow();
-            if (extra > 0) try out_w.interface.print("\x1b[{d}B", .{extra});
-            try out_w.interface.writeAll("\n");
-            try out_w.interface.flush();
-            return editor.line();
-        }
-    }
-}
-
-var repl_prompt_buf: [32]u8 = undefined;
-var repl_prompt: []const u8 = "clanker> "; // overwritten once `repl_theme` is known (cmdRepl)
-const repl_prompt_width = 9; // "clanker> " display width, ANSI codes excluded
-
-/// Tab-completes a slash command in place: `/he` + Tab -> `/help `. A no-op
-/// once args have started (a space is already in the line) or when nothing
-/// in `entries` starts with what's typed.
-fn tryComplete(gpa: std.mem.Allocator, editor: *lineedit.Editor, entries: []const tui_palette.Entry) void {
-    const line = editor.line();
-    if (line.len == 0 or line[0] != '/') return;
-    if (std.mem.indexOfScalar(u8, line, ' ') != null) return;
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const completed = tui_palette.complete(arena_state.allocator(), entries, line[1..]) catch return orelse return;
-
-    editor.reset();
-    _ = editor.apply(.{ .char = '/' });
-    for (completed) |c| _ = editor.apply(.{ .char = c });
-}
-
-/// One redraw call gets its own small arena: row slices are cheap and
-/// short-lived, and a fresh arena per keystroke beats growing one arena for
-/// the lifetime of the whole line.
-fn redrawRegion(
-    gpa: std.mem.Allocator,
-    out_w: *std.Io.File.Writer,
-    editor: *const lineedit.Editor,
-    region: *tui_region.BottomRegion,
-    status: ReplStatus,
-) !void {
-    // A resized terminal invalidates any diff against the previous frame
-    // (its content assumed the old width) — force a full repaint at
-    // whatever width `term.getSize` reports now.
-    if (term.resize_pending.swap(false, .acquire)) region.reset();
-
-    var frame_arena = std.heap.ArenaAllocator.init(gpa);
-    defer frame_arena.deinit();
-    const arena = frame_arena.allocator();
-    const cols: usize = if (term.getSize(out_w.file.handle)) |sz| sz.cols else tui_input.default_cols;
-
-    const status_line = try tui_statusbar.render(arena, &repl_theme, cols, .{
-        .model = status.model_name,
-        .session_id = status.session_id,
-        .total_tokens = status.session_stats.total_tokens + status.stats.total_tokens,
-        .budget = if (status.budget) |b| @intCast(b) else null,
-        .extra = repl_statusline_extra,
-    });
-    // Reserve 2 columns for the "│ " left-bar border (same style as tool
-    // cards — see transcript.zig's doc comment on why a left bar, not a
-    // full right-hand-bordered box) so wrapped rows don't overflow it.
-    const box_cols = if (cols > 2) cols - 2 else 1;
-    const f = try tui_input.frame(arena, editor, box_cols, repl_prompt, repl_prompt_width);
-
-    var lines = try arena.alloc([]const u8, 3 + f.rows.len);
-    lines[0] = status_line;
-    lines[1] = try std.fmt.allocPrint(arena, "{s}\xe2\x95\xad\xe2\x94\x80{s}", .{ repl_theme.dim, repl_theme.reset });
-    for (f.rows, 0..) |r, i| lines[2 + i] = try std.fmt.allocPrint(arena, "{s}\xe2\x94\x82 {s}{s}", .{ repl_theme.dim, repl_theme.reset, r });
-    lines[2 + f.rows.len] = try std.fmt.allocPrint(arena, "{s}\xe2\x95\xb0\xe2\x94\x80{s}", .{ repl_theme.dim, repl_theme.reset });
-    try region.render(&out_w.interface, lines, 2 + f.cursor_row, 2 + f.cursor_col);
-    try out_w.interface.flush();
-}
-
-/// Set for the duration of a REPL session so the ask_user tool can reach the
-/// terminal. A tool call runs deep inside the sandbox with no writer of its
-/// own, so the pieces it needs are parked here.
-var ask_out: ?*std.Io.File.Writer = null;
-var ask_stdin: ?std.Io.File = null;
-var ask_gpa: ?std.mem.Allocator = null;
-var ask_interactive = false;
-
-/// ask_user's terminal side: print the question, collect a pick through the
-/// inline approval widget (re-prompts on bad input instead of defaulting),
-/// return the chosen option. The returned slice is gpa-owned; ckAsk frees it.
-fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
-    const gpa = ask_gpa orelse return error.NoUser;
-    const out_w = ask_out orelse return error.NoUser;
-    const stdin_file = ask_stdin orelse return error.NoUser;
-
-    replClearThinking();
-    const chosen = try tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, options);
-    replShowThinking();
-    return chosen;
-}
-
-/// Confirm-before-write's terminal side (agent.confirm_writes = "always"):
-/// the same approval widget as replAsk, asking whether one write-capable
-/// tool call may run. Anything short of an explicit "allow" — including a
-/// prompt that fails — refuses the call.
-fn replConfirm(tool_name: []const u8, args_preview: []const u8) bool {
-    const gpa = ask_gpa orelse return false;
-    const out_w = ask_out orelse return false;
-    const stdin_file = ask_stdin orelse return false;
-
-    var qbuf: [512]u8 = undefined;
-    const question = std.fmt.bufPrint(&qbuf, "Run '{s}' with {s}?", .{ tool_name, args_preview }) catch
-        std.fmt.bufPrint(&qbuf, "Run '{s}'?", .{tool_name}) catch "Run this tool?";
-
-    replClearThinking();
-    const chosen = tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, confirm_options) catch {
-        replShowThinking();
-        return false;
-    };
-    replShowThinking();
-    defer gpa.free(chosen);
-    return std.mem.eql(u8, chosen, "allow");
-}
-
-/// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
-/// prints its `{"ok":true,"text":"..."}` output.
-const ToolExecError = error{ WasmMissing, LoadFailed, ExecFailed };
-
-/// Runs one internal WASM tool (a slash command's `cmd_*` handler, or a
-/// `statusline: true` contributor) with `{"args": args}` as input. Returns
-/// the raw JSON response (gpa-owned; caller frees). Shared by `replSlashTool`
-/// and `statuslineSegments` so the sandbox/module-load/JSON-envelope dance
-/// exists in exactly one place.
-fn runInternalTool(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    cfg: *const config.Config,
-    environ_map: *std.process.Environ.Map,
-    tool: *const registry.Tool,
-    args: []const u8,
-) (ToolExecError || error{ OutOfMemory, WriteFailed })![]u8 {
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch return error.WasmMissing;
-    defer gpa.free(wasm_bytes);
-
-    var sb = host.Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = cfg.agent.sandbox_root,
-        .network_allow = tool.network_allow,
-        .fs_prefixes = tool.fs_prefixes,
-        .environ_map = environ_map,
-        .seed = cfg.agent.seed,
-    };
-    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch return error.LoadFailed;
-    defer mod.deinit();
-
-    var ibuf: [8192]u8 = undefined;
-    var iw: std.Io.Writer = .fixed(&ibuf);
-    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
-    try is.beginObject();
-    try is.objectField("args");
-    try is.write(args);
-    try is.endObject();
-
-    return mod.executeTool(ibuf[0..iw.end]) catch return error.ExecFailed;
-}
 
 const ToolResult = struct { ok: bool = false, text: []const u8 = "", err: []const u8 = "" };
 
@@ -1657,141 +980,6 @@ fn parseToolResult(arena: std.mem.Allocator, raw: []const u8) ToolResult {
     return r;
 }
 
-fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, line: []const u8, out_w: *std.Io.File.Writer) !void {
-    const rest_start = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
-    const name = line[1..rest_start];
-    const args = std.mem.trimStart(u8, line[rest_start..], " ");
-
-    const tool_name = try std.fmt.allocPrint(arena, "cmd_{s}", .{name});
-    const tool = reg.get(tool_name) orelse {
-        try out_w.interface.writeAll("unknown command: /");
-        try out_w.interface.writeAll(name);
-        try out_w.interface.writeAll("   (try :help)\n");
-        try out_w.interface.flush();
-        return;
-    };
-
-    const out = runInternalTool(io, gpa, cfg, environ_map, tool, args) catch |err| {
-        const msg = switch (err) {
-            error.WasmMissing => "slash tool wasm missing (run zig build tools)\n",
-            error.LoadFailed => "slash tool load failed\n",
-            error.ExecFailed => "slash tool execution failed\n",
-            error.OutOfMemory => return error.OutOfMemory,
-            error.WriteFailed => return error.WriteFailed,
-        };
-        try out_w.interface.writeAll(msg);
-        try out_w.interface.flush();
-        return;
-    };
-    defer gpa.free(out);
-
-    const result = parseToolResult(arena, out);
-    if (!result.ok and result.err.len > 0) {
-        try out_w.interface.writeAll("error: ");
-        try out_w.interface.writeAll(result.err);
-        try out_w.interface.writeAll("\n");
-        try out_w.interface.flush();
-        return;
-    }
-    try out_w.interface.writeAll(result.text);
-    try out_w.interface.writeAll("\n");
-    try out_w.interface.flush();
-}
-
-/// Recomputes `repl_statusline_extra` from every `statusline: true` tool.
-/// Called once per turn (not per keystroke): these are ordinary sandboxed
-/// WASM calls, the same cost as a slash command, and the status line's
-/// dynamic parts (tokens, activity) already update every redraw without
-/// this, so a plugin segment only needs to be as fresh as the last turn.
-/// A tool that fails to load or run just contributes nothing — one broken
-/// plugin should not blank the whole status line.
-fn refreshStatusline(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) void {
-    repl_statusline_extra = statuslineSegments(io, gpa, arena, cfg, environ_map, reg) catch "";
-}
-
-fn statuslineSegments(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) ![]const u8 {
-    const tools = try reg.statuslineTools(arena);
-    if (tools.len == 0) return "";
-    var parts: std.ArrayList([]const u8) = .empty;
-    for (tools) |tool| {
-        const out = runInternalTool(io, gpa, cfg, environ_map, tool, "") catch continue;
-        defer gpa.free(out);
-        const result = parseToolResult(arena, out);
-        if (result.ok and result.text.len > 0) try parts.append(arena, try arena.dupe(u8, result.text));
-    }
-    if (parts.items.len == 0) return "";
-    return std.mem.join(arena, " \xc2\xb7 ", parts.items);
-}
-
-/// Runs every `turn_hook: true` tool once after a turn completes and prints
-/// any non-empty result into the transcript — a general REPL-behavior
-/// plugin surface (as opposed to `statuslineSegments`'s fixed one-line
-/// contribution), for a plugin that reacts to what just happened rather
-/// than only decorating the status line. Same cadence and same "one broken
-/// plugin contributes nothing" tolerance as the statusline path.
-fn runTurnHooks(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, out_w: *std.Io.File.Writer, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) void {
-    const hooks = reg.turnHookTools(arena) catch return;
-    for (hooks) |tool| {
-        const out = runInternalTool(io, gpa, cfg, environ_map, tool, "") catch continue;
-        defer gpa.free(out);
-        const result = parseToolResult(arena, out);
-        if (!result.ok or result.text.len == 0) continue;
-        out_w.interface.writeAll(repl_theme.dim) catch continue;
-        out_w.interface.writeAll(result.text) catch {};
-        out_w.interface.writeAll(repl_theme.reset) catch {};
-        out_w.interface.writeAll("\n") catch {};
-    }
-    out_w.interface.flush() catch {};
-}
-
-/// Writes the effective modules set (from the merged cfg) into
-/// config.local.json so runtime toggles like `/autolearn on|off` survive
-/// restarts. Local modules fully override the base, so we persist the whole
-/// effective set.
-fn persistModules(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config) void {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, "config.local.json", arena, .limited(1 << 20)) catch return;
-    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(gpa);
-    const wbuf = gpa.alloc(u8, 1 << 20) catch return;
-    defer gpa.free(wbuf);
-    var w: std.Io.Writer = .fixed(wbuf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    if (root == .object) {
-        s.beginObject() catch return;
-        var it = root.object.iterator();
-        while (it.next()) |kv| {
-            if (std.mem.eql(u8, kv.key_ptr.*, "modules")) continue;
-            s.objectField(kv.key_ptr.*) catch return;
-            s.write(kv.value_ptr.*) catch return;
-        }
-        s.objectField("modules") catch return;
-        s.beginObject() catch return;
-        const fields = [_]struct { key: []const u8, v: bool }{
-            .{ .key = "mcp", .v = cfg.modules.mcp },
-            .{ .key = "peers", .v = cfg.modules.peers },
-            .{ .key = "a2a", .v = cfg.modules.a2a },
-            .{ .key = "webui", .v = cfg.modules.webui },
-            .{ .key = "graphs", .v = cfg.modules.graphs },
-            .{ .key = "sessions", .v = cfg.modules.sessions },
-            .{ .key = "goal", .v = cfg.modules.goal },
-            .{ .key = "token_budget", .v = cfg.modules.token_budget },
-            .{ .key = "streaming", .v = cfg.modules.streaming },
-            .{ .key = "dotenv", .v = cfg.modules.dotenv },
-            .{ .key = "hot_reload", .v = cfg.modules.hot_reload },
-            .{ .key = "autolearn", .v = cfg.modules.autolearn },
-        };
-        for (fields) |f| {
-            s.objectField(f.key) catch return;
-            s.write(f.v) catch return;
-        }
-        s.endObject() catch return;
-        s.endObject() catch return;
-    }
-    atomic_write.writeFile(io, std.Io.Dir.cwd(), "config.local.json", w.buffer[0..w.end]) catch |err| log.log(.warn, "failed to persist config.local.json: {s}", .{@errorName(err)});
-}
-
-/// True if `exe_path`'s mtime differs from `start_mtime` and the file has
 /// settled into a stable, valid ELF. The binary may be mid-write (e.g.
 /// clanker's own improve loop rebuilds it constantly); exec'ing a
 /// half-written file kills the process silently, so this only reports an
@@ -1971,26 +1159,6 @@ const HotReload = struct {
 /// already used for other REPL cross-cutting state.
 var hot_reload_active: ?*HotReload = null;
 
-fn buildReplArgvTail(arena: std.mem.Allocator, sid: []const u8, opts: Options) ![]const []const u8 {
-    var argv: std.ArrayList([]const u8) = .empty;
-    // This builds cmdRepl's own re-exec argv (hot-reload self-restart) —
-    // cmdRepl is reachable as "repl-legacy" now that "repl" means the
-    // vaxis REPL (src/tui2/repl_vaxis.zig), which has no hot-reload of
-    // its own yet.
-    try argv.append(arena, "repl-legacy");
-    try argv.append(arena, "--session");
-    try argv.append(arena, sid);
-    if (opts.provider) |p| {
-        try argv.append(arena, "--provider");
-        try argv.append(arena, p);
-    }
-    if (opts.model) |m| {
-        try argv.append(arena, "--model");
-        try argv.append(arena, m);
-    }
-    return argv.items;
-}
-
 fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
@@ -1999,215 +1167,16 @@ fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
     return argv.items;
 }
 
-/// Streams REPL output: the model's content deltas land here (via
-/// Agent.on_token) while the run is still in flight.
-var repl_out: ?*std.Io.File.Writer = null;
-
-/// Braille spinner frames, animated on a background thread while waiting on
-/// the LLM or a tool: covers the otherwise silent gap with visible motion.
-const spinner_frames = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
-const spinner_interval_ns = 80 * std.time.ns_per_ms;
-
-var spinner_thread: ?std.Thread = null;
-var spinner_stop = std.atomic.Value(bool).init(false);
-/// Set once in cmdRepl; the spinner thread needs an Io handle to sleep with
-/// (std.Thread has no sleep of its own in std.Io-based Zig).
-var repl_io: std.Io = undefined;
-/// Live spinner state: when the current turn started and what it is doing.
-var repl_turn_start_ns: i128 = 0;
-var repl_activity: []const u8 = "thinking";
-/// Scratch for a batch label like "read_file +2" (see replToolCall): the
-/// status line names the first tool and counts the rest of the batch.
-var repl_activity_buf: [256]u8 = undefined;
-/// True while the spinner is on screen; only touched from the REPL's single
-/// main thread (show/clear calls never overlap with the spinner thread,
-/// which is always joined before the writer is touched again).
-var repl_thinking_shown = false;
-
-fn spinnerLoop() callconv(.c) void {
-    var i: usize = 0;
-    while (!spinner_stop.load(.acquire)) {
-        const w = repl_out orelse return;
-        const elapsed_ns = std.Io.Timestamp.now(repl_io, .awake).nanoseconds - repl_turn_start_ns;
-        const secs: u64 = if (elapsed_ns <= 0) 0 else @intCast(@divTrunc(elapsed_ns, 1_000_000_000));
-        const activity = repl_activity;
-        const verb: []const u8 = if (std.mem.eql(u8, activity, "thinking")) "" else "running ";
-        w.interface.print("\r{s}{s}{s} {s}{d}s \xc2\xb7 {s}{s}\xe2\x80\xa6{s}", .{ repl_theme.answer_marker, spinner_frames[i % spinner_frames.len], repl_theme.reset, repl_theme.dim, secs, verb, activity, repl_theme.reset }) catch return;
-        w.interface.flush() catch {};
-        i += 1;
-        std.Io.sleep(repl_io, .{ .nanoseconds = spinner_interval_ns }, .awake) catch return;
-    }
-}
-
-fn replShowThinking() void {
-    if (repl_thinking_shown) return;
-    repl_thinking_shown = true;
-    spinner_stop.store(false, .release);
-    spinner_thread = std.Thread.spawn(.{}, spinnerLoop, .{}) catch {
-        repl_thinking_shown = false;
-        return;
-    };
-}
-
-fn replClearThinking() void {
-    if (!repl_thinking_shown) return;
-    repl_thinking_shown = false;
-    spinner_stop.store(true, .release);
-    if (spinner_thread) |t| t.join();
-    spinner_thread = null;
-    const w = repl_out orelse return;
-    w.interface.writeAll("\r\x1b[K") catch {};
-}
-
 /// The streaming markdown renderer now lives in tui/transcript.zig, next to
 /// the tool-call card renderer it shares a "print-once transcript element"
-/// role with.
+/// role with. Still used by `cmdRun`'s own `run_md` below even though the
+/// REPL that used to also use this type is gone.
 const MdStream = tui_transcript.MdStream;
 
 /// True once the current turn's assistant text has started streaming, so the
 /// colored "›" gutter is only printed once, right before the first token.
-var repl_answer_started = false;
-var repl_md: MdStream = .{};
-
-/// Segments from `statusline: true` WASM tools, joined and appended to the
-/// built-in status line. Refreshed once per turn (see `refreshStatusline`),
-/// not per keystroke — matches `Registry.statuslineTools`'s documented
-/// cadence and avoids a WASM invocation on every redraw. arena-owned: lives
-/// as long as the REPL process, same as everything else `replHandleLine`
-/// hands to `arena.dupe`.
-/// `NO_COLOR`-aware; set once at REPL startup (see `cmdRepl`) and read by
-/// every tui/ renderer the REPL calls into.
-var repl_theme: tui_theme.Theme = tui_theme.Theme.default;
-
-var repl_statusline_extra: []const u8 = "";
-
-/// Zig-side index of `cmd_*` slash commands, for Tab-completion and a live
-/// `:help` listing. Built once at REPL startup and refreshed whenever
-/// `/plugins` changes what's registered, same lifecycle as
-/// `repl_statusline_extra`.
-var repl_palette: []const tui_palette.Entry = &.{};
-
-/// Options offered by the last answer, so the next line can be a bare number.
-/// gpa-owned: replaced (and freed) on every turn that ends in a question.
-var repl_choices: std.ArrayList([]u8) = .empty;
-/// The question those options answered, for the graph's decision node.
-var repl_last_question: []const u8 = "";
-
-fn replClearChoices(gpa: std.mem.Allocator) void {
-    for (repl_choices.items) |c| gpa.free(c);
-    repl_choices.clearRetainingCapacity();
-}
-
-/// The last line of an answer, which is the question its options belong to.
-fn lastQuestion(text: []const u8) []const u8 {
-    const trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
-    const start = if (std.mem.lastIndexOfScalar(u8, trimmed, '\n')) |nl| nl + 1 else 0;
-    return std.mem.trim(u8, trimmed[start..], " \t");
-}
-
-/// The options a multiple-choice answer offers, or null when the answer does
-/// not end in a question.
-///
-/// Two shapes cover what models actually produce: an enumerated list under a
-/// question ("1. ... 2. ..."), and the inline form ("do X, or dig into Y?").
-/// Anything else is left alone — a wrong guess here would put words in the
-/// user's mouth on the next turn.
-fn parseChoices(arena: std.mem.Allocator, text: []const u8) !?[]const []const u8 {
-    const trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
-    if (trimmed.len == 0 or trimmed[trimmed.len - 1] != '?') return null;
-
-    // The question is the last non-empty line.
-    const q_start = if (std.mem.lastIndexOfScalar(u8, trimmed, '\n')) |nl| nl + 1 else 0;
-    const question = std.mem.trim(u8, trimmed[q_start..], " \t\r\n");
-
-    var out: std.ArrayList([]const u8) = .empty;
-
-    // Enumerated options anywhere above the question: "1. foo" / "2) bar".
-    var lines = std.mem.splitScalar(u8, trimmed[0..q_start], '\n');
-    var want: u8 = '1';
-    while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \t\r\n");
-        if (line.len < 3) continue;
-        if (line[0] != want) continue;
-        if (line[1] != '.' and line[1] != ')') continue;
-        const body = std.mem.trim(u8, line[2..], " \t");
-        if (body.len == 0) continue;
-        try out.append(arena, body);
-        if (want == '9') break;
-        want += 1;
-    }
-    if (out.items.len >= 2) return try out.toOwnedSlice(arena);
-    out.clearRetainingCapacity();
-
-    // Inline: "... A, or B?" — split the question itself.
-    const body = std.mem.trim(u8, question[0 .. question.len - 1], " \t");
-    var it = std.mem.splitSequence(u8, body, ", or ");
-    while (it.next()) |part| {
-        const opt = std.mem.trim(u8, part, " \t");
-        // A fragment this short is punctuation, not an option worth offering.
-        if (opt.len < 3) return null;
-        try out.append(arena, opt);
-        if (out.items.len > 4) return null;
-    }
-    if (out.items.len >= 2) return try out.toOwnedSlice(arena);
-    return null;
-}
-
-fn replDelta(delta: []const u8) void {
-    replClearThinking();
-    const w = repl_out orelse return;
-    if (!repl_answer_started) {
-        repl_answer_started = true;
-        w.interface.print("{s}\xe2\x80\xba {s}", .{ repl_theme.answer_marker, repl_theme.reset }) catch return;
-    }
-    repl_md.feed(&w.interface, delta);
-    w.interface.flush() catch {};
-}
-
-fn replCols(w: *std.Io.File.Writer) usize {
-    return if (term.getSize(w.file.handle)) |sz| sz.cols else tui_input.default_cols;
-}
-
-/// Opens one bordered card per tool call about to run, showing the tool name
-/// and a truncated preview of its arguments so the user can see what is
-/// being searched / read / written before it happens.
-fn replToolCall(calls: []const types.ToolCall) void {
-    replClearThinking();
-    const w = repl_out orelse return;
-    if (calls.len == 1) {
-        repl_activity = calls[0].name;
-    } else if (calls.len > 1) {
-        repl_activity = std.fmt.bufPrint(&repl_activity_buf, "{s} +{d}", .{ calls[0].name, calls.len - 1 }) catch calls[0].name;
-    }
-    const cols = replCols(w);
-    for (calls) |tc| tui_transcript.printCallCard(&w.interface, &repl_theme, tc.name, tc.arguments, cols);
-    w.interface.flush() catch {};
-    replShowThinking();
-}
-
-/// Fills each open card with a truncated preview of what the tool actually
-/// returned, so the card shows what happened rather than only how long it
-/// took.
-fn replToolResults(calls: []const types.ToolCall, results: []const ?[]const u8) void {
-    const w = repl_out orelse return;
-    const cols = replCols(w);
-    for (calls, results) |tc, result| {
-        _ = tc;
-        tui_transcript.printResultBody(&w.interface, &repl_theme, result, cols);
-    }
-    w.interface.flush() catch {};
-}
-
-/// Closes the tool batch's card(s) with the elapsed time, then resumes the
-/// spinner while the next LLM call is in flight.
-fn replToolResult(ms: u64) void {
-    replClearThinking();
-    repl_activity = "thinking";
-    const w = repl_out orelse return;
-    tui_transcript.printCardFooter(&w.interface, &repl_theme, ms);
-    w.interface.flush() catch {};
-    replShowThinking();
-}
+/// Shared with `cmdRun` (see `runDelta`), not REPL-exclusive despite the name.
+var run_answer_started = false;
 
 /// `clanker run`'s stdout content writer: kept separate from `repl_out`
 /// (which, in `run`, points at stderr for the spinner/tool-status line) so
@@ -2218,10 +1187,9 @@ var run_stdout_color = false;
 var run_md: MdStream = .{};
 
 fn runDelta(delta: []const u8) void {
-    replClearThinking();
     const w = run_out orelse return;
-    if (run_stdout_color and !repl_answer_started) {
-        repl_answer_started = true;
+    if (run_stdout_color and !run_answer_started) {
+        run_answer_started = true;
         w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
     }
     if (run_stdout_color) {
@@ -2267,85 +1235,6 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) v
             i += 1;
         }
     }
-}
-
-fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
-    // A hot-reload must never interrupt a turn in progress (would lose the
-    // response before its session save below); see HotReload's doc comment.
-    if (hot_reload_active) |hr| hr.begin();
-    defer if (hot_reload_active) |hr| hr.end();
-
-    compactMessages(messages, max_turn_tokens);
-    const gpa = a.ctx.gpa;
-    // NOTE: a.run() appends the user task (and each assistant reply) to
-    // `messages` itself; appending here would duplicate them in the
-    // transcript and the persisted session.
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    var err_detail: ?[]const u8 = null;
-    repl_answer_started = false;
-    repl_turn_start_ns = t0.nanoseconds;
-    repl_activity = "thinking";
-    replShowThinking();
-    const resp = a.run(messages, task, &err_detail) catch |err| {
-        replClearThinking();
-        log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
-        return false;
-    };
-    const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
-
-    replClearThinking();
-    const streamed = a.on_token != null and a.cfg.modules.streaming;
-    const content = resp.message.content orelse "";
-    if (!streamed) {
-        try out_w.interface.print("{s}\xe2\x80\xba {s}", .{ repl_theme.answer_marker, repl_theme.reset });
-        repl_md.feed(&out_w.interface, content);
-    }
-    repl_md.flush(&out_w.interface);
-    try out_w.interface.writeAll("\n\n");
-    // Dim turn stats (tokens + wall time) so each turn reports its cost.
-    // a.stats is reset to zero at the top of Agent.run(), so it already
-    // holds exactly this turn's numbers here — no diffing needed.
-    const turn_prompt = a.stats.total_prompt_tokens;
-    const turn_completion = a.stats.total_completion_tokens;
-    const turn_cost = a.stats.cost;
-    const turn_cache_hit = a.stats.total_cache_hit_tokens;
-    const turn_cache_miss = a.stats.total_cache_miss_tokens;
-    const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(turn_completion)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
-    const cache_total = turn_cache_hit + turn_cache_miss;
-    const hit_rate: f64 = if (cache_total > 0) @as(f64, @floatFromInt(turn_cache_hit)) / @as(f64, @floatFromInt(cache_total)) * 100.0 else 0;
-    const stats = if (turn_prompt + turn_completion > 0)
-        try std.fmt.allocPrint(a.arena, "{s}  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 cache {d:.0}% \xc2\xb7 ${d:.4}]{s}\n", .{ repl_theme.dim, turn_prompt, turn_completion, ms, tps, hit_rate, turn_cost, repl_theme.reset })
-    else
-        try std.fmt.allocPrint(a.arena, "{s}  [{d}ms]{s}\n", .{ repl_theme.dim, ms, repl_theme.reset });
-    try out_w.interface.writeAll(stats);
-
-    // A turn that ends in a multiple-choice question gets numbered options,
-    // so the reply can be "2" instead of retyping the option.
-    replClearChoices(gpa);
-    if (try parseChoices(a.arena, content)) |choices| {
-        repl_last_question = lastQuestion(content);
-        for (choices, 1..) |c, n| {
-            const line = try std.fmt.allocPrint(a.arena, "  {s}{d}{s} {s}\xc2\xb7{s} {s}\n", .{ repl_theme.ask_pick, n, repl_theme.reset, repl_theme.dim, repl_theme.reset, c });
-            try out_w.interface.writeAll(line);
-            repl_choices.append(gpa, try gpa.dupe(u8, c)) catch {};
-        }
-        try out_w.interface.print("  {s}reply with a number, or type anything else{s}\n", .{ repl_theme.dim, repl_theme.reset });
-    }
-    try out_w.interface.flush();
-    // run() already appended (and finish()-cleaned) the assistant message.
-
-    const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    if (!a.cfg.modules.sessions) return false;
-    compactMessages(messages, max_session_tokens);
-    const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});
-    try session.saveSession(io, gpa, a.arena, std.Io.Dir.cwd(), .{
-        .id = sid,
-        .title = title,
-        .messages = messages.items,
-        .created = created,
-        .updated = updated,
-    });
-    return false;
 }
 
 fn cmdSessions(init: std.process.Init) !void {
@@ -5609,58 +4498,52 @@ test "a turn that read a large file does not wipe the conversation" {
     try std.testing.expect(messages.items.len >= 3);
 }
 
-test "parseChoices reads an inline 'A, or B?' question" {
+test "--model provider/model picks both, and leaves a slashed model id alone" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const answer =
-        \\Here is the snapshot.
-        \\
-        \\Want me to draft the eval definition for chatrooms, or dig into the Vertex caching issue?
-    ;
-    const choices = (try parseChoices(arena, answer)).?;
-    try std.testing.expectEqual(@as(usize, 2), choices.len);
-    try std.testing.expectEqualStrings("Want me to draft the eval definition for chatrooms", choices[0]);
-    try std.testing.expectEqualStrings("dig into the Vertex caching issue", choices[1]);
-}
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
 
-test "parseChoices prefers an enumerated list over splitting the question" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{
+        \\  "default_provider": "zai",
+        \\  "providers": {
+        \\    "zai": { "base_url": "http://x/v1", "models": { "glm-5.2": {} } },
+        \\    "kimi-k3": { "base_url": "http://y/v1", "models": { "moonshotai/kimi-k3": {} } }
+        \\  }
+        \\}
+        ,
+    });
+    const cfg = try config.Config.load(io, arena, tmp.dir, "config.json", "absent.json");
 
-    const answer =
-        \\Three options:
-        \\
-        \\1. Prune the stale learnings
-        \\2) Add an eval for chat_send
-        \\3. Audit the Vertex cache hit rate
-        \\
-        \\Which one, or something else?
-    ;
-    const choices = (try parseChoices(arena, answer)).?;
-    try std.testing.expectEqual(@as(usize, 3), choices.len);
-    try std.testing.expectEqualStrings("Prune the stale learnings", choices[0]);
-    try std.testing.expectEqualStrings("Add an eval for chat_send", choices[1]);
-    try std.testing.expectEqualStrings("Audit the Vertex cache hit rate", choices[2]);
-}
+    // The prefix names a provider, so it selects one.
+    const split = try resolveProvider(&cfg, .{ .model = "zai/glm-5.2" });
+    try std.testing.expectEqualStrings("zai", split.name);
+    try std.testing.expectEqualStrings("glm-5.2", split.default_model);
 
-test "parseChoices stays quiet when the answer is not a choice question" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    // The prefix does not name a provider: this is a model id that contains a
+    // slash, and splitting it would ask a provider that does not exist for a
+    // model that does not either.
+    const whole = try resolveProvider(&cfg, .{ .provider = "kimi-k3", .model = "moonshotai/kimi-k3" });
+    try std.testing.expectEqualStrings("kimi-k3", whole.name);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", whole.default_model);
 
-    // No question at all.
-    try std.testing.expect((try parseChoices(arena, "Done. The eval passes.")) == null);
-    // A question with a single answer is not a menu.
-    try std.testing.expect((try parseChoices(arena, "Should I start on the eval?")) == null);
-    // A numbered list with no closing question is a report, not a prompt.
-    const report =
-        \\1. built the tool
-        \\2. ran the gate
-    ;
-    try std.testing.expect((try parseChoices(arena, report)) == null);
+    // Same, without --provider: the default provider keeps the whole string.
+    const bare = try resolveProvider(&cfg, .{ .model = "moonshotai/kimi-k3" });
+    try std.testing.expectEqualStrings("zai", bare.name);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", bare.default_model);
+
+    // An explicit --provider always wins; the model is never split then.
+    const explicit = try resolveProvider(&cfg, .{ .provider = "kimi-k3", .model = "zai/glm-5.2" });
+    try std.testing.expectEqualStrings("kimi-k3", explicit.name);
+    try std.testing.expectEqualStrings("zai/glm-5.2", explicit.default_model);
 }
 
 test "a bare invocation starts the REPL, and --help still asks for help" {
