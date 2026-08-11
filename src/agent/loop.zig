@@ -454,11 +454,11 @@ pub const Agent = struct {
                 });
                 return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
             }
-            try self.maybeCompactMessages(messages);
-
             // Log estimated prompt tokens before each LLM call for visibility
-            // into context usage and to aid compaction tuning.
-            const est_prompt_tokens = Agent.estimateMessageTokens(messages.items);
+            // into context usage and to aid compaction tuning. maybeCompactMessages
+            // already computes this while deciding whether to compact, so reuse
+            // its result instead of rescanning every message a second time.
+            const est_prompt_tokens = try self.maybeCompactMessages(messages);
             const ctx_window = self.provider.activeModel().context_window;
             const utilization: f64 = if (ctx_window > 0) @as(f64, @floatFromInt(est_prompt_tokens)) / @as(f64, @floatFromInt(ctx_window)) * 100.0 else 0;
             log.log(.debug, "LLM call: ~{d} estimated prompt tokens ({d:.0}% of {d} context window)", .{ est_prompt_tokens, utilization, ctx_window });
@@ -960,7 +960,7 @@ pub const Agent = struct {
     /// tool-result exchange is never split), replacing the removed middle with
     /// an LLM-generated summary (or a static placeholder when summarization
     /// fails).
-    fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
+    fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !usize {
         const estimated_tokens = estimateMessageTokens(messages.items);
         // Effective context budget in tokens: never exceed half the provider's
         // context window (room for input plus output), and honor an explicit
@@ -981,7 +981,7 @@ pub const Agent = struct {
         // Threshold floors: compaction must never race the per-turn cap,
         // which would otherwise terminate the run before compaction runs.
         threshold = @max(threshold, max_per_turn_tokens);
-        const keep_start = compactionKeepStart(messages.items, estimated_tokens, threshold) orelse return;
+        const keep_start = compactionKeepStart(messages.items, estimated_tokens, threshold) orelse return estimated_tokens;
         log.log(.info, "compacting conversation: {d} messages, ~{d} estimated tokens (threshold {d})", .{ messages.items.len, estimated_tokens, threshold });
         // Build a summary of the messages being removed (indices 1..keep_start-1).
         const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
@@ -990,6 +990,7 @@ pub const Agent = struct {
         };
         const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
         try compactMiddle(messages, self.arena, keep_start, placeholder);
+        return estimateMessageTokens(messages.items);
     }
 
     /// Decides whether compaction should run and, if so, where the kept tail

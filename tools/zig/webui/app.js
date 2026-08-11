@@ -1027,33 +1027,8 @@ function renderStats(turn, stats, task) {
   }
 }
 
-/* Streamed bytes are content by default; a line prefixed with 0x01 is an
-   out-of-band event (tool started, tool finished, error, turn done) —
-   see stream_event_prefix in the server. Buffering on "\n" means a
-   control line split across two network chunks is never misread as
-   content. */
-function makeLineSplitter(onLine) {
-  var buffer = "";
-  return {
-    push: function (chunk) {
-      buffer += chunk;
-      // A control event is introduced by \x01 and terminated by a newline,
-      // but the answer text before it need not end in one. Without this the
-      // two share a line, the \x01 test fails because it is not at index 0,
-      // and the raw {"type":"done"} JSON lands in the answer while the
-      // turn's stats never render. JSON escapes control characters, so a
-      // literal \x01 only ever appears as this marker.
-      buffer = buffer.replace(/([^\n])\u0001/g, "$1\n\u0001");
-      var lines = buffer.split("\n");
-      buffer = lines.pop();
-      for (var i = 0; i < lines.length; i++) onLine(lines[i], true);
-    },
-    flush: function () {
-      if (buffer) onLine(buffer, false);
-      buffer = "";
-    }
-  };
-}
+/* Stream splitter lives in core/stream.js (bridged as window.ckStream). */
+var makeLineSplitter = window.ckStream.makeLineSplitter;
 
 function renderStatus(status) {
   if (!status) {
