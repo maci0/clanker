@@ -35,8 +35,30 @@ export function escapeHtml(s) {
 }
 
 export function fmtMs(ms) {
+  if (typeof ms !== "number" || !isFinite(ms)) return "";
   if (ms < 1000) return ms + "ms";
-  return (ms / 1000).toFixed(1) + "s";
+  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  var mins = Math.floor(ms / 60000);
+  return mins + "m " + Math.round((ms % 60000) / 1000) + "s";
+}
+
+export function fmtInt(n) {
+  return (typeof n === "number" ? n : 0).toLocaleString();
+}
+
+export function fmtCost(n) {
+  return "$" + (typeof n === "number" ? n : 0).toFixed(4);
+}
+
+export function formatChatTime(ts) {
+  if (!ts) return "";
+  var d = new Date(ts * 1000);
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+export function fmtDeadline(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 /* The server explains itself — "sessions module disabled", "no such model for
@@ -118,6 +140,10 @@ if (typeof window !== "undefined") window.ckUtil = {
   fuzzyMatch: fuzzyMatch,
   escapeHtml: escapeHtml,
   fmtMs: fmtMs,
+  fmtInt: fmtInt,
+  fmtCost: fmtCost,
+  formatChatTime: formatChatTime,
+  fmtDeadline: fmtDeadline,
   readJson: readJson,
   newSessionId: newSessionId,
   sessionLabel: sessionLabel,

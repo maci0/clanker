@@ -1501,15 +1501,8 @@ function loadRun(id) {
     });
 }
 
-var metricsFor = window.ckGraph ? window.ckGraph.metricsFor : function(n){ if(n.kind==="llm") return n.prompt_tokens+"/"+n.completion_tokens+" tok · "+n.duration_ms+"ms"; if(n.kind==="tool") return n.result_bytes+" B · "+n.duration_ms+"ms"; return "answer "+n.result_bytes+" B"; };
-
-/* The run is a chain of iterations: one llm node decides, then zero or
-   more tool nodes run (in parallel when the model asked for several at
-   once), then the next llm node picks up from there — until an llm node
-   decides it's done and a final node closes the run. Group the flat node
-   list back into that shape so it can be drawn as boxes and arrows instead
-   of a bar chart pretending to be a timeline. */
-var buildStages = window.ckGraph ? window.ckGraph.buildStages : function(nodes){ var stages=[], fin=null; nodes.forEach(function(n){ if(n.kind==="llm") stages.push({iteration:n.iteration, llm:n, tools:[]}); else if(n.kind==="tool"&&stages.length) stages[stages.length-1].tools.push(n); else if(n.kind==="final") fin=n; }); return {stages:stages, final:fin}; };
+var metricsFor = window.ckGraph.metricsFor;
+var buildStages = window.ckGraph.buildStages;
 
 var lastGraph = null;
 var lastBuilt = null;
@@ -1595,27 +1588,12 @@ function drawRun(g) {
   });
 }
 
-var graphSummaryText = window.ckGraph ? window.ckGraph.graphSummaryText : function(built){ return "Execution graph"; };
+var graphSummaryText = window.ckGraph.graphSummaryText;
+var toDagInput = window.ckGraph.toDagInput;
+var layoutGraph = window.ckGraph.layoutGraph;
 
-/* Turns the stage list into d3-dag's flat {id, parentIds} input: each llm
-   node's parents are whatever fed it (the previous llm directly, or that
-   iteration's tool cluster), each tool's parent is its iteration's llm,
-   and a synthetic "incomplete" node closes off a run that ended without a
-   final node (hit the iteration cap or the token budget) instead of
-   leaving the chain dangling with no visible outcome. */
-var toDagInput = window.ckGraph ? window.ckGraph.toDagInput : function(built){ return []; };
-
-/* Lays the DAG out with d3-dag's Sugiyama layered algorithm (proper
-   crossing minimization instead of hand-rolled fan-out math — this is the
-   same layered-graph technique tools like dagre/Airflow's DAG view use)
-   and draws the result as accessible DOM boxes with an SVG arrow layer
-   behind them. A layer wider than the viewport scrolls horizontally
-   inside .run-canvas rather than wrapping or shrinking nodes. */
-var layoutGraph = window.ckGraph ? window.ckGraph.layoutGraph : function(){ return Promise.resolve(); };
-
-var buildIncompleteNode = window.ckGraph ? window.ckGraph.buildIncompleteNode : function(nodeW){ var d=document.createElement("div"); d.className="run-node-incomplete"; d.textContent="did not finish"; return d; };
-
-var buildNodeBox = window.ckGraph ? window.ckGraph.buildNodeBox : function(d,slowest,nodeW){ var b=document.createElement("button"); b.textContent=d.node.label||d.kind; return b; };
+var buildIncompleteNode = window.ckGraph.buildIncompleteNode;
+var buildNodeBox = window.ckGraph.buildNodeBox;
 
 /* A collapsible tree for JSON-shaped node output — most tool results are
    JSON, and a flat highlighted blob makes a large payload (a big file
@@ -2069,58 +2047,12 @@ function buildChatMessage(m) {
   return wrap;
 }
 
-/* A card action is a chat message, which is what lets a board replicate with
-   the room it belongs to. Printed as it is stored it is a line of JSON in the
-   middle of a human conversation, so the room shows the sentence the action
-   stands for and keeps the payload out of the way. Returns null for an
-   ordinary message, which is then shown verbatim. */
-var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done" };
+/* Board helpers live in lib/board.js (bridged as window.ckBoard). */
+var BOARD_COLUMNS = window.ckBoard.BOARD_COLUMNS;
+var boardActionLine = window.ckBoard.boardActionLine;
 
-function boardActionLine(raw) {
-  if (typeof raw !== "string" || raw.slice(0, 6) !== "@todo ") return null;
-  var a;
-  try { a = JSON.parse(raw.slice(6)); } catch (e) { return null; }
-  if (!a || typeof a !== "object") return null;
-  var quoted = function (s) { return "\u201c" + String(s) + "\u201d"; };
-  var col = function (c) { return BOARD_COLUMNS[c] || c; };
-  switch (a.action) {
-    case "add": return "added " + quoted(a.title) + (a.column ? " to " + col(a.column) : "");
-    case "update": {
-      var parts = [];
-      if (a.title) parts.push("title to " + quoted(a.title));
-      if (a.priority) parts.push("priority to " + a.priority);
-      if (a.column) parts.push("column to " + col(a.column));
-      if (a.who !== undefined) parts.push(a.who ? "owner to " + a.who : "nobody as owner");
-      if (a.deadline !== undefined) parts.push("the deadline");
-      if (a.body !== undefined && !parts.length) parts.push("the notes");
-      return "changed " + (parts.length ? parts.join(", ") : "a card");
-    }
-    case "move": return "moved a card to " + col(a.column);
-    case "close": return "moved a card to Done";
-    case "claim": return "claimed a card";
-    case "assign": return a.who ? "assigned a card to " + a.who : "left a card unassigned";
-    case "delete": return "deleted a card";
-    case "subtask_add": return "added the subtask " + quoted(a.text);
-    case "subtask_toggle": return (a.done === false ? "unticked" : "ticked") + " a subtask";
-    case "subtask_remove": return "removed a subtask";
-    case "depend": return a.off ? "cleared a dependency" : "made a card wait on another";
-    case "log": return "noted: " + a.what;
-    case "usage": {
-      var bits = [];
-      var tok = (a.prompt_tokens || 0) + (a.completion_tokens || 0);
-      if (tok) bits.push(tok.toLocaleString() + " tokens");
-      if (a.cost) bits.push("$" + Number(a.cost).toFixed(4));
-      return "recorded " + (bits.length ? bits.join(" and ") : "usage") + " against a card";
-    }
-    default: return null;
-  }
-}
-
-function formatChatTime(ts) {
-  if (!ts) return "";
-  var d = new Date(ts * 1000);
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
+/* formatChatTime lives in core/utils.js (bridged as window.ckUtil.formatChatTime). */
+var formatChatTime = window.ckUtil.formatChatTime;
 
 /* Polling rather than a socket: the server closes every connection after one
    response (see Connection: close in cli.zig), so there is nothing to hold
@@ -2196,25 +2128,10 @@ el.chatForm.addEventListener("submit", function (e) {
 
 // ---- usage: what the model calls have cost -----------------------------
 
-function fmtInt(n) {
-  return (typeof n === "number" ? n : 0).toLocaleString();
-}
-
-/* Cost is the reading people actually come here for, so it gets four
-   decimals rather than a rounded currency format: a single run is often
-   worth less than a cent, and rounding it to $0.00 would say nothing. */
-/* 183245ms is a number; three minutes is a duration. */
-function fmtMs(ms) {
-  if (typeof ms !== "number" || !isFinite(ms)) return "";
-  if (ms < 1000) return ms + "ms";
-  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
-  var mins = Math.floor(ms / 60000);
-  return mins + "m " + Math.round((ms % 60000) / 1000) + "s";
-}
-
-function fmtCost(n) {
-  return "$" + (typeof n === "number" ? n : 0).toFixed(4);
-}
+/* fmtInt/fmtMs/fmtCost live in core/utils.js (bridged). */
+var fmtInt = window.ckUtil.fmtInt;
+var fmtMs = window.ckUtil.fmtMs;
+var fmtCost = window.ckUtil.fmtCost;
 
 var allUsage = [];
 
@@ -3896,11 +3813,8 @@ function dueState(card) {
   return "ok";
 }
 
-function fmtDeadline(ts) {
-  if (!ts) return "";
-  var d = new Date(ts * 1000);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+/* fmtDeadline lives in core/utils.js (bridged). */
+var fmtDeadline = window.ckUtil.fmtDeadline;
 
 /* The board derives from the card set, the column set and the "only mine"
    filter. It used to clear #board and rebuild it, which is what forced the
@@ -4833,8 +4747,7 @@ function paletteEntries() {
 var paletteItems = [];
 var paletteIndex = 0;
 
-/* fuzzyMatch lives in core/utils.js (bridged as window.ckUtil.fuzzyMatch). */
-var fuzzyMatch = window.ckUtil ? window.ckUtil.fuzzyMatch : function(q,t){ if(!q) return true; var tt=String(t).toLowerCase(), qq=String(q).toLowerCase(), qi=0; for(var i=0;i<tt.length&&qi<qq.length;i++) if(tt.charAt(i)===qq.charAt(qi)) qi+=1; return qi===qq.length; };
+var fuzzyMatch = window.ckUtil.fuzzyMatch;
 
 function renderPalette() {
   var rawQ = el.paletteInput.value.trim();

@@ -530,7 +530,9 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 .transcript { display: flex; flex-direction: column; gap: var(--space-6); margin-top: var(--space-6); }
 .transcript:empty { display: none; }
 /* A turn is a job on the panel's record: seamed off from the one above,
-   its number stamped in the margin, a blue strip lit while it runs. */
+   its number stamped in the margin, a blue strip lit while it runs.
+   Card width is clamped to --measure so answers stay legible even on a
+   32-inch shop monitor. */
 .turn {
   position: relative;
   border-top: 1px solid var(--border);
@@ -571,7 +573,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-width: var(--measure);
 }
-.turn-author { color: var(--fg); font-weight: 700; }
+.turn-author { color: var(--fg); font-weight: 700; letter-spacing: -0.015em; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
 .turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
@@ -1788,28 +1790,33 @@ h2#session-title {
   border-bottom: 1px solid var(--rule);
 }
 
-/* Alive lamp phase: chip pending amber; turn data-phase left border */
+/* Alive lamp phase: chip pending amber; turn data-phase left border.
+   The phase strip shares the live strip's geometry but carries its own
+   semantics: llm is the accent's idle glow, tool is the healthy green,
+   ask is the operator-action blue held at full. */
 .chip[data-state="pending"] { color: var(--warn); }
 .chip[data-state="pending"]::before {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent),
     0 0 7px 1px color-mix(in srgb, var(--warn) 45%, transparent);
 }
-.turn[data-phase="llm"]::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--accent) 50%, transparent);
-}
-.turn[data-phase="tool"]::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-  background: var(--ok);
-  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--ok) 45%, transparent);
-}
+.turn[data-phase="llm"]::before,
+.turn[data-phase="tool"]::before,
 .turn[data-phase="ask"]::before {
   content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+}
+.turn[data-phase="llm"]::before {
   background: var(--accent);
-  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--accent) 55%, transparent);
-  opacity: 0.9;
+  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--accent) 35%, transparent);
+  opacity: 0.7;
+}
+.turn[data-phase="tool"]::before {
+  background: var(--ok);
+  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.turn[data-phase="ask"]::before {
+  background: var(--accent);
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 /* alive polish: control-cabinet lamps and fleet accents fade rather than snap */

@@ -14,58 +14,51 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 ### P0 fixes
 - `src/cli.zig:handleRuns` — accept `sub-<digits>` as well as `run-<digits>`
   (prefix_len branch). Makes nested runs linkable end-to-end.
+- `src/tui/repl_vaxis.zig:540` — `trimRight→trimEnd` (Zig 0.16 std.mem has no `trimRight`).
 
 ### ES-module split (no bundler)
-- `tools/zig/webui/core/utils.js` — `fmtBytes, clip, fuzzyMatch, escapeHtml, fmtMs`
-- `tools/zig/webui/core/vendor.js` — `readJson, copyText, loadVendor, loadD3, loadHljs, scrollTo, reducedMotion` (+ window fallback for classic `app.js`)
-- `tools/zig/webui/core/theme.js` — `THEMES, loadTheme, applyTheme, cycleTheme` (pure, no auto-init)
-- `tools/zig/webui/features/fleet.js` — Fleet view (imports `clip` + `readJson`), groups runs by `parent_run_id` with `[subagent run: sub-…]` output fallback, peers roster, DM channels via `GET /api/chat/rooms` (gate-tolerant), detail fallback fetch, collapsible children, keyboard, skeletons + retry errors.
-- `tools/zig/webui.zig` — embed + comptime `encodedLen` guard + `assetFor` for 4 new modules.
-- `src/cli.zig` — `is_webui` exact paths + deferred-module dispatch + `RenderCache/GzipCache` vars for each new module; `handleWebuiAsset` cache selection.
-- `tools/zig/webui/index.html` — rail `Watch > Fleet` tab, `#view-fleet` with `#fleet-roster/#fleet-dms/#fleet-runs/#fleet-detail`, script order `van-boot → van-ui defer → core/utils → core/vendor → core/theme → features/fleet → app.js defer` (module+defer document order).
+- `tools/zig/webui/core/utils.js` — `fmtBytes, clip, fuzzyMatch, escapeHtml, fmtMs, fmtInt, fmtCost, formatChatTime, fmtDeadline` (now also `fmtInt/fmtCost/formatChatTime/fmtDeadline`)
+- `tools/zig/webui/core/vendor.js` — `readJson, copyText, loadVendor, loadD3, loadHljs, scrollTo, reducedMotion`
+- `tools/zig/webui/core/theme.js` — `THEMES, loadTheme, applyTheme, cycleTheme`
+- `tools/zig/webui/core/ui.js` / `core/icons.js` — `bind, toast, skeletonRows, setTurnPhase, T/UI` and icon set (already bridged as `window.ckUi/ckIcons`)
+- `tools/zig/webui/lib/markdown.js` — markdown pipeline (`~9KB`)
+- `tools/zig/webui/lib/graph.js` — execution-graph layout (`~8.7KB`)
+- `tools/zig/webui/lib/board.js` — **new** `BOARD_COLUMNS, boardActionLine` extracted from `app.js:2072-2117` (pure, no DOM, bridged as `window.ckBoard`)
+- `tools/zig/webui/features/fleet.js` — Fleet view (`clip` + `readJson`), groups runs by `parent_run_id` with `[subagent run: sub-…]` fallback, peers roster, DM channels, detail fetch, collapsible children, keyboard, skeletons + retry.
+- `tools/zig/webui.zig` — embed + comptime `encodedLen` guard + `assetFor` for all 13 webui assets (now incl. `lib/board.js`).
+- `src/cli.zig` — `is_webui` exact paths + `handleWebuiAsset` `RenderCache/GzipCache` vars for each new module (now 13 routes); `board` added alongside `graph/markdown`.
+- `tools/zig/webui/index.html` — rail `Watch > Fleet` tab, `#view-fleet` with roster/DMs/runs/detail, script order `van-boot → van-ui defer → core/utils → core/icons → core/vendor → core/theme → lib/markdown → lib/graph → lib/board → features/fleet → app.js defer` (module+defer document order).
 
-### Design / alive polish (app.css, index.html unchanged structurally)
-- Header <34rem keeps chips as truncated `8ch` with ellipsis + dot lamp, not `display:none`; `#help-open` stays; breathing clamp on `main` (`88rem`, `clamp(1rem,3vw,2.5rem)`).
-- Transcript empty → hero: inset `surface-2` card, `p:first-child` `step-2 700`, staggered `suggestion-in` 150ms per pill, gated by `prefers-reduced-motion`.
-- Skeletons `.skeleton/.skeleton-bar/.fleet-skeleton` shimmer `1.2s` (reduced-motion → static `surface-2`).
-- Alive lamps: `chip[data-state=pending]` amber, `turn[data-phase=llm|tool|ask]` left 3px (`accent` vs `ok`), rail lamp transition `180ms ease-out`.
-- Fleet tokens: `.fleet-card/card--parent/child-group/dm-*` all via `var(--accent/--rule/--surface/--space/--step/--radius/--lift)`, hover `color-mix`, `focus-visible`, `role=list` where needed, `collapsed` state.
+### App.js dedupe (monolith shrink)
+- `app.js` now bridges instead of duplicating: `fmtInt/fmtMs/fmtCost/fmtDeadline/formatChatTime → window.ckUtil`, `T/bind/skeletonRows/setTurnPhase/icon/UI → window.ckUi/ckIcons`, `vendor/lifecycle → window.vendorLoads/ckBoard`, `THEMES/loadTheme/applyTheme → window.ckTheme`, `BOARD_COLUMNS/boardActionLine → window.ckBoard`, `graph helpers → window.ckGraph`. Net cut this run: `boardActionLine` (~50 lines) + formatting helpers (~20 lines) + earlier `graph` block (254) and fallback cleanups. Current: `app.js` 4944 lines (from 5511 at start; −567 total).
 
-### Bugfixes / a11y (app.js)
-- Model picker: `runOptions()` split on first space not last, blur via `focusout+relatedTarget` with list containment, bad model surfaces `error/message` from `resp.text()` JSON.
-- Runs graph: `loadRuns/loadRun` skeletons + `aria-busy`, stale graph cleared, `drawRun` d3 failure path cleans container, resize handler `pagehide` cleanup.
-- Ask/confirm: `role=alertdialog aria-live assertive aria-label`, per-row `Tab` trap + `Escape→deny` via `fleet-status` live announce.
-- Palette: empty query returns all grouped entries, labels `textContent` only, no `innerHTML`.
+### Design / alive polish
+- Header <34rem keeps chips as truncated `8ch` + dot lamp, not `display:none`; breathing clamp on `main`.
+- Transcript empty → hero hero card + staggered `suggestion-in` 150ms/pill (reduced-motion gated).
+- Skeletons `.skeleton/.skeleton-bar/.fleet-skeleton` (reduced-motion → static).
+- Alive lamps: refined `turn[data-phase=llm|tool|ask]` — shared base rule, tuned glows (`accent 35%/40%/60%`, `ok 40%`), `ask` brightest; `chip[data-state=pending]` amber. Rail lamp `180ms ease-out`.
+- Fleet tokens all via `var(--…)` (`accent/rule/surface/space/step/radius/lift`), hover `color-mix`, `focus-visible`, `collapsed` state.
+
+### Bugfixes / a11y
+- Model picker, Runs graph skeletons+`aria-busy`, Ask/confirm `alertdialog`+tab trap, Palette dedupe — carried from earlier passes (unchanged this turn).
 
 ## Constraints honored
 
-- `lib.out_cap = 2MiB` comptime guard passes (largest encoded `app.js` ~215KB; new modules 1–19KB each).
+- `lib.out_cap = 2MiB` comptime guard passes (largest encoded `app.js` ~205KB; new modules 2–6KB each; headroom ~1.8MB).
 - `script-src 'self'` only: all scripts `src="/webui/…" module` or `defer`, no inline script, no `style=` attrs.
-- Offline-capable, vendored `/webui/vendor/*` (d3-dag, hljs, van) lazy via `loadVendor`, no third-party fetch, no new sockets, no `eval/new Function`.
+- Offline-capable, vendored `/webui/vendor/*` lazy via `loadVendor`, no third-party fetch, no new sockets, no `eval/new Function`.
 - No `src/improve/`, `src/evals/`, `evals/`, `src/tools/builder.zig` edits.
 
-### Runtime alive + loading (this turn)
-- `app.js:skeletonRows` + `setTurnPhase` — turn `data-phase="llm|tool|ask"` wired to `\x01` stream (`tool_call → tool`, `ask|confirm → ask`, `done|error → clear`), `chip[data-state=pending]` amber available; CSS `.turn[data-phase]` already gated.
-- `loadRuns/loadRun/markLoading` now render `.skeleton/.skeleton-row/.skeleton-bar` with `aria-busy` (was text `Loading…`).
-- `features/fleet.js` now fetches `/.well-known/agent.json` same-origin (gate-tolerant) and renders `This agent` A2A card (`name/id/skills`) via `.fleet-a2a` tokens; DMs already in previous turn.
-- `src/cli.zig` fix: `std.time.nanoTimestamp()` → `std.Io.Timestamp.now(...).nanoseconds` (Zig 0.16 `time/epoch.zig` has no such member; `llm/client.zig:132` pattern).
+## Verification (this turn)
 
-## Verification (manual, this run)
-
-- `zig build` EXIT 0, `zig build tools` EXIT 0, `zig build test` EXIT 0 (separate `zig build test` run: pass; noisy config/provider errors expected).
-- `zig fmt --check src/cli.zig tools/zig/webui.zig` EXIT 0; `node --check` on `app.js`, `core/*`, `features/fleet.js` → OK.
-- No `innerHTML` assignments in fleet/vendor/theme; no `style=` in `index.html`; only `/api/*` + `/.well-known/agent.json` same-origin fetches (CSP `connect-src 'self'` intact).
-- Manual proof: before/after screenshots not yet captured (headless run). Fleet reachable at `#fleet`, roster + A2A + DMs + grouped sub-runs navigable, responsive rail/hero + skeletons + phase lamps verified via CSS/JS.
-
-### This turn — lib/markdown + lib/graph + routing (2026-08-12 ~01:48Z)
-
-- Added `tools/zig/webui/lib/markdown.js` (~9KB) + `lib/graph.js` (~8.7KB) — markdown block (`app.js:1046-1362`) and graph layout (`metricsFor, buildStages, graphSummaryText, toDagInput, buildNodeBox, layoutGraph` from `app.js:2016-2370`) now canonical ES modules; each imports only `loadHljs/copyText` or `loadD3` from `core/vendor.js`.
-- `tools/zig/webui.zig` + `src/cli.zig`: embedded both (`render_markdown/render_graph`, `gzip_markdown/gzip_graph`), extended `is_webui` + `handleWebuiAsset` dispatch (now 11 webui routes incl. `lib/graph.js`), comptime guard now 10 assets. Fix: `core/vendor.js`/`core/theme.js` routing was stale — patched.
-- `tools/zig/webui/index.html`: `… → core/theme → lib/markdown → lib/graph → features/fleet → app.js defer` (module+defer document order).
-- `core/utils.js` still bridges `window.ckUtil` for classic `app.js` fallback; `lib/*` are additive until `app.js` switches to `import` — keeps risk bounded.
+- `zig build` EXIT 0, `zig build tools` EXIT 0, `zig build test --summary all` 368/369 pass (1 skipped).
+- `zig fmt --check src/cli.zig tools/zig/webui.zig` EXIT 0; `node --check` on `app.js`, `core/*`, `lib/*`, `features/fleet.js` → OK.
+- `out_cap` per-file: all `ok` (see script check; max ~205KB well under 2MiB).
+- CSP/connect: only `/api/*` + `/.well-known/agent.json` same-origin fetches.
 
 ## Left / next
 
-- Complete the ES-module cutover: make `app.js` import from `lib/markdown.js` (and eventually `lib/graph.js`, `core/ui.js`, `features/*`) so the duplicated 340-line markdown block is the canonical one in `lib/`.
-- Decompose remaining monolith per `docs/webui-framework-research.md` §4: `lib/graph.js` (D3 layout + node boxes), `core/ui.js` (rail + toast + overlays), then feature modules.
-- `axe-core` + `playwright` screenshot proof per view (incl. Fleet) — no `axe`/`playwright` harness vendored in this repo today, so manual verification until added.
+- Continue cutover: make `app.js` a real ES module (`<script type="module">` + `import`s) so `window.ck*` bridges can be removed.
+- Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, `features/tools.js`) per `docs/webui-framework-research.md` §4.
+- `axe-core` + `playwright` screenshot proof per view (incl. Fleet) — no harness vendored yet, manual verification until added.
+
