@@ -66,7 +66,12 @@ const Config = struct { op: ?[]const u8 = null };
 const History = struct {
     ok: bool = false,
     messages: []const cards.Message = &.{},
+    has_more: bool = false,
 };
+
+fn pageCapExceeded(pages_read: usize, has_more: bool) bool {
+    return pages_read >= max_pages and has_more;
+}
 
 const Sent = struct {
     ok: bool = false,
@@ -83,8 +88,8 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
     var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
     var after: i64 = 0;
 
-    var page: usize = 0;
-    while (page < max_pages) : (page += 1) {
+    var pages_read: usize = 0;
+    while (pages_read < max_pages) : (pages_read += 1) {
         var req: std.Io.Writer.Allocating = .init(alloc);
         var s = std.json.Stringify{ .writer = &req.writer };
         try s.beginObject();
@@ -111,7 +116,10 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
         }
         // The host returns history newest-first or oldest-first depending on
         // nothing this tool controls, so the fold sorts rather than assumes.
-        if (added == 0 or parsed.messages.len == 0) break;
+        if (added == 0 or parsed.messages.len == 0 or !parsed.has_more) break;
+        // `has_more` is host-derived from an extra record, so a full final
+        // page remains valid while a 65th page is an explicit, safe failure.
+        if (pageCapExceeded(pages_read + 1, parsed.has_more)) return error.TooLarge;
     }
 
     std.mem.sort(cards.Message, all.items, {}, struct {
@@ -121,6 +129,12 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
         }
     }.lt);
     return all.items;
+}
+
+test "history page cap fails only when another page exists" {
+    try std.testing.expect(!pageCapExceeded(max_pages - 1, true));
+    try std.testing.expect(!pageCapExceeded(max_pages, false));
+    try std.testing.expect(pageCapExceeded(max_pages, true));
 }
 
 /// Appends one action to the room. The message id becomes the card id for an

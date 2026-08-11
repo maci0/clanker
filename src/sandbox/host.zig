@@ -741,13 +741,19 @@ fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []c
     return std.fmt.allocPrint(arena, "dm:{s}|{s}", pair);
 }
 
+/// The agent-facing history response is deliberately small to protect its
+/// context budget. Read one extra record internally so callers that must fold
+/// a complete log can tell whether another page exists without guessing from
+/// a full final page.
+const chat_history_page_size = 20;
+
 /// ck_chat(op_json) — chatroom operations for the chat_* tools, plus the
 /// private-list todo_* ops (see below).
 /// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
 ///          "room"|"to":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
 /// Output (in the host arena):
 ///   send:      {"ok":true,"ts":...,"id":"..."}
-///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...]}
+///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...],"has_more":bool}
 ///   rooms:     {"ok":true,"rooms":[{room,messages,last_ts,last_from,last_text}],
 ///               "subscribed":["dev"]}
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
@@ -830,7 +836,9 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.eql(u8, op, "history")) {
         const room = parsed.room orelse return Err.invalid;
         const after = parsed.after orelse 0;
-        const msgs = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, 20) catch return Err.invalid;
+        const page = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, chat_history_page_size + 1) catch return Err.invalid;
+        const has_more = page.len > chat_history_page_size;
+        const msgs = page[0..@min(page.len, chat_history_page_size)];
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
         s.write(true) catch return Err.too_large;
@@ -851,6 +859,8 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.endObject() catch return Err.too_large;
         }
         s.endArray() catch return Err.too_large;
+        s.objectField("has_more") catch return Err.too_large;
+        s.write(has_more) catch return Err.too_large;
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "rooms")) {

@@ -91,11 +91,6 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Known issues
 
-- **Silent partial fold at the page cap.** `history()` should error when
-  `max_pages` is hit (stated in both this PRD and `board.zig`'s own
-  comments) but instead returns whatever it collected. A board past the cap
-  can quietly resurrect deleted cards or drop moves with no signal to the
-  caller. Fix belongs in `tools/zig/board.zig`'s `history()` loop.
 - **`board_add` and `board_update` manifests advertise a dead `assignee`
   field.** Neither tool's `Req` struct has an `assignee` field (`board.zig`
   parses `who` for reassignment on `update`); the manifested field is
@@ -113,7 +108,7 @@ runs — this one field is not itself an array, unlike the others above).
 | Condition | Behaviour |
 |---|---|
 | Chatrooms disabled | `list` fails: "chatrooms are disabled, and the board is a chatroom" |
-| Log exceeds page cap | **Bug:** silently returns a partial fold; no error (see Known issues) |
+| Log exceeds page cap | Named error; the board refuses to fold a partial log |
 | Claim race lost | Answer shows who holds the claim |
 | Move to unknown column / unknown card | Named error before any write |
 | Delete | Permanent; peers that already dropped it never restore it |
@@ -127,15 +122,13 @@ runs — this one field is not itself an array, unlike the others above).
 - [x] No *tracked* file under `state/` other than the room log (a stray,
   gitignored `state/board.json` from before this design may still sit in a
   local checkout; nothing reads it).
-- [ ] Log exceeding the page cap errors instead of partially folding — not
-  currently true, see Known issues.
+- [x] Log exceeding the page cap errors instead of partially folding.
 
 ## Open questions / future work
 
 - Board cap behaviour: archive old rooms or compact the log (a snapshot
-  action) before `max_pages` is reachable in practice. (Separate from, and a
-  longer-term answer to, the Known issues bug above — that bug should be
-  fixed regardless of whether compaction ever ships.)
+  action) before `max_pages` is reachable in practice. The tool now errors
+  instead of returning a partial fold, but compaction is the durable answer.
 - Column set is fixed in `cards.zig`; configurable columns would need a
   room-level config action, not a descriptor change.
 - `board_add`/`board_update`/`board_move` manifest fields above: implement

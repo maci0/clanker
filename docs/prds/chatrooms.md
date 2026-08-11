@@ -97,8 +97,11 @@ subscribed clanker notices what its peers said.
 
 **History limits differ by surface — not one number.** The effective page
 size is 20 for the agent-facing `chat_history` tool (`src/sandbox/host.zig`),
-50 for the CLI and for `GET /api/chat/messages`. The tool path also truncates each
-message to 600 chars; the CLI/HTTP paths don't truncate. The chatroom inbox
+50 for the CLI and for `GET /api/chat/messages`. The tool response includes
+`has_more` when another 20-message page exists; board folding uses that
+signal so it never mistakes a full final page for a truncated log. The tool
+path also truncates each message to 600 chars; the CLI/HTTP paths don't
+truncate. The chatroom inbox
 injected into agent runs caps at the 5 newest messages, each preview
 truncated to 300 chars.
 
