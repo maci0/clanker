@@ -94,7 +94,10 @@ test "fuzz: no byte sequence makes the framing panic" {
     // These functions see whatever arrives on the socket, so the property under
     // test is simply that nothing crashes, whatever the bytes are.
     const Ctx = struct {
-        fn one(_: void, input: []const u8) anyerror!void {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
             _ = requestComplete(input);
             _ = parseContentLength(input);
         }
