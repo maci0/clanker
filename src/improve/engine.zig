@@ -437,7 +437,7 @@ pub const Engine = struct {
         var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
         defer build.deinit(self.ctx.gpa);
         if (!build.ok) {
-            const tail = errorTail(self.arena, build.detail);
+            const tail = try errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
@@ -453,7 +453,7 @@ pub const Engine = struct {
         var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer tools.deinit(self.ctx.gpa);
         if (!tools.ok) {
-            const tail = errorTail(self.arena, tools.detail);
+            const tail = try errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
@@ -465,7 +465,7 @@ pub const Engine = struct {
         var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer test_gate.deinit(self.ctx.gpa);
         if (!test_gate.ok) {
-            const tail = errorTail(self.arena, test_gate.detail);
+            const tail = try errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
@@ -479,7 +479,7 @@ pub const Engine = struct {
         var fmt_check = try gate_checks.fmtGate(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files);
         defer fmt_check.deinit(self.ctx.gpa);
         if (!fmt_check.ok) {
-            const tail = errorTail(self.arena, fmt_check.detail);
+            const tail = try errorTail(self.arena, fmt_check.detail);
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
@@ -491,7 +491,7 @@ pub const Engine = struct {
         var lint_check = try gate_checks.lintGate(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files);
         defer lint_check.deinit(self.ctx.gpa);
         if (!lint_check.ok) {
-            const tail = errorTail(self.arena, lint_check.detail);
+            const tail = try errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
@@ -520,7 +520,7 @@ pub const Engine = struct {
                     if (retry.ok) {
                         log.log(.info, "capability evals: PASS on retry", .{});
                     } else {
-                        const tail = errorTail(self.arena, retry.detail);
+                        const tail = try errorTail(self.arena, retry.detail);
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
                         try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
@@ -537,7 +537,7 @@ pub const Engine = struct {
                     if (cap.ok) {
                         log.log(.info, "capability evals: PASS on retry", .{});
                     } else {
-                        const tail = errorTail(self.arena, cap.detail);
+                        const tail = try errorTail(self.arena, cap.detail);
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
                         try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
@@ -718,7 +718,7 @@ pub const Engine = struct {
             else => return error.NotAGateEval,
         };
         defer g.deinit(self.ctx.gpa);
-        const detail = if (g.ok) "" else errorTail(self.arena, g.detail);
+        const detail = if (g.ok) "" else try errorTail(self.arena, g.detail);
         return .{ .name = e.name, .kind = e.kind, .score = if (g.ok) 1 else 0, .ok = g.ok, .detail = detail };
     }
 
@@ -1315,9 +1315,15 @@ fn proposalChangedPathsSlice(gpa: std.mem.Allocator, changes: []const proposal_m
     return out;
 }
 
-fn errorTail(arena: std.mem.Allocator, s: []const u8) []const u8 {
+/// The excerpt always owns its memory. It used to alias `s` whenever the input
+/// was short enough to need no trimming, and every caller passes the `detail`
+/// of a gate result it frees on scope exit, so the one caller that returns the
+/// excerpt handed back freed memory: a gate whose output fitted in the budget
+/// segfaulted the improve run while collecting the reasons a proposal was
+/// rejected. Copying a string under 1500 bytes is not worth the aliasing.
+fn errorTail(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
     const max = 1500;
-    if (s.len <= max) return s;
+    if (s.len <= max) return arena.dupe(u8, s);
     // This excerpt is the only thing the model sees about why its patch was
     // rejected. Zig prints the diagnosis first and build-runner noise last
     // ("referenced by", "Build Summary", "failed command"), so a plain tail
@@ -1332,9 +1338,9 @@ fn errorTail(arena: std.mem.Allocator, s: []const u8) []const u8 {
         }
         if (s[start] == '\n') start += 1;
         const end = @min(s.len, start + max);
-        return arena.dupe(u8, s[start..end]) catch s[start..end];
+        return arena.dupe(u8, s[start..end]);
     }
-    return arena.dupe(u8, s[s.len - max ..]) catch s[s.len - max ..];
+    return arena.dupe(u8, s[s.len - max ..]);
 }
 
 /// Finds the LAST {...} block in `text` that contains a "changes" field
@@ -1614,7 +1620,7 @@ test "errorTail keeps the diagnosis, not the build-runner noise" {
     for (0..200) |_| try buf.appendSlice(std.testing.allocator, "referenced by: executeCalls: src/agent/loop.zig:899:50\n");
     try buf.appendSlice(std.testing.allocator, "Build Summary: 2/4 steps succeeded\n");
 
-    const tail = errorTail(arena, buf.items);
+    const tail = try errorTail(arena, buf.items);
     try std.testing.expect(tail.len <= 1500);
     try std.testing.expect(std.mem.indexOf(u8, tail, "error: cast discards const qualifier") != null);
 }
@@ -1627,7 +1633,7 @@ test "errorTail falls back to the end when nothing looks like an error" {
     const long = try arena.alloc(u8, 4000);
     @memset(long, 'x');
     long[3999] = 'Z';
-    const tail = errorTail(arena, long);
+    const tail = try errorTail(arena, long);
     try std.testing.expectEqual(@as(usize, 1500), tail.len);
     try std.testing.expectEqual(@as(u8, 'Z'), tail[tail.len - 1]);
 }
