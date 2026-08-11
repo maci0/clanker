@@ -3803,6 +3803,9 @@ fn handleBoard(
                 return;
             };
             const card = &cards.items[idx];
+            // Set by the move branch, acted on after every write to `card`.
+            var moved_from: ?[]const u8 = null;
+            var moved_to: ?[]const u8 = null;
 
             if (std.mem.eql(u8, req.op, "update")) {
                 if (req.title) |t| {
@@ -3832,17 +3835,18 @@ fn handleBoard(
                 }
                 const from = card.column;
                 card.column = col;
-                // Sort the destination by order, then place this card at the
-                // requested index and close the gaps in both columns.
+                // Placed between the neighbours at the requested index, then
+                // resequenced below. Sorting has to wait until every field of
+                // this card is written: it reorders the array `card` points
+                // into, and the pointer does not follow.
                 const want = req.position orelse -1;
                 card.order = if (want < 0) std.math.maxInt(i64) else want * 2 - 1;
-                std.mem.sort(Card, cards.items, {}, cardLessThan);
-                resequence(cards.items, col);
-                if (!std.mem.eql(u8, from, col)) resequence(cards.items, from);
                 var entry: std.ArrayList(LogEntry) = .empty;
                 entry.appendSlice(arena, card.log) catch {};
                 entry.append(arena, .{ .ts = now, .who = actor, .what = std.fmt.allocPrint(arena, "moved to {s}", .{col}) catch "moved" }) catch {};
                 card.log = entry.items;
+                moved_from = from;
+                moved_to = col;
             } else if (std.mem.eql(u8, req.op, "delete")) {
                 _ = cards.orderedRemove(idx);
                 b.cards = cards.items;
@@ -3949,6 +3953,12 @@ fn handleBoard(
                 return;
             }
             card.updated = now;
+            if (moved_to) |to| {
+                std.mem.sort(Card, cards.items, {}, cardLessThan);
+                resequence(cards.items, to);
+                const from = moved_from.?;
+                if (!std.mem.eql(u8, from, to)) resequence(cards.items, from);
+            }
         }
 
         b.cards = cards.items;

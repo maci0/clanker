@@ -885,16 +885,69 @@
   }
   .md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; }
 
-  /* Todos */
-  .todos { list-style: none; margin: var(--space-5) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-  .todo {
-    display: flex; align-items: center; gap: var(--space-3);
-    min-height: 32px; padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-2);
+  /* Board: columns scroll sideways as a group, each column scrolls down on
+     its own, so a long Backlog never pushes Done off the bottom. */
+  .board {
+    display: flex; gap: var(--space-4); margin-top: var(--space-5);
+    overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start;
   }
-  .todo-text { flex: 1; font-family: var(--mono); font-size: var(--step-0); overflow-wrap: anywhere; }
-  .todo[data-done="true"] .todo-text { color: var(--fg-muted); text-decoration: line-through; }
-  .todo-when { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); font-variant-numeric: tabular-nums; }
+  .board-col {
+    flex: 0 0 15rem; display: flex; flex-direction: column;
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    background: var(--surface); max-height: 32rem;
+  }
+  .board-col[data-drop="true"] { border-color: var(--accent); }
+  .board-col-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule);
+    font-family: var(--mono); font-size: var(--step-0);
+  }
+  .board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+  .board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  /* Over the limit is said, not enforced: see the endpoint's reasoning. */
+  .board-col-count[data-over="true"] { color: var(--danger); }
+  .board-cards { list-style: none; margin: 0; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); overflow-y: auto; }
+  .card {
+    text-align: left; width: 100%; cursor: pointer;
+    padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius);
+    background: var(--surface-2); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0);
+    display: flex; flex-direction: column; gap: var(--space-2);
+  }
+  .card:hover { border-color: var(--border); }
+  .card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent); }
+  .card[data-dragging="true"] { opacity: 0.5; }
+  .card-title { overflow-wrap: anywhere; }
+  .card-meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .card-flag { border-radius: var(--radius-pill); padding: 0 var(--space-2); border: 1px solid var(--rule); }
+  .card-flag[data-priority="high"] { color: var(--danger); border-color: var(--danger); }
+  .card-flag[data-priority="low"] { color: var(--fg-muted); }
+  .card-flag[data-due="soon"] { color: var(--accent); border-color: var(--accent); }
+  .card-flag[data-due="late"] { color: var(--danger); border-color: var(--danger); }
+  .card-flag[data-blocked="true"] { color: var(--danger); border-color: var(--danger); }
+  .card-progress { color: var(--fg-muted); }
+  .detail-head {
+    margin: var(--space-5) 0 var(--space-2); font-family: var(--mono); font-size: var(--step-0);
+    color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .detail-head:first-of-type { margin-top: var(--space-4); }
+  .detail-body { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+  .detail-row { display: flex; align-items: center; gap: var(--space-3); flex: 1 1 100%; min-width: 0; }
+  .detail-row label { flex: 0 0 6rem; color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
+  .detail-row input[type="text"], .detail-row input[type="date"], .detail-row textarea, .detail-row select { flex: 1; min-width: 0; }
+  .detail-row input[type="checkbox"] { flex: none; }
+  .detail-row label.subtask {
+    flex: 1; min-width: 0; text-transform: none; letter-spacing: normal;
+    font-weight: 400; color: var(--fg); margin-bottom: 0; overflow-wrap: anywhere;
+  }
+  .detail-row label.subtask[data-done="true"] { color: var(--fg-muted); text-decoration: line-through; }
+  .dep-open { color: var(--danger); flex: 1; }
+  .log-entry {
+    display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 0 var(--space-2);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
+  }
+  .log-when { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: 0 0 8rem; }
+  .log-who { color: var(--accent); }
 
   /* Log tail */
   .log-view {
@@ -952,7 +1005,7 @@
   <button type="button" class="tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
   <button type="button" class="tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
   <button type="button" class="tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
-  <button type="button" class="tab" role="tab" id="tab-todos" aria-controls="view-todos" aria-selected="false" tabindex="-1" data-view="todos">Todos</button>
+  <button type="button" class="tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" tabindex="-1" data-view="board">Board</button>
   <button type="button" class="tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
   <button type="button" class="tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
 </nav>
@@ -1104,21 +1157,30 @@
       <div id="goals"></div>
     </section>
   </div>
-  <div class="view" id="view-todos" role="tabpanel" aria-labelledby="tab-todos" tabindex="-1" hidden>
+  <div class="view" id="view-board" role="tabpanel" aria-labelledby="tab-board" tabindex="-1" hidden>
     <section>
       <div class="section-head">
-        <h2>Todos</h2>
-        <button type="button" class="secondary" id="todos-refresh">Refresh</button>
+        <h2>Board</h2>
+        <div class="toolbar-actions">
+          <label class="checkbox-row" for="board-mine">
+            <input type="checkbox" id="board-mine">
+            <span>Only mine</span>
+          </label>
+          <button type="button" class="secondary" id="board-refresh">Refresh</button>
+        </div>
       </div>
-      <!-- state/todos.json is a plain file, so anything else that opens it,
-           including the agent, shares this list. -->
-      <form id="todo-form" class="run-picker">
-        <label for="todo-text">New todo</label>
-        <input type="text" id="todo-text" placeholder="What needs doing?" maxlength="500" autocomplete="off" required>
-        <button type="submit" class="secondary" id="todo-add">Add</button>
+      <!-- state/board.json is a plain file: a card moved by a clanker is the
+           same card that moves here. -->
+      <form id="card-form" class="goal-form">
+        <label for="card-title">New card</label>
+        <input type="text" id="card-title" placeholder="What needs doing?" maxlength="500" autocomplete="off" required>
+        <label for="card-column">In</label>
+        <select id="card-column"></select>
+        <button type="submit" class="secondary" id="card-add">Add card</button>
       </form>
-      <ul class="todos" id="todos"></ul>
-      <p class="sr-only" id="todos-status" role="status" aria-live="polite"></p>
+      <div class="board" id="board"></div>
+      <div id="card-detail" class="run-detail" role="region" aria-label="Selected card" hidden></div>
+      <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
     </section>
   </div>
   <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
@@ -1269,11 +1331,14 @@ document.addEventListener("DOMContentLoaded", function () {
     sessionExport: document.getElementById("session-export"),
     sessionCopy: document.getElementById("session-copy"),
     runCopy: document.getElementById("run-copy"),
-    todos: document.getElementById("todos"),
-    todoForm: document.getElementById("todo-form"),
-    todoText: document.getElementById("todo-text"),
-    todosRefresh: document.getElementById("todos-refresh"),
-    todosStatus: document.getElementById("todos-status"),
+    board: document.getElementById("board"),
+    cardForm: document.getElementById("card-form"),
+    cardTitle: document.getElementById("card-title"),
+    cardColumn: document.getElementById("card-column"),
+    cardDetail: document.getElementById("card-detail"),
+    boardMine: document.getElementById("board-mine"),
+    boardRefresh: document.getElementById("board-refresh"),
+    boardStatus: document.getElementById("board-status"),
     logSelect: document.getElementById("log-select"),
     logView: document.getElementById("log-view"),
     logsRefresh: document.getElementById("logs-refresh"),
@@ -4107,7 +4172,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // ---- views: one section visible at a time -----------------------------
 
-  var VIEWS = ["chat", "runs", "rooms", "goals", "todos", "tools", "system"];
+  var VIEWS = ["chat", "runs", "rooms", "goals", "board", "tools", "system"];
   /* Each view's data is fetched the first time it is opened rather than all of
      it at load. The page used to fire seven requests before showing anything,
      several of which execute a WASM tool. */
@@ -4116,7 +4181,7 @@ document.addEventListener("DOMContentLoaded", function () {
     runs: loadRuns,
     rooms: function () { return loadStatus().then(loadChatRooms); },
     goals: loadGoals,
-    todos: loadTodos,
+    board: loadBoard,
     tools: loadTools,
     system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList()]); }
   };
@@ -4437,7 +4502,7 @@ document.addEventListener("DOMContentLoaded", function () {
         showToast(text);
       });
     });
-    ["session-status", "run-status", "chat-status", "todos-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+    ["session-status", "run-status", "chat-status", "board-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
       var node = document.getElementById(id);
       if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
     });
@@ -4694,91 +4759,514 @@ document.addEventListener("DOMContentLoaded", function () {
     copyText(graphSummaryText(lastBuilt), el.runCopy, "Copy summary", el.runGraph);
   });
 
-  /* ---------- todos ---------- */
+  /* ---------- board ---------- */
 
-  var todos = [];
+  var board = { columns: [], cards: [] };
+  var openCardId = null;
 
-  function loadTodos() {
-    return fetch("/api/todos")
+  function loadBoard() {
+    return fetch("/api/board")
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
-      .then(function (d) { renderTodos(d.todos || []); })
-      .catch(function (err) { el.todosStatus.textContent = "Could not load todos: " + err.message; });
+      .then(function (d) { renderBoard(d.board || { columns: [], cards: [] }); })
+      .catch(function (err) { el.boardStatus.textContent = "Could not load the board: " + err.message; });
   }
 
-  function postTodo(payload, status) {
-    return fetch("/api/todos", {
+  function postBoard(payload, status) {
+    return fetch("/api/board", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     })
       .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
       .then(function (d) {
-        renderTodos(d.todos || []);
-        el.todosStatus.textContent = status;
+        renderBoard(d.board || board);
+        if (status) el.boardStatus.textContent = status;
+        return d;
       })
-      .catch(function (err) { el.todosStatus.textContent = "Todo failed: " + err.message; });
+      .catch(function (err) { el.boardStatus.textContent = "Board: " + err.message; });
   }
 
-  function renderTodos(list) {
-    todos = list;
-    el.todos.textContent = "";
-    var open = 0;
-    list.forEach(function (t) {
-      if (!t.done) open += 1;
-      var li = document.createElement("li");
-      li.className = "todo";
-      li.setAttribute("data-done", String(!!t.done));
+  function cardById(id) {
+    for (var i = 0; i < board.cards.length; i++) {
+      if (board.cards[i].id === id) return board.cards[i];
+    }
+    return null;
+  }
 
-      var box = document.createElement("input");
-      box.type = "checkbox";
-      box.checked = !!t.done;
-      box.id = "todo-box-" + t.id;
-      box.addEventListener("change", function () {
-        postTodo({ id: t.id, done: box.checked }, box.checked ? "Marked done." : "Marked open.");
+  /* A card is blocked while anything it depends on has not reached the last
+     column. Said on the card, because "why can I not start this" is the
+     question a board exists to answer. */
+  function doneColumn() {
+    return board.columns.length ? board.columns[board.columns.length - 1].id : "done";
+  }
+
+  function blockers(card) {
+    return (card.depends_on || []).filter(function (id) {
+      var dep = cardById(id);
+      return dep && dep.column !== doneColumn();
+    });
+  }
+
+  function dueState(card) {
+    if (!card.deadline) return "";
+    var left = card.deadline - Math.floor(Date.now() / 1000);
+    if (left < 0) return "late";
+    if (left < 2 * 24 * 60 * 60) return "soon";
+    return "ok";
+  }
+
+  function fmtDeadline(ts) {
+    if (!ts) return "";
+    var d = new Date(ts * 1000);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function renderBoard(next) {
+    board = next;
+    // The "new card" column choice follows the board rather than a fixed list.
+    var keepCol = el.cardColumn.value;
+    el.cardColumn.textContent = "";
+    board.columns.forEach(function (c) {
+      var opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.title;
+      el.cardColumn.appendChild(opt);
+    });
+    if (keepCol) el.cardColumn.value = keepCol;
+
+    var mineOnly = el.boardMine.checked;
+    var me = (el.instanceChip.textContent || "").trim();
+    el.board.textContent = "";
+    var openTotal = 0;
+
+    board.columns.forEach(function (col) {
+      var colEl = document.createElement("div");
+      colEl.className = "board-col";
+      colEl.setAttribute("data-column", col.id);
+
+      var head = document.createElement("div");
+      head.className = "board-col-head";
+      var title = document.createElement("span");
+      title.className = "board-col-title";
+      title.textContent = col.title;
+      var count = document.createElement("span");
+      count.className = "board-col-count";
+      head.appendChild(title);
+      head.appendChild(count);
+      colEl.appendChild(head);
+
+      var list = document.createElement("ul");
+      list.className = "board-cards";
+
+      var shown = board.cards
+        .filter(function (c) { return c.column === col.id; })
+        .filter(function (c) { return !mineOnly || c.assignee === me; })
+        .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+
+      count.textContent = shown.length + (col.wip ? " / " + col.wip : "");
+      if (col.wip && shown.length > col.wip) count.setAttribute("data-over", "true");
+      if (col.id !== doneColumn()) openTotal += shown.length;
+
+      shown.forEach(function (c) {
+        var li = document.createElement("li");
+        li.appendChild(cardNode(c));
+        list.appendChild(li);
+      });
+      colEl.appendChild(list);
+
+      // Pointer drop target. The keyboard equivalent lives on the card.
+      colEl.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        colEl.setAttribute("data-drop", "true");
+      });
+      colEl.addEventListener("dragleave", function () { colEl.removeAttribute("data-drop"); });
+      colEl.addEventListener("drop", function (e) {
+        e.preventDefault();
+        colEl.removeAttribute("data-drop");
+        var id = e.dataTransfer.getData("text/plain");
+        if (id) postBoard({ op: "move", id: id, column: col.id }, "Moved to " + col.title + ".");
       });
 
-      var label = document.createElement("label");
-      label.className = "todo-text";
-      label.htmlFor = box.id;
-      label.textContent = t.text;
-
-      var when = document.createElement("span");
-      when.className = "todo-when";
-      when.textContent = t.created ? formatChatTime(t.created) : "";
-
-      var del = document.createElement("button");
-      del.type = "button";
-      del.className = "secondary danger";
-      del.textContent = "Delete";
-      del.setAttribute("aria-label", "Delete todo: " + t.text);
-      del.addEventListener("click", function () { postTodo({ id: t.id, remove: true }, "Deleted."); });
-
-      li.appendChild(box);
-      li.appendChild(label);
-      li.appendChild(when);
-      li.appendChild(del);
-      el.todos.appendChild(li);
+      el.board.appendChild(colEl);
     });
-    if (!list.length) {
-      var p = document.createElement("p");
-      p.className = "run-empty";
-      p.textContent = "No todos yet. Anything written here is also in state/todos.json.";
-      el.todos.appendChild(p);
+
+    setTabCount("board", openTotal);
+    if (openCardId && cardById(openCardId)) showCardDetail(openCardId);
+    else closeCardDetail();
+
+    if (!board.cards.length) {
+      var none = document.createElement("p");
+      none.className = "run-empty";
+      none.textContent = "No cards yet. Anything added here is in state/board.json, which every clanker can read.";
+      el.board.appendChild(none);
     }
-    setTabCount("todos", open);
   }
 
-  el.todoForm.addEventListener("submit", function (e) {
+  function cardNode(c) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "card";
+    b.draggable = true;
+    b.setAttribute("data-card", c.id);
+    if (c.id === openCardId) b.setAttribute("aria-current", "true");
+
+    var title = document.createElement("span");
+    title.className = "card-title";
+    title.textContent = c.title;
+    b.appendChild(title);
+
+    var meta = document.createElement("span");
+    meta.className = "card-meta";
+
+    if (c.priority && c.priority !== "normal") {
+      var pr = document.createElement("span");
+      pr.className = "card-flag";
+      pr.setAttribute("data-priority", c.priority);
+      pr.textContent = c.priority;
+      meta.appendChild(pr);
+    }
+    if (c.deadline) {
+      var due = document.createElement("span");
+      due.className = "card-flag";
+      due.setAttribute("data-due", dueState(c));
+      due.textContent = "due " + fmtDeadline(c.deadline);
+      meta.appendChild(due);
+    }
+    var blocked = blockers(c);
+    if (blocked.length) {
+      var bl = document.createElement("span");
+      bl.className = "card-flag";
+      bl.setAttribute("data-blocked", "true");
+      bl.textContent = "blocked ×" + blocked.length;
+      meta.appendChild(bl);
+    }
+    if ((c.subtasks || []).length) {
+      var doneN = c.subtasks.filter(function (s) { return s.done; }).length;
+      var prog = document.createElement("span");
+      prog.className = "card-progress";
+      prog.textContent = doneN + "/" + c.subtasks.length;
+      meta.appendChild(prog);
+    }
+    if (c.assignee) {
+      var who = document.createElement("span");
+      who.textContent = c.assignee;
+      meta.appendChild(who);
+    }
+    if (c.usage && c.usage.cost) {
+      var cost = document.createElement("span");
+      cost.textContent = fmtCost(c.usage.cost);
+      meta.appendChild(cost);
+    }
+    if (meta.childNodes.length) b.appendChild(meta);
+
+    b.addEventListener("click", function () {
+      openCardId = openCardId === c.id ? null : c.id;
+      renderBoard(board);
+    });
+    b.addEventListener("dragstart", function (e) {
+      e.dataTransfer.setData("text/plain", c.id);
+      e.dataTransfer.effectAllowed = "move";
+      b.setAttribute("data-dragging", "true");
+    });
+    b.addEventListener("dragend", function () { b.removeAttribute("data-dragging"); });
+    /* Dragging is not available to a keyboard, so the same move is on the
+       arrow keys with a modifier, which is the only way this board is usable
+       without a mouse. */
+    b.addEventListener("keydown", function (e) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      var ids = board.columns.map(function (col) { return col.id; });
+      var at = ids.indexOf(c.column);
+      var next = at + (e.key === "ArrowRight" ? 1 : -1);
+      if (next < 0 || next >= ids.length) return;
+      postBoard({ op: "move", id: c.id, column: ids[next] }, "Moved to " + board.columns[next].title + ".");
+    });
+    return b;
+  }
+
+  function closeCardDetail() {
+    el.cardDetail.hidden = true;
+    el.cardDetail.textContent = "";
+  }
+
+  function detailSection(parent, title) {
+    var head = document.createElement("p");
+    head.className = "detail-head";
+    head.textContent = title;
+    parent.appendChild(head);
+    var box = document.createElement("div");
+    box.className = "detail-body";
+    parent.appendChild(box);
+    return box;
+  }
+
+  function fieldRow(parent, label, control) {
+    var row = document.createElement("div");
+    row.className = "detail-row";
+    var l = document.createElement("label");
+    l.textContent = label;
+    l.htmlFor = control.id;
+    row.appendChild(l);
+    row.appendChild(control);
+    parent.appendChild(row);
+    return row;
+  }
+
+  function input(id, type, value, placeholder) {
+    var i = document.createElement("input");
+    i.type = type;
+    i.id = id;
+    i.value = value == null ? "" : value;
+    if (placeholder) i.placeholder = placeholder;
+    return i;
+  }
+
+  /* Everything about one card, in the order you ask about it: what it is, who
+     has it and when it is due, what it is waiting on, what is left to do,
+     what it has cost, and what has happened to it. */
+  function showCardDetail(id) {
+    var c = cardById(id);
+    if (!c) return closeCardDetail();
+    el.cardDetail.textContent = "";
+    el.cardDetail.hidden = false;
+
+    var head = document.createElement("div");
+    head.className = "run-detail-head";
+    var title = document.createElement("span");
+    title.className = "run-detail-title";
+    title.textContent = c.title;
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "secondary";
+    close.textContent = "Close";
+    close.addEventListener("click", function () { openCardId = null; renderBoard(board); });
+    head.appendChild(title);
+    head.appendChild(close);
+    el.cardDetail.appendChild(head);
+
+    // ---- fields ----
+    var fields = detailSection(el.cardDetail, "Card");
+    var titleIn = input("card-f-title", "text", c.title);
+    titleIn.maxLength = 500;
+    fieldRow(fields, "Title", titleIn);
+
+    var bodyIn = document.createElement("textarea");
+    bodyIn.id = "card-f-body";
+    bodyIn.rows = 3;
+    bodyIn.value = c.body || "";
+    fieldRow(fields, "Notes", bodyIn);
+
+    var assignIn = input("card-f-assignee", "text", c.assignee, "unassigned");
+    fieldRow(fields, "Assignee", assignIn);
+
+    var prioIn = document.createElement("select");
+    prioIn.id = "card-f-priority";
+    ["low", "normal", "high"].forEach(function (v) {
+      var o = document.createElement("option");
+      o.value = v;
+      o.textContent = v;
+      if ((c.priority || "normal") === v) o.selected = true;
+      prioIn.appendChild(o);
+    });
+    fieldRow(fields, "Priority", prioIn);
+
+    // A date input, because a deadline typed as a unix timestamp is not a
+    // deadline anyone will set twice.
+    var dueIn = input("card-f-deadline", "date", c.deadline ? new Date(c.deadline * 1000).toISOString().slice(0, 10) : "");
+    fieldRow(fields, "Deadline", dueIn);
+
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = "secondary";
+    save.textContent = "Save card";
+    save.addEventListener("click", function () {
+      var deadline = 0;
+      if (dueIn.value) {
+        var parsed = Date.parse(dueIn.value + "T23:59:59");
+        if (!isNaN(parsed)) deadline = Math.floor(parsed / 1000);
+      }
+      postBoard({
+        op: "update", id: c.id,
+        title: titleIn.value, body: bodyIn.value,
+        assignee: assignIn.value, priority: prioIn.value, deadline: deadline
+      }, "Card saved.");
+    });
+    fields.appendChild(save);
+
+    var takeIt = document.createElement("button");
+    takeIt.type = "button";
+    takeIt.className = "secondary";
+    takeIt.textContent = "Assign to me";
+    takeIt.addEventListener("click", function () {
+      postBoard({ op: "update", id: c.id, assignee: (el.instanceChip.textContent || "").trim() }, "Assigned.");
+    });
+    fields.appendChild(takeIt);
+
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "secondary danger";
+    del.textContent = "Delete card";
+    del.addEventListener("click", function () {
+      if (!window.confirm("Delete \"" + c.title + "\"? Its log and usage go with it.")) return;
+      openCardId = null;
+      postBoard({ op: "delete", id: c.id }, "Card deleted.");
+    });
+    fields.appendChild(del);
+
+    // ---- subtasks ----
+    var subs = detailSection(el.cardDetail, "Subtasks");
+    (c.subtasks || []).forEach(function (s) {
+      var row = document.createElement("div");
+      row.className = "detail-row";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !!s.done;
+      box.id = "sub-" + s.id;
+      box.addEventListener("change", function () {
+        postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: box.checked }, null);
+      });
+      var lab = document.createElement("label");
+      lab.htmlFor = box.id;
+      lab.textContent = s.text;
+      lab.className = "subtask";
+      lab.setAttribute("data-done", String(!!s.done));
+      var drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "rail-pin";
+      drop.textContent = "×";
+      drop.setAttribute("aria-label", "Remove subtask: " + s.text);
+      drop.addEventListener("click", function () {
+        postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, null);
+      });
+      row.appendChild(box);
+      row.appendChild(lab);
+      row.appendChild(drop);
+      subs.appendChild(row);
+    });
+    var subIn = input("card-f-subtask", "text", "", "Add a subtask…");
+    subIn.maxLength = 500;
+    subIn.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || !subIn.value.trim()) return;
+      e.preventDefault();
+      postBoard({ op: "subtask_add", id: c.id, text: subIn.value.trim() }, null);
+    });
+    subs.appendChild(subIn);
+
+    // ---- dependencies ----
+    var deps = detailSection(el.cardDetail, "Waiting on");
+    (c.depends_on || []).forEach(function (depId) {
+      var dep = cardById(depId);
+      var row = document.createElement("div");
+      row.className = "detail-row";
+      var name = document.createElement("span");
+      name.textContent = dep ? dep.title + "  ·  " + dep.column : depId + " (missing)";
+      if (dep && dep.column !== doneColumn()) name.className = "dep-open";
+      var drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "rail-pin";
+      drop.textContent = "×";
+      drop.setAttribute("aria-label", "Stop waiting on " + (dep ? dep.title : depId));
+      drop.addEventListener("click", function () {
+        postBoard({ op: "depend_remove", id: c.id, depends_on: depId }, null);
+      });
+      row.appendChild(name);
+      row.appendChild(drop);
+      deps.appendChild(row);
+    });
+    var depPick = document.createElement("select");
+    depPick.id = "card-f-dep";
+    var blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Add a dependency…";
+    depPick.appendChild(blank);
+    board.cards.forEach(function (other) {
+      if (other.id === c.id || (c.depends_on || []).indexOf(other.id) !== -1) return;
+      var o = document.createElement("option");
+      o.value = other.id;
+      o.textContent = other.title;
+      depPick.appendChild(o);
+    });
+    depPick.addEventListener("change", function () {
+      if (!depPick.value) return;
+      postBoard({ op: "depend_add", id: c.id, depends_on: depPick.value }, null);
+    });
+    deps.appendChild(depPick);
+
+    // ---- usage ----
+    var usage = c.usage || {};
+    if (usage.prompt_tokens || usage.completion_tokens || usage.cost) {
+      var u = detailSection(el.cardDetail, "Cost so far");
+      var line = document.createElement("p");
+      line.className = "meta";
+      line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
+        " completion  ·  " + fmtCost(usage.cost || 0) +
+        ((usage.runs || []).length ? "  ·  " + usage.runs.length + (usage.runs.length === 1 ? " run" : " runs") : "");
+      u.appendChild(line);
+      (usage.runs || []).forEach(function (rid) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "secondary";
+        b.textContent = rid;
+        b.title = "Open this run's graph";
+        b.addEventListener("click", function () {
+          showView("runs", true);
+          el.runSelect.value = rid;
+          loadRun(rid);
+        });
+        u.appendChild(b);
+      });
+    }
+
+    // ---- log ----
+    var logBox = detailSection(el.cardDetail, "Activity");
+    var entries = (c.log || []).slice().reverse();
+    if (!entries.length) {
+      var empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "Nothing recorded yet.";
+      logBox.appendChild(empty);
+    }
+    entries.forEach(function (e) {
+      var row = document.createElement("p");
+      row.className = "log-entry";
+      var when = document.createElement("span");
+      when.className = "log-when";
+      when.textContent = e.ts ? formatChatTime(e.ts) : "";
+      var who = document.createElement("span");
+      who.className = "log-who";
+      who.textContent = e.who || "someone";
+      var what = document.createElement("span");
+      what.textContent = e.what || "";
+      row.appendChild(when);
+      row.appendChild(who);
+      row.appendChild(what);
+      logBox.appendChild(row);
+    });
+    var noteIn = input("card-f-log", "text", "", "Record what you did…");
+    noteIn.maxLength = 2000;
+    noteIn.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || !noteIn.value.trim()) return;
+      e.preventDefault();
+      postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
+    });
+    logBox.appendChild(noteIn);
+  }
+
+  el.cardForm.addEventListener("submit", function (e) {
     e.preventDefault();
-    var text = el.todoText.value.trim();
-    if (!text) return;
-    el.todoText.value = "";
-    postTodo({ text: text }, "Added.");
+    var title = el.cardTitle.value.trim();
+    if (!title) return;
+    postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function () {
+      el.cardTitle.value = "";
+    });
   });
-  el.todosRefresh.addEventListener("click", function () { loadTodos(); });
+
+  el.boardRefresh.addEventListener("click", function () { loadBoard(); });
+  el.boardMine.addEventListener("change", function () { renderBoard(board); });
 
   /* ---------- logs ---------- */
 
@@ -4883,8 +5371,12 @@ document.addEventListener("DOMContentLoaded", function () {
     allRuns.forEach(function (r) {
       out.push({ kind: "run", label: runLabel(r), run: function () { showView("runs", false); el.runSelect.value = r.run_id; loadRun(r.run_id); } });
     });
-    todos.forEach(function (t) {
-      out.push({ kind: "todo", label: t.text, run: function () { showView("todos", true); } });
+    board.cards.forEach(function (c) {
+      out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {
+        openCardId = c.id;
+        showView("board", true);
+        renderBoard(board);
+      } });
     });
     return out;
   }
