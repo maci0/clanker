@@ -1635,6 +1635,9 @@ var spinner_stop = std.atomic.Value(bool).init(false);
 /// Set once in cmdRepl; the spinner thread needs an Io handle to sleep with
 /// (std.Thread has no sleep of its own in std.Io-based Zig).
 var repl_io: std.Io = undefined;
+/// Live spinner state: when the current turn started and what it is doing.
+var repl_turn_start_ns: i128 = 0;
+var repl_activity: []const u8 = "thinking";
 /// True while the spinner is on screen; only touched from the REPL's single
 /// main thread (show/clear calls never overlap with the spinner thread,
 /// which is always joined before the writer is touched again).
@@ -1644,7 +1647,11 @@ fn spinnerLoop() callconv(.c) void {
     var i: usize = 0;
     while (!spinner_stop.load(.acquire)) {
         const w = repl_out orelse return;
-        w.interface.print("\r\x1b[35m{s}\x1b[0m \x1b[2mworking\xe2\x80\xa6\x1b[0m", .{spinner_frames[i % spinner_frames.len]}) catch return;
+        const elapsed_ns = std.Io.Timestamp.now(repl_io, .awake).nanoseconds - repl_turn_start_ns;
+        const secs: u64 = if (elapsed_ns <= 0) 0 else @intCast(@divTrunc(elapsed_ns, 1_000_000_000));
+        const activity = repl_activity;
+        const verb: []const u8 = if (std.mem.eql(u8, activity, "thinking")) "" else "running ";
+        w.interface.print("\r\x1b[35m{s}\x1b[0m \x1b[2m{d}s · {s}{s}\xe2\x80\xa6\x1b[0m", .{ spinner_frames[i % spinner_frames.len], secs, verb, activity }) catch return;
         w.interface.flush() catch {};
         i += 1;
         std.Io.sleep(repl_io, .{ .nanoseconds = spinner_interval_ns }, .awake) catch return;
@@ -1946,6 +1953,7 @@ fn replToolCall(calls: []const types.ToolCall) void {
     replClearThinking();
     const w = repl_out orelse return;
     const arg_preview_cap = 80;
+    if (calls.len > 0) repl_activity = calls[0].name;
     for (calls) |tc| {
         w.interface.writeAll("\x1b[36m  \xe2\x9a\x99 ") catch return;
         w.interface.writeAll(tc.name) catch {};
@@ -1971,6 +1979,7 @@ fn replToolCall(calls: []const types.ToolCall) void {
 /// next LLM call is in flight.
 fn replToolResult(ms: u64) void {
     replClearThinking();
+    repl_activity = "thinking";
     const w = repl_out orelse return;
     var buf: [48]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "\x1b[2m    \xe2\x86\xb3 {d}ms\x1b[0m\n", .{ms}) catch return;
@@ -2052,6 +2061,8 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const prev_cache_hit = a.stats.total_cache_hit_tokens;
     const prev_cache_miss = a.stats.total_cache_miss_tokens;
     repl_answer_started = false;
+    repl_turn_start_ns = t0.nanoseconds;
+    repl_activity = "thinking";
     replShowThinking();
     const resp = a.run(messages, task, &err_detail) catch |err| {
         replClearThinking();
