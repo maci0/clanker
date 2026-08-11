@@ -195,6 +195,13 @@ Peers, their A2A cards from `/.well-known/agent.json`, DM channels, and — once
 3.1 lands — a nested run's own timeline. This is the view that answers "what is
 this fleet doing".
 
+**Landed.** The Fleet view (`features/fleet.js`) shows the roster, DM
+channels, and runs grouped parent → nested. Peer agent cards arrive through
+`GET /api/peers`, which dispatches the same sandboxed `peers` tool
+`clanker phonebook` uses — the page's CSP allows no other origin, so the
+browser never asks a peer anything itself; the roster says up/down per peer
+and carries the card's name, description, and skills.
+
 ### 3.3 Todo lists
 
 Two lists, one vocabulary (already specced in `docs/ROADMAP.md`):
