@@ -22,6 +22,7 @@ const proposal_mod = @import("proposal.zig");
 const history_mod = @import("history.zig");
 const patch_apply = @import("../patch/apply.zig");
 const gate_checks = @import("../gate/checks.zig");
+const sandbox_host = @import("../sandbox/host.zig");
 const peers = @import("../peers/notify.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -60,6 +61,39 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
 };
+
+/// The next `std.…` reference in `text`, reduced to its most specific
+/// component: `std.posix.SEEK.SET` identifies itself as `SET`, which is what a
+/// lookup has to search for. Returns the remainder so a caller can walk the
+/// whole message.
+fn nextStdSymbol(text: []const u8) ?struct { sym: []const u8, rest: []const u8 } {
+    var rest = text;
+    while (std.mem.indexOf(u8, rest, "std.")) |at| {
+        rest = rest[at + "std.".len ..];
+        var end: usize = 0;
+        var last_dot: ?usize = null;
+        while (end < rest.len) : (end += 1) {
+            const c = rest[end];
+            if (c == '.') {
+                // A dot only continues the path when an identifier follows it,
+                // so a sentence ending in "std.mem." does not swallow the space.
+                if (end + 1 < rest.len and (std.ascii.isAlphanumeric(rest[end + 1]) or rest[end + 1] == '_')) {
+                    last_dot = end;
+                    continue;
+                }
+                break;
+            }
+            if (!std.ascii.isAlphanumeric(c) and c != '_') break;
+        }
+        const path = rest[0..end];
+        rest = rest[end..];
+        if (path.len == 0) continue;
+        const sym = if (last_dot) |d| path[d + 1 ..] else path;
+        if (sym.len < 3) continue;
+        return .{ .sym = sym, .rest = rest };
+    }
+    return null;
+}
 
 /// Copied into staging when present, so the staged binary can actually run.
 /// Never promoted back: neither path passes validatePath.
@@ -321,7 +355,7 @@ pub const Engine = struct {
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tree did not compile", tail });
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tree did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
         }
@@ -337,7 +371,7 @@ pub const Engine = struct {
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tools did not compile", tail });
+            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tools did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
         }
@@ -537,6 +571,62 @@ pub const Engine = struct {
         }
         if (buf.items.len == 0) return "all gates pass";
         return buf.toOwnedSlice(self.arena);
+    }
+
+    /// Real declarations for the std symbols a compile error complains about.
+    ///
+    /// The model writes the patch in one shot with no tools, so it cannot look
+    /// a signature up: it recalls one, and what it recalls is usually a
+    /// different Zig version. Handing it only "expected enum, found
+    /// comptime_int" leaves it guessing again, which is how one lock patch
+    /// failed four attempts running on std.posix.SEEK. This is the same lookup
+    /// the std_api tool does, attached to the failure that needs it.
+    fn stdSymbolHelp(self: *Engine, err_text: []const u8) []const u8 {
+        if (sandbox_host.zig_lib_dir.len == 0) return "";
+        var out: std.ArrayList(u8) = .empty;
+        var seen: [4][]const u8 = undefined;
+        var seen_n: usize = 0;
+
+        var rest = err_text;
+        while (nextStdSymbol(rest)) |found| {
+            rest = found.rest;
+            const sym = found.sym;
+
+            var dup = false;
+            for (seen[0..seen_n]) |s2| {
+                if (std.mem.eql(u8, s2, sym)) dup = true;
+            }
+            if (dup) continue;
+            if (seen_n == seen.len) break;
+            seen[seen_n] = sym;
+            seen_n += 1;
+
+            const lines = self.stdGrep(sym) orelse continue;
+            out.appendSlice(self.arena, "\n") catch return "";
+            out.appendSlice(self.arena, sym) catch return "";
+            out.appendSlice(self.arena, ", as it actually is in this Zig:\n") catch return "";
+            out.appendSlice(self.arena, lines) catch return "";
+        }
+        if (out.items.len == 0) return "";
+        return out.items;
+    }
+
+    /// Up to 12 lines mentioning `sym` in the standard library source.
+    fn stdGrep(self: *Engine, sym: []const u8) ?[]const u8 {
+        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zig_lib_dir}) catch return null;
+        defer self.ctx.gpa.free(std_dir);
+        const pattern = std.fmt.allocPrint(self.ctx.gpa, "(pub (fn|const|var) {s}\\b|\\b{s} *[:=])", .{ sym, sym }) catch return null;
+        defer self.ctx.gpa.free(pattern);
+        const run_argv = [_][]const u8{ "rg", "-n", "--max-count", "12", "-e", pattern, std_dir };
+        const res = std.process.run(self.ctx.gpa, self.ctx.io, .{
+            .argv = &run_argv,
+            .stdout_limit = .limited(8 * 1024),
+            .stderr_limit = .limited(4 * 1024),
+        }) catch return null;
+        defer self.ctx.gpa.free(res.stdout);
+        defer self.ctx.gpa.free(res.stderr);
+        if (res.stdout.len == 0) return null;
+        return self.arena.dupe(u8, res.stdout) catch null;
     }
 
     /// The first gate invariant the staged tree no longer satisfies, if any.
@@ -1501,4 +1591,29 @@ test "the staging remover refuses any path that is not a staging directory" {
     try std.testing.expect(!Engine.isStagingDirPath("src"));
     try std.testing.expect(!Engine.isStagingDirPath("/"));
     try std.testing.expect(!Engine.isStagingDirPath(""));
+}
+
+test "a compile error's std references reduce to the symbol worth looking up" {
+    // The engine hands the model a signature it cannot look up itself. Picking
+    // the wrong component would look it up in the wrong place and quietly
+    // teach nothing.
+    const err =
+        \\src/util/flock.zig:30:48: error: expected enum or tagged union, found 'comptime_int'
+        \\        fl.whence = @intFromEnum(std.posix.SEEK.SET);
+    ;
+    const first = nextStdSymbol(err) orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("SET", first.sym);
+    try std.testing.expect(nextStdSymbol(first.rest) == null);
+
+    // A bare path yields its own last component.
+    const two = nextStdSymbol("std.mem.splitScalar is gone") orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("splitScalar", two.sym);
+
+    // Trailing punctuation is not part of the name.
+    const three = nextStdSymbol("use std.Io.Writer.") orelse return error.TestExpectedSymbol;
+    try std.testing.expectEqualStrings("Writer", three.sym);
+
+    // Nothing to look up.
+    try std.testing.expect(nextStdSymbol("no standard library here") == null);
+    try std.testing.expect(nextStdSymbol("std.x") == null);
 }
