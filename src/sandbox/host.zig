@@ -49,6 +49,14 @@ pub const Err = struct {
 /// Per-tool sandbox policy, owned by the harness.
 /// Runs a nested sub-agent. The harness wires this in when modules.subagents
 /// is enabled; tools call it via ck_subagent.
+/// Asks the human a multiple-choice question and returns the option they
+/// picked. Wired in only by the interactive REPL: a piped or scripted run has
+/// nobody to ask, so the tool reports that instead of blocking forever.
+pub const AskFn = *const fn (
+    question: []const u8,
+    options: []const []const u8,
+) anyerror![]const u8;
+
 pub const SubagentRunner = *const fn (
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -75,8 +83,14 @@ pub const Sandbox = struct {
     seed: u64 = 0,
     /// Optional nested sub-agent runner (subagent tool).
     subagent_runner: ?SubagentRunner = null,
+    /// Optional human prompt (ask_user tool); null outside the REPL.
+    ask_fn: ?AskFn = null,
     /// Effective config, for host functions that need it (subagent runner).
     cfg: ?*const config_mod.Config = null,
+    /// Per-session token budget for ck_llm calls (0 = unlimited).
+    session_token_budget: usize = 0,
+    /// Tokens used so far by ck_llm calls in this session.
+    used_session_tokens: u64 = 0,
     /// Non-null only for tools that declared the llm capability. A tool holding
     /// this runs sequentially: one provider call per tool call, never from the
     /// parallel worker pool.
@@ -372,7 +386,17 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         log.log(.warn, "[llm] call failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
         return Err.network;
     };
-    return h.writeResult(bytes, resp.message.content orelse "");
+    const content = resp.message.content orelse "";
+    // Approximate token usage: 4 bytes per token (rough heuristic).
+    const est_tokens: u64 = @intCast(@min(content.len / 4, std.math.maxInt(u32)));
+    if (h.sandbox.session_token_budget > 0) {
+        if (h.sandbox.used_session_tokens + est_tokens > h.sandbox.session_token_budget) {
+            log.log(.warn, "[llm] session token budget exceeded", .{});
+            return Err.too_large;
+        }
+        h.sandbox.used_session_tokens += est_tokens;
+    }
+    return h.writeResult(bytes, content);
 }
 
 /// ck_config() -> this tool's `config` object from its descriptor, as JSON.
@@ -1175,6 +1199,47 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
 }
 
 /// Delegates a task to a nested sub-agent run (see subagent tool).
+/// ck_ask: put a multiple-choice question to the human and return their answer.
+///
+/// The sandbox has no terminal, so the decision is made host-side by whoever
+/// installed `ask_fn` (the REPL). Without one there is no human attached, and
+/// saying so lets the model decide for itself rather than hang.
+pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
+    const ask = h.sandbox.ask_fn orelse return Err.not_found;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_input, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const question = switch (obj.get("question") orelse return Err.invalid) {
+        .string => |q| q,
+        else => return Err.invalid,
+    };
+    var options: std.ArrayList([]const u8) = .empty;
+    if (obj.get("options")) |o| {
+        if (o == .array) {
+            for (o.array.items) |item| {
+                if (item == .string and item.string.len > 0) options.append(arena, item.string) catch return Err.too_large;
+            }
+        }
+    }
+    // A question with nothing to choose between is a prompt for free text,
+    // which this tool does not do: the model should just ask in its answer.
+    if (options.items.len < 2) return Err.invalid;
+
+    const answer = ask(question, options.items) catch return Err.invalid;
+    defer h.sandbox.gpa.free(@constCast(answer));
+    return h.writeResult(bytes, answer);
+}
+
 pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
