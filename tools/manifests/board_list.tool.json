@@ -5,7 +5,7 @@
   "sequential": true,
   "category": "board",
   "name": "board_list",
-  "description": "Read the shared Kanban board: every column and every card, with its subtasks, dependencies, deadline, assignee, activity log and accrued cost. The board is at state/board.json and every clanker sees the same one.",
+  "description": "Read the shared Kanban board: every column and every card, with its subtasks, dependencies, deadline, assignee, activity log and accrued cost. The board is derived from the board room's chat log, not a separate file, so every clanker sees the same one.",
   "input_schema": {
     "type": "object",
     "properties": {

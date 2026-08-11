@@ -95,6 +95,13 @@ clanker.registerView({
           { x: 1, y: h - 2 }
         ],
         bin: { x: binX, y: h - 2 },
+        shelf: { x: w - 2, y: 5 },
+        cooler: { x: w - 2, y: 7 },
+        sofa: { x: 2 + Math.floor(rand() * 2), y: h - 3 },
+        pictures: [
+          { x: 4 + Math.floor(rand() * 3), y: 4 },
+          { x: 9 + Math.floor(rand() * 3), y: 4 }
+        ],
         door: { x: doorX, y: h - 1 },
         board: { x: 1, y: 1, w: w - 6, h: 3 },
         whiteboard: { x: w - 5, y: 1, w: 4, h: 3 },
@@ -162,12 +169,19 @@ clanker.registerView({
     // Tile picks, by grid coordinate on the sheet.
     var S_FLOOR = [11, 0];
     var S_WALL = [18, 2];
-    var S_DESK = [4, 11];
     var S_BOARD = [13, 12];
     var S_WHITEBOARD = [9, 14];
     var S_JANITOR = [25, 6];
     var S_PLANT = [17, 9];
-    var S_BIN = [10, 9];
+    // The pack carries a whole interior set; the first pass used seven tiles
+    // of its 486 and the rooms looked unfurnished as a result.
+    var S_BIN = [9, 10];
+    var S_SHELF = [11, 10];
+    var S_COOLER = [2, 10];
+    var S_SOFA = [[4, 12], [5, 12], [6, 12]];
+    var S_DOOR = [13, 10];
+    var S_DESK = [3, 10];
+    var S_PICTURE = [11, 13];
     var S_AGENTS = [[23, 0], [24, 0], [25, 0], [26, 0], [23, 2], [24, 2], [25, 2], [26, 2]];
 
     function tile(t, dx, dy) {
@@ -226,16 +240,30 @@ clanker.registerView({
         tile(S_PLANT, ox + pl.x * TILE, oy + pl.y * TILE);
       });
       if (L.bin) tile(S_BIN, ox + L.bin.x * TILE, oy + L.bin.y * TILE);
+      if (L.shelf) tile(S_SHELF, ox + L.shelf.x * TILE, oy + L.shelf.y * TILE);
+      if (L.cooler) tile(S_COOLER, ox + L.cooler.x * TILE, oy + L.cooler.y * TILE);
+      if (L.sofa) {
+        S_SOFA.forEach(function (s, i) {
+          tile(s, ox + (L.sofa.x + i) * TILE, oy + L.sofa.y * TILE);
+        });
+      }
+      // Pictures hang on the wall the board does not occupy.
+      (L.pictures || []).forEach(function (pic) {
+        tile(S_PICTURE, ox + pic.x * TILE, oy + pic.y * TILE);
+      });
+      // A door in the doorway, rather than a gap in the bricks.
+      tile(S_DOOR, ox + L.door.x * TILE, oy + L.door.y * TILE);
 
       // Desks.
       L.desks.forEach(function (d) {
         var dx = ox + d.x * TILE;
         var dy = oy + d.y * TILE;
-        ctx2d.fillStyle = "#8b5e34";
-        ctx2d.fillRect(dx, dy + 3, TILE * 2, 7);
-        ctx2d.fillStyle = "#6b4526";
-        ctx2d.fillRect(dx + 1, dy + 10, 2, 4);
-        ctx2d.fillRect(dx + TILE * 2 - 3, dy + 10, 2, 4);
+        if (!tile(S_DESK, dx, dy)) {
+          ctx2d.fillStyle = "#8b5e34";
+          ctx2d.fillRect(dx, dy + 3, TILE * 2, 7);
+        } else {
+          tile(S_DESK, dx + TILE, dy);
+        }
       });
 
       o.agents.forEach(function (a) { drawAgent(a, ox, oy, ink, L.w); });

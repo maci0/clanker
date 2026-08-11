@@ -21,10 +21,6 @@
         "type": "string",
         "description": "low, normal or high"
       },
-      "assignee": {
-        "type": "string",
-        "description": "Instance name of whoever is taking it"
-      },
       "body": {
         "type": "string",
         "description": "Longer notes"

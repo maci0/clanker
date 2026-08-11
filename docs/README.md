@@ -141,9 +141,11 @@ peer keeps the message only when it subscribes to that room.
   `docs/adrs/0002-private-todos-vs-shared-board.md`). `board_add`, `board_move`,
   `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`,
   `board_cost`, `board_list`, `board_delete` (`tools/zig/board.zig`, one
-  `board.wasm` module, one op each) work a shared Kanban board at
-  `state/board.json`, with subtasks, dependencies, a work log and accrued
-  cost per card. A move or claim is announced in the board's chatroom, so
+  `board.wasm` module, one op each) work a shared Kanban board folded from
+  the board room's chat log (see
+  `docs/adrs/0001-board-is-a-chatroom.md`), with subtasks, dependencies, a
+  work log and accrued cost per card. A move or claim is announced in the
+  board's chatroom, so
   `todo_*` with a `room` set now fails with a pointer to the `board_*`
   replacement.
 - Private sub-agent todos: `todo_*` tools called without a `room`
@@ -257,7 +259,7 @@ changes as tools are added.
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
-| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (`state/board.json`): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
+| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
 Internal tools, never offered to the model:
 
