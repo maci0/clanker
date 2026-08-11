@@ -2769,11 +2769,11 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
             handleStatus(cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/runs")) {
-            handleRuns(io, gpa, cfg, environ_map, target, accepts_gzip, stream);
+            handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, target, "/api/sessions") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
-            handleSessions(io, gpa, cfg, method, target, body, stream);
+            handleSessions(io, gpa, cfg, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/notify")) {
             handleNotify(io, gpa, body) catch {
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
@@ -4961,6 +4961,22 @@ var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
 var gzip_hljs: GzipCache = .{};
+
+/// A JSON body, gzipped when the client takes it and the saving is worth the
+/// work. Uncached on purpose: these bodies are per-request (a session list, a
+/// run graph), so a cache keyed on nothing would serve one caller's answer to
+/// another. Compression failure is not an error, it just sends the bytes.
+fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, accepts_gzip: bool, body: []const u8) void {
+    // Below roughly a packet's worth, gzip costs more than it saves.
+    const worth_it = accepts_gzip and body.len >= 1024;
+    const gzipped = if (worth_it) gzipAlloc(arena, body) else null;
+    const out = gzipped orelse body;
+    const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
+    var hbuf: [4096]u8 = undefined;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
+    rawhttp.writeAllFd(stream.socket.handle, hdr);
+    rawhttp.writeAllFd(stream.socket.handle, out);
+}
 
 fn gzipCached(gpa: std.mem.Allocator, cache: *GzipCache, raw: []const u8) ?[]const u8 {
     switch (cache.state.load(.acquire)) {
