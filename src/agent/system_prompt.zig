@@ -9,6 +9,12 @@ pub const PromptParts = struct {
     skills_dir: []const u8,
     learnings_file: []const u8,
     max_skill_bytes: usize = 24 * 1024,
+    /// This instance's own name and id. Without them the agent reads its own
+    /// chatroom messages as someone else's and greets itself by name.
+    instance_name: []const u8 = "",
+    instance_id: []const u8 = "",
+    /// Names of the peer instances it can talk to.
+    peers: []const []const u8 = &.{},
 };
 
 /// Builds the system prompt into `arena`-owned memory. Returns the prompt text.
@@ -27,6 +33,29 @@ pub fn build(
     };
     try buf.appendSlice(arena, base);
     try buf.appendSlice(arena, "\n\n");
+
+    // Who this instance is. Chatrooms and peer messages carry sender names,
+    // and an agent that does not know its own answers itself.
+    if (parts.instance_name.len > 0 or parts.instance_id.len > 0) {
+        try buf.appendSlice(arena, "## Identity\n\nYou are the clanker instance named \"");
+        try buf.appendSlice(arena, if (parts.instance_name.len > 0) parts.instance_name else parts.instance_id);
+        try buf.appendSlice(arena, "\"");
+        if (parts.instance_id.len > 0 and !std.mem.eql(u8, parts.instance_id, parts.instance_name)) {
+            try buf.appendSlice(arena, " (id ");
+            try buf.appendSlice(arena, parts.instance_id);
+            try buf.appendSlice(arena, ")");
+        }
+        try buf.appendSlice(arena, ". Chatroom and peer messages from that name are your own: do not answer or greet yourself.");
+        if (parts.peers.len > 0) {
+            try buf.appendSlice(arena, " The other instances you can reach are: ");
+            for (parts.peers, 0..) |peer, i| {
+                if (i > 0) try buf.appendSlice(arena, ", ");
+                try buf.appendSlice(arena, peer);
+            }
+            try buf.appendSlice(arena, ".");
+        }
+        try buf.appendSlice(arena, "\n\n");
+    }
 
     // Project conventions (AGENTS.md).
     const agents_md = std.Io.Dir.cwd().readFileAlloc(io, "AGENTS.md", arena, .limited(64 * 1024)) catch null;

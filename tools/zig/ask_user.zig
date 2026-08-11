@@ -5,8 +5,13 @@
 //! renders the options and returns the chosen one verbatim.
 //!
 //! Input:  {"question": "Which first?", "options": ["fix the eval", "add the tool"]}
-//! Output: {"ok": true, "answer": "fix the eval"}
+//!         {"question": "...", "options": [...], "peer": "clanker-ember-raven"}
+//! Output: {"ok": true, "answer": "fix the eval", "answered_by": "user"}
 //!         {"ok": false, "error": "..."} when nobody is attached to answer.
+//!
+//! With `peer`, the question goes to another clanker instead of the human:
+//! same question, same options, answered by a peer that has its own tools and
+//! its own view of the work.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -34,11 +39,23 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (options.items.len < 2) return errJson(out, "give at least two options; ask in your answer instead when the question is open-ended");
 
-    const answer = lib.ask(q.string, options.items) catch |err| return errJson(out, switch (err) {
-        // Scripted runs have no human: say so plainly so the model picks.
-        error.NotFound => "no interactive user is attached; decide yourself and say which option you took and why",
-        else => "could not ask the user",
-    });
+    var answered_by: []const u8 = "user";
+    var answer: []const u8 = undefined;
+    if (parsed.object.get("peer")) |p| {
+        if (p != .string or p.string.len == 0) return errJson(out, "peer must be a peer instance name");
+        answered_by = p.string;
+        answer = askPeer(p.string, q.string, options.items) catch |err| return errJson(out, switch (err) {
+            error.NoSuchPeer => "no peer by that name in config; call peers to see who is reachable",
+            error.SandboxDenied => "that peer's host is not allowlisted for this tool",
+            else => "the peer did not answer",
+        });
+    } else {
+        answer = lib.ask(q.string, options.items) catch |err| return errJson(out, switch (err) {
+            // Scripted runs have no human: say so plainly so the model picks.
+            error.NotFound => "no interactive user is attached; decide yourself and say which option you took and why, or ask a peer with {\"peer\": \"<name>\"}",
+            else => "could not ask the user",
+        });
+    }
 
     var buf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -48,8 +65,71 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("answer");
     try s.write(answer);
+    try s.objectField("answered_by");
+    try s.write(answered_by);
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
+}
+
+const PeerError = error{ NoSuchPeer, SandboxDenied, NoAnswer, IoError };
+
+/// Puts the same question to a peer clanker over its HTTP API and returns the
+/// answer text. The peer runs it as a normal task, so it answers with its own
+/// tools and its own state rather than mirroring this instance.
+fn askPeer(name: []const u8, question: []const u8, options: []const []const u8) PeerError![]const u8 {
+    const url = peerUrl(name) orelse return error.NoSuchPeer;
+
+    var body_buf: [8192]u8 = undefined;
+    var bw: std.Io.Writer = .fixed(&body_buf);
+    var task_buf: [4096]u8 = undefined;
+    var tw: std.Io.Writer = .fixed(&task_buf);
+    tw.print("{s}\n\nAnswer with exactly one of these options, verbatim, and nothing else:\n", .{question}) catch return error.IoError;
+    for (options) |o| tw.print("- {s}\n", .{o}) catch return error.IoError;
+
+    var s = std.json.Stringify{ .writer = &bw, .options = .{} };
+    s.beginObject() catch return error.IoError;
+    s.objectField("task") catch return error.IoError;
+    s.write(task_buf[0..tw.end]) catch return error.IoError;
+    s.endObject() catch return error.IoError;
+
+    var endpoint_buf: [512]u8 = undefined;
+    const endpoint = std.fmt.bufPrint(&endpoint_buf, "{s}/api/run", .{std.mem.trimEnd(u8, url, "/")}) catch return error.IoError;
+
+    const raw = lib.httpPost(endpoint, body_buf[0..bw.end]) catch |err| return switch (err) {
+        error.SandboxDenied => error.SandboxDenied,
+        else => error.NoAnswer,
+    };
+    const reply = std.json.parseFromSliceLeaky(std.json.Value, std.heap.wasm_allocator, raw, .{}) catch return error.NoAnswer;
+    if (reply != .object) return error.NoAnswer;
+    // /api/run answers in "content"; the other two are accepted so a peer
+    // running an older build still gets understood.
+    const answer = reply.object.get("content") orelse reply.object.get("answer") orelse reply.object.get("text") orelse return error.NoAnswer;
+    if (answer != .string or answer.string.len == 0) return error.NoAnswer;
+    return std.mem.trim(u8, answer.string, " \t\r\n");
+}
+
+/// The configured URL of a peer by name.
+///
+/// The peers live in the harness config on disk, not in `lib.config()` — that
+/// returns this plugin's own settings — so they are read the same way the
+/// peers tool reads them, with config.local.json winning.
+const ConfigFile = struct {
+    peers: []const struct {
+        name: []const u8 = "",
+        url: []const u8 = "",
+    } = &.{},
+};
+
+fn peerUrl(name: []const u8) ?[]const u8 {
+    var found: ?[]const u8 = null;
+    for ([_][]const u8{ "config.json", "config.local.json" }) |path| {
+        const raw = lib.fsRead(path) catch continue;
+        const cfg = std.json.parseFromSliceLeaky(ConfigFile, std.heap.wasm_allocator, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        for (cfg.peers) |peer| {
+            if (std.mem.eql(u8, peer.name, name) and peer.url.len > 0) found = peer.url;
+        }
+    }
+    return found;
 }
 
 fn errJson(out: *lib.Out, msg: []const u8) !void {
