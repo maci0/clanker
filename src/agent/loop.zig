@@ -1237,7 +1237,15 @@ pub const Agent = struct {
             var in_str = false;
             var end: usize = 0;
             for (s[start..], 0..) |ch, i| {
-                if (ch == '"' and (i == 0 or s[start + i - 1] != '\\')) in_str = !in_str;
+                // Track string state: a `"` toggles unless it's preceded by an
+                // odd number of backslashes (escaped). Checking only the single
+                // preceding char mis-handles `\\"` (escaped backslash + real
+                // quote), so count the full backslash run.
+                if (ch == '"') {
+                    var bs: usize = 0;
+                    while (bs < i and s[start + i - 1 - bs] == '\\') bs += 1;
+                    if (bs % 2 == 0) in_str = !in_str;
+                }
                 if (in_str) continue;
                 if (ch == '{' or ch == '[') {
                     depth += 1;

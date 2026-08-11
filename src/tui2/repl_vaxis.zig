@@ -34,6 +34,8 @@ const registry = @import("../tools/registry.zig");
 const agent_loop = @import("../agent/loop.zig");
 const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
+const syntax = @import("syntax.zig");
+const theme_mod = @import("../tui/theme.zig");
 
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
@@ -116,10 +118,13 @@ fn runThreadMain(args: RunThreadArgs) void {
 }
 
 /// One rendered line of session-permanent transcript (a completed turn's
-/// text, or a tool-call/result line).
+/// text, or a tool-call/result line). `fence_lang` is non-null for lines
+/// inside a fenced code block: they render through the syntax highlighter
+/// instead of getting the dim fence style.
 const Line = struct {
     text: []const u8,
     dim: bool = false,
+    fence_lang: ?[]const u8 = null,
 };
 
 const Model = struct {
@@ -138,6 +143,12 @@ const Model = struct {
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
     status_buf: [160]u8 = undefined,
+    /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
+    /// single-line widget (Enter either submits or is a no-op — there is no
+    /// way to insert a literal newline into one), so a multi-line paste's
+    /// embedded Enters would otherwise submit the task early, mid-paste.
+    /// While true, Enter is folded to a space and inserted instead.
+    in_paste: bool = false,
 
     fn widget(self: *Model) vxfw.Widget {
         return .{
@@ -157,7 +168,32 @@ const Model = struct {
         g_tool_lines.clearRetainingCapacity();
         const answer = if (final_text.len > 0) final_text else g_stream_buf.items;
         const owned = self.arena.dupe(u8, answer) catch answer;
-        self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "\xe2\x80\xba {s}", .{owned}) catch owned }) catch {};
+        // Fold the answer's markdown into one transcript line per source
+        // line: the fence is where highlighting attaches, so lines must
+        // know which fence (if any) they came from.
+        var in_fence = false;
+        var fence_lang: []const u8 = "";
+        var first = true;
+        var it = std.mem.splitScalar(u8, owned, '\n');
+        while (it.next()) |src_line| {
+            const trimmed = std.mem.trim(u8, src_line, " \t\r");
+            if (std.mem.startsWith(u8, trimmed, "```")) {
+                if (in_fence) {
+                    in_fence = false;
+                } else {
+                    in_fence = true;
+                    fence_lang = std.mem.trim(u8, trimmed[3..], " ");
+                }
+                continue; // fence markers themselves are not shown
+            }
+            const lang: ?[]const u8 = if (in_fence) fence_lang else null;
+            const prefixed = if (first)
+                std.fmt.allocPrint(self.arena, "\xe2\x80\xba {s}", .{src_line}) catch src_line
+            else
+                src_line;
+            first = false;
+            self.lines.append(self.arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
+        }
         g_stream_buf.clearRetainingCapacity();
         g_streaming = false;
         if (self.thread) |t| {
@@ -220,11 +256,18 @@ const Model = struct {
                     return;
                 }
                 if (key.matches(vaxis.Key.enter, .{})) {
+                    if (self.in_paste) {
+                        try self.text_field.insertSliceAtCursor(" ");
+                        ctx.redraw = true;
+                        return;
+                    }
                     try self.submit(ctx);
                     return;
                 }
                 try self.text_field.handleEvent(ctx, event);
             },
+            .paste_start => self.in_paste = true,
+            .paste_end => self.in_paste = false,
             else => try self.text_field.handleEvent(ctx, event),
         }
     }
@@ -264,18 +307,49 @@ const Model = struct {
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
         var row: u16 = top;
         const start = tailStart(self.lines.items, avail_rows);
+        // Lines carry fence_lang when they came out of a code fence; the
+        // highlighter state is rebuilt per draw from the tagged lines.
+        const fence_on = blk: {
+            const t = theme_mod.select(null, self.ctx.environ_map);
+            break :blk t.reset.len > 0;
+        };
+        var syn_style = syntax.Style.fromTheme(&theme_mod.Theme.default);
         var i: usize = start;
         while (i < self.lines.items.len and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
-            writeRow(surface, row, l.text, if (l.dim) dim else .{});
+            if (l.fence_lang) |lang| {
+                var state = syntax.State.init(lang);
+                var segs: std.ArrayList(vaxis.Segment) = .empty;
+                syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs) catch {
+                    writeRow(surface, row, l.text, dim);
+                    row += 1;
+                    continue;
+                };
+                writeSegments(ctx, surface, row, segs.items);
+            } else {
+                writeRow(surface, row, l.text, if (l.dim) dim else .{});
+            }
             row += 1;
         }
         if (streaming and row < bottom and stream_snapshot.len > 0) {
-            writeWrapped(surface, &row, bottom, max.width, stream_snapshot, .{});
+            self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
         }
 
         surface.children = children;
         return surface;
+    }
+
+    /// Renders the live streaming buffer as plain wrapped text. The buffer
+    /// is raw model output without fence tags (unlike `lines`), so there's
+    /// no per-line language to highlight against — `writeWrapped` is the
+    /// right call. The `fence_on`/`syn_style` params are carried for a
+    /// future highlight pass but not used yet.
+    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style) void {
+        _ = self;
+        _ = ctx;
+        _ = fence_on;
+        _ = syn_style;
+        writeWrapped(surface, row, bottom, surface.size.width, text, .{});
     }
 };
 
@@ -298,6 +372,26 @@ fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Styl
         if (col >= surface.size.width) break;
         surface.writeCell(col, row, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
         col += 1;
+    }
+}
+
+/// Writes styled segments onto `row` with grapheme-accurate widths,
+/// stopping at the surface edge. Segment text borrows the caller's buffer.
+fn writeSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: u16, segs: []const vaxis.Segment) void {
+    var col: u16 = 0;
+    for (segs) |seg| {
+        var it = ctx.graphemeIterator(seg.text);
+        while (it.next()) |g| {
+            const bytes = g.bytes(seg.text);
+            if (std.mem.eql(u8, bytes, "\t")) {
+                col += 8 - col % 8;
+                continue;
+            }
+            const w: u16 = @intCast(@min(ctx.stringWidth(bytes), 2));
+            if (col + w > surface.size.width) return;
+            if (w > 0) surface.writeCell(col, row, .{ .char = .{ .grapheme = bytes, .width = @intCast(w) }, .style = seg.style });
+            col += w;
+        }
     }
 }
 
