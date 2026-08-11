@@ -10,9 +10,9 @@
 //
 // A tool file does:
 //   #include "../c/ck.h"
-//   u32 scratch(u32 need) { return ck_scratch(need); }
-//   u32 host_arena(void) { return ck_host_arena(); }
-//   u64 run(u32 ptr, u32 len) { ... return ck_ok_text("..."); }
+//   CK_EXPORT("scratch") u32 scratch(u32 need) { return ck_scratch(need); }
+//   CK_EXPORT("host_arena") u32 host_arena(void) { return ck_host_arena(); }
+//   CK_EXPORT("run") u64 run(u32 ptr, u32 len) { ... return ck_ok_text("..."); }
 
 #ifndef CLANKER_CK_H
 #define CLANKER_CK_H
@@ -23,6 +23,14 @@ typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef uintptr_t uptr;
+
+// Marks a function as a wasm export under exactly `name`, regardless of the
+// -fvisibility=hidden this toolchain compiles wasm32-freestanding with by
+// default. rdynamic/--export-dynamic do not reach a hidden-visibility
+// symbol — visibility is decided at compile time, before the linker's
+// export-table pass ever sees it — so every ABI entry point (scratch,
+// host_arena, run) needs this explicitly; nothing else does.
+#define CK_EXPORT(name) __attribute__((export_name(name)))
 
 // ---- host function imports (provided by the harness) -----------------------
 __attribute__((import_module("env"), import_name("ck_log")))

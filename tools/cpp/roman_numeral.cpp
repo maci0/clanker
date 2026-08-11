@@ -147,10 +147,10 @@ static void IntToDecimalText(int v, char *out, u32 *out_len) {
 
 extern "C" {
 
-u32 scratch(u32 need) { return ck_scratch(need); }
-u32 host_arena() { return ck_host_arena(); }
+CK_EXPORT("scratch") u32 scratch(u32 need) { return ck_scratch(need); }
+CK_EXPORT("host_arena") u32 host_arena() { return ck_host_arena(); }
 
-u64 run(u32 ptr, u32 len) {
+CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
   const u8 *input = ck_input(ptr);
 
   if (len > 0 && input[0] == '{') {

@@ -10,8 +10,8 @@
 
 #include "ck.h"
 
-u32 scratch(u32 need) { return ck_scratch(need); }
-u32 host_arena(void) { return ck_host_arena(); }
+CK_EXPORT("scratch") u32 scratch(u32 need) { return ck_scratch(need); }
+CK_EXPORT("host_arena") u32 host_arena(void) { return ck_host_arena(); }
 
 static const char *extract_text_field(const u8 *input, u32 len, u32 *out_len) {
   for (u32 i = 0; i + 6 < len; i++) {
@@ -66,7 +66,7 @@ static char hex_nibble(u8 v) {
   return v < 10 ? (char)('0' + v) : (char)('a' + (v - 10));
 }
 
-u64 run(u32 ptr, u32 len) {
+CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
   const u8 *input = ck_input(ptr);
   const u8 *data;
   u32 data_len;

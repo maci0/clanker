@@ -6,8 +6,8 @@
 
 #include "ck.h"
 
-u32 scratch(u32 need) { return ck_scratch(need); }
-u32 host_arena(void) { return ck_host_arena(); }
+CK_EXPORT("scratch") u32 scratch(u32 need) { return ck_scratch(need); }
+CK_EXPORT("host_arena") u32 host_arena(void) { return ck_host_arena(); }
 
 static u32 crc32_table[256];
 static int crc32_table_ready = 0;
@@ -67,7 +67,7 @@ static const char *extract_text_field(const u8 *input, u32 len, u32 *out_len) {
   return 0;
 }
 
-u64 run(u32 ptr, u32 len) {
+CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
   const u8 *input = ck_input(ptr);
   const char *text;
   u32 text_len;
