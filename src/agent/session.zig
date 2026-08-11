@@ -680,3 +680,36 @@ test "compactMessages under a tiny budget still never drops the system message" 
     try std.testing.expectEqual(@as(usize, 1), messages.items.len);
     try std.testing.expectEqual(types.Role.system, messages.items[0].role);
 }
+
+test "renameSession retitles in place and deleteSession removes the file" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "s1",
+        .title = "Old",
+        .messages = &.{.{ .role = .user, .content = "hello" }},
+        .created = 1,
+        .updated = 2,
+    });
+
+    try renameSession(io, gpa, arena, tmp.dir, "s1", "New");
+    const renamed = try loadSession(io, gpa, arena, tmp.dir, "s1");
+    try std.testing.expectEqualStrings("New", renamed.title);
+    try std.testing.expectEqual(@as(usize, 1), renamed.messages.len);
+
+    try deleteSession(io, arena, tmp.dir, "s1");
+    try std.testing.expectError(error.FileNotFound, loadSession(io, gpa, arena, tmp.dir, "s1"));
+}
