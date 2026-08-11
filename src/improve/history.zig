@@ -445,6 +445,22 @@ pub const History = struct {
         rejections: u32,
     };
 
+    /// Number of consecutive non-accepted entries at the tail of the
+    /// window `entries[start..]`. A streak of 3+ means the model has been
+    /// failing repeatedly and should try something fundamentally different.
+    fn trailingRejectionStreak(self: *const History, entries: []const Entry, start: usize) usize {
+        _ = self;
+        if (entries.len == 0) return 0;
+        var streak: usize = 0;
+        var i: usize = entries.len;
+        while (i > start) {
+            i -= 1;
+            if (std.mem.eql(u8, entries[i].status, "accepted")) break;
+            streak += 1;
+        }
+        return streak;
+    }
+
     /// Every file touched by the last `max_entries` attempts.
     ///
     /// These are the files most likely to change again, and a file that
@@ -514,6 +530,17 @@ pub const History = struct {
             }
             try buf.appendSlice(arena, "\n");
         }
+        // Trailing rejection streak: how many consecutive non-accepted
+        // attempts end the window. A long streak is the signal to try a
+        // fundamentally different approach, not a variation of the last one.
+        const streak = self.trailingRejectionStreak(entries, start);
+        if (streak >= 2) {
+            var streak_buf: [128]u8 = undefined;
+            var streak_w: std.Io.Writer = .fixed(&streak_buf);
+            streak_w.print("\nNote: the last {d} consecutive attempts were rejected. Try a fundamentally different file or approach.\n", .{streak}) catch {};
+            try buf.appendSlice(arena, streak_buf[0..streak_w.end]);
+        }
+
         // Append a hot-files section when files have been rejected multiple
         // times, so the model sees which targets to avoid or approach
         // differently.
@@ -625,6 +652,40 @@ test "hotFiles ranks files by rejection frequency" {
     try hist2.append("a2", .accepted, "i", "s", &.{"src/c.zig"}, 0, 1, "", &.{});
     const empty = try hist2.hotFiles(arena, 10);
     try std.testing.expectEqual(@as(usize, 0), empty.len);
+}
+
+test "trailingRejectionStreak counts consecutive non-accepted entries at the tail" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try hist.append("s1", .accepted, "i", "s", &.{}, 0, 1, "", &.{});
+    try hist.append("s2", .rejected, "i", "s", &.{}, 0, 0, "d", &.{});
+    try hist.append("s3", .rejected, "i", "s", &.{}, 0, 0, "d", &.{});
+    try hist.append("s4", .failed, "i", "s", &.{}, 0, 0, "d", &.{});
+
+    const entries = try hist.loadAll(arena);
+    // Three non-accepted entries after the accepted one.
+    try std.testing.expectEqual(@as(usize, 3), hist.trailingRejectionStreak(entries, 0));
+    // Only looking at last 2 entries: both non-accepted.
+    try std.testing.expectEqual(@as(usize, 2), hist.trailingRejectionStreak(entries, 2));
+    // The summary must mention the streak.
+    const summary = try hist.recentSummary(arena, 10);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "consecutive attempts were rejected") != null);
 }
 
 test "an edit already rejected is recognised within the lookback window" {
