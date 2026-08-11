@@ -138,6 +138,25 @@ pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, id:
     try base.deleteFile(io, path);
 }
 
+/// Forks a conversation: the same messages written back under a new id,
+/// titled "fork of <old title>". A fork is a branch you can abandon without
+/// losing the conversation it came from. Returns the new id (arena-owned).
+pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) ![]const u8 {
+    const s = try loadSession(io, gpa, arena, base, id);
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    // Nanosecond suffix keeps two forks of the same session distinct and
+    // stays within the alphanumeric/dash alphabet validSessionId accepts.
+    const new_id = try std.fmt.allocPrint(arena, "{s}-fork-{d}", .{ id, std.Io.Timestamp.now(io, .real).nanoseconds });
+    try saveSession(io, gpa, arena, base, .{
+        .id = new_id,
+        .title = try std.fmt.allocPrint(arena, "fork of {s}", .{s.title}),
+        .messages = s.messages,
+        .created = now,
+        .updated = now,
+    });
+    return new_id;
+}
+
 /// Retitles a conversation in place, leaving its messages untouched.
 ///
 /// Titles are otherwise derived from the first 60 characters of the opening
@@ -251,4 +270,54 @@ test "session save/load round trip" {
     try std.testing.expectEqual(types.Role.tool, loaded.messages[3].role);
     try std.testing.expectEqualStrings("42", loaded.messages[3].content.?);
     try std.testing.expectEqualStrings("tc1", loaded.messages[3].tool_call_id.?);
+}
+
+test "forkSession copies a conversation under a new id and leaves the original alone" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "s1",
+        .title = "Original",
+        .messages = &.{
+            .{ .role = .user, .content = "hello" },
+            .{ .role = .assistant, .content = "hi there" },
+        },
+        .created = 100,
+        .updated = 200,
+    });
+
+    const new_id = try forkSession(io, gpa, arena, tmp.dir, "s1");
+    try std.testing.expect(!std.mem.eql(u8, new_id, "s1"));
+
+    const forked = try loadSession(io, gpa, arena, tmp.dir, new_id);
+    try std.testing.expectEqualStrings(new_id, forked.id);
+    try std.testing.expectEqualStrings("fork of Original", forked.title);
+    try std.testing.expectEqual(@as(usize, 2), forked.messages.len);
+    try std.testing.expectEqualStrings("hello", forked.messages[0].content.?);
+    try std.testing.expectEqualStrings("hi there", forked.messages[1].content.?);
+
+    // Two forks of the same session get distinct ids.
+    const second_id = try forkSession(io, gpa, arena, tmp.dir, "s1");
+    try std.testing.expect(!std.mem.eql(u8, new_id, second_id));
+
+    // The source conversation is untouched.
+    const original = try loadSession(io, gpa, arena, tmp.dir, "s1");
+    try std.testing.expectEqualStrings("Original", original.title);
+    try std.testing.expectEqual(@as(usize, 2), original.messages.len);
+
+    // Forking a session that does not exist fails rather than inventing one.
+    try std.testing.expectError(error.FileNotFound, forkSession(io, gpa, arena, tmp.dir, "nope"));
 }
