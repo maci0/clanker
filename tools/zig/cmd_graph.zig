@@ -60,7 +60,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
 
-    const raw = lib.fsList("state/runs") catch |err| return lib.failErr(out, err, "reading the run graph");
+    // Same as cmd_sessions: state/runs does not exist until the first run
+    // writes one, so a fresh checkout has no graph rather than a broken one.
+    const raw: []const u8 = lib.fsList("state/runs") catch |err| switch (err) {
+        error.NotFound => "[]",
+        else => return lib.failErr(out, err, "reading the run graph"),
+    };
     const names = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{});
 
     if (std.mem.eql(u8, args, "list")) return listRuns(out, alloc, names);

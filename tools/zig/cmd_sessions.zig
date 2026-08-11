@@ -19,7 +19,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
 
-    const raw = lib.fsList("state/sessions") catch |err| return lib.failErr(out, err, "listing state/sessions");
+    // state/ is gitignored and every directory under it is created lazily on
+    // first write, so a checkout that has never saved a session has no
+    // state/sessions at all. That is zero sessions, not a failure — fall
+    // through to the empty-list message below.
+    const raw: []const u8 = lib.fsList("state/sessions") catch |err| switch (err) {
+        error.NotFound => "[]",
+        else => return lib.failErr(out, err, "listing state/sessions"),
+    };
     const names = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{});
 
     var metas: std.ArrayList(SessionMeta) = .empty;

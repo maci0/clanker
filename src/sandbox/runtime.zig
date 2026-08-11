@@ -538,6 +538,47 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     try std.testing.expect(std.mem.indexOf(u8, read_out, "tool gate  3 B") != null);
 }
 
+test "cmd_sessions and cmd_graph report empty when the state dir does not exist" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    // A sandbox root with no state/ at all — what a fresh clone looks like,
+    // since state/ is gitignored and every subdirectory under it is created
+    // lazily on first write.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "state/sessions/", "state/runs/" },
+        .environ_map = &env_map,
+    };
+
+    const cases = [_]struct { wasm: []const u8, want: []const u8 }{
+        .{ .wasm = "zig-out/tools/cmd_sessions.wasm", .want = "(no sessions yet)" },
+        .{ .wasm = "zig-out/tools/cmd_graph.wasm", .want = "(no runs yet" },
+    };
+    for (cases) |c| {
+        const wasm = try std.Io.Dir.cwd().readFileAlloc(io, c.wasm, std.testing.allocator, .limited(1 << 20));
+        defer std.testing.allocator.free(wasm);
+        const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+        defer mod.deinit();
+        const out = try mod.executeTool("{}");
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, c.want) != null);
+    }
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
