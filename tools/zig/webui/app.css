@@ -1599,7 +1599,7 @@ h2#session-title {
   background: var(--surface-2); max-height: 32rem;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
 }
-.board-col[data-drop="true"] { border-color: var(--accent); }
+.board-col[data-drop="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface-2)); box-shadow: inset 0 0 0 1px var(--accent); }
 .board-col-head {
   display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3);
   padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule);
@@ -1622,12 +1622,13 @@ h2#session-title {
   font-family: var(--sans); font-size: var(--step-0);
   display: flex; flex-direction: column; gap: var(--space-2);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  transition: border-color 160ms ease;
+  transition: border-color 160ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
-.card:hover { border-color: var(--border); }
+.card:hover { border-color: var(--border); transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
+.card:active { transform: translateY(0); }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.1); }
-.card[data-dragging="true"] { opacity: 0.5; }
+.card[data-dragging="true"] { opacity: 0.5; transform: rotate(1deg) scale(1.02); }
 .card-title { overflow-wrap: anywhere; }
 .card-meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .card-flag { border-radius: var(--radius-pill); padding: 0 var(--space-2); border: 1px solid var(--rule); }
@@ -1827,6 +1828,8 @@ h2#session-title {
 @media (prefers-reduced-motion: reduce) {
   .json-node > summary::before, .tool-config > summary::before { transition: none; }
   .fleet-card, .card, .rail-tab[aria-selected="true"]::before { transition: none; }
+  .card:hover { transform: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
+  .card[data-dragging="true"] { transform: none; }
 }
 @media (max-width: 900px) {
   #view-fleet .runs { margin-top: var(--space-4); }
