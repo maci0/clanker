@@ -337,6 +337,14 @@ pub const Agent = struct {
 
         var iteration: u32 = 0;
         var budget_hit = false;
+        // Cross-turn duplicate tool-call detection: the intra-batch dedup in
+        // executeCalls only serializes repeats within one batch, so a model
+        // retrying the exact same call (same name + same arguments) on
+        // consecutive iterations would spin until max_iterations with no
+        // answer. Fingerprint counts are per-run; the third identical call
+        // gets a synthetic error result instead of another execution.
+        var call_counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
+        defer call_counts.deinit(self.ctx.gpa);
         while (iteration < self.max_iterations) : (iteration += 1) {
             try self.maybeCompactMessages(messages);
 
@@ -458,11 +466,46 @@ pub const Agent = struct {
             if (self.on_tool_call) |cb| cb(calls);
             const tool_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
+            // Cross-turn dedup: a call already executed twice with identical
+            // arguments gets a synthetic error result instead of a third
+            // execution, deterministically breaking a verbatim retry spin and
+            // telling the model to answer with what it already has.
+            const skipped = try self.arena.alloc(bool, calls.len);
+            @memset(skipped, false);
+            var to_run: std.ArrayList(types.ToolCall) = .empty;
+            defer to_run.deinit(self.ctx.gpa);
+            for (calls, 0..) |tc, i| {
+                const fp = try std.fmt.allocPrint(self.arena, "{s}\x00{s}", .{ tc.name, tc.arguments });
+                const gop = try call_counts.getOrPut(self.ctx.gpa, fp);
+                if (!gop.found_existing) gop.value_ptr.* = 0;
+                gop.value_ptr.* += 1;
+                if (gop.value_ptr.* >= 3) {
+                    skipped[i] = true;
+                    log.log(.warn, "tool '{s}' repeated identically {d} times; refusing to re-execute", .{ tc.name, gop.value_ptr.* });
+                    continue;
+                }
+                try to_run.append(self.ctx.gpa, tc);
+            }
             // Execute tool calls in parallel for distinct tool names (each on
             // a worker thread with a large stack); a tool name repeated in the
             // same batch falls back to sequential execution because the zwasm
             // module is stateful and the cached instance is reused.
-            const results = try self.executeCalls(calls);
+            const run_results = try self.executeCalls(to_run.items);
+            // Re-align results with the original batch: skipped calls keep
+            // their synthetic error, executed calls take the next result, so
+            // the results loop below is unchanged.
+            const results = try self.arena.alloc(?[]const u8, calls.len);
+            {
+                var ri: usize = 0;
+                for (skipped, 0..) |skip, i| {
+                    if (skip) {
+                        results[i] = "{\"ok\":false,\"error\":\"identical tool call already executed twice with the same arguments; do not repeat it — answer with the information you already have\"}";
+                    } else {
+                        results[i] = run_results[ri];
+                        ri += 1;
+                    }
+                }
+            }
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
