@@ -433,13 +433,12 @@ pub fn ckHttp(
     hdr_ptr: u32,
     hdr_len: u32,
 ) u32 {
-    _ = hdr_ptr;
-    _ = hdr_len;
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const url = sliceOf(bytes, url_ptr, url_len) orelse return Err.invalid;
     const body = sliceOf(bytes, body_ptr, body_len) orelse &.{};
-    return httpImpl(h, bytes, method, url, body);
+    const hdr_json = if (hdr_len > 0) sliceOf(bytes, hdr_ptr, hdr_len) else null;
+    return httpImpl(h, bytes, method, url, body, hdr_json);
 }
 
 // Host-side implementation for the docker tool; registered in runtime.zig linkHostFns.
@@ -680,7 +679,37 @@ pub fn ckStats(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8) u32 {
+/// Maximum number of custom headers a tool may send per request.
+const max_custom_headers = 16;
+
+/// Parses a JSON object of string key-value pairs into extra HTTP headers.
+/// Returns the number of headers written into `out`. Malformed input or
+/// non-string values are silently skipped so the request still goes through
+/// with whatever headers were valid.
+fn parseCustomHeaders(
+    arena: std.mem.Allocator,
+    hdr_json: ?[]const u8,
+    out: *[max_custom_headers]std.http.Header,
+) u32 {
+    const json = hdr_json orelse return 0;
+    if (json.len == 0) return 0;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json, .{}) catch return 0;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return 0,
+    };
+    var count: u32 = 0;
+    for (obj.keys(), obj.values()) |key, val| {
+        if (count >= max_custom_headers) break;
+        if (val != .string) continue;
+        if (key.len == 0) continue;
+        out[count] = .{ .name = key, .value = val.string };
+        count += 1;
+    }
+    return count;
+}
+
+fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
     const uri = std.Uri.parse(url) catch return Err.invalid;
     const hostname = switch (uri.host orelse return Err.invalid) {
         .raw => |hh| hh,
@@ -698,6 +727,13 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         log.log(.warn, "[sandbox] tool denied network access to '{s}'", .{hostname});
         return Err.denied;
     }
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var custom_hdrs: [max_custom_headers]std.http.Header = undefined;
+    const n_custom = parseCustomHeaders(arena, hdr_json, &custom_hdrs);
 
     var http: std.http.Client = .{ .allocator = h.sandbox.gpa, .io = h.sandbox.io };
     defer http.deinit();
@@ -721,12 +757,57 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         .method = req_method,
         .payload = if (has_body) body else null,
         .headers = .{ .user_agent = .{ .override = "clanker-tool/0.1.0" } },
+        .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
         .response_writer = &w,
     }) catch return Err.network;
 
     const response = resp_buf[0..w.end];
     if (@intFromEnum(result.status) >= 400) return Err.network;
     return h.writeResult(mem_bytes, response);
+}
+
+test "parseCustomHeaders parses valid JSON object into headers" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hdrs: [max_custom_headers]std.http.Header = undefined;
+
+    // Valid object with two string values.
+    const n = parseCustomHeaders(arena, "{\"Authorization\":\"Bearer tok123\",\"Content-Type\":\"application/json\"}", &hdrs);
+    try std.testing.expectEqual(@as(u32, 2), n);
+    // Check both headers are present (order from JSON object is not guaranteed,
+    // but the std JSON parser preserves insertion order).
+    var found_auth = false;
+    var found_ct = false;
+    for (hdrs[0..n]) |hdr| {
+        if (std.mem.eql(u8, hdr.name, "Authorization") and std.mem.eql(u8, hdr.value, "Bearer tok123")) found_auth = true;
+        if (std.mem.eql(u8, hdr.name, "Content-Type") and std.mem.eql(u8, hdr.value, "application/json")) found_ct = true;
+    }
+    try std.testing.expect(found_auth);
+    try std.testing.expect(found_ct);
+}
+
+test "parseCustomHeaders handles null, empty, non-object, and non-string values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hdrs: [max_custom_headers]std.http.Header = undefined;
+
+    // null input.
+    try std.testing.expectEqual(@as(u32, 0), parseCustomHeaders(arena, null, &hdrs));
+    // Empty string.
+    try std.testing.expectEqual(@as(u32, 0), parseCustomHeaders(arena, "", &hdrs));
+    // Non-object JSON.
+    try std.testing.expectEqual(@as(u32, 0), parseCustomHeaders(arena, "[1,2]", &hdrs));
+    // Object with non-string value — those entries are skipped.
+    const n2 = parseCustomHeaders(arena, "{\"X-Good\":\"yes\",\"X-Bad\":42}", &hdrs);
+    try std.testing.expectEqual(@as(u32, 1), n2);
+    try std.testing.expectEqualStrings("X-Good", hdrs[0].name);
+    try std.testing.expectEqualStrings("yes", hdrs[0].value);
+    // Invalid JSON.
+    try std.testing.expectEqual(@as(u32, 0), parseCustomHeaders(arena, "{not json", &hdrs));
 }
 
 /// Lists the entries under an allowed directory as a JSON string array
