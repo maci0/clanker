@@ -46,6 +46,7 @@ const Req = struct {
     priority: ?[]const u8 = null,
     deadline: ?i64 = null,
     who: ?[]const u8 = null,
+    assignee: ?[]const u8 = null,
     text: ?[]const u8 = null,
     subtask: ?[]const u8 = null,
     subtask_id: ?[]const u8 = null,
@@ -77,7 +78,9 @@ const Sent = struct {
 /// Reads the room's whole log, oldest first, following `after` until a page
 /// comes back empty. Messages are deduplicated by id: paging by timestamp can
 /// hand back the boundary message twice, and folding a claim twice would be
-/// harmless but folding a cost twice would not.
+/// harmless but folding a cost twice would not. Errors with `PartialLog` when
+/// the page budget runs out before the log does: what was collected is not the
+/// whole board, and folding it anyway would resurrect deleted cards.
 fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
     var all: std.ArrayList(cards.Message) = .empty;
     var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
@@ -113,6 +116,10 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
         // nothing this tool controls, so the fold sorts rather than assumes.
         if (added == 0 or parsed.messages.len == 0) break;
     }
+    // The loop stops early only when a page adds nothing new. Leaving it by
+    // exhausting the budget instead means the log kept going, and there is no
+    // telling what the missing pages held.
+    if (page == max_pages) return error.PartialLog;
 
     std.mem.sort(cards.Message, all.items, {}, struct {
         fn lt(_: void, a: cards.Message, b: cards.Message) bool {
@@ -240,6 +247,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const msgs = history(alloc, room) catch |err| return lib.fail(out, switch (err) {
         error.SandboxDenied => "chatrooms are disabled, and the board is a chatroom",
         error.TooLarge => "this room's log no longer fits in one read; the board cannot be folded from a partial log",
+        error.PartialLog => "this room's log ran past the page budget; the board cannot be folded from a partial log",
         else => "could not read the board's room",
     });
     const list = try cards.derive(alloc, msgs);
@@ -272,6 +280,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (req.priority) |p| {
             if (!cards.validPriority(p)) return lib.fail(out, "priority must be low, normal or high");
         }
+        // The manifest calls it `assignee`; an empty one means the same as
+        // none, so it is dropped rather than encoded as a cleared field.
+        const assignee: ?[]const u8 = if (req.assignee) |a| (if (a.len > 0) a else null) else null;
         _ = apply(alloc, room, .{
             .action = "add",
             .title = title,
@@ -279,6 +290,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .column = req.column,
             .priority = req.priority,
             .deadline = req.deadline,
+            .who = assignee,
         }) catch return lib.fail(out, "could not post the card to the room");
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
@@ -315,7 +327,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .column = req.column,
             .priority = req.priority,
             .deadline = req.deadline,
-            .who = req.who,
+            // `assignee` is the manifested name (and what the web UI sends);
+            // `who` is the older internal one. Either reassigns, "" clears.
+            .who = req.who orelse req.assignee,
         };
     } else if (std.mem.eql(u8, op, "move")) blk: {
         const col = req.column orelse return lib.fail(out, "which column?");

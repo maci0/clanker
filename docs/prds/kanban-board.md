@@ -51,15 +51,13 @@ board by folding the room's whole log, oldest first, deduplicated by message
 id, sorted by `(ts, id)`. The response after a write is re-derived rather
 than assumed, because a concurrent claim from a peer may have won.
 
-**Paging bound (intent, not current behavior — see Known issues).** The guest
-reads history in pages through a 64 KB host buffer, up to `max_pages = 64`.
-The design intent, stated in `board.zig`'s own comments, is that a board
-reaching the cap is reported as an error rather than silently folded from a
-partial log, since a partial fold would quietly resurrect deleted cards and
-lose moves. `history()` does not currently enforce this: it returns whatever
-it collected when the page budget runs out, with no error. `error.TooLarge`
-only fires if a single page's JSON exceeds the 64 KB buffer, not when the
-page-count cap is hit.
+**Paging bound.** The guest reads history in pages through a 64 KB host
+buffer, up to `max_pages = 64`. Running out of page budget while pages are
+still arriving is an error, not a partial fold: `history()` refuses, since a
+partial fold would quietly resurrect deleted cards and lose moves.
+`error.TooLarge` covers the other size limit — a single page's JSON exceeding
+the 64 KB buffer. Neither bound closes the paging-cursor hole in Known
+issues, which reaches a partial fold without ever touching the cap.
 
 **Ops.** `list`, `create`/`add`, `update`, `move`, `claim`, `assign`,
 `close`, `delete`, `log`, `usage`, `subtask_add`, `subtask_toggle`,
@@ -68,8 +66,11 @@ agent-facing tools pin their op in the descriptor's `config`; `board_subtask`
 and `board_depend` instead take `op` as a request field (one tool, several
 sub-ops each) since a subtask/dependency action needs more than a fixed verb.
 The internal multiplexed `board` entry point always names the op in the
-request. Aliases (`subtask`/`subtask_id`, `on`/`depends_on`, `run`/`run_id`)
-are accepted so old callers keep working.
+request. Aliases (`subtask`/`subtask_id`, `on`/`depends_on`, `run`/`run_id`,
+and `who`/`assignee` on `update`) are accepted so old callers keep working.
+`create` takes `assignee` too, so a card can be put on someone the moment it
+exists; the assignment folds as if stamped by the add itself, and a later
+`assign` or `claim` outranks it by the usual rule.
 
 **Validation lives in the guest.** Title 1–512 chars, bounded body, known
 column, priority in {low, normal, high}, existing card id, no
@@ -91,29 +92,26 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Known issues
 
-- **Silent partial fold at the page cap.** `history()` should error when
-  `max_pages` is hit (stated in both this PRD and `board.zig`'s own
-  comments) but instead returns whatever it collected. A board past the cap
-  can quietly resurrect deleted cards or drop moves with no signal to the
-  caller. Fix belongs in `tools/zig/board.zig`'s `history()` loop.
-- **`board_add` and `board_update` manifests advertise a dead `assignee`
-  field.** Neither tool's `Req` struct has an `assignee` field (`board.zig`
-  parses `who` for reassignment on `update`); the manifested field is
-  silently dropped by `ignore_unknown_fields`. A card can't be assigned at
-  creation despite the manifest promising it, and `board_update` callers who
-  follow their own tool's schema get a silent no-op.
-- **`board_move`'s `position` field is a no-op.** No ordering/position
-  concept exists in `cards.zig` or `board.zig`'s `move` handling.
-- These three are manifest/implementation drift, not doc drift — the
-  manifests describe a design the Zig side moved past. Fix by either
-  implementing the fields or removing them from the manifests.
+- **A log longer than one page folds from its newest messages only.** The
+  host answers a history request with the *newest* 20 messages after the
+  cursor (`src/sandbox/host.zig`), and the guest advances the cursor to the
+  highest timestamp it has seen — so the first page jumps it to the end of
+  the log and the second comes back empty. A board room past 20 messages
+  folds without its oldest messages: adds fall off first, and every action on
+  a card whose add was dropped is ignored. Measured, not guessed: a
+  25-message log folds to 20 cards. The page-cap error cannot catch this —
+  the loop ends well under budget — and the fix needs an oldest-first page
+  shape from the host, which newest-first chat display must not inherit.
+  That makes it a different fix from the (closed) page-cap one, and it is
+  still open.
 
 ## Failure modes
 
 | Condition | Behaviour |
 |---|---|
 | Chatrooms disabled | `list` fails: "chatrooms are disabled, and the board is a chatroom" |
-| Log exceeds page cap | **Bug:** silently returns a partial fold; no error (see Known issues) |
+| Log runs past the page budget | Error: the board refuses to fold from a partial log |
+| Log longer than one history page | **Bug:** folds from the newest messages only, no error (see Known issues) |
 | Claim race lost | Answer shows who holds the claim |
 | Move to unknown column / unknown card | Named error before any write |
 | Delete | Permanent; peers that already dropped it never restore it |
@@ -127,16 +125,16 @@ runs — this one field is not itself an array, unlike the others above).
 - [x] No *tracked* file under `state/` other than the room log (a stray,
   gitignored `state/board.json` from before this design may still sit in a
   local checkout; nothing reads it).
-- [ ] Log exceeding the page cap errors instead of partially folding — not
-  currently true, see Known issues.
+- [x] Exhausting the page budget errors instead of partially folding. (The
+  paging-cursor hole in Known issues is a separate, still-open way to reach
+  a partial fold; it never touches the cap.)
 
 ## Open questions / future work
 
 - Board cap behaviour: archive old rooms or compact the log (a snapshot
-  action) before `max_pages` is reachable in practice. (Separate from, and a
-  longer-term answer to, the Known issues bug above — that bug should be
-  fixed regardless of whether compaction ever ships.)
+  action) before a room outgrows what one fold can read. Compaction would
+  also shrink the paging-cursor hole in Known issues, but that hole should
+  be closed on its own — an oldest-first page shape for folds — whether or
+  not compaction ever ships.
 - Column set is fixed in `cards.zig`; configurable columns would need a
   room-level config action, not a descriptor change.
-- `board_add`/`board_update`/`board_move` manifest fields above: implement
-  or remove.

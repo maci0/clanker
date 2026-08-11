@@ -17,10 +17,6 @@
         "type": "string",
         "description": "Column id to move it to"
       },
-      "position": {
-        "type": "integer",
-        "description": "Index within the column; omit to append"
-      },
       "room": {
         "type": "string",
         "description": "Board room name; omit for the default 'board' room"
