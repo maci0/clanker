@@ -60,8 +60,16 @@ change a tool's behaviour without changing the thing running the gate.
 
 So, when adding a capability:
 
-- Write it as `tools/zig/<name>.zig` with a descriptor in `tools/manifests/`.
-  Native code in `src/` needs a reason that survives the questions above.
+- Write it as a guest module with a descriptor in `tools/manifests/`. Native
+  code in `src/` needs a reason that survives the questions above.
+- Either language compiles to a guest, and the host cannot tell them apart:
+  `tools/zig/<name>.zig`, built by `zig build tools` into `zig-out/tools/`
+  (gitignored), or `tools/ts/<name>.ts` in AssemblyScript, built by
+  `npm run build:all` in `tools/ts/` into `tools/bin/` (committed, since not
+  everyone building clanker has a node toolchain). The descriptor's `wasm`
+  field points at whichever path. Zig is the default because the harness is
+  Zig and `lib.zig` carries the host bindings; reach for AssemblyScript when
+  the logic is easier to express in TypeScript or already exists there.
 - Migrate what is already native when you touch it. `patch_apply`, `peers`, and
   `board` each began as `src/` code and moved out, deleting more from the
   harness than they added as guests.
