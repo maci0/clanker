@@ -8,6 +8,10 @@
             .url = "https://github.com/clojurewasm/zwasm/archive/refs/tags/v2.4.1.tar.gz",
             .hash = "zwasm-2.4.1-FT1Fv0J0jQDowvbJuWRyBg6N0aX7lj52ldrm7T7HWzBr",
         },
+        .vaxis = .{
+            .url = "git+https://github.com/rockorager/libvaxis#82cec0db8fc57c32f2ce4c1c3fc377052f4c86ba",
+            .hash = "vaxis-0.6.0-BWNV_KwYCgB-L5MNRY8I8HGbKDE6KOxDPAVSaZ8-3lJ8",
+        },
     },
     .paths = .{
         "build.zig",

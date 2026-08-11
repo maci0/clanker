@@ -170,9 +170,11 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 // ------------------------------------------------------------------ writing --
 
 /// Appends a message to the local log, trimming the log to
-/// cfg.chatrooms.max_history entries. The read-modify-write is safe because
-/// chat tools are marked `sequential` (no parallel workers) and serve handles
-/// one connection at a time.
+/// cfg.chatrooms.max_history entries. `serve` now runs one thread per
+/// connection, so two local requests can call this at once, on top of the
+/// cross-process case; the read-modify-write below is safe only because of
+/// the exclusive `lock_file_name` lock, not because of any single-threading
+/// assumption.
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
     if (state_dir.len > 0) try base.createDirPath(io, state_dir);
     const path = try subPath(arena, state_dir, log_path);
