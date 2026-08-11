@@ -1,6 +1,6 @@
 {
   "name": "reasoning",
-  "description": "read recent reasoning traces recorded from reasoning models (state/reasoning.jsonl) to review your own chain-of-thought and learn from it (RLM).",
+  "description": "Retrieve recent reasoning traces (chain-of-thought logs) recorded from prior reasoning-model calls (stored in state/reasoning.jsonl). Use this when you need to introspect or debug your own past reasoning — e.g. to spot repeated mistakes, review how you arrived at a decision, or extract insights from earlier thinking. Do NOT use this to process or summarize arbitrary text (use the rlm tool instead). Input: an optional integer field 'last' specifying how many recent traces to return (omit to get all).",
   "wasm": "zig-out/tools/reasoning.wasm",
   "input_schema": {
     "type": "object",
