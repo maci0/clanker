@@ -1,5 +1,5 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fmtDeadline as utilFmtDeadline, fuzzyMatch as utilFuzzyMatch } from "./core/utils.js";
-import { T as vanT, bind as vanBind, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI } from "./core/ui.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI } from "./core/ui.js";
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
@@ -3038,37 +3038,7 @@ SUGGESTIONS.forEach(function (text) {
    or Export or Save prompt produced no sign anything had happened unless you
    were using a screen reader. Rather than change fifty call sites and leave
    the two able to drift, the regions are observed and mirrored here. */
-var toasts = document.getElementById("toasts");
-
-function showToast(text) {
-  if (!text) return;
-  var node = document.createElement("p");
-  node.className = "toast";
-  node.tabIndex = 0;
-  // The word "failed" is the one distinction worth colour: everything else
-  // is progress, and progress does not need to shout.
-  if (/fail|error|could not|refus|denied|no such/i.test(text)) node.setAttribute("data-kind", "bad");
-  node.textContent = text;
-  node.setAttribute("aria-label", text + ". Press Enter, Space, or Escape to dismiss.");
-  node.addEventListener("click", function () { node.remove(); });
-  node.addEventListener("keydown", function (event) {
-    if (event.key !== "Enter" && event.key !== " " && event.key !== "Escape") return;
-    event.preventDefault();
-    node.remove();
-  });
-  // A 5s timer is too short to read a long message, so hovering or focusing
-  // it (mouse or keyboard) holds it on screen; it resumes counting down once
-  // you look away, rather than vanishing mid-read.
-  var timer;
-  function schedule() { timer = window.setTimeout(function () { node.remove(); }, 5000); }
-  node.addEventListener("mouseenter", function () { window.clearTimeout(timer); });
-  node.addEventListener("mouseleave", schedule);
-  node.addEventListener("focusin", function () { window.clearTimeout(timer); });
-  node.addEventListener("focusout", schedule);
-  toasts.appendChild(node);
-  while (toasts.children.length > 3) toasts.removeChild(toasts.firstChild);
-  schedule();
-}
+function showToast(text) { uiToast(text); }
 
 if (window.MutationObserver) {
   var statusObserver = new MutationObserver(function (records) {
