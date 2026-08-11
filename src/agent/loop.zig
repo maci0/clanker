@@ -9,6 +9,7 @@ const registry = @import("../tools/registry.zig");
 const tool_usage = @import("../tools/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
+const private_todos = @import("private_todos.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
 const autolearn = @import("autolearn.zig");
@@ -100,6 +101,10 @@ pub const Agent = struct {
     /// Nested sub-agent runner, wired by the app when modules.subagents is
     /// enabled (powers the subagent tool via ck_subagent).
     subagent_runner: ?host.SubagentRunner = null,
+    /// This run's private todo list, wired by subagent.runNested and null for
+    /// top-level agents. Handed to every tool sandbox so todo_* calls that
+    /// name no "room" reach it (see src/agent/private_todos.zig).
+    private_todos: ?*private_todos.List = null,
     /// When set, tool calls run strictly sequentially (no worker threads).
     /// Used by sub-agent runs to avoid spawning threads from within threads.
     no_parallel_tools: bool = false,
@@ -1276,6 +1281,7 @@ pub const Agent = struct {
         // Agent-only extras: nested sub-agents and the state dir are meaningless
         // for the CLI and MCP callers of the shared builder.
         sb.subagent_runner = self.subagent_runner;
+        sb.private_todos = self.private_todos;
         sb.ask_fn = self.ask_fn;
         sb.parent_task = self.current_task;
         sb.state_dir = self.cfg.agent.state_dir;

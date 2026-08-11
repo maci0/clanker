@@ -16,6 +16,7 @@ const config_mod = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const todos_mod = @import("../peers/todos.zig");
+const private_todos_mod = @import("../agent/private_todos.zig");
 const filelock = @import("../util/filelock.zig");
 const token_stats = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
@@ -134,6 +135,10 @@ pub const Sandbox = struct {
     exec_allow: []const []const u8 = &.{},
     /// Environment variables a guest may read, from the tool's manifest.
     env_allow: []const []const u8 = &.{},
+    /// A nested run's private todo list (src/agent/private_todos.zig), wired
+    /// only by subagent.runNested. When set, todo_* ops that name no "room"
+    /// operate on it instead of a shared room list; null for top-level agents.
+    private_todos: ?*private_todos_mod.List = null,
     /// Directory (relative to `state_base_dir`) holding the harness state:
     /// chatroom logs, subscriptions, cursor. Defaults to "state".
     state_dir: []const u8 = "state",
@@ -617,21 +622,15 @@ const ChatOp = struct {
 /// src/peers/todos.zig), so they reuse the same log, fan-out, and
 /// subscription filter; a claim can lose to a concurrent claim already in
 /// the log, which is why todo_claim reports the winner.
+/// Exception: a todo_* op with no "room" targets the run's private list
+/// (sub-agent runs only; src/agent/private_todos.zig) — same ops and
+/// response shapes, but in-memory, single-owner, and never fanned out.
 /// The fan-out, subscription filter, and persistence all live host-side so
 /// the WASM module stays thin; the descriptor config pins which op a tool is.
 pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const input = sliceOf(bytes, ptr, len) orelse return Err.invalid;
-
-    const cfg = h.sandbox.cfg orelse {
-        log.log(.warn, "[chat] denied: no config in sandbox", .{});
-        return Err.denied;
-    };
-    if (!cfg.modules.chatrooms) {
-        log.log(.warn, "[chat] denied: chatrooms module disabled", .{});
-        return Err.denied;
-    }
 
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
@@ -641,6 +640,26 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         return Err.invalid;
     };
     const op = parsed.op orelse return Err.invalid;
+
+    // A todo_* op that names no room targets the run's private list (wired
+    // only inside sub-agent runs). Routed before the chatrooms gate on
+    // purpose: a private list is in-memory state on this one run, not a chat
+    // message, so it neither needs the module nor touches its log.
+    if (std.mem.startsWith(u8, op, "todo_") and (parsed.room == null or parsed.room.?.len == 0)) {
+        const list = h.sandbox.private_todos orelse
+            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no \\\"room\\\" given, and private todo lists exist only inside sub-agent runs; pass \\\"room\\\" to use a shared room list\"}");
+        const out = private_todos_mod.handleOp(list, arena, op, parsed.title, parsed.todo) catch return Err.too_large;
+        return h.writeResult(bytes, out);
+    }
+
+    const cfg = h.sandbox.cfg orelse {
+        log.log(.warn, "[chat] denied: no config in sandbox", .{});
+        return Err.denied;
+    };
+    if (!cfg.modules.chatrooms) {
+        log.log(.warn, "[chat] denied: chatrooms module disabled", .{});
+        return Err.denied;
+    }
 
     var out_buf: [64 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&out_buf);

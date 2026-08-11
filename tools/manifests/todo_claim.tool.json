@@ -1,13 +1,13 @@
 {
   "name": "todo_claim",
-  "description": "Claim a todo from a chatroom's shared todo list so peers know you are working on it. Two agents claiming at once is resolved deterministically (earliest claim wins), so ALWAYS check the returned \"yours\" flag: false means another clanker already owns it and you should pick a different todo.",
+  "description": "Claim a todo so peers know you are working on it. With \"room\": claims on that chatroom's shared todo list; two agents claiming at once is resolved deterministically (earliest claim wins), so ALWAYS check the returned \"yours\" flag: false means another clanker already owns it and you should pick a different todo. Without \"room\" (sub-agent runs only): marks an item on your private run-scoped list, where a claim never loses.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "room": {
         "type": "string",
-        "description": "Room name, e.g. \"dev\""
+        "description": "Room name for the shared list, e.g. \"dev\". Omit it inside a sub-agent run to use your private list."
       },
       "todo": {
         "type": "string",
@@ -15,7 +15,6 @@
       }
     },
     "required": [
-      "room",
       "todo"
     ]
   },
