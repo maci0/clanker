@@ -169,3 +169,34 @@ test "consecutive final nodes are never collapsed" {
     try std.testing.expectEqual(@as(u32, 1), g.nodes.items[0].repeats);
     try std.testing.expectEqual(@as(u32, 1), g.nodes.items[1].repeats);
 }
+
+test "total tokens aggregate across nodes, collapsed repeats count once per call" {
+    const gpa = std.testing.allocator;
+    var g = Graph{ .run_id = "run-tokens", .task = "t", .provider = "p", .started_at = 0 };
+    defer g.deinit(gpa);
+
+    // Two separate LLM steps: 100/20 and 50/30 tokens.
+    try g.add(gpa, .{ .kind = .llm, .iteration = 1, .label = "chat", .prompt_tokens = 100, .completion_tokens = 20 });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "read_file" });
+    try g.add(gpa, .{ .kind = .llm, .iteration = 2, .label = "chat", .prompt_tokens = 50, .completion_tokens = 30 });
+    try std.testing.expectEqual(@as(u64, 150), g.totalPromptTokens());
+    try std.testing.expectEqual(@as(u64, 50), g.totalCompletionTokens());
+
+    // A back-to-back repeat collapses into one node whose token counts are
+    // summed, so the totals still reflect every underlying call.
+    var g2 = Graph{ .run_id = "run-repeats", .task = "t", .provider = "p", .started_at = 0 };
+    defer g2.deinit(gpa);
+    try g2.add(gpa, .{ .kind = .llm, .iteration = 1, .label = "chat", .prompt_tokens = 10, .completion_tokens = 5 });
+    try g2.add(gpa, .{ .kind = .llm, .iteration = 1, .label = "chat", .prompt_tokens = 10, .completion_tokens = 5 });
+    try g2.add(gpa, .{ .kind = .llm, .iteration = 1, .label = "chat", .prompt_tokens = 10, .completion_tokens = 5 });
+    try std.testing.expectEqual(@as(usize, 1), g2.nodes.items.len);
+    try std.testing.expectEqual(@as(u32, 3), g2.nodes.items[0].repeats);
+    try std.testing.expectEqual(@as(u64, 30), g2.totalPromptTokens());
+    try std.testing.expectEqual(@as(u64, 15), g2.totalCompletionTokens());
+
+    // An empty graph totals to zero.
+    var g3 = Graph{ .run_id = "run-empty", .task = "t", .provider = "p", .started_at = 0 };
+    defer g3.deinit(gpa);
+    try std.testing.expectEqual(@as(u64, 0), g3.totalPromptTokens());
+    try std.testing.expectEqual(@as(u64, 0), g3.totalCompletionTokens());
+}
