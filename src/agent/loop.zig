@@ -253,17 +253,8 @@ pub const Agent = struct {
                 kv.value_ptr.*.deinit();
             }
             self.modules.clearRetainingCapacity();
-            // The wasm cache holds gpa-owned keys and file bytes; the modules
-            // above were freed but these were not, so every run leaked one
-            // copy of every tool's wasm.
-            var wit = self.wasm_cache.iterator();
-            while (wit.next()) |kv| {
-                self.ctx.gpa.free(kv.key_ptr.*);
-                self.ctx.gpa.free(@constCast(kv.value_ptr.*));
-            }
-            self.wasm_cache.deinit(self.ctx.gpa);
-            self.wasm_cache = .empty;
-            // wasm_cache is gpa-owned and survives across turns; do NOT clear it here.
+            // wasm_cache is gpa-owned and survives across turns (freed once
+            // in Agent.deinit at session end): do NOT clear it here.
             const run_ms: u64 = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
             const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
             const prompt_total = self.stats.total_cache_hit_tokens + self.stats.total_cache_miss_tokens;
