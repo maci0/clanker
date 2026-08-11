@@ -365,6 +365,12 @@
      tag here on purpose: together they are ~200 KB, and the common visit (check
      status, read a streamed answer) needs neither. loadVendor below fetches each
      one the first time something actually needs it. -->
+<!-- Order matters and is guaranteed: module scripts and deferred classic
+     scripts both execute in document order once parsing is done. van-boot puts
+     VanJS on window, van-ui destructures van.tags the moment it loads, and
+     app.js uses both. -->
+<script type="module" src="/webui/van-boot.js"></script>
+<script src="/webui/vendor/van-ui.js" defer></script>
 <script src="/webui/app.js" defer></script>
 </body>
 </html>

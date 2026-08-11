@@ -793,7 +793,7 @@ function showCaret(turn, on) {
    innerHTML, so markup a model writes lands as visible characters and is
    never parsed as markup. */
 
-var INLINE_RE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
 
 function inlineInto(parent, text) {
   while (text.length) {
@@ -820,6 +820,15 @@ function inlineInto(parent, text) {
       }
       node = document.createElement("em");
       inlineInto(node, tok.slice(1, -1));
+    } else if (tok.slice(0, 2) === "![") {
+      // An image, not a link to one: the link branch below matched the second
+      // half and left the "!" behind as text.
+      var isplit = tok.indexOf("](");
+      node = document.createElement("img");
+      node.src = tok.slice(isplit + 2, -1);
+      node.alt = tok.slice(2, isplit);
+      node.className = "md-img";
+      node.loading = "lazy";
     } else if (tok.charAt(0) === "[") {
       var split = tok.indexOf("](");
       node = document.createElement("a");
@@ -864,17 +873,50 @@ function renderMarkdown(text) {
   var frag = document.createDocumentFragment();
   var lines = text.split("\n");
   var i = 0;
-  function flushList(ordered) {
+  /* Indentation is structure: agent output leans on nested bullets, and
+     flattening a plan into one level loses what depends on what. Each level
+     recurses, so a sub-list becomes a list inside its parent's item. */
+  function buildList(ordered, indent) {
     var list = document.createElement(ordered ? "ol" : "ul");
+    var li = null;
     while (i < lines.length) {
-      var m = ordered ? /^\s*\d+[.)]\s+(.*)$/.exec(lines[i]) : /^\s*[-*+]\s+(.*)$/.exec(lines[i]);
+      var line = lines[i];
+      var m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line);
       if (!m) break;
-      var li = document.createElement("li");
-      inlineInto(li, m[1]);
+      var depth = m[1].length;
+      if (depth < indent) break;
+      if (depth > indent) {
+        // Deeper than this list: it belongs to the item just added.
+        var childOrdered = /\d/.test(m[2]);
+        var child = buildList(childOrdered, depth);
+        (li || list).appendChild(child);
+        continue;
+      }
+      var isOrdered = /\d/.test(m[2]);
+      if (isOrdered !== ordered) break;
+      li = document.createElement("li");
+      var text = m[3];
+      // A task list is a checklist, not two literal brackets.
+      var task = /^\[([ xX])\]\s+(.*)$/.exec(text);
+      if (task) {
+        var box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = task[1] !== " ";
+        box.disabled = true;
+        li.className = "md-task";
+        li.appendChild(box);
+        text = task[2];
+      }
+      inlineInto(li, text);
       list.appendChild(li);
       i += 1;
     }
-    frag.appendChild(list);
+    return list;
+  }
+
+  function flushList(ordered) {
+    var indent = /^(\s*)/.exec(lines[i])[1].length;
+    frag.appendChild(buildList(ordered, indent));
   }
   while (i < lines.length) {
     var line = lines[i];
@@ -1067,7 +1109,7 @@ function renderStats(turn, stats, task) {
   turn.foot.textContent = "";
   var parts = [];
   if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
-    parts.push(stats.prompt_tokens + " prompt + " + stats.completion_tokens + " completion");
+    parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
   }
   if (typeof stats.ms === "number") parts.push(fmtMs(stats.ms));
   if (typeof stats.cost === "number") parts.push("$" + stats.cost.toFixed(4));
@@ -1229,7 +1271,12 @@ function renderAttachments() {
 }
 
 function addImageFile(file) {
-  if (!file || file.type.indexOf("image/") !== 0) return;
+  if (!file) return;
+  // Silence on a dropped PDF read as the drop having failed.
+  if (file.type.indexOf("image/") !== 0) {
+    el.sessionStatus.textContent = "Only images can be attached; " + (file.type || "that file") + " was ignored.";
+    return;
+  }
   var reader = new FileReader();
   reader.onload = function () {
     // Split on the comma: a data: URL is "data:<mime>;base64,<payload>" and
@@ -1241,7 +1288,9 @@ function addImageFile(file) {
     // decoded size here rather than the base64 length, which is a third larger.
     var bytes = Math.floor(b64.length * 3 / 4);
     if (bytes > max_image_bytes) {
-      el.hint.textContent = "That image is " + fmtBytes(bytes) + "; the limit is " + fmtBytes(max_image_bytes) + ".";
+      // #hint belongs to the elapsed ticker, and three writers were clearing
+      // each other there; a refused attachment is announced and shown instead.
+      el.sessionStatus.textContent = "That image is " + fmtBytes(bytes) + "; the limit is " + fmtBytes(max_image_bytes) + ".";
       return;
     }
     pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
@@ -1361,6 +1410,16 @@ el.form.addEventListener("submit", function (e) {
   }).then(function () {
     splitter.flush();
     finalizeAnswer(turn);
+    /* The reader resolves whenever the body ends, whether or not the agent
+       ever said it was done. A dropped connection, a killed server or a
+       truncating proxy left a half-finished answer with no error, no marker
+       and an empty stats row — and took the task text and every attached
+       image with it, as though the run had succeeded. */
+    if (!statsRendered) {
+      markTurn(turn, "\n[the run ended before it finished]");
+      el.sessionStatus.textContent = "The run ended before it finished; your task is still in the composer.";
+      return;
+    }
     el.task.value = "";
     // Attachments belong to the turn that just went out, not the next one.
     pendingImages = [];
@@ -3551,6 +3610,10 @@ el.sessionCompact.addEventListener("click", function () {
     el.sessionStatus.textContent = "Finish or stop the current run before compacting.";
     return;
   }
+  // Irreversible: the dropped exchanges are gone from what the model can see.
+  // Fork, Export and Copy all sit beside it and are not, so the difference
+  // should not be left to the label.
+  if (!window.confirm("Compact this conversation? The oldest exchanges are dropped permanently.")) return;
   el.sessionCompact.disabled = true;
   fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
     .then(readJson)
@@ -4078,7 +4141,7 @@ function showCardDetail(id) {
     drop.textContent = "×";
     drop.setAttribute("aria-label", "Remove subtask: " + s.text);
     drop.addEventListener("click", function () {
-      postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, null);
+      postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed subtask: " + s.text);
     });
     row.appendChild(box);
     row.appendChild(lab);
@@ -4248,6 +4311,17 @@ function pluginApi() {
     status: function (message) { el.webuiPluginsStatus.textContent = message; },
     // The page's own formatters, so a plugin's numbers read like the rest.
     fmt: { bytes: fmtBytes, int: fmtInt, cost: fmtCost, time: formatChatTime },
+    /* VanJS and VanUI, so a plugin can build reactive DOM declaratively rather
+       than hand-rolling appendChild chains, and can reach for a Modal or Tabs
+       without shipping its own. Both are vendored and same-origin, so a plugin
+       using them adds no request and no policy exception. */
+    van: window.van,
+    ui: {
+      Modal: window.Modal, Tabs: window.Tabs, Banner: window.Banner,
+      Tooltip: window.Tooltip, Toggle: window.Toggle, Await: window.Await,
+      MessageBoard: window.MessageBoard, OptionGroup: window.OptionGroup,
+      choose: window.choose
+    },
     showView: function (id) { showView(id, false); }
   };
 }
@@ -4471,60 +4545,67 @@ function postRoomTodo(payload, status) {
     .catch(function (err) { el.roomTodosStatus.textContent = "Room todo: " + err.message; });
 }
 
+/* Written with VanJS rather than by hand.
+
+   The rest of the page rebuilds a container from scratch on every change,
+   which is fine where a render is cheap and was the direct cause of a bug in
+   the board panel (a rebuild threw away half-typed edits). Here the list is a
+   piece of state and the DOM is derived from it: postRoomTodo sets the state
+   and the rows follow, so there is no second copy of "what is on screen" to
+   keep in step.
+
+   The elements are still created and their text still set as text — van.tags
+   builds real DOM nodes, so nothing about the no-innerHTML rule changes. */
+
+var roomTodoState = van.state({ todos: [], me: "", empty: null });
+
 function renderRoomTodos(d, emptyText) {
-  var list = d.todos || [];
-  var me = d.me || "";
+  roomTodoState.val = { todos: (d && d.todos) || [], me: (d && d.me) || "", empty: emptyText || null };
+}
+
+function roomTodoRow(t, me) {
+  var tags = van.tags;
+  var status = t.status === "claimed" ? "claimed by " + (t.claimed_by === me ? "you" : t.claimed_by)
+    : t.status === "closed" ? "closed by " + (t.closed_by === me ? "you" : t.closed_by)
+    : "open";
+
+  var children = [
+    tags.span({ class: "room-todo-title" }, t.title),
+    tags.span({
+      class: "room-todo-status",
+      "data-status": t.status,
+      "data-mine": String(t.status === "claimed" && t.claimed_by === me)
+    }, status),
+    tags.span({ class: "room-todo-who" }, t.created_by + "  ·  " + formatChatTime(t.ts))
+  ];
+  if (t.status === "open") {
+    children.push(tags.button({
+      type: "button",
+      class: "secondary",
+      onclick: function () { postRoomTodo({ op: "claim", id: t.id }, "Claim sent."); }
+    }, "Claim"));
+  }
+  if (t.status !== "closed") {
+    children.push(tags.button({
+      type: "button",
+      class: "secondary",
+      onclick: function () { postRoomTodo({ op: "close", id: t.id }, "Closed."); }
+    }, "Close"));
+  }
+  return tags.li({ class: "room-todo", "data-status": t.status }, children);
+}
+
+/* One derivation: whenever the state changes, this is the list. */
+van.derive(function () {
+  var s = roomTodoState.val;
+  var tags = van.tags;
   el.roomTodos.textContent = "";
-  if (!list.length) {
-    var none = document.createElement("li");
-    none.className = "run-empty";
-    none.textContent = emptyText || "Nothing on this room's list.";
-    el.roomTodos.appendChild(none);
+  if (!s.todos.length) {
+    van.add(el.roomTodos, tags.li({ class: "run-empty" }, s.empty || "Nothing on this room's list."));
     return;
   }
-  list.forEach(function (t) {
-    var li = document.createElement("li");
-    li.className = "room-todo";
-    li.setAttribute("data-status", t.status);
-
-    var title = document.createElement("span");
-    title.className = "room-todo-title";
-    title.textContent = t.title;
-    li.appendChild(title);
-
-    var status = document.createElement("span");
-    status.className = "room-todo-status";
-    status.setAttribute("data-status", t.status);
-    if (t.status === "claimed" && t.claimed_by === me) status.setAttribute("data-mine", "true");
-    status.textContent = t.status === "claimed" ? "claimed by " + (t.claimed_by === me ? "you" : t.claimed_by)
-      : t.status === "closed" ? "closed by " + (t.closed_by === me ? "you" : t.closed_by)
-      : "open";
-    li.appendChild(status);
-
-    var who = document.createElement("span");
-    who.className = "room-todo-who";
-    who.textContent = t.created_by + "  ·  " + formatChatTime(t.ts);
-    li.appendChild(who);
-
-    if (t.status === "open") {
-      var claim = document.createElement("button");
-      claim.type = "button";
-      claim.className = "secondary";
-      claim.textContent = "Claim";
-      claim.addEventListener("click", function () { postRoomTodo({ op: "claim", id: t.id }, "Claim sent."); });
-      li.appendChild(claim);
-    }
-    if (t.status !== "closed") {
-      var close = document.createElement("button");
-      close.type = "button";
-      close.className = "secondary";
-      close.textContent = "Close";
-      close.addEventListener("click", function () { postRoomTodo({ op: "close", id: t.id }, "Closed."); });
-      li.appendChild(close);
-    }
-    el.roomTodos.appendChild(li);
-  });
-}
+  s.todos.forEach(function (t) { van.add(el.roomTodos, roomTodoRow(t, s.me)); });
+});
 
 el.roomTodoForm.addEventListener("submit", function (e) {
   e.preventDefault();

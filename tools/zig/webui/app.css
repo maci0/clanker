@@ -751,10 +751,9 @@ mark {
 .suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
 .toasts {
-  position: fixed; left: 50%; bottom: var(--space-5); z-index: 30;
-  transform: translateX(-50%);
-  display: flex; flex-direction: column-reverse; gap: var(--space-2);
-  align-items: center; pointer-events: none;
+  position: fixed; right: var(--space-5); top: var(--space-5); z-index: 30;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  align-items: flex-end; pointer-events: none;
 }
 .toast {
   pointer-events: auto; max-width: min(40rem, 90vw);
@@ -766,7 +765,7 @@ mark {
   animation: toast-in 140ms ease-out;
 }
 .toast[data-kind="bad"] { border-color: var(--danger); color: var(--danger); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-0.4rem); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
 .goal-form {
@@ -811,8 +810,8 @@ mark {
 .rail-head { display: flex; flex-direction: column; gap: var(--space-3); }
 .rail-new {
   min-height: 32px; padding: 0 var(--space-4);
-  border: 1px solid var(--accent); border-radius: var(--radius);
-  background: transparent; color: var(--accent);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); color: var(--fg);
   font-family: var(--mono); font-size: var(--step-0); cursor: pointer;
 }
 .rail-new:hover { background: var(--accent); color: var(--on-accent); }
@@ -909,6 +908,9 @@ mark {
   text-align: left; vertical-align: top; font-variant-numeric: tabular-nums;
 }
 .md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.md-img { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
+.md-task { list-style: none; margin-left: -1.2em; }
+.md-task input { margin-right: var(--space-2); }
 
 /* Board: columns scroll sideways as a group, each column scrolls down on
    its own, so a long Backlog never pushes Done off the bottom. */

@@ -32,6 +32,8 @@ const gate_checks = @import("gate/checks.zig");
 // WASM "webui" tool — its shared output buffer, lib.zig's out_cap, is 64 KiB,
 // far smaller than these). Vendored rather than CDN-loaded so the page has
 // zero runtime network dependencies and needs no change to the webui CSP.
+const webui_vendor_van = @embedFile("webui_vendor/van.js");
+const webui_vendor_vanui = @embedFile("webui_vendor/van-ui.js");
 const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
 const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
 
@@ -2700,6 +2702,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui") or
             std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
+            std.mem.eql(u8, target, "/webui/van-boot.js") or
+            std.mem.eql(u8, target, "/webui/vendor/van.js") or std.mem.eql(u8, target, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, target, "/webui/plugins/") or
             std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, target, "/webui/vendor/hljs.min.js");
         const is_a2a = std.mem.eql(u8, target, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message"));
@@ -2735,8 +2739,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, stream);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van.js")) {
+            respondJs(gpa, stream, webui_vendor_van, &gzip_van, acceptsGzip(headers_raw));
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van-ui.js")) {
+            respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw));
         } else if (std.mem.eql(u8, method, "GET") and
-            (std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js")))
+            (std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
+                std.mem.eql(u8, target, "/webui/van-boot.js")))
         {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, stream);
@@ -5398,6 +5407,8 @@ const GzipCache = struct {
     const State = enum(u8) { idle, compressing, ready, failed };
 };
 
+var gzip_van: GzipCache = .{};
+var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
 var gzip_hljs: GzipCache = .{};
 

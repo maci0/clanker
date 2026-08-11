@@ -48,6 +48,22 @@ clanker.registerView({
 | `api.status(message)` | announce through the live region, which also shows a toast |
 | `api.fmt` | `bytes`, `int`, `cost`, `time` — the page's own formatters, so a plugin's numbers match |
 | `api.showView(id)` | switch to another view |
+| `api.van` | [VanJS](https://vanjs.org): `van.tags`, `van.state`, `van.derive`, `van.add` |
+| `api.ui` | VanUI components: `Modal`, `Tabs`, `Banner`, `Tooltip`, `Toggle`, `Await`, `MessageBoard`, `OptionGroup`, `choose` |
+
+Both are vendored and same-origin, so using them costs no extra request and no
+policy exception. VanJS builds real DOM nodes, so the no-`innerHTML` rule below
+is unchanged by it — `van.tags.p("text")` sets text as text. Prefer it when a
+view has state that changes: derive the DOM from the state and there is no
+second copy of "what is on screen" to keep in step.
+
+```js
+var items = van.state([]);
+van.derive(function () {
+  container.textContent = "";
+  items.val.forEach(function (i) { van.add(container, van.tags.li({}, i.title)); });
+});
+```
 
 Plugins are off until turned on in System → Web UI plugins. Enabled ones are
 recorded in `state/webui_plugins.json`.
