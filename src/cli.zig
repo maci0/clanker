@@ -2787,7 +2787,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         {
             handleSessions(io, gpa, cfg, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify")) {
-            handleNotify(io, gpa, body) catch {
+            handleNotify(io, gpa, body) catch |err| {
+                log.log(.error_, "POST /api/notify: {s}", .{@errorName(err)});
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
                 return;
             };
@@ -4696,7 +4697,8 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         },
     };
 
-    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "POST /api/plugins/config: registry load failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"registry unavailable\"}");
         return;
     };
@@ -4893,16 +4895,19 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
-    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "POST /api/run: registry load failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
         return;
     };
-    const tool_defs = reg.toToolDefs(arena) catch {
+    const tool_defs = reg.toToolDefs(arena) catch |err| {
+        log.log(.error_, "POST /api/run: tool defs failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tool defs failed\"}");
         return;
     };
 
-    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch {
+    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch |err| {
+        log.log(.error_, "POST /api/run: agent init failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
     };
