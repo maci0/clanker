@@ -83,8 +83,26 @@ pub fn installResizeHandler() void {
     // Both ends non-blocking: the write end because a signal handler must
     // never block, the read end so the drain loop in KeyReader can empty it
     // without blocking. Failure (fd exhaustion) just leaves both at -1.
+    // pipe2 is Linux-flavored, not POSIX: on macOS std.c.pipe2 is a void
+    // placeholder ("type 'void' not a function" at compile time), so where
+    // it does not exist the flags are set after pipe() with fcntl. The gap
+    // between the two calls is harmless here — nothing shares the fds until
+    // this function returns.
     var fds: [2]std.posix.fd_t = undefined;
-    if (std.posix.errno(std.posix.system.pipe2(&fds, .{ .NONBLOCK = true })) == .SUCCESS) {
+    if (@TypeOf(std.posix.system.pipe2) != void) {
+        if (std.posix.errno(std.posix.system.pipe2(&fds, .{ .NONBLOCK = true })) == .SUCCESS) {
+            resize_pipe_fds = fds;
+        }
+    } else {
+        if (std.posix.errno(std.c.pipe(&fds)) != .SUCCESS) return;
+        const nonblock: c_int = @bitCast(@as(u32, @bitCast(std.c.O{ .NONBLOCK = true })));
+        for (fds) |fd| {
+            const fl = std.c.fcntl(fd, std.c.F.GETFL, @as(c_int, 0));
+            if (fl < 0 or std.c.fcntl(fd, std.c.F.SETFL, fl | nonblock) < 0) {
+                for (fds) |f| _ = std.c.close(f);
+                return;
+            }
+        }
         resize_pipe_fds = fds;
     }
 }
