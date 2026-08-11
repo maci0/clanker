@@ -238,6 +238,26 @@
       <div id="card-detail" class="run-detail" role="region" aria-label="Selected card" hidden></div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
     </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Room todos</h2>
+        <button type="button" class="secondary" id="room-todos-refresh">Refresh</button>
+      </div>
+      <!-- These are not board cards. They ride the chatroom log, replicate to
+           peers with the rest of the room, and settle competing claims on
+           their own. Shown here because someone tracking work should not have
+           to know which transport a task arrived on. -->
+      <form id="room-todo-form" class="goal-form">
+        <label for="room-todo-room">Room</label>
+        <select id="room-todo-room"></select>
+        <label for="room-todo-title">Add</label>
+        <input type="text" id="room-todo-title" placeholder="What should the room do?" maxlength="512" autocomplete="off">
+        <button type="submit" class="secondary">Add to room</button>
+      </form>
+      <ul class="room-todos" id="room-todos"></ul>
+      <p class="sr-only" id="room-todos-status" role="status" aria-live="polite"></p>
+    </section>
   </div>
   <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
     <section>

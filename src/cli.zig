@@ -20,6 +20,7 @@ const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
 const lineedit = @import("util/lineedit.zig");
 const chatrooms = @import("peers/chatrooms.zig");
+const room_todos = @import("peers/todos.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -2713,6 +2714,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
         const is_board = std.mem.eql(u8, target, "/api/board") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_room_todos = std.mem.startsWith(u8, target, "/api/room-todos") and
+            (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
@@ -2721,7 +2724,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"error\":\"a2a module disabled\"}");
         } else if (is_notify and !cfg.modules.peers) {
             respond(stream, 404, "Not Found", "{\"error\":\"peers module disabled\"}");
-        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
+        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe or is_room_todos) and !cfg.modules.chatrooms) {
             respond(stream, 404, "Not Found", "{\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
@@ -2774,6 +2777,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleProviders(cfg, stream);
         } else if (is_board) {
             handleBoard(io, gpa, cfg, method, body, stream);
+        } else if (is_room_todos) {
+            handleRoomTodos(io, gpa, cfg, method, target, body, stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
@@ -3594,6 +3599,139 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+const RoomTodoPost = struct {
+    room: ?[]const u8 = null,
+    op: []const u8 = "",
+    title: ?[]const u8 = null,
+    id: ?[]const u8 = null,
+};
+
+/// Per-room todos, which are not board cards: they live in the chatroom log
+/// (`@todo` messages folded into a list by peers/todos.zig), replicate to
+/// peers with the rest of the room, and resolve competing claims on their own.
+/// The board is this instance's plan; these are what a room has agreed to.
+/// Both are shown in the Board view, because a person tracking work should not
+/// have to know which transport a task arrived on.
+fn handleRoomTodos(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    method: []const u8,
+    target: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var room: []const u8 = "";
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(RoomTodoPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        room = req.room orelse "";
+        if (room.len == 0) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+            return;
+        }
+        // The three operations are the three the tools expose, encoded the
+        // same way, so a todo added here is indistinguishable from one added
+        // by an agent.
+        const text = blk: {
+            if (std.mem.eql(u8, req.op, "add")) {
+                const title = std.mem.trim(u8, req.title orelse "", " \t\r\n");
+                if (title.len == 0 or title.len > room_todos.max_title_len) {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title must be 1-512 characters\"}");
+                    return;
+                }
+                break :blk room_todos.encodeAdd(arena, title) catch {
+                    respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                    return;
+                };
+            }
+            const id = req.id orelse {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing id\"}");
+                return;
+            };
+            if (std.mem.eql(u8, req.op, "claim")) break :blk room_todos.encodeClaim(arena, id) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+            if (std.mem.eql(u8, req.op, "close")) break :blk room_todos.encodeClose(arena, id) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"op must be add, claim or close\"}");
+            return;
+        };
+        if (!chatrooms.isSubscribed(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room)) {
+            chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, true) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not join room\"}");
+                return;
+            };
+        }
+        _ = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, room, text) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
+            return;
+        };
+    } else {
+        // GET /api/room-todos?room=<name>
+        if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+            var it = std.mem.tokenizeScalar(u8, target[q + 1 ..], '&');
+            while (it.next()) |pair| {
+                if (!std.mem.startsWith(u8, pair, "room=")) continue;
+                room = percentDecode(arena, pair["room=".len..]) catch "";
+            }
+        }
+        if (room.len == 0) {
+            respond(stream, 400, "Bad Request", "{\"error\":\"missing room\"}");
+            return;
+        }
+    }
+
+    // Re-derived after a write rather than assumed: a claim races other peers'
+    // claims, and the fold decides which one actually won.
+    const list = room_todos.load(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read room\"}");
+        return;
+    };
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("room") catch return;
+    s.write(room) catch return;
+    s.objectField("me") catch return;
+    s.write(cfg.instance.name) catch return;
+    s.objectField("todos") catch return;
+    s.beginArray() catch return;
+    for (list) |t| {
+        s.beginObject() catch return;
+        s.objectField("id") catch return;
+        s.write(t.id) catch return;
+        s.objectField("title") catch return;
+        s.write(t.title) catch return;
+        s.objectField("created_by") catch return;
+        s.write(t.created_by) catch return;
+        s.objectField("ts") catch return;
+        s.write(t.ts) catch return;
+        s.objectField("status") catch return;
+        s.write(t.status()) catch return;
+        s.objectField("claimed_by") catch return;
+        s.write(t.claimed_by) catch return;
+        s.objectField("closed_by") catch return;
+        s.write(t.closed_by) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// A card on the shared board. Everything an agent or a person needs to know

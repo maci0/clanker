@@ -69,6 +69,12 @@ var el = {
   boardMine: document.getElementById("board-mine"),
   boardRefresh: document.getElementById("board-refresh"),
   boardStatus: document.getElementById("board-status"),
+  roomTodos: document.getElementById("room-todos"),
+  roomTodoForm: document.getElementById("room-todo-form"),
+  roomTodoRoom: document.getElementById("room-todo-room"),
+  roomTodoTitle: document.getElementById("room-todo-title"),
+  roomTodosRefresh: document.getElementById("room-todos-refresh"),
+  roomTodosStatus: document.getElementById("room-todos-status"),
   logSelect: document.getElementById("log-select"),
   logView: document.getElementById("log-view"),
   logsRefresh: document.getElementById("logs-refresh"),
@@ -2914,7 +2920,7 @@ var viewLoaders = {
   runs: loadRuns,
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
-  board: loadBoard,
+  board: function () { return Promise.all([loadBoard(), loadRoomTodos()]); },
   tools: loadTools,
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList()]); }
 };
@@ -3241,7 +3247,7 @@ if (window.MutationObserver) {
       showToast(text);
     });
   });
-  ["session-status", "run-status", "chat-status", "board-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
+  ["session-status", "run-status", "chat-status", "board-status", "room-todos-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
     var node = document.getElementById(id);
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
@@ -4009,6 +4015,130 @@ el.cardForm.addEventListener("submit", function (e) {
 });
 
 el.boardRefresh.addEventListener("click", function () { loadBoard(); });
+
+/* ---------- room todos ---------- */
+
+/* A second list, deliberately: board cards are this instance's plan, room
+   todos are what a room has agreed to and are replicated to every peer in it.
+   They are shown together so nobody has to remember which is which to find
+   their work. */
+var roomTodoRooms = [];
+
+function loadRoomTodos() {
+  return fetch("/api/chat/rooms")
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) {
+      // The listing calls the field "room", not "name".
+      roomTodoRooms = (d.rooms || []).map(function (r) { return typeof r === "string" ? r : r.room; });
+      var keep = el.roomTodoRoom.value;
+      el.roomTodoRoom.textContent = "";
+      roomTodoRooms.forEach(function (name) {
+        var opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        el.roomTodoRoom.appendChild(opt);
+      });
+      if (keep && roomTodoRooms.indexOf(keep) !== -1) el.roomTodoRoom.value = keep;
+      if (!roomTodoRooms.length) {
+        renderRoomTodos({ todos: [] }, "No rooms joined, so there are no shared todos yet.");
+        return;
+      }
+      return fetchRoomTodos(el.roomTodoRoom.value);
+    })
+    .catch(function (err) { el.roomTodosStatus.textContent = "Could not load room todos: " + err.message; });
+}
+
+function fetchRoomTodos(room) {
+  if (!room) return Promise.resolve();
+  return fetch("/api/room-todos?room=" + encodeURIComponent(room))
+    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(function (d) { renderRoomTodos(d, null); })
+    .catch(function (err) { el.roomTodosStatus.textContent = "Could not load room todos: " + err.message; });
+}
+
+function postRoomTodo(payload, status) {
+  payload.room = el.roomTodoRoom.value;
+  return fetch("/api/room-todos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "HTTP " + r.status); return d; }); })
+    .then(function (d) {
+      renderRoomTodos(d, null);
+      el.roomTodosStatus.textContent = status;
+    })
+    .catch(function (err) { el.roomTodosStatus.textContent = "Room todo: " + err.message; });
+}
+
+function renderRoomTodos(d, emptyText) {
+  var list = d.todos || [];
+  var me = d.me || "";
+  el.roomTodos.textContent = "";
+  if (!list.length) {
+    var none = document.createElement("li");
+    none.className = "run-empty";
+    none.textContent = emptyText || "Nothing on this room's list.";
+    el.roomTodos.appendChild(none);
+    return;
+  }
+  list.forEach(function (t) {
+    var li = document.createElement("li");
+    li.className = "room-todo";
+    li.setAttribute("data-status", t.status);
+
+    var title = document.createElement("span");
+    title.className = "room-todo-title";
+    title.textContent = t.title;
+    li.appendChild(title);
+
+    var status = document.createElement("span");
+    status.className = "room-todo-status";
+    status.setAttribute("data-status", t.status);
+    if (t.status === "claimed" && t.claimed_by === me) status.setAttribute("data-mine", "true");
+    status.textContent = t.status === "claimed" ? "claimed by " + (t.claimed_by === me ? "you" : t.claimed_by)
+      : t.status === "closed" ? "closed by " + (t.closed_by === me ? "you" : t.closed_by)
+      : "open";
+    li.appendChild(status);
+
+    var who = document.createElement("span");
+    who.className = "room-todo-who";
+    who.textContent = t.created_by + "  ·  " + formatChatTime(t.ts);
+    li.appendChild(who);
+
+    if (t.status === "open") {
+      var claim = document.createElement("button");
+      claim.type = "button";
+      claim.className = "secondary";
+      claim.textContent = "Claim";
+      claim.addEventListener("click", function () { postRoomTodo({ op: "claim", id: t.id }, "Claim sent."); });
+      li.appendChild(claim);
+    }
+    if (t.status !== "closed") {
+      var close = document.createElement("button");
+      close.type = "button";
+      close.className = "secondary";
+      close.textContent = "Close";
+      close.addEventListener("click", function () { postRoomTodo({ op: "close", id: t.id }, "Closed."); });
+      li.appendChild(close);
+    }
+    el.roomTodos.appendChild(li);
+  });
+}
+
+el.roomTodoForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  var title = el.roomTodoTitle.value.trim();
+  if (!title) return;
+  postRoomTodo({ op: "add", title: title }, "Added to the room.").then(function () {
+    el.roomTodoTitle.value = "";
+  });
+});
+el.roomTodoRoom.addEventListener("change", function () { fetchRoomTodos(el.roomTodoRoom.value); });
+el.roomTodosRefresh.addEventListener("click", function () { loadRoomTodos(); });
 el.boardMine.addEventListener("change", function () { renderBoard(board); });
 
 /* ---------- logs ---------- */
