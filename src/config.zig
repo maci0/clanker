@@ -780,6 +780,17 @@ pub const Config = struct {
             for (arr.items) |item| {
                 const pat = try jsonStr(item, "exec_pattern_allow[]");
                 if (pat.len == 0) return error.ExecPatternAllowEmpty;
+                // The git tool's deny list (which refuses checkout, reset, etc.)
+                // must never be overridable through exec_pattern_allow. If a
+                // config names a git command here it silently grants a verb the
+                // sandbox is supposed to refuse, breaking git_deny. Destructive
+                // git verbs are meant to be enabled via git_remote_ops instead.
+                if (std.mem.startsWith(u8, pat, "git") and
+                    (pat.len == 3 or (pat.len > 3 and (pat[3] == ' ' or pat[3] == '\t'))))
+                {
+                    log.log(.error_, "agent: exec_pattern_allow must not name git commands (use git_remote_ops instead)", .{});
+                    return error.ExecPatternAllowGitForbidden;
+                }
                 try patterns.append(arena, pat);
             }
             a.exec_pattern_allow = try patterns.toOwnedSlice(arena);
@@ -1322,6 +1333,27 @@ test "agent.git_remote_ops and exec_pattern_allow parse from config" {
     const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.json", "config.local.json");
     try std.testing.expect(!cfg2.agent.git_remote_ops);
     try std.testing.expectEqual(@as(usize, 0), cfg2.agent.exec_pattern_allow.len);
+}
+
+test "exec_pattern_allow rejects git patterns to protect the deny list" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"exec_pattern_allow":["git checkout*"]}}
+        ,
+    });
+    try std.testing.expectError(
+        error.ExecPatternAllowGitForbidden,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "config.local.json"),
+    );
 }
 
 test "a vertex_anthropic provider missing project/location is rejected at load" {
