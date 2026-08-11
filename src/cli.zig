@@ -3395,6 +3395,24 @@ fn handleSessions(
     const rest = target["/api/sessions".len..];
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
+        // `POST /api/sessions/<id>/fork` branches a conversation. The fork
+        // suffix is handled before the id validation below because
+        // "<id>/fork" itself contains a separator and would never pass it.
+        if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/fork")) {
+            const src_id = id[0 .. id.len - "/fork".len];
+            if (!validSessionId(src_id)) {
+                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                return;
+            }
+            const new_id = session.forkSession(io, gpa, arena, std.Io.Dir.cwd(), src_id) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            };
+            var fork_buf: [256]u8 = undefined;
+            const fork_body = std.fmt.bufPrint(&fork_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{new_id}) catch return;
+            respond(stream, 200, "OK", fork_body);
+            return;
+        }
         if (!validSessionId(id)) {
             respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
             return;
@@ -3470,6 +3488,44 @@ test "validSessionId refuses path traversal" {
     try std.testing.expect(!validSessionId("a.json"));
     try std.testing.expect(!validSessionId(""));
     try std.testing.expect(!validSessionId("x" ** 65));
+}
+
+test "fork route suffix parsing yields a valid source id and refuses traversal" {
+    // POST /api/sessions/<id>/fork strips the suffix before validating.
+    const id = "sess-abc/fork";
+    try std.testing.expect(std.mem.endsWith(u8, id, "/fork"));
+    try std.testing.expect(validSessionId(id[0 .. id.len - "/fork".len]));
+    // A traversal attempt in the source id is refused, not sanitised.
+    const bad = "../../etc/fork";
+    try std.testing.expect(!validSessionId(bad[0 .. bad.len - "/fork".len]));
+    // A real session id never ends in the fork marker, so the rename POST
+    // for a plain id cannot be shadowed by the fork branch.
+    try std.testing.expect(!std.mem.endsWith(u8, "sess-abc", "/fork"));
+}
+
+test "forkSession mints an id that still passes validSessionId" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try session.saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = "sess-1",
+        .title = "t",
+        .messages = &.{.{ .role = .user, .content = "hi" }},
+        .created = 1,
+        .updated = 2,
+    });
+    const forked = try session.forkSession(io, std.testing.allocator, arena, tmp.dir, "sess-1");
+    // The fork id is returned to the client and must itself stay addressable
+    // through the id-validated session endpoints.
+    try std.testing.expect(validSessionId(forked));
 }
 
 fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) ![]const u8 {
