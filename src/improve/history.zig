@@ -238,6 +238,8 @@ pub const History = struct {
         files: []const []const u8,
         summary: []const u8 = "",
         detail: []const u8 = "",
+        score_before: ?f64 = null,
+        score_after: ?f64 = null,
         /// Empty for entries written before fingerprints existed; those simply
         /// cannot be matched against, rather than matching everything.
         changes: []const u64 = &.{},
@@ -294,12 +296,24 @@ pub const History = struct {
                     };
                 }
             }.get;
+            const score_b: ?f64 = if (obj.get("score_before")) |sv| switch (sv) {
+                .float => |f| f,
+                .integer => |i| @floatFromInt(i),
+                else => null,
+            } else null;
+            const score_a: ?f64 = if (obj.get("score_after")) |sv| switch (sv) {
+                .float => |f| f,
+                .integer => |i| @floatFromInt(i),
+                else => null,
+            } else null;
             try out.append(arena, .{
                 .id = id,
                 .status = status,
                 .files = try files.toOwnedSlice(arena),
                 .summary = text(obj, "summary"),
                 .detail = text(obj, "detail"),
+                .score_before = score_b,
+                .score_after = score_a,
                 .changes = try fps.toOwnedSlice(arena),
             });
         }
@@ -385,6 +399,16 @@ pub const History = struct {
                     if (fi > 0) try buf.appendSlice(arena, ", ");
                     try buf.appendSlice(arena, file);
                 }
+            }
+            // Scores give the model a sense of how close the attempt was.
+            if (e.score_before != null or e.score_after != null) {
+                var sbuf: [64]u8 = undefined;
+                var sw: std.Io.Writer = .fixed(&sbuf);
+                sw.print("\n    scores: ", .{}) catch {};
+                if (e.score_before) |sb| sw.print("{d:.2}", .{sb}) catch {} else sw.print("?", .{}) catch {};
+                sw.print(" -> ", .{}) catch {};
+                if (e.score_after) |sa| sw.print("{d:.2}", .{sa}) catch {} else sw.print("?", .{}) catch {};
+                try buf.appendSlice(arena, sbuf[0..sw.end]);
             }
             // Why it failed is the part worth carrying: the summary alone says
             // what was attempted, not what went wrong with it.
