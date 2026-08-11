@@ -618,6 +618,73 @@ test "ambiguousMatchGate rejects old text that matches twice" {
     try std.testing.expect(missing.ok);
 }
 
+/// Rejects proposals where new text introduces an `@import("...")` referencing
+/// a .zig file that does not exist relative to the changed file's directory.
+/// Only checks .zig files and only newly introduced imports (present in new
+/// but not in old). Skips std library imports and non-.zig imports.
+pub fn importPathGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, files: []const []const u8, old_texts: []const []const u8, new_texts: []const []const u8) !GateResult {
+    if (files.len != old_texts.len or files.len != new_texts.len)
+        return .{ .ok = true, .label = "import-path" };
+    for (files, old_texts, new_texts) |f, old, new| {
+        if (!std.mem.endsWith(u8, f, ".zig")) continue;
+        const file_dir = std.fs.path.dirname(f) orelse ".";
+        // Find @import("...") in new that are not in old.
+        var offset: usize = 0;
+        while (offset < new.len) {
+            const needle = "@import(\"";
+            const found = std.mem.indexOfPos(u8, new, offset, needle) orelse break;
+            const path_start = found + needle.len;
+            const path_end = std.mem.indexOfPos(u8, new, path_start, "\"") orelse break;
+            const import_path = new[path_start..path_end];
+            offset = path_end + 1;
+            // Skip non-.zig imports (e.g. "build_options", "zwasm", "vaxis").
+            if (!std.mem.endsWith(u8, import_path, ".zig")) continue;
+            // Skip if this import was already in old text.
+            if (std.mem.indexOf(u8, old, import_path) != null) continue;
+            // Resolve relative to the file's directory.
+            const resolved = if (std.mem.eql(u8, file_dir, "."))
+                import_path
+            else
+                std.fmt.allocPrint(gpa, "{s}/{s}", .{ file_dir, import_path }) catch continue;
+            defer if (!std.mem.eql(u8, file_dir, ".")) gpa.free(resolved);
+            dir.access(io, resolved, .{}) catch {
+                return .{ .ok = false, .label = "import-path", .detail = resolved };
+            };
+        }
+    }
+    return .{ .ok = true, .label = "import-path" };
+}
+
+test "importPathGate rejects import of non-existent file" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.zig", .data = "const x = 1;\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "real.zig", .data = "pub const y = 2;\n" });
+
+    // New import of non-existent file: fail
+    const bad = try importPathGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"}, &.{"const z = @import(\"nope.zig\");"});
+    try std.testing.expect(!bad.ok);
+    try std.testing.expectEqualStrings("import-path", bad.label);
+
+    // New import of existing file: pass
+    const ok = try importPathGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"}, &.{"const z = @import(\"real.zig\");"});
+    try std.testing.expect(ok.ok);
+
+    // Import already in old: pass (not newly introduced)
+    const existing = try importPathGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"@import(\"nope.zig\")"}, &.{"@import(\"nope.zig\")"});
+    try std.testing.expect(existing.ok);
+
+    // Non-zig import (module name): pass
+    const mod = try importPathGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"}, &.{"const z = @import(\"build_options\");"});
+    try std.testing.expect(mod.ok);
+}
+
 /// Rejects proposals that introduce `std.debug.print` calls in non-test
 /// production .zig files. These are debugging leftovers that should never
 /// ship; the project uses `std.log` or `log.log` for runtime diagnostics.
