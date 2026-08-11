@@ -60,6 +60,147 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, @errorName(err));
     };
 
+    // For ast-grep, parse the exec result into structured matches.
+    if (std.mem.eql(u8, engine, "ast-grep")) {
+        const ag_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, result, .{ .ignore_unknown_fields = true }) catch
+            return out.writeAll(result);
+        if (ag_parsed != .object) return out.writeAll(result);
+
+        const ag_code: i64 = if (ag_parsed.object.get("code")) |c| switch (c) {
+            .integer => |i| i,
+            else => 1,
+        } else 1;
+        const ag_stdout = if (ag_parsed.object.get("stdout")) |sv| switch (sv) {
+            .string => |ss| ss,
+            else => "",
+        } else "";
+        const ag_stderr = if (ag_parsed.object.get("stderr")) |sv| switch (sv) {
+            .string => |ss| ss,
+            else => "",
+        } else "";
+
+        // Non-zero exit: return a structured error with a hint when the
+        // grammar or config is missing.
+        if (ag_code != 0) {
+            var w = lib.writer(out);
+            var s = lib.json(&w);
+            try s.beginObject();
+            try s.objectField("ok");
+            try s.write(false);
+            try s.objectField("code");
+            try s.print("{d}", .{ag_code});
+            try s.objectField("error");
+            if (ag_stderr.len > 0) {
+                const cap: usize = 2048;
+                try s.write(if (ag_stderr.len > cap) ag_stderr[0..cap] else ag_stderr);
+            } else {
+                try s.write("ast-grep exited with non-zero status");
+            }
+            // Detect grammar/config issues and add an actionable hint.
+            if (std.mem.indexOf(u8, ag_stderr, "language") != null or
+                std.mem.indexOf(u8, ag_stderr, "config") != null or
+                std.mem.indexOf(u8, ag_stderr, "sgconfig") != null or
+                std.mem.indexOf(u8, ag_stderr, "Cannot find") != null)
+            {
+                try s.objectField("hint");
+                try s.write("run tools/grammars/build.sh to build the Zig tree-sitter grammar, then retry");
+            }
+            try s.endObject();
+            lib.commit(out, &w);
+            return;
+        }
+
+        if (ag_stdout.len == 0) {
+            return lib.okText(out, "no matches");
+        }
+
+        // Parse ast-grep output lines into compact {file, line, text} matches.
+        // ast-grep prints one match per line: "file:line:col:text" or just text.
+        var w = lib.writer(out);
+        var s = lib.json(&w);
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("matches");
+        try s.beginArray();
+
+        var match_count: usize = 0;
+        const max_matches: usize = 200;
+        var ag_rest: []const u8 = ag_stdout;
+        while (ag_rest.len > 0 and match_count < max_matches) {
+            const ag_nl = std.mem.indexOfScalar(u8, ag_rest, '\n');
+            const ag_line = if (ag_nl) |n| ag_rest[0..n] else ag_rest;
+            ag_rest = if (ag_nl) |n| ag_rest[n + 1 ..] else &[_]u8{};
+
+            const trimmed = std.mem.trim(u8, ag_line, " \t\r\n");
+            if (trimmed.len == 0) continue;
+
+            // ast-grep default output: "path/file.zig:LINE:COL:matched text"
+            var file_path: []const u8 = "";
+            var line_num: []const u8 = "";
+            var text: []const u8 = trimmed;
+
+            // Try to split "file:line:col:text" — at least 3 colons for a
+            // well-formed match. The file path may itself contain colons on
+            // non-Unix systems, but Zig paths in this project do not.
+            if (std.mem.indexOfScalar(u8, trimmed, ':')) |c1| {
+                const after1 = trimmed[c1 + 1 ..];
+                if (std.mem.indexOfScalar(u8, after1, ':')) |c2| {
+                    const after2 = after1[c2 + 1 ..];
+                    // Verify the segment between c1 and c2 looks numeric (line number).
+                    const num_candidate = after1[0..c2];
+                    var is_num = num_candidate.len > 0;
+                    for (num_candidate) |ch| {
+                        if (ch < '0' or ch > '9') {
+                            is_num = false;
+                            break;
+                        }
+                    }
+                    if (is_num) {
+                        file_path = trimmed[0..c1];
+                        line_num = num_candidate;
+                        // Skip col field if present.
+                        if (std.mem.indexOfScalar(u8, after2, ':')) |c3| {
+                            text = after2[c3 + 1 ..];
+                        } else {
+                            text = after2;
+                        }
+                    }
+                }
+            }
+
+            const display = if (text.len > 500) text[0..500] else text;
+
+            try s.beginObject();
+            try s.objectField("file");
+            try s.write(file_path);
+            try s.objectField("line");
+            try s.write(line_num);
+            try s.objectField("text");
+            try s.write(display);
+            try s.endObject();
+            match_count += 1;
+        }
+
+        try s.endArray();
+        if (match_count >= max_matches) {
+            var omitted: usize = 0;
+            while (ag_rest.len > 0) {
+                const snl = std.mem.indexOfScalar(u8, ag_rest, '\n');
+                const sline = if (snl) |n| ag_rest[0..n] else ag_rest;
+                ag_rest = if (snl) |n| ag_rest[n + 1 ..] else &[_]u8{};
+                if (std.mem.trim(u8, sline, " \t\r\n").len > 0) omitted += 1;
+            }
+            try s.objectField("truncated");
+            try s.write(true);
+            try s.objectField("truncated_count");
+            try s.print("{d}", .{omitted});
+        }
+        try s.endObject();
+        lib.commit(out, &w);
+        return;
+    }
+
     // For rg --json, parse the JSON-lines output into compact matches.
     if (std.mem.eql(u8, engine, "rg")) {
         // Extract stdout from the exec result.
