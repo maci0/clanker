@@ -575,7 +575,9 @@ pub const History = struct {
             if (e.summary.len == 0) continue;
             try buf.appendSlice(arena, "- ");
             try buf.appendSlice(arena, e.status);
-            try buf.appendSlice(arena, ": ");
+            try buf.appendSlice(arena, " (");
+            try buf.appendSlice(arena, e.id);
+            try buf.appendSlice(arena, "): ");
             try buf.appendSlice(arena, firstLine(e.summary, 160));
             // Which files were touched: helps the model see what area was
             // already attempted so it can vary its approach or target.
