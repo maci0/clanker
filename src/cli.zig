@@ -4011,6 +4011,10 @@ const Column = struct {
 const Board = struct {
     columns: []const Column = &.{},
     cards: []const Card = &.{},
+    /// Room that board changes are announced in. Subscribing to a board is
+    /// joining this room: peers already replicate rooms, filter by
+    /// subscription, and poll them, so a board needs no transport of its own.
+    announce_room: []const u8 = "board",
 };
 
 const board_path = "state/board.json";
@@ -4110,6 +4114,65 @@ fn seedBoard(io: std.Io, arena: std.mem.Allocator) Board {
     return .{ .columns = &default_columns, .cards = cards.items };
 }
 
+/// Message-text prefix marking a board announcement, mirroring `@todo`. Kept
+/// human-readable so it still reads as chat in `chat_history` output: a
+/// clanker seeing it in a room can decide whether the change concerns it
+/// without parsing anything.
+const board_marker = "@board ";
+
+/// Tells the room what changed and who changed it. Announcements are a
+/// courtesy, not part of the write: a room that cannot be reached must not
+/// fail the board update that already succeeded, so every failure here is
+/// swallowed deliberately.
+fn announceBoard(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    b: Board,
+    action: []const u8,
+    card: Card,
+    detail: []const u8,
+    actor: []const u8,
+) void {
+    if (!cfg.modules.chatrooms) return;
+    const room = if (b.announce_room.len > 0) b.announce_room else return;
+
+    var buf: [4 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.writeAll(board_marker) catch return;
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("action") catch return;
+    s.write(action) catch return;
+    s.objectField("card") catch return;
+    s.write(card.id) catch return;
+    s.objectField("title") catch return;
+    s.write(card.title) catch return;
+    s.objectField("column") catch return;
+    s.write(card.column) catch return;
+    if (card.assignee.len > 0) {
+        s.objectField("assignee") catch return;
+        s.write(card.assignee) catch return;
+    }
+    if (card.deadline > 0) {
+        s.objectField("deadline") catch return;
+        s.write(card.deadline) catch return;
+    }
+    s.objectField("by") catch return;
+    s.write(actor) catch return;
+    s.endObject() catch return;
+    // A sentence after the JSON, so the room log reads as chat to a person and
+    // to a model that never learned the schema.
+    w.writeAll(" ") catch return;
+    w.writeAll(detail) catch return;
+
+    if (!chatrooms.isSubscribed(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room)) {
+        chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, true) catch return;
+    }
+    _ = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, room, buf[0..w.end]) catch return;
+}
+
 fn writeBoard(io: std.Io, arena: std.mem.Allocator, b: Board) !void {
     var enc: std.Io.Writer.Allocating = .init(arena);
     try std.json.Stringify.value(b, .{}, &enc.writer);
@@ -4165,6 +4228,10 @@ fn handleBoard(
         };
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         const actor = if (req.who) |w| w else cfg.instance.name;
+        // Filled in by whichever branch runs, announced once the write lands.
+        var announce_action: []const u8 = "";
+        var announce_detail: []const u8 = "";
+        var announce_card: ?Card = null;
 
         if (std.mem.eql(u8, req.op, "create")) {
             const title = std.mem.trim(u8, req.title orelse "", " \t\r\n");
@@ -4210,6 +4277,9 @@ fn handleBoard(
                 respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
                 return;
             };
+            announce_action = "created";
+            announce_card = cards.items[cards.items.len - 1];
+            announce_detail = std.fmt.allocPrint(arena, "{s} added \"{s}\" to {s}.", .{ actor, title, col }) catch "";
         } else if (req.op.len == 0) {
             boardError(stream, 400, "Bad Request", "missing op");
             return;
@@ -4248,6 +4318,20 @@ fn handleBoard(
                     }
                     card.priority = pr;
                 }
+                // Assignment and deadlines change whether someone else should
+                // act; notes and titles do not, and a board that announces
+                // every keystroke is a board people mute.
+                if (req.assignee) |who| {
+                    announce_action = "assigned";
+                    announce_detail = if (who.len > 0)
+                        std.fmt.allocPrint(arena, "{s} assigned \"{s}\" to {s}.", .{ actor, card.title, who }) catch ""
+                    else
+                        std.fmt.allocPrint(arena, "{s} unassigned \"{s}\".", .{ actor, card.title }) catch "";
+                } else if (req.deadline != null) {
+                    announce_action = "deadline";
+                    announce_detail = std.fmt.allocPrint(arena, "{s} set a deadline on \"{s}\".", .{ actor, card.title }) catch "";
+                }
+                if (announce_action.len > 0) announce_card = card.*;
             } else if (std.mem.eql(u8, req.op, "move")) {
                 const col = req.column orelse card.column;
                 if (!columnExists(b.columns, col)) {
@@ -4268,13 +4352,21 @@ fn handleBoard(
                 card.log = entry.items;
                 moved_from = from;
                 moved_to = col;
+                announce_action = "moved";
+                announce_card = card.*;
+                announce_detail = std.fmt.allocPrint(arena, "{s} moved \"{s}\" from {s} to {s}.", .{ actor, card.title, from, col }) catch "";
             } else if (std.mem.eql(u8, req.op, "delete")) {
+                const gone = card.*;
                 _ = cards.orderedRemove(idx);
+                announce_action = "deleted";
+                announce_card = gone;
+                announce_detail = std.fmt.allocPrint(arena, "{s} deleted \"{s}\".", .{ actor, gone.title }) catch "";
                 b.cards = cards.items;
                 writeBoard(io, arena, b) catch {
                     boardError(stream, 500, "Internal Server Error", "write failed");
                     return;
                 };
+                if (announce_card) |c| announceBoard(io, gpa, arena, cfg, b, announce_action, c, announce_detail, actor);
                 respondBoard(arena, b, stream);
                 return;
             } else if (std.mem.eql(u8, req.op, "subtask_add")) {
@@ -4353,6 +4445,9 @@ fn handleBoard(
                 entry.appendSlice(arena, card.log) catch {};
                 entry.append(arena, .{ .ts = now, .who = actor, .what = what }) catch {};
                 card.log = entry.items;
+                announce_action = "logged";
+                announce_card = card.*;
+                announce_detail = std.fmt.allocPrint(arena, "{s} on \"{s}\": {s}", .{ actor, card.title, what }) catch "";
             } else if (std.mem.eql(u8, req.op, "usage")) {
                 // Accrued, not replaced: a card is worked on by more than one
                 // run, and the total is what the card cost.
@@ -4374,6 +4469,7 @@ fn handleBoard(
                 return;
             }
             card.updated = now;
+            if (announce_card != null and !std.mem.eql(u8, announce_action, "deleted")) announce_card = card.*;
             if (moved_to) |to| {
                 std.mem.sort(Card, cards.items, {}, cardLessThan);
                 resequence(cards.items, to);
@@ -4387,6 +4483,9 @@ fn handleBoard(
             boardError(stream, 500, "Internal Server Error", "write failed");
             return;
         };
+        // Announced only once the change is on disk, so nobody is told about a
+        // move that did not happen.
+        if (announce_card) |c| announceBoard(io, gpa, arena, cfg, b, announce_action, c, announce_detail, actor);
     }
 
     respondBoard(arena, b, stream);
