@@ -158,9 +158,6 @@ pub const ToolModule = struct {
     pub fn executeTool(self: *ToolModule, input: []const u8) ![]u8 {
         self.h.reset();
 
-        const mem = self.inst.memory() orelse return error.ToolNoMemory;
-        const mem_bytes = mem.slice();
-
         // ---- input buffer ----
         var scratch_fn = self.inst.typedFunc(fn (u32) u32, "scratch");
         // A trap here (e.g. OutOfFuel on a small per-tool budget) is the same
@@ -171,8 +168,18 @@ pub const ToolModule = struct {
             return error.ToolTrap;
         };
         if (scratch_ptr == 0) return error.ToolScratchTooSmall;
-        if (@as(u64, scratch_ptr) + input.len > mem_bytes.len) return error.ToolScratchTooSmall;
-        @memcpy(mem_bytes[scratch_ptr .. scratch_ptr + input.len], input);
+        // Re-read memory after every call into the guest, not once up front: a
+        // guest allocator can grow linear memory to satisfy an allocation
+        // (AssemblyScript's does, readily — a JSON-heavy tool like csv_json
+        // triggers it on input too small to look like a memory concern), and
+        // a slice captured before that call points at a size that no longer
+        // matches the instance's actual memory. This surfaced as a spurious
+        // ToolInvalidOutput on well-formed output from a tool that happened
+        // to allocate enough during run() to grow past its starting size.
+        const mem_before_run = self.inst.memory() orelse return error.ToolNoMemory;
+        const scratch_mem = mem_before_run.slice();
+        if (@as(u64, scratch_ptr) + input.len > scratch_mem.len) return error.ToolScratchTooSmall;
+        @memcpy(scratch_mem[scratch_ptr .. scratch_ptr + input.len], input);
 
         // ---- execute ----
         var run_fn = self.inst.typedFunc(fn (u32, u32) u64, "run");
@@ -181,6 +188,8 @@ pub const ToolModule = struct {
             return error.ToolTrap;
         };
         const r = protocol.unpackPtrLen(p);
+        const mem_after_run = self.inst.memory() orelse return error.ToolNoMemory;
+        const mem_bytes = mem_after_run.slice();
         if (@as(u64, r.ptr) + r.len > mem_bytes.len) return error.ToolInvalidOutput;
         return self.gpa.dupe(u8, mem_bytes[r.ptr .. r.ptr + r.len]);
     }
