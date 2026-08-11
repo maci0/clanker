@@ -511,6 +511,20 @@ Create the local directory before adding the file:
 mkdir -p .agents
 ```
 
+#### `@path` imports
+
+Instruction files support Claude-compatible `@path` imports. Relative paths resolve against the file that contains the `@` (not necessarily cwd); `~/…` expands with `$HOME`. Nested imports are allowed up to four hops. Missing imports are a soft skip (the `@ref` is dropped), so a shared root `AGENTS.md` can pull in checkout-private rules without breaking clones that lack that file:
+
+```markdown
+# Project conventions
+…
+
+# Local operator rules (optional; gitignored)
+@.agents/AGENTS.md
+```
+
+Tools that already understand Claude-style imports (Claude Code, and others that copy it) can expand the same line when they read `AGENTS.md`. Clanker expands imports in all three instruction layers. If root `AGENTS.md` already inlined `.agents/AGENTS.md` via `@`, the dedicated local section is not appended again. Imports inside `` `code spans` `` or fenced code blocks are left literal.
+
 For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig` — this section is kept in sync by hand and can lag.
 
 ## HTTP server
