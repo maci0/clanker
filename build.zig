@@ -174,4 +174,36 @@ pub fn build(b: *std.Build) void {
     // The pty-driven `tui-test` step (src/tui/testing/) drove the old
     // hand-rolled REPL (src/tui/*) over a real pty; removed with it when
     // the REPL migrated to libvaxis (src/tui/repl_vaxis.zig).
+
+    // -------------------------------------------------------------- e2e tests
+    // Black-box tests (tests/e2e/) that spawn the actual built `clanker`
+    // binary as a subprocess against a scripted local mock LLM server
+    // (tests/e2e/mock_llm.zig), proving CLI -> Agent.run -> LLM client ->
+    // sandboxed WASM tool execution end to end with no API key and no
+    // network egress. Separate from `zig build test`: it needs the exe
+    // actually installed first (unlike any unit test) and spawns real
+    // subprocesses, so it belongs behind its own, slower step.
+    const e2e_options = b.addOptions();
+    e2e_options.addOption([]const u8, "clanker_bin", b.pathFromRoot("zig-out/bin/clanker"));
+    const rawhttp_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/rawhttp.zig"),
+        .target = test_target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const e2e_mod = b.createModule(.{
+        .root_source_file = b.path("tests/e2e/main.zig"),
+        .target = test_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "e2e_options", .module = e2e_options.createModule() },
+            .{ .name = "rawhttp", .module = rawhttp_mod },
+        },
+    });
+    const e2e_tests = b.addTest(.{ .root_module = e2e_mod });
+    const run_e2e = b.addRunArtifact(e2e_tests);
+    run_e2e.step.dependOn(b.getInstallStep());
+    const e2e_step = b.step("e2e", "Run black-box e2e tests against the built clanker binary + a mock LLM server");
+    e2e_step.dependOn(&run_e2e.step);
 }
