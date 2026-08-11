@@ -3643,8 +3643,13 @@ function renderBoard(next) {
   });
 
   setTabCount("board", openTotal);
-  if (openCardId && cardById(openCardId)) showCardDetail(openCardId);
-  else closeCardDetail();
+  var focusSnap = captureFocus();
+  if (openCardId && cardById(openCardId)) {
+    showCardDetail(openCardId);
+    restoreFocus(focusSnap);
+  } else {
+    closeCardDetail();
+  }
 
   if (!board.cards.length) {
     var none = document.createElement("p");
@@ -3742,6 +3747,51 @@ function closeCardDetail() {
   el.cardDetail.textContent = "";
 }
 
+/* Unsaved edits to a card's fields, keyed by card id.
+
+   Every sub-action in the panel (ticking a subtask, adding a dependency,
+   recording a log line) posts, which re-renders the board, which rebuilds this
+   panel from the server's copy. Half-typed title and notes were thrown away
+   each time, and focus went with them. The draft outlives the rebuild; saving
+   or closing clears it. */
+var cardDrafts = {};
+
+function draftFor(id) {
+  if (!cardDrafts[id]) cardDrafts[id] = {};
+  return cardDrafts[id];
+}
+
+/* Which control had focus and where the caret was, so a rebuild triggered by
+   an unrelated sub-action does not silently move it. */
+function captureFocus() {
+  var a = document.activeElement;
+  if (!a || !a.id || !el.cardDetail.contains(a)) return null;
+  var at = null;
+  try { at = { start: a.selectionStart, end: a.selectionEnd }; } catch (e) {}
+  return { id: a.id, at: at };
+}
+
+function restoreFocus(snap) {
+  if (!snap) return;
+  var node = document.getElementById(snap.id);
+  if (!node) return;
+  node.focus();
+  if (!snap.at) return;
+  try { node.setSelectionRange(snap.at.start, snap.at.end); } catch (e) {}
+}
+
+/* Binds a field to the card's draft: what you typed survives a rebuild, and
+   the saved value is what the server last confirmed. */
+function bindDraft(control, id, key, saved) {
+  var draft = draftFor(id);
+  control.value = draft[key] !== undefined ? draft[key] : (saved == null ? "" : saved);
+  control.addEventListener("input", function () {
+    if (control.value === (saved == null ? "" : String(saved))) delete draft[key];
+    else draft[key] = control.value;
+  });
+  return control;
+}
+
 function detailSection(parent, title) {
   var head = document.createElement("p");
   head.className = "detail-head";
@@ -3792,24 +3842,30 @@ function showCardDetail(id) {
   close.type = "button";
   close.className = "secondary";
   close.textContent = "Close";
-  close.addEventListener("click", function () { openCardId = null; renderBoard(board); });
+  close.addEventListener("click", function () {
+    delete cardDrafts[c.id];
+    openCardId = null;
+    renderBoard(board);
+  });
   head.appendChild(title);
   head.appendChild(close);
   el.cardDetail.appendChild(head);
 
   // ---- fields ----
   var fields = detailSection(el.cardDetail, "Card");
-  var titleIn = input("card-f-title", "text", c.title);
+  var titleIn = input("card-f-title", "text", "");
   titleIn.maxLength = 500;
+  bindDraft(titleIn, c.id, "title", c.title);
   fieldRow(fields, "Title", titleIn);
 
   var bodyIn = document.createElement("textarea");
   bodyIn.id = "card-f-body";
   bodyIn.rows = 3;
-  bodyIn.value = c.body || "";
+  bindDraft(bodyIn, c.id, "body", c.body);
   fieldRow(fields, "Notes", bodyIn);
 
-  var assignIn = input("card-f-assignee", "text", c.assignee, "unassigned");
+  var assignIn = input("card-f-assignee", "text", "", "unassigned");
+  bindDraft(assignIn, c.id, "assignee", c.assignee);
   fieldRow(fields, "Assignee", assignIn);
 
   var prioIn = document.createElement("select");
@@ -3818,14 +3874,20 @@ function showCardDetail(id) {
     var o = document.createElement("option");
     o.value = v;
     o.textContent = v;
-    if ((c.priority || "normal") === v) o.selected = true;
     prioIn.appendChild(o);
+  });
+  var prioDraft = draftFor(c.id);
+  prioIn.value = prioDraft.priority !== undefined ? prioDraft.priority : (c.priority || "normal");
+  prioIn.addEventListener("change", function () {
+    if (prioIn.value === (c.priority || "normal")) delete prioDraft.priority;
+    else prioDraft.priority = prioIn.value;
   });
   fieldRow(fields, "Priority", prioIn);
 
   // A date input, because a deadline typed as a unix timestamp is not a
   // deadline anyone will set twice.
-  var dueIn = input("card-f-deadline", "date", c.deadline ? new Date(c.deadline * 1000).toISOString().slice(0, 10) : "");
+  var dueIn = input("card-f-deadline", "date", "");
+  bindDraft(dueIn, c.id, "deadline", c.deadline ? new Date(c.deadline * 1000).toISOString().slice(0, 10) : "");
   fieldRow(fields, "Deadline", dueIn);
 
   var save = document.createElement("button");
@@ -3838,6 +3900,7 @@ function showCardDetail(id) {
       var parsed = Date.parse(dueIn.value + "T23:59:59");
       if (!isNaN(parsed)) deadline = Math.floor(parsed / 1000);
     }
+    delete cardDrafts[c.id];
     postBoard({
       op: "update", id: c.id,
       title: titleIn.value, body: bodyIn.value,
@@ -3861,6 +3924,7 @@ function showCardDetail(id) {
   del.textContent = "Delete card";
   del.addEventListener("click", function () {
     if (!window.confirm("Delete \"" + c.title + "\"? Its log and usage go with it.")) return;
+    delete cardDrafts[c.id];
     openCardId = null;
     postBoard({ op: "delete", id: c.id }, "Card deleted.");
   });
