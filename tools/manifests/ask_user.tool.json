@@ -1,6 +1,6 @@
 {
   "name": "ask_user",
-  "description": "Ask a human, or another clanker instance, to choose between concrete options when guessing would waste work: which of two designs to build, which file to change, whether to widen the scope. Only for genuine forks where the options lead to materially different work \u2014 do not ask for permission to continue, and do not ask what you can determine by reading the code. Input: {\"question\": \"...\", \"options\": [\"...\", \"...\"]} (two or more), plus optional {\"peer\": \"<instance name>\"} to ask that peer instead of the human. Returns the chosen option verbatim and who answered. In a non-interactive run with no peer it returns an error saying to decide yourself.",
+  "description": "Ask a human, another clanker instance, or (in a sub-agent run) the parent agent that spawned you, to choose between concrete options when guessing would waste work: which of two designs to build, which file to change, whether to widen the scope. Only for genuine forks where the options lead to materially different work — do not ask for permission to continue, and do not ask what you can determine by reading the code. Input: {\"question\": \"...\", \"options\": [\"...\", \"...\"]} (two or more), plus optional {\"peer\": \"<instance name>\"} to ask that peer, or {\"parent\": true} to ask your parent agent — the one holding the context your brief left out (sub-agent runs only; pick at most one target). Returns the chosen option verbatim and who answered. With no reachable answerer it returns an error saying to decide yourself.",
   "wasm": "zig-out/tools/ask_user.wasm",
   "input_schema": {
     "type": "object",
@@ -19,6 +19,10 @@
       "peer": {
         "type": "string",
         "description": "Name of a peer clanker instance to ask instead of the human (see the peers tool)."
+      },
+      "parent": {
+        "type": "boolean",
+        "description": "true to ask the agent that spawned this sub-agent run instead of the human. Use when the decision hinges on context the parent has and the brief left out."
       }
     },
     "required": [

@@ -61,6 +61,29 @@ pub const AskFn = *const fn (
     options: []const []const u8,
 ) anyerror![]const u8;
 
+/// Answers a sub-agent's question on the parent's behalf (`ask_user` with
+/// `{"parent": true}`). `ctx` is the parent agent; the answer is gpa-owned
+/// and freed by the caller.
+///
+/// The concurrency decision this type encodes: the answer is a *re-entrant
+/// path* — one bounded completion on the parent's provider over a snapshot of
+/// the parent's transcript — not a queue that resolves at the parent's next
+/// turn boundary. A queue cannot work here: ck_subagent joins the nested
+/// thread, so the parent never reaches a turn boundary while its sub-agent
+/// waits. The same join is what makes the re-entrant path safe: the subagent
+/// tool is `llm: true`, which pins it to the sequential tool path, so while
+/// this callback runs the parent is parked with no other tool of its own in
+/// flight, and its transcript cannot move under the reader.
+pub const ParentAsk = struct {
+    ctx: *anyopaque,
+    call: *const fn (
+        ctx: *anyopaque,
+        gpa: std.mem.Allocator,
+        question: []const u8,
+        options: []const []const u8,
+    ) anyerror![]const u8,
+};
+
 /// What the parent hands down to a sub-agent. A sub-agent starts with an
 /// empty transcript on purpose - the point of delegating is to keep that work
 /// out of the parent's context window, and copying the transcript back in
@@ -92,6 +115,7 @@ pub const SubagentRunner = *const fn (
     task: []const u8,
     provider_name: ?[]const u8,
     brief: Brief,
+    parent_ask: ?ParentAsk,
 ) anyerror![]const u8;
 
 /// Per-tool sandbox policy, owned by the harness.
@@ -114,6 +138,12 @@ pub const Sandbox = struct {
     subagent_runner: ?SubagentRunner = null,
     /// Optional human prompt (ask_user tool); null outside the REPL.
     ask_fn: ?AskFn = null,
+    /// A nested run's channel to the agent that spawned it (ask_user with
+    /// {"parent": true}); wired only inside sub-agent runs.
+    parent_ask: ?ParentAsk = null,
+    /// This agent as an answerer for the sub-agents it spawns; ckSubagent
+    /// hands it down to become the nested run's parent_ask.
+    own_ask: ?ParentAsk = null,
     /// The task the parent agent is working on, handed to sub-agents so their
     /// piece is read in service of something rather than in a vacuum.
     parent_task: []const u8 = "",
@@ -1750,20 +1780,23 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
 /// sub-agent to modify files you are currently editing (it works on a
 /// snapshot, not on your live state).
 ///
-/// ck_ask: put a multiple-choice question to the human and return their pick.
+/// ck_ask: put a multiple-choice question to the human — or, with
+/// {"to": "parent"}, to the agent that spawned this sub-agent — and return
+/// the pick.
 ///
-/// Use this when a decision is genuinely ambiguous and the user's preference
-/// matters (e.g. choosing between two valid refactoring strategies).  Do NOT
-/// use it for yes/no confirmations you can resolve yourself, or when the
-/// options list has fewer than 2 entries (the call will fail).  The sandbox
-/// has no terminal, so the decision is made host-side by whoever installed
-/// `ask_fn` (the REPL).  Without one there is no human attached, and the
-/// call returns Err.not_found so the model can decide for itself.
+/// Use this when a decision is genuinely ambiguous and the asker cannot
+/// resolve it alone (e.g. choosing between two valid refactoring strategies).
+/// Do NOT use it for yes/no confirmations the model can resolve itself, or
+/// when the options list has fewer than 2 entries (the call will fail). The
+/// sandbox has no terminal, so the decision is made host-side: by whoever
+/// installed `ask_fn` (the REPL) for the human target, or by the ParentAsk
+/// callback (wired only inside sub-agent runs) for the parent target. When
+/// the requested answerer is not attached the call returns Err.not_found so
+/// the model can decide for itself.
 pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
-    const ask = h.sandbox.ask_fn orelse return Err.not_found;
 
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
@@ -1790,6 +1823,16 @@ pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     // which this tool does not do: the model should just ask in its answer.
     if (options.items.len < 2) return Err.invalid;
 
+    if (obj.get("to")) |t| {
+        if (t == .string and std.mem.eql(u8, t.string, "parent")) {
+            const pa = h.sandbox.parent_ask orelse return Err.not_found;
+            const answer = pa.call(pa.ctx, h.sandbox.gpa, question, options.items) catch return Err.invalid;
+            defer h.sandbox.gpa.free(@constCast(answer));
+            return h.writeResult(bytes, answer);
+        }
+    }
+
+    const ask = h.sandbox.ask_fn orelse return Err.not_found;
     const answer = ask(question, options.items) catch return Err.invalid;
     defer h.sandbox.gpa.free(@constCast(answer));
     return h.writeResult(bytes, answer);
@@ -1835,11 +1878,12 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         task: []const u8,
         provider_name: ?[]const u8,
         brief: Brief,
+        parent_ask: ?ParentAsk,
         runner: SubagentRunner,
         result: ?[]const u8 = null,
         err: ?anyerror = null,
         fn run(self: *@This()) void {
-            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief) catch |e| {
+            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask) catch |e| {
                 self.err = e;
                 return;
             };
@@ -1853,6 +1897,9 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         .task = task,
         .provider_name = provider_name,
         .brief = brief,
+        // The spawning agent as answerer: it becomes the nested run's
+        // parent_ask, reachable via ask_user {"parent": true}.
+        .parent_ask = h.sandbox.own_ask,
         .runner = runner,
     };
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
