@@ -106,19 +106,15 @@ fn walk(
         try owned.append(alloc, try alloc.dupe(u8, item.string));
     }
 
-    for (owned.items) |name| {
-        const full = if (std.mem.eql(u8, dir, "."))
+    for (owned.items) |listed| {
+        const is_dir = std.mem.endsWith(u8, listed, "/");
+        const name = if (is_dir) listed[0 .. listed.len - 1] else listed;
+        if (name.len == 0) continue;
+
+        const full = if (dir.len == 0 or std.mem.eql(u8, dir, "."))
             try alloc.dupe(u8, name)
         else
             try std.fmt.allocPrint(alloc, "{s}/{s}", .{ dir, name });
-
-        const is_dir = blk: {
-            const raw_stat = lib.fsStat(full) catch break :blk false;
-            const st = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw_stat, .{}) catch break :blk false;
-            if (st != .object) break :blk false;
-            const kind = st.object.get("kind") orelse break :blk false;
-            break :blk kind == .string and std.mem.eql(u8, kind.string, "directory");
-        };
 
         // The same directories the host's name search skips: a recursive
         // listing of the project should not be mostly build output and copies
