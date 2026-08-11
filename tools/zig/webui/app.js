@@ -2645,9 +2645,62 @@ function buildChatMessage(m) {
 
   var text = document.createElement("div");
   text.className = "chat-text";
-  text.textContent = m.text;
+  var said = boardActionLine(m.text);
+  if (said) {
+    text.classList.add("chat-action");
+    text.textContent = said;
+  } else {
+    text.textContent = m.text;
+  }
   wrap.appendChild(text);
   return wrap;
+}
+
+/* A card action is a chat message, which is what lets a board replicate with
+   the room it belongs to. Printed as it is stored it is a line of JSON in the
+   middle of a human conversation, so the room shows the sentence the action
+   stands for and keeps the payload out of the way. Returns null for an
+   ordinary message, which is then shown verbatim. */
+var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done" };
+
+function boardActionLine(raw) {
+  if (typeof raw !== "string" || raw.slice(0, 6) !== "@todo ") return null;
+  var a;
+  try { a = JSON.parse(raw.slice(6)); } catch (e) { return null; }
+  if (!a || typeof a !== "object") return null;
+  var quoted = function (s) { return "\u201c" + String(s) + "\u201d"; };
+  var col = function (c) { return BOARD_COLUMNS[c] || c; };
+  switch (a.action) {
+    case "add": return "added " + quoted(a.title) + (a.column ? " to " + col(a.column) : "");
+    case "update": {
+      var parts = [];
+      if (a.title) parts.push("title to " + quoted(a.title));
+      if (a.priority) parts.push("priority to " + a.priority);
+      if (a.column) parts.push("column to " + col(a.column));
+      if (a.who !== undefined) parts.push(a.who ? "owner to " + a.who : "nobody as owner");
+      if (a.deadline !== undefined) parts.push("the deadline");
+      if (a.body !== undefined && !parts.length) parts.push("the notes");
+      return "changed " + (parts.length ? parts.join(", ") : "a card");
+    }
+    case "move": return "moved a card to " + col(a.column);
+    case "close": return "moved a card to Done";
+    case "claim": return "claimed a card";
+    case "assign": return a.who ? "assigned a card to " + a.who : "left a card unassigned";
+    case "delete": return "deleted a card";
+    case "subtask_add": return "added the subtask " + quoted(a.text);
+    case "subtask_toggle": return (a.done === false ? "unticked" : "ticked") + " a subtask";
+    case "subtask_remove": return "removed a subtask";
+    case "depend": return a.off ? "cleared a dependency" : "made a card wait on another";
+    case "log": return "noted: " + a.what;
+    case "usage": {
+      var bits = [];
+      var tok = (a.prompt_tokens || 0) + (a.completion_tokens || 0);
+      if (tok) bits.push(tok.toLocaleString() + " tokens");
+      if (a.cost) bits.push("$" + Number(a.cost).toFixed(4));
+      return "recorded " + (bits.length ? bits.join(" and ") : "usage") + " against a card";
+    }
+    default: return null;
+  }
 }
 
 function formatChatTime(ts) {

@@ -677,6 +677,9 @@ select:focus-visible { border-color: var(--accent); }
 .chat-msg.mine .chat-from { color: var(--ok); }
 .chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .chat-text { white-space: pre-wrap; color: var(--fg); max-width: var(--measure); }
+/* What a card action reads as: a report of something that happened, not
+   something anyone typed. */
+.chat-text.chat-action { color: var(--fg-muted); font-style: italic; }
 .chat-composer { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
 .chat-composer input {
   flex: 1; min-width: 12rem; min-height: 44px; padding: 0.5rem 0.75rem;
