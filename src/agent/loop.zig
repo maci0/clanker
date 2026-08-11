@@ -731,11 +731,15 @@ pub const Agent = struct {
         } = null,
     };
 
+    const reasoning_record_buf_bytes = 65536;
+    const reasoning_record_task_chars = 200;
+    const reasoning_record_reasoning_chars = 20000;
+
     /// Appends one reasoning trace to state/reasoning.jsonl (RLM).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
         std.Io.Dir.cwd().createDirPath(io, "state") catch return;
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-        var buf: [65536]u8 = undefined;
+        var buf: [reasoning_record_buf_bytes]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
         var s = std.json.Stringify{ .writer = &w, .options = .{} };
         s.beginObject() catch return;
@@ -746,9 +750,9 @@ pub const Agent = struct {
         s.objectField("model") catch return;
         s.write(model) catch return;
         s.objectField("task") catch return;
-        s.write(if (task.len > 200) task[0..200] else task) catch return;
+        s.write(if (task.len > reasoning_record_task_chars) task[0..reasoning_record_task_chars] else task) catch return;
         s.objectField("reasoning") catch return;
-        s.write(if (reasoning.len > 20000) reasoning[0..20000] else reasoning) catch return;
+        s.write(if (reasoning.len > reasoning_record_reasoning_chars) reasoning[0..reasoning_record_reasoning_chars] else reasoning) catch return;
         s.endObject() catch return;
 
         const path = "state/reasoning.jsonl";
