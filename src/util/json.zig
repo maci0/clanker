@@ -29,6 +29,16 @@ pub fn boolField(obj: std.json.ObjectMap, key: []const u8) !bool {
     };
 }
 
+/// Returns the float value of `key`, or an error if absent or not a number.
+pub fn floatField(obj: std.json.ObjectMap, key: []const u8) !f64 {
+    const v = obj.get(key) orelse return error.MissingField;
+    return switch (v) {
+        .integer => |i| @floatFromInt(i),
+        .float => |f| f,
+        else => error.FieldNotNumber,
+    };
+}
+
 test "json field helpers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -38,6 +48,7 @@ test "json field helpers" {
     try obj.put(arena, "name", .{ .string = "clanker" });
     try obj.put(arena, "count", .{ .integer = 3 });
     try obj.put(arena, "active", .{ .bool = true });
+    try obj.put(arena, "ratio", .{ .float = 1.5 });
 
     try std.testing.expectEqualStrings("clanker", try strField(obj, "name"));
     try std.testing.expectError(error.FieldNotString, strField(obj, "count"));
@@ -50,4 +61,8 @@ test "json field helpers" {
     try std.testing.expectEqual(true, try boolField(obj, "active"));
     try std.testing.expectError(error.FieldNotBool, boolField(obj, "name"));
     try std.testing.expectError(error.MissingField, boolField(obj, "missing"));
+
+    try std.testing.expectEqual(@as(f64, 1.5), try floatField(obj, "ratio"));
+    try std.testing.expectError(error.FieldNotNumber, floatField(obj, "name"));
+    try std.testing.expectError(error.MissingField, floatField(obj, "missing"));
 }
