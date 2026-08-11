@@ -179,8 +179,8 @@ pub const Editor = struct {
             },
             .kill_word => {
                 var i = self.cursor;
-                while (i > 0 and self.buf[i - 1] == ' ') i -= 1;
-                while (i > 0 and self.buf[i - 1] != ' ') i -= 1;
+                while (i > 0 and isWhitespace(self.buf[i - 1])) i -= 1;
+                while (i > 0 and !isWhitespace(self.buf[i - 1])) i -= 1;
                 const removed = self.cursor - i;
                 std.mem.copyForwards(u8, self.buf[i .. self.len - removed], self.buf[self.cursor..self.len]);
                 self.len -= removed;
@@ -212,6 +212,10 @@ pub const Editor = struct {
         return false;
     }
 };
+
+fn isWhitespace(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '\r' or c == '\n';
+}
 
 // ------------------------------------------------------------------- tests --
 
@@ -281,6 +285,56 @@ test "editing keys insert, delete and kill at the cursor" {
     _ = ed.apply(.kill_to_start);
     try std.testing.expectEqualStrings("", ed.line());
     try std.testing.expect(ed.apply(.enter));
+}
+
+test "kill_to_start clears entire line when cursor is at end" {
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+
+    for ("remove me") |c| _ = ed.apply(.{ .char = c });
+    try std.testing.expectEqualStrings("remove me", ed.line());
+    _ = ed.apply(.kill_to_start);
+    try std.testing.expectEqualStrings("", ed.line());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+}
+
+test "kill_to_start with cursor in middle" {
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+
+    for ("hello world") |c| _ = ed.apply(.{ .char = c });
+    // Move cursor to position 6 (before 'w')
+    _ = ed.apply(.home);
+    for (0..6) |_| _ = ed.apply(.right);
+    _ = ed.apply(.kill_to_start);
+    try std.testing.expectEqualStrings("world", ed.line());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+}
+
+test "kill_to_end removes from cursor to end" {
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+
+    for ("hello world") |c| _ = ed.apply(.{ .char = c });
+    _ = ed.apply(.home);
+    for (0..5) |_| _ = ed.apply(.right);
+    _ = ed.apply(.kill_to_end);
+    try std.testing.expectEqualStrings("hello", ed.line());
+}
+
+test "kill_word skips tabs as whitespace" {
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+
+    for ("hello\t\tworld") |c| _ = ed.apply(.{ .char = c });
+    _ = ed.apply(.kill_word);
+    try std.testing.expectEqualStrings("hello\t\t", ed.line());
+    _ = ed.apply(.kill_word);
+    try std.testing.expectEqualStrings("", ed.line());
 }
 
 test "duplicate consecutive entries are not remembered twice" {
