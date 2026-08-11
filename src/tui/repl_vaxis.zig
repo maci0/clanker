@@ -344,6 +344,20 @@ const Model = struct {
     }
 
     fn submit(self: *Model, ctx: *vxfw.EventContext) !void {
+        // One turn at a time: runThreadMain's finishTurn touches self.lines
+        // and self.arena from the background thread. self.arena is a plain
+        // ArenaAllocator (no internal locking) and self.lines is a plain
+        // ArrayList, so a second in-flight turn spawned here would race the
+        // first turn's background thread on both — not just contend for
+        // g_mutex-guarded state, but corrupt the arena's free-list and the
+        // transcript's backing storage. Leaving typed input untouched (no
+        // toOwnedSlice yet) is a no-op keystroke while the picker is modal
+        // for the same reason: nothing to submit into.
+        g_mutex.lockUncancelable(g_io);
+        const already_streaming = g_streaming;
+        g_mutex.unlock(g_io);
+        if (already_streaming) return;
+
         const task = try self.text_field.toOwnedSlice();
         defer self.gpa.free(task);
         if (task.len == 0) return;
@@ -376,12 +390,20 @@ const Model = struct {
         self.hist_idx = self.history.items.len;
         self.hist_draft = "";
 
+        // self.thread is assigned here and read by finishTurn on the
+        // background thread (to detach itself); spawning and storing the
+        // handle under the same lock finishTurn locks before reading it
+        // gives that read a happens-after relationship to this write. Doing
+        // the assignment outside the lock let a background thread that
+        // fails fast in Agent.init race finishTurn's read of self.thread
+        // against this store, seeing it still null and leaking the handle.
         g_mutex.lockUncancelable(g_io);
+        defer g_mutex.unlock(g_io);
         g_streaming = true;
         g_stream_buf.clearRetainingCapacity();
         g_tool_lines.clearRetainingCapacity();
         g_stop_flag.store(false, .release);
-        g_mutex.unlock(g_io);
+        errdefer g_streaming = false;
 
         const owned_task = try self.arena.dupe(u8, task);
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
@@ -728,10 +750,15 @@ const Model = struct {
         const err_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.err } } else .{};
         @memset(surface.buffer, .{ .style = .{}, .default = true });
 
+        // Held through the self.lines read loop below, not just the
+        // streaming snapshot: finishTurn appends to self.lines from the
+        // background thread while a turn is in flight (this same draw runs
+        // on every 50ms tick during that window), so reading self.lines.items
+        // without the lock is a torn read against a concurrent append/resize.
         g_mutex.lockUncancelable(g_io);
+        defer g_mutex.unlock(g_io);
         const streaming = g_streaming;
         const stream_snapshot = ctx.arena.dupe(u8, g_stream_buf.items) catch "";
-        g_mutex.unlock(g_io);
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
