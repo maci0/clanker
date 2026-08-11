@@ -1,6 +1,6 @@
 {
   "name": "subagent",
-  "description": "delegate a task to a nested sub-agent run with its own context and bounded iterations; returns the sub-agent's final answer. Use for isolated sub-problems (research a file, draft a patch, verify a claim) while you keep working.",
+  "description": "Delegate a self-contained sub-problem to a nested agent with its own context and a short iteration budget; returns its final answer. WHEN TO USE: work that would otherwise fill your own context \u2014 reading a large file to answer one question, checking a claim, drafting one patch \u2014 while you keep the thread of the main task. WHEN NOT TO USE: anything you can finish in a couple of tool calls yourself; delegation costs a whole extra run. The sub-agent starts with an EMPTY transcript: it cannot see what you have read or decided, so brief it. Put the facts it must not re-derive in \"context\" and the paths worth reading in \"files\" (it reads them itself, which costs you nothing). Input: {\"task\": \"...\", \"context\": [\"...\"], \"files\": [\"src/x.zig\"], \"provider\": \"kimi-k3\"}.",
   "wasm": "zig-out/tools/subagent.wasm",
   "input_schema": {
     "type": "object",
@@ -10,6 +10,20 @@
       },
       "provider": {
         "type": "string"
+      },
+      "context": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Facts, constraints and decisions you already established, so the sub-agent does not redo that work."
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Paths the sub-agent should read first. Passed by reference; it reads them itself."
       }
     },
     "required": [

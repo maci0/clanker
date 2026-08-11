@@ -87,6 +87,9 @@ pub const Agent = struct {
     /// REPL renders tokens live). Tool-call flows still assemble a normal
     /// ChatResponse internally.
     on_token: ?*const fn ([]const u8) void = null,
+    /// The task this run is working on, handed down to sub-agents so their
+    /// piece is read in service of something.
+    current_task: []const u8 = "",
     /// Human prompt for the ask_user tool, wired by the REPL. Null elsewhere:
     /// a scripted run has nobody to ask.
     ask_fn: ?host.AskFn = null,
@@ -260,6 +263,7 @@ pub const Agent = struct {
             if (self.cfg.modules.graphs) graph_mod.write(self.ctx.io, self.ctx.gpa, self.arena, &g) catch {};
             g.deinit(self.ctx.gpa);
         }
+        self.current_task = task;
         // A decision the user made before this turn started (they picked one
         // of the options the last answer offered): first node, so the graph
         // says why this run exists.
@@ -1137,6 +1141,7 @@ pub const Agent = struct {
         // for the CLI and MCP callers of the shared builder.
         sb.subagent_runner = self.subagent_runner;
         sb.ask_fn = self.ask_fn;
+        sb.parent_task = self.current_task;
         sb.state_dir = self.cfg.agent.state_dir;
         // A tool that named no provider of its own follows the agent, which may
         // itself be running under a --provider override rather than the default.

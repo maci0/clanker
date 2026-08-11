@@ -14,6 +14,59 @@ const Agent = @import("loop.zig").Agent;
 /// Bounded iteration budget for sub-agent runs.
 const sub_max_iterations: u32 = 6;
 
+/// What the parent hands down. A sub-agent starts with an empty transcript on
+/// purpose — the point of delegating is to keep that work out of the parent's
+/// context window, and copying the transcript back in would double the tokens
+/// and pass along every wrong turn the parent already took.
+///
+/// What it must not start without is the *brief*: the objective the work
+/// serves, the facts the parent already established, and where to look. Left
+/// to reconstruct those, a sub-agent re-reads what the parent just read and
+/// answers a question nobody asked.
+pub const Brief = struct {
+    /// The parent's own task, so the sub-task is read in service of something.
+    parent_task: []const u8 = "",
+    /// Facts, constraints and decisions the parent already has in hand.
+    context: []const []const u8 = &.{},
+    /// Paths worth reading first. Passed by reference, not by value: the
+    /// sub-agent reads them itself, which costs the parent nothing and keeps
+    /// the bytes out of both prompts until they are needed.
+    files: []const []const u8 = &.{},
+};
+
+/// Renders the brief and the task into the sub-agent's opening message.
+pub fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    if (brief.parent_task.len > 0) {
+        try buf.appendSlice(arena, "You are a sub-agent. The work you are part of: ");
+        try buf.appendSlice(arena, brief.parent_task);
+        try buf.appendSlice(arena, "\n\n");
+    }
+    if (brief.context.len > 0) {
+        try buf.appendSlice(arena, "Already established (do not re-derive):\n");
+        for (brief.context) |c| {
+            try buf.appendSlice(arena, "- ");
+            try buf.appendSlice(arena, c);
+            try buf.appendSlice(arena, "\n");
+        }
+        try buf.appendSlice(arena, "\n");
+    }
+    if (brief.files.len > 0) {
+        try buf.appendSlice(arena, "Read these first:\n");
+        for (brief.files) |f| {
+            try buf.appendSlice(arena, "- ");
+            try buf.appendSlice(arena, f);
+            try buf.appendSlice(arena, "\n");
+        }
+        try buf.appendSlice(arena, "\n");
+    }
+    if (buf.items.len == 0) return task;
+    try buf.appendSlice(arena, "Your task: ");
+    try buf.appendSlice(arena, task);
+    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs.");
+    return buf.toOwnedSlice(arena);
+}
+
 /// Matches host.SubagentRunner: runs a nested agent on `task` and returns the
 /// final answer text.
 pub fn runNested(
@@ -23,6 +76,7 @@ pub fn runNested(
     cfg: *const config.Config,
     task: []const u8,
     provider_name: ?[]const u8,
+    brief: Brief,
 ) ![]const u8 {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -45,8 +99,34 @@ pub fn runNested(
 
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
-    const resp = try a.run(&messages, task, &err_detail);
+    const resp = try a.run(&messages, try briefedTask(arena, task, brief), &err_detail);
     // gpa-owned so the caller (ckSubagent) can use it after this fn's arena
     // is gone; the caller frees it.
     return gpa.dupe(u8, resp.message.content orelse "");
+}
+
+test "the brief tells a sub-agent what it cannot see" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const briefed = try briefedTask(arena, "Check whether runChain is reachable.", .{
+        .parent_task = "wire the transform chain into executeTool",
+        .context = &.{ "runChain exists but has no call site", "ast-grep cannot parse Zig here" },
+        .files = &.{"src/agent/loop.zig"},
+    });
+
+    // The objective, the established facts and the pointers all survive.
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "wire the transform chain") != null);
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "no call site") != null);
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "src/agent/loop.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "Check whether runChain is reachable.") != null);
+    // Facts are marked as settled, or the sub-agent spends its budget
+    // rediscovering them.
+    try std.testing.expect(std.mem.indexOf(u8, briefed, "do not re-derive") != null);
+
+    // With nothing to hand down, the task is passed through untouched rather
+    // than wrapped in an empty preamble.
+    const bare = try briefedTask(arena, "just do this", .{});
+    try std.testing.expectEqualStrings("just do this", bare);
 }

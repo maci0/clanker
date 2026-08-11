@@ -13,6 +13,7 @@ const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const config_mod = @import("../config.zig");
+const subagent_mod = @import("../agent/subagent.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const token_stats = @import("../stats/tokens.zig");
@@ -64,6 +65,7 @@ pub const SubagentRunner = *const fn (
     cfg: *const config_mod.Config,
     task: []const u8,
     provider_name: ?[]const u8,
+    brief: subagent_mod.Brief,
 ) anyerror![]const u8;
 
 pub const Sandbox = struct {
@@ -85,6 +87,9 @@ pub const Sandbox = struct {
     subagent_runner: ?SubagentRunner = null,
     /// Optional human prompt (ask_user tool); null outside the REPL.
     ask_fn: ?AskFn = null,
+    /// The task the parent agent is working on, handed to sub-agents so their
+    /// piece is read in service of something rather than in a vacuum.
+    parent_task: []const u8 = "",
     /// Effective config, for host functions that need it (subagent runner).
     cfg: ?*const config_mod.Config = null,
     /// Per-session token budget for ck_llm calls (0 = unlimited).
@@ -1528,6 +1533,11 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     if (obj.get("provider")) |p| {
         if (p == .string and p.string.len > 0) provider_name = p.string;
     }
+    // The brief the parent hands down: what it already knows, and where to
+    // look. Without it the sub-agent re-derives what the parent just learned.
+    var brief = subagent_mod.Brief{ .parent_task = h.sandbox.parent_task };
+    brief.context = stringArray(arena, obj.get("context")) catch &.{};
+    brief.files = stringArray(arena, obj.get("files")) catch &.{};
     const cfg = h.sandbox.cfg orelse return Err.not_found;
     // Run the nested agent on its own thread with a large stack: nesting a
     // second zwasm interpreter on the caller's stack (which may itself be a
@@ -1539,11 +1549,12 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         cfg: *const config_mod.Config,
         task: []const u8,
         provider_name: ?[]const u8,
+        brief: subagent_mod.Brief,
         runner: SubagentRunner,
         result: ?[]const u8 = null,
         err: ?anyerror = null,
         fn run(self: *@This()) void {
-            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name) catch |e| {
+            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief) catch |e| {
                 self.err = e;
                 return;
             };
@@ -1556,6 +1567,7 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         .cfg = cfg,
         .task = task,
         .provider_name = provider_name,
+        .brief = brief,
         .runner = runner,
     };
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
@@ -1695,6 +1707,17 @@ fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []c
 /// Resolves a tool-supplied path against the sandbox root, rejecting absolute
 /// paths, any `..` / `.` component, and anything outside the tool's allowed
 /// prefix list. Returns an allocated joined path.
+/// A JSON array of strings as a slice, ignoring anything that is not a string.
+fn stringArray(arena: std.mem.Allocator, value: ?std.json.Value) ![]const []const u8 {
+    const v = value orelse return &.{};
+    if (v != .array) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    for (v.array.items) |item| {
+        if (item == .string and item.string.len > 0) try out.append(arena, item.string);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     if (sub_path.len == 0) return error.PathOutsideSandbox;
     if (sub_path[0] == '/') return error.PathOutsideSandbox;

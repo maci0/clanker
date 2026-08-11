@@ -152,6 +152,22 @@ pub fn subagent(task: []const u8, provider: ?[]const u8) FsError![]const u8 {
     };
 }
 
+/// Delegates to a sub-agent, forwarding the caller's whole input object so the
+/// brief ("context", "files") reaches the host untouched.
+pub fn subagentBriefed(input: []const u8, task: []const u8, provider: ?[]const u8) FsError![]const u8 {
+    // The host already parses task/provider/context/files out of this object;
+    // re-encoding here would only be a chance to drop a field.
+    _ = task;
+    _ = provider;
+    const req = sliceToMem(input);
+    const rc = ck_subagent(req.ptr, req.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        2 => error.NotFound,
+        else => error.IoError,
+    };
+}
+
 /// Puts a multiple-choice question to the human and returns the option they
 /// chose. `error.NotFound` means nobody is attached to answer (a scripted run),
 /// which the caller should treat as "decide it yourself", not as a failure.

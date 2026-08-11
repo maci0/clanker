@@ -1,6 +1,6 @@
 //! subagent: delegate a task to a nested sub-agent run (separate context,
 //! bounded iterations). Returns the sub-agent's final answer.
-//! Input:  {"task": "...", "provider": "kimi-k3"}
+//! Input:  {"task": "...", "context": ["..."], "files": ["src/x.zig"], "provider": "kimi-k3"}
 //! Output: {"ok": true, "text": "<sub-agent answer>"}
 
 const std = @import("std");
@@ -21,7 +21,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (obj.get("provider")) |p| {
         if (p == .string and p.string.len > 0) provider = p.string;
     }
-    const raw = lib.subagent(task, provider) catch |err| return errJson(out, @errorName(err));
+    // The brief travels as-is: the host reads "context" and "files" out of the
+    // same object, so nothing has to be re-encoded here.
+    const raw = lib.subagentBriefed(input, task, provider) catch |err| return errJson(out, @errorName(err));
     var rbuf: [65536]u8 = undefined;
     var w: std.Io.Writer = .fixed(&rbuf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
