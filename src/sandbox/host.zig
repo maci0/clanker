@@ -1529,7 +1529,18 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         .cwd = .{ .dir = exec_dir },
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(8 * 1024),
-    }) catch return Err.network;
+    }) catch |err| {
+        // Not a network condition: a process that could not be spawned or
+        // whose output overran the cap was reported to the guest as
+        // "NetworkError", which sent the model looking for a connectivity
+        // problem that never existed.
+        log.log(.warn, "[exec] {s} failed to run: {s}", .{ cmd, @errorName(err) });
+        return switch (err) {
+            error.FileNotFound => Err.not_found,
+            error.StreamTooLong, error.FileTooBig, error.NoSpaceLeft => Err.too_large,
+            else => Err.invalid,
+        };
+    };
     defer h.sandbox.gpa.free(result.stdout);
     defer h.sandbox.gpa.free(result.stderr);
 

@@ -34,6 +34,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try args.append(std.heap.wasm_allocator, query);
         try args.append(std.heap.wasm_allocator, path);
     } else if (std.mem.eql(u8, engine, "ast-grep")) {
+        // ast-grep has no Zig grammar. Saying so costs one line here and
+        // saves the caller a turn spent decoding "zig is not supported".
+        if (std.mem.endsWith(u8, path, ".zig")) {
+            return errJson(out, "ast-grep has no Zig grammar; use engine=\"rg\" for .zig files");
+        }
         try args.append(std.heap.wasm_allocator, "-p");
         try args.append(std.heap.wasm_allocator, query);
         try args.append(std.heap.wasm_allocator, path);

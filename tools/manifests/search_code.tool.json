@@ -1,6 +1,6 @@
 {
   "name": "search_code",
-  "description": "Search the project source. Input: {\"engine\": \"rg\" | \"ast-grep\" | \"semcode\", \"query\": \"...\", \"path\": \".\"}. rg = ripgrep regex search (--json); ast-grep = structural AST pattern search; semcode = semantic code search (needs a .semcode.db). Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
+  "description": "Search the project source with the most deterministic engine that fits the question. engine=\"ast-grep\": structural AST patterns with metavariables ($NAME, $$$ARGS) \u2014 use this whenever you are looking for a code *shape* rather than text, in a language it supports (JS/TS, Python, Rust, Go, C/C++, Java and more). It does NOT support Zig, so it cannot be used on this project's own src/ \u2014 use rg there. engine=\"semcode\": semantic queries over an indexed C/C++/Rust tree (needs .semcode.db); also not Zig. engine=\"rg\": ripgrep regex, the fallback for Zig and for plain text. Prefer a precise regex anchored on syntax (e.g. \"fn name\\\\(\") over a bare identifier, and read the file before acting on a match. Input: {\"engine\": \"rg\" | \"ast-grep\" | \"semcode\", \"query\": \"...\", \"path\": \".\"}. Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
   "wasm": "zig-out/tools/search_code.wasm",
   "input_schema": {
     "type": "object",
