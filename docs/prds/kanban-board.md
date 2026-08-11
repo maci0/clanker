@@ -57,6 +57,15 @@ buffer, up to `max_pages = 64`. A board reaching the cap is reported as
 partial fold would quietly resurrect deleted cards and lose moves
 (`pageCapExceeded` in `board.zig`, exercised by its own unit test).
 
+Pages are requested oldest-first (`{"oldest":true}` on the history op): the
+fold's only cursor is `ts > after`, so the default newest-first page shape
+would jump it past everything older than the newest page and fold a partial
+log below the cap. The host extends an oldest-first page through a shared
+boundary timestamp (timestamps are seconds; a burst of writes shares one), so
+the cursor never splits a timestamp group (`readHistoryAsc` in
+`chatrooms.zig`; regression-tested end to end in `runtime.zig` with a
+25-message room).
+
 **Ops.** `list`, `create`/`add`, `update`, `move`, `claim`, `assign`,
 `close`, `delete`, `log`, `usage`, `subtask_add`, `subtask_toggle`,
 `subtask_remove`, `depend_add`, `depend_remove`. Eight of the ten
@@ -96,6 +105,12 @@ runs — this one field is not itself an array, unlike the others above).
 - Resolved: `board_move`'s `position` field was a no-op (no ordering concept
   exists in `cards.zig` or `board.zig`'s `move` handling). Removed from the
   manifest; see Open questions for card ordering as future work.
+- Resolved: a room log longer than one history page folded from its newest
+  20 messages only — the host answered history newest-first, so the fold's
+  `ts > after` cursor jumped to the top of the log after page one and every
+  older card silently vanished from `board_list`, below the page cap and
+  with no error. The fold now requests oldest-first pages (see Paging bound
+  above).
 
 ## Failure modes
 
