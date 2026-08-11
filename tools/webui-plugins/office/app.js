@@ -179,22 +179,29 @@ clanker.registerView({
     CHARS.src = "/webui/plugins/office/characters.png";
 
     var TS = 16;
-    // Tile picks, by grid coordinate on the sheet.
+    // Tile picks, by grid coordinate on the sheet. The sheet stacks two CC0
+    // Kenney packs: rows 0-17 are RPG Urban (the exterior: brick, doors,
+    // windows, bins, street plants), rows 18-35 are Roguelike Indoors (the
+    // furniture). IN() addresses the lower half, so an indoor pick reads as
+    // its own coordinate on its own pack rather than an offset nobody can
+    // check against the source sheet.
+    function IN(c, r) { return [c, r + 18]; }
     var S_FLOOR = [9, 4];
     var S_WALL = [18, 2];
     var S_BOARD = [13, 12];
     var S_WHITEBOARD = [9, 14];
     var S_JANITOR = [25, 6];
-    var S_PLANT = [17, 9];
+    var S_PLANT = IN(16, 0);       // a potted plant, not a street tree
     // The pack carries a whole interior set; the first pass used seven tiles
     // of its 486 and the rooms looked unfurnished as a result.
     var S_BIN = [9, 10];
-    var S_SHELF = [11, 10];
-    var S_COOLER = [2, 10];
-    var S_SOFA = [[4, 12], [5, 12], [6, 12]];
+    var S_SHELF = IN(8, 1);        // bookshelf
+    var S_COOLER = IN(21, 4);      // a water butt, which is what a cooler is
+    var S_SOFA = [IN(10, 3), IN(11, 3)];
     var S_DOOR = [13, 10];
-    var S_DESK = [3, 10];
-    var S_PICTURE = [11, 13];
+    var S_DESK = IN(4, 3);         // a table, with S_CHAIR pulled up to it
+    var S_CHAIR = IN(0, 2);
+    var S_PICTURE = IN(18, 0);     // a framed picture, hung indoors
     var S_AGENTS = [[23, 0], [24, 0], [25, 0], [26, 0], [23, 2], [24, 2], [25, 2], [26, 2]];
 
     function tile(t, dx, dy) {
@@ -304,11 +311,13 @@ clanker.registerView({
       L.desks.forEach(function (d) {
         var dx = ox + d.x * TILE;
         var dy = oy + d.y * TILE;
+        // A desk is a table with a chair pulled up to it: two tiles that read
+        // as one workstation, which a doubled table never did.
         if (!tile(S_DESK, dx, dy)) {
           ctx2d.fillStyle = "#8b5e34";
           ctx2d.fillRect(dx, dy + 3, TILE * 2, 7);
         } else {
-          tile(S_DESK, dx + TILE, dy);
+          tile(S_CHAIR, dx + TILE, dy);
         }
       });
 
