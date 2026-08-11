@@ -56,20 +56,18 @@ its reach.
 
 | Tool | Input |
 |---|---|
-| `chat_send` | `{"room":"dev","text":"hello"}` |
+| `chat_send` | `{"room":"dev","text":"hello"}` or `{"to":"other-clanker","text":"hello"}` for a DM |
 | `chat_history` | `{"room":"dev","after":0}` — newest first; pass the last seen ts to get only newer |
 | `chat_rooms` | `{}` — per-room count, last sender, preview, subscriptions |
 | `chat_subscribe` | `{"room":"dev","on":true}` |
 | `todo_add` / `todo_claim` / `todo_close` / `todo_list` | `{"title":"..."}` etc., **no `room`** — see Private todos below |
 
-**DM rooms are a manual convention, not a feature.** The original design
-called for `chat_send` to accept a `"to"` field and build `dm:<a>|<b>`
-automatically; that was never implemented (`ChatOp` in `src/sandbox/host.zig`
-and the `chat_send` manifest have no `to` field — only a stale error string
-in `tools/zig/chat.zig` still mentions it). A DM today is just two callers
-manually agreeing on and sending to the same `dm:<a>|<b>` room string; there
-is no canonicalization (e.g. sorted participant order), so mismatched
-ordering silently creates two different rooms.
+**DM rooms are ordinary rooms with a canonical entry point.** `chat_send`
+accepts `{"to":"other-clanker","text":"..."}` as an alternative to
+`room`. The host sorts the sender and recipient names and sends to
+`dm:<first>|<second>`, so either participant reaches the same room without
+constructing or ordering it. `room` and `to` are mutually exclusive; a caller
+can still explicitly name a DM room when reading history or subscribing.
 
 **Private todos.** The `todo_*` ops no longer accept `room` at all —
 `src/sandbox/host.zig` hard-errors any `todo_*` call that names one
@@ -99,8 +97,11 @@ subscribed clanker notices what its peers said.
 
 **History limits differ by surface — not one number.** The effective page
 size is 20 for the agent-facing `chat_history` tool (`src/sandbox/host.zig`),
-50 for the CLI and for `GET /api/chat/messages`. The tool path also truncates each
-message to 600 chars; the CLI/HTTP paths don't truncate. The chatroom inbox
+50 for the CLI and for `GET /api/chat/messages`. The tool response includes
+`has_more` when another 20-message page exists; board folding uses that
+signal so it never mistakes a full final page for a truncated log. The tool
+path also truncates each message to 600 chars; the CLI/HTTP paths don't
+truncate. The chatroom inbox
 injected into agent runs caps at the 5 newest messages, each preview
 truncated to 300 chars.
 
@@ -113,11 +114,6 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 
 ## Known issues
 
-- **`chat_send`'s `"to"` field was never built.** Goal 3 and the acceptance
-  criteria below promise DM rooms with no special-casing by senders; the
-  code only offers the manual `dm:<a>|<b>` convention (see Design). Fix by
-  implementing `to` with canonicalized ordering, or by rewriting the goal
-  and acceptance criterion to describe the convention that actually exists.
 - **History page size differs by surface** (tool: 20, CLI/HTTP: 50). The
   dead `chatrooms.zig` `history_limit` constant this used to also disagree
   with has been removed. Document why the tool path is deliberately
@@ -144,8 +140,7 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 
 - [x] A message sent in a room appears in `state/chatrooms.jsonl` and at
       every subscribed peer.
-- [ ] `dm:<a>|<b>` requires no special-casing by senders — not true today,
-      see Known issues.
+- [x] `dm:<a>|<b>` requires no special-casing by senders.
 - [x] Eight descriptors share one wasm module via descriptor `config`.
 - [x] Sub-agent private todos never leak to a room.
 

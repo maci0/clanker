@@ -1,0 +1,39 @@
+/* The floor. Pixel art means nearest-neighbour scaling: the browser's default
+   smoothing turns a 16px grid into mush. */
+.office-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display: block;
+  max-width: none;
+  margin: var(--space-4) 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+/* The same events the canvas animates, in words. Everything the floor shows is
+   already in the Board, Rooms and Goals views, and this is what makes that true
+   for someone who cannot see the canvas. */
+.office-log {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: var(--step-0);
+  color: var(--fg-muted);
+}
+.office-log li {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+}
+.office-log li:last-child { border-bottom: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Nothing here animates in CSS; the still-frame decision is made in app.js,
+     which stops walking and bubbles. This rule exists so the canvas cannot
+     acquire a transition later without someone reading this. */
+  .office-canvas { transition: none; }
+}

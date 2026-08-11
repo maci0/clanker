@@ -90,12 +90,26 @@ Default if unspecified: **review only**, all of `src/`.
 
 | Changelog change | Check |
 |---|---|
-| `@Type` replaced with `@Int`/`@Enum`/`@Struct`/`@Union`/`@Pointer`/`@Fn`/`@Tuple`/`@EnumLiteral` | No `@Type(` anywhere; `std.meta.Int` -> `@Int` (same args) |
 | `@cImport` deprecated (moves to build system) | No `@cImport` in src |
 | `@intFromFloat` deprecated ("redundant with `@trunc`") | `@intFromFloat(f)` -> `@trunc(f)`; `@intFromFloat(@floor(v))` -> `@floor(v)` with int result type |
 | Small ints coerce to floats (e.g. `u24` -> `f32`, not `u25`) | No needless `@floatFromInt` under the precision limit |
 | switch prong captures may no longer all be discarded | Compiler-enforced; verify no all-`_` captures remain |
 | No runtime vector indexes; no in-memory array/vector coercion | Compiler-enforced; spot-check any SIMD-shaped code (none expected in clanker today) |
+
+### A1. Comptime-specific changes (0.16 touched this directly — check every one)
+
+Comptime discipline as a *style* question (should this be comptime at all)
+is `zig-idiomatic-review.md` section 1 and `zig-best-practices-review.md`
+section D's territory. This section is narrower and non-negotiable: four
+real 0.16 language changes to how comptime itself behaves, each with a
+concrete, checkable footprint.
+
+| Changelog change | Check |
+|---|---|
+| `@Type` replaced with `@Int`/`@Enum`/`@Struct`/`@Union`/`@Pointer`/`@Fn`/`@Tuple`/`@EnumLiteral` | No `@Type(` anywhere; `std.meta.Int` -> `@Int` (same args). `rg -n '@Type\('` should be empty |
+| Lazy field analysis: a type used only as a namespace no longer has its fields analyzed (fixes a cost `std.Io`-as-interface exposed) | Do not micro-split files to "avoid pulling in" a type's fields — that workaround is no longer needed, and reintroducing it (or leaving old instances of it in touched code) is a finding, not a style nit. Split for cycle control and cohesion, not to dodge field analysis |
+| Pointers to comptime-only types (`*comptime_int` and slices thereof) are runtime types now, not comptime-only | If touched code has a hand-rolled wrapper struct that exists only to smuggle comptime-only data into a runtime function, check whether the wrapper is now unnecessary |
+| Zero-bit tuple fields are no longer implicitly `comptime` (values stay comptime-known, but the field itself is not) | Low relevance today (no zero-bit-field tuple metaprogramming found in clanker at review-authoring time); spot-check only if touched code builds or destructures tuples with a zero-bit field type (e.g. `void`, `u0`) |
 
 ### B. Time (changelog "Time")
 

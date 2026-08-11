@@ -23,7 +23,8 @@ const help_text =
     \\  /graph           show the latest execution graph
     \\  /status          show instance + peers
     \\  /goal <intent>   design and persist a goal (runs the agent)
-    \\  /quit | /exit    leave the REPL
+    \\  /quit | /exit | /q | exit | quit
+    \\                                leave the REPL
     \\
     \\anything else is sent to the agent as a task.
 ;

@@ -13,6 +13,15 @@ state/
 # User-local configuration (API keys live in env vars anyway)
 config.local.json
 
+# User-local project agent instructions
+.agents/
+
+# User-local Claude project rules (e.g. symlink into .agents/)
+.claude/
+
+# User-local agent coordination and machine state (task board, locks, scratch)
+.local/
+
 # Editor / OS junk
 .DS_Store
 *.swp

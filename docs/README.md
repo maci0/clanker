@@ -141,9 +141,11 @@ peer keeps the message only when it subscribes to that room.
   `docs/adrs/0002-private-todos-vs-shared-board.md`). `board_add`, `board_move`,
   `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`,
   `board_cost`, `board_list`, `board_delete` (`tools/zig/board.zig`, one
-  `board.wasm` module, one op each) work a shared Kanban board at
-  `state/board.json`, with subtasks, dependencies, a work log and accrued
-  cost per card. A move or claim is announced in the board's chatroom, so
+  `board.wasm` module, one op each) work a shared Kanban board folded from
+  the board room's chat log (see
+  `docs/adrs/0001-board-is-a-chatroom.md`), with subtasks, dependencies, a
+  work log and accrued cost per card. A move or claim is announced in the
+  board's chatroom, so
   `todo_*` with a `room` set now fails with a pointer to the `board_*`
   replacement.
 - Private sub-agent todos: `todo_*` tools called without a `room`
@@ -211,8 +213,9 @@ Tools are discovered by the registry (`src/tools/registry.zig`) from the configu
 | `zig build test` | Run the unit and integration tests |
 | `zig fmt --check src/ tools/zig/` | Verify formatting |
 | `clanker gate` | Run all of the above the way the self-improvement gate does |
+| `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/bin/*.wasm`, to catch drift `clanker gate` cannot see (requires node) |
 
-All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool.
+All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool. `tools/ts/verify.sh` is not part of `clanker gate` (a node toolchain is not guaranteed) and must be run by hand after editing `tools/ts/`.
 
 ## Tool catalog
 
@@ -257,7 +260,7 @@ changes as tools are added.
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
-| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (`state/board.json`): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
+| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
 Internal tools, never offered to the model:
 
@@ -338,7 +341,7 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the two handled in-process, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`.
+A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the in-process quit commands, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`. A bare `exit` or `quit` also leaves the REPL.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -349,7 +352,7 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
 | `/status` | `cmd_status` | Show instance and peers |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
-| `/quit`, `/exit`, `/q` | in-process | Leave the REPL |
+| `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
 
 ### `/graph`
 
@@ -372,10 +375,12 @@ iter 2
 
 | Command | Description |
 |---------|-------------|
+| `help` | Print usage; `--help` / `-h` anywhere does the same |
+| `version` | Print the version; `--version` anywhere does the same |
 | `init` | Create `config.local.json` and `state/` |
-| `providers check [name]` | Verify provider connectivity |
+| `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, search the models.dev catalog, or print catalog specs for configured models |
 | `run "<task>"` | Run the agent on a task |
-| `repl` | Start an interactive REPL with streaming |
+| `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
@@ -389,11 +394,19 @@ iter 2
 | `goal` | Design and persist a structured goal |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
-| `serve` | Start the HTTP server |
+| `chat send <room> "<text>"` | Send a message to a chatroom |
+| `chat history <room> [after]` | Read a chatroom's history (newest first) |
+| `chat rooms` | List chatrooms and this instance's subscriptions |
+| `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
+| `stats` | Token usage per provider/model |
+| `serve [--port N]` | HTTP server + web UI (default port 17921) |
+| `setup` | Guided first run: check config, keys and tools |
+| `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
+| `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
 
 ## Configuration
 
-`config.json` is the global config; `config.local.json` overrides it, provider by provider.
+`config.json` is the global config; `config.local.json` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them.
 
 A provider declares its backend once and its models in a map. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
@@ -445,6 +458,9 @@ Full example:
   "peers": [
     { "name": "peer1", "url": "http://127.0.0.1:17922" }
   ],
+  "web": {
+    "allow": ["github.com", "raw.githubusercontent.com"]
+  },
   "instance": { "name": "clanker-1", "id": "abc" },
   "notify": { "topic": "updates" },
   "improve": { "capability_gate": true }
@@ -453,23 +469,63 @@ Full example:
 
 Fields:
 - `providers`: map of provider name → config.
-  - `kind`: `"openai_compat"` or `"anthropic"`.
-  - `base_url`, `api_key_env`, `default_model` (only needed with more than one model), `models` (map of model name → `context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`).
+  - `kind`: `"openai_compat"`, `"anthropic"`, or `"vertex_anthropic"` (Anthropic models via Google Vertex AI: requires `project` + `location`, and either `api_key_env` or `service_account_file`; an env var wins over the service account if both are set).
+  - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model), `models` (map of model name → `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`).
   - `kimi-k3` supports reasoning (returns `reasoning` field).
 - `agent`:
   - `max_iterations`: max agent loop iterations.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
   - `max_total_tokens`: total token budget across the run.
-  - `tools_dir`: directory containing `.tool.json` descriptors.
+  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in.
+  - `tools_dir`, `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: paths the agent reads/writes at runtime.
+  - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: base directory for file operations in tools.
+  - `git_commit`: commit promoted improvements with git (default true).
+  - `seed`: sampling seed.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
-  - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions. Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
+  - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs. `"always"` is reserved for also asking interactive REPL sessions, but `src/tui/repl_vaxis.zig` has no prompt-rendering path to answer it yet, so today `"always"` behaves exactly like `"browser"` — the REPL runs write-capable tools ungated whatever this is set to (tracked in `docs/ROADMAP.md`, "vaxis REPL: close the gap left by the deleted REPL"). Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
   - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.
+- `web`: research-host allowlist for `fetch_web` and `web_search` only.
+  - `allow`: hostnames only — no scheme, path, or port. These hosts are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.json`.
 - `instance`: identity of this agent.
-- `notify`: default topic for notifications.
+- `notify`: `on` / `topic` for peer notifications.
+- `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
+- `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
 - `improve`: settings for self-improvement (`max_context_bytes`, `capability_gate`, `max_cache_bytes`).
+
+### Layered agent instructions
+
+At prompt construction and refresh, clanker appends these instruction files as separate sections, from broadest to narrowest:
+
+1. `$HOME/.agents/AGENTS.md` (or `agent.global_instructions_file`) for device-wide operator rules.
+2. `AGENTS.md` for repository-wide shared conventions.
+3. `.agents/AGENTS.md` for one developer's additions in this checkout.
+
+The project-local file is gitignored. It is additive: use it for instructions such as a personal Git workflow without editing or replacing the repository's `AGENTS.md`. Missing or blank files are omitted.
+
+Create the local directory before adding the file:
+
+```bash
+mkdir -p .agents
+```
+
+#### `@path` imports
+
+Instruction files support Claude-compatible `@path` imports. Relative paths resolve against the file that contains the `@` (not necessarily cwd); `~/…` expands with `$HOME`. Nested imports are allowed up to four hops. Missing imports are a soft skip (the `@ref` is dropped), so a shared root `AGENTS.md` can pull in checkout-private rules without breaking clones that lack that file:
+
+```markdown
+# Project conventions
+…
+
+# Local operator rules (optional; gitignored)
+@.agents/AGENTS.md
+```
+
+Tools that already understand Claude-style imports (Claude Code, and others that copy it) can expand the same line when they read `AGENTS.md`. Clanker expands imports in all three instruction layers. If root `AGENTS.md` already inlined `.agents/AGENTS.md` via `@`, the dedicated local section is not appended again. Imports inside `` `code spans` `` or fenced code blocks are left literal.
+
+For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig` — this section is kept in sync by hand and can lag.
 
 ## HTTP server
 
@@ -492,6 +548,7 @@ Fields:
 | `/api/plugins` | GET, POST | List plugins, or toggle one on/off |
 | `/api/plugins/config` | POST | Update a plugin's `config` object |
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |
+| `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
@@ -505,7 +562,7 @@ Fields:
 
 ### `POST /api/run`
 
-Body: `{"task": "...", "stream": bool, "session": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after.
+Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after. `goal` is optional: when set, that entry from `state/goals.json` is prepended as an `## Active goal` preamble, and an empty `task` becomes a default work order for the goal (what the web UI **Work on this** button sends). When `goal` is omitted and `modules.goal` is on, the newest active goal steers the run automatically.
 
 With `"stream": true`, the response body is `text/plain` and framed line-by-line: plain lines are answer content, verbatim; a line prefixed with byte `0x01` is an out-of-band JSON event instead of content:
 

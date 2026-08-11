@@ -7,6 +7,7 @@
 //! JSON back.
 //!
 //!   chat_send:      {"room":"dev","text":"hello"}
+//!   chat_send:      {"to":"other-clanker","text":"hello"} (DM)
 //!   chat_history:   {"room":"dev","after":0}
 //!   chat_rooms:     {}
 //!   chat_subscribe: {"room":"dev","on":true}

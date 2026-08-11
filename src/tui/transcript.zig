@@ -15,6 +15,7 @@ const std = @import("std");
 const types = @import("../llm/types.zig");
 const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
+const syntax = @import("syntax.zig");
 pub const Theme = theme_mod.Theme;
 
 // -------------------------------------------------------- control stripping --
@@ -80,6 +81,22 @@ pub const MdStream = struct {
     /// Longest marker needing lookahead: "###### " (7 bytes).
     hold: [7]u8 = undefined,
     hold_len: usize = 0,
+    /// Fence language tag ("zig" in ```zig), collected while in_fence_lang
+    /// and handed to the highlighter when the fence opens. 16 bytes covers
+    /// every tag an LLM realistically emits; longer ones just highlight
+    /// less precisely (truncation never breaks rendering).
+    fence_lang: [16]u8 = undefined,
+    fence_lang_len: usize = 0,
+    /// Highlighter state for the open fence, initialized (from fence_lang)
+    /// on the first line of the fence body. syn_ready tracks that init so
+    /// `syn_state` can stay undefined until then.
+    syn_state: syntax.State = undefined,
+    syn_style: syntax.Style = .{ .keyword = "", .string = "", .comment = "", .number = "", .builtin = "", .preproc = "", .reset = "" },
+    syn_ready: bool = false,
+    /// The current fenced line accumulates here and is emitted (highlighted)
+    /// on its newline, so tokens spanning write calls still color correctly.
+    fence_line: [4096]u8 = undefined,
+    fence_line_len: usize = 0,
 
     fn at(self: *const MdStream, chunk: []const u8, idx: usize) u8 {
         return if (idx < self.hold_len) self.hold[idx] else chunk[idx - self.hold_len];
@@ -92,6 +109,29 @@ pub const MdStream = struct {
         return n;
     }
 
+    /// Emits the accumulated fence line through the syntax highlighter,
+    /// initialized on first use from fence_lang. Lines longer than the
+    /// buffer are emitted unhighlighted (still control-stripped) — a
+    /// 4 KiB source line is a paste artifact, not something to color.
+    fn emitFenceLine(self: *MdStream, w: *std.Io.Writer) void {
+        const line = self.fence_line[0..self.fence_line_len];
+        self.fence_line_len = 0;
+        if (!self.syn_ready) {
+            self.syn_ready = true;
+            self.syn_state = syntax.State.init(self.fence_lang[0..self.fence_lang_len]);
+            self.syn_style = syntax.Style.fromTheme(&self.theme);
+        }
+        var toks: std.ArrayList(syntax.Token) = .empty;
+        defer toks.deinit(std.heap.page_allocator);
+        syntax.highlightLine(&self.syn_state, std.heap.page_allocator, line, &toks) catch {
+            // OOM: fall back to the same plain-but-sanitized path the
+            // pre-highlighting renderer used. Never lose the line.
+            writeSanitized(w, line);
+            return;
+        };
+        syntax.emit(w, &self.syn_style, toks.items);
+    }
+
     pub fn feed(self: *MdStream, w: *std.Io.Writer, chunk: []const u8) void {
         const t = &self.theme;
         const total = self.hold_len + chunk.len;
@@ -102,7 +142,12 @@ pub const MdStream = struct {
 
             // The language tag right after an opening fence (e.g. "python")
             // is consumed, not printed: it names the block, it isn't code.
+            // It is remembered in fence_lang so the body can be highlighted.
             if (self.in_fence_lang) {
+                if (c != '\n' and c != ' ' and c != '\r' and self.fence_lang_len < self.fence_lang.len) {
+                    self.fence_lang[self.fence_lang_len] = c;
+                    self.fence_lang_len += 1;
+                }
                 self.in_fence_lang = (c != '\n');
                 self.at_line_start = (c == '\n');
                 i += 1;
@@ -126,8 +171,9 @@ pub const MdStream = struct {
 
             // Inside a fence everything is literal: a code block full of *,
             // _ and ` must not toggle emphasis on its way to the terminal.
+            // The body is syntax-highlighted per line (see emitFenceLine).
             if (self.in_fence) {
-                if (c == '`') {
+                if (c == '`' and self.fence_line_len == 0) {
                     if (remaining < 3) break;
                     if (self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
                         self.in_fence = false;
@@ -137,8 +183,18 @@ pub const MdStream = struct {
                         continue;
                     }
                 }
-                w.writeAll(&[_]u8{c}) catch {};
-                self.at_line_start = (c == '\n');
+                if (c == '\n') {
+                    self.emitFenceLine(w);
+                    w.writeAll("\n") catch {};
+                    self.at_line_start = true;
+                    i += 1;
+                    continue;
+                }
+                if (self.fence_line_len < self.fence_line.len) {
+                    self.fence_line[self.fence_line_len] = c;
+                    self.fence_line_len += 1;
+                }
+                self.at_line_start = false;
                 i += 1;
                 continue;
             }
@@ -219,6 +275,9 @@ pub const MdStream = struct {
             if (c == '`' and self.at(chunk, i + 1) == '`' and self.at(chunk, i + 2) == '`') {
                 self.in_fence = true;
                 self.in_fence_lang = true;
+                self.fence_lang_len = 0;
+                self.fence_line_len = 0;
+                self.syn_ready = false;
                 w.writeAll(t.fence) catch {};
                 i += 3;
                 self.at_line_start = false;
@@ -273,6 +332,9 @@ pub const MdStream = struct {
             // they'd have gotten had more input resolved the marker.
             writeSanitized(w, self.hold[0..self.hold_len]);
         }
+        // An unterminated fence's last partial line still deserves its
+        // highlight pass rather than being dropped on the floor.
+        if (self.in_fence and self.fence_line_len > 0) self.emitFenceLine(w);
         if (self.in_code) w.writeAll(self.theme.reset) catch {};
         if (self.in_italic) w.writeAll(self.theme.reset) catch {};
         if (self.in_bold) w.writeAll(self.theme.reset) catch {};
@@ -419,16 +481,18 @@ test "MdStream renders headings, rules, quotes and ordered lists" {
 }
 
 test "MdStream leaves fenced code untouched" {
-    // Emphasis markers inside a code block are code, not formatting: toggling
-    // on them corrupted every snippet containing * or `.
+    // Emphasis markers inside a code block are code, not markdown formatting.
+    // Syntax highlighting may split the line with ANSI spans, so assert the
+    // comment segment rather than requiring the whole source line to remain
+    // one contiguous byte string.
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
+    var md: MdStream = .{ .theme = Theme.mono };
     md.feed(&w, "```zig\nconst p: *u8 = x; // **not bold**\n```\nafter\n");
     md.flush(&w);
     const out = buf[0..w.end];
 
-    try std.testing.expect(std.mem.indexOf(u8, out, "const p: *u8 = x; // **not bold**") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "// **not bold**") != null);
     // And the fence closes, so following text is not left dim.
     try std.testing.expect(std.mem.endsWith(u8, out, "after\n"));
 }
@@ -436,13 +500,17 @@ test "MdStream leaves fenced code untouched" {
 test "MdStream consumes the fence language tag instead of printing it" {
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    var md: MdStream = .{};
+    var md: MdStream = .{ .theme = Theme.mono };
     md.feed(&w, "```python\nprint(1)\n```\n");
     md.flush(&w);
     const out = buf[0..w.end];
 
     try std.testing.expect(std.mem.indexOf(u8, out, "python") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "print(1)") != null);
+    // The numeric token is coloured, so it sits between the surrounding
+    // source fragments rather than leaving `print(1)` contiguous.
+    try std.testing.expect(std.mem.indexOf(u8, out, "print") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "(") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, ")") != null);
 }
 
 test "MdStream does not mistake a hyphen mid-sentence for a rule" {
@@ -473,9 +541,17 @@ test "MdStream strips C0 controls and DEL from prose, keeping newline and tab" {
 
 test "MdStream strips controls inside a fence too" {
     const allocator = std.testing.allocator;
-    const out = try mdStreamRender(allocator, &.{"```\nx\x1b[2Jy\n```\n"});
+    var w: std.Io.Writer.Allocating = .init(allocator);
+    defer w.deinit();
+    var md: MdStream = .{ .theme = Theme.mono };
+    md.feed(&w.writer, "```\nx\x1b[2Jy\n```\n");
+    md.flush(&w.writer);
+    const out = try allocator.dupe(u8, w.written());
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "x[2Jy") != null);
+    // The number may be syntax-coloured, but the stripped ESC leaves the
+    // printable pieces of its escape sequence intact.
+    try std.testing.expect(std.mem.indexOf(u8, out, "x[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Jy") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2J") == null);
 }
 

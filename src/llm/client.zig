@@ -488,9 +488,10 @@ pub fn chatStream(
                 }
                 const chunk = std.json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
                     // Dropping a frame silently hides truncated or re-framed
-                    // streams as "the model said nothing"; the payload is
-                    // the only clue left. Mirrors the Anthropic event path.
-                    log.log(.debug, "unparseable stream frame ({d} bytes): {s}", .{ payload.len, payload[0..@min(payload.len, 300)] });
+                    // streams as "the model said nothing".  Log the byte count
+                    // only — the payload is raw provider output that may
+                    // contain generated content or echoed user data.
+                    log.log(.debug, "unparseable stream frame ({d} bytes)", .{payload.len});
                     continue;
                 };
                 // The final chunk may carry usage with an empty choices list;
@@ -645,8 +646,10 @@ fn handleAnthropicEvent(
 ) !void {
     const ev = std.json.parseFromSliceLeaky(AnthropicEvent, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
         // Dropping a frame silently hides truncated or re-framed streams as
-        // "the model said nothing"; the payload is the only clue left.
-        log.log(.debug, "unparseable stream frame ({d} bytes): {s}", .{ payload.len, payload[0..@min(payload.len, 300)] });
+        // "the model said nothing".  Log the byte count only — the payload is
+        // raw provider output that may contain generated content or echoed
+        // user data.
+        log.log(.debug, "unparseable stream frame ({d} bytes)", .{payload.len});
         return;
     };
 

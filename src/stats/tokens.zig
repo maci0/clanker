@@ -66,8 +66,14 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
 /// a stats write must not break a chat completion. O(1) append via a
 /// truncate-free open + seek to end (the caller holds the only writer).
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {
-    if (state_dir.len > 0) base.createDirPath(io, state_dir) catch return;
-    const path = subPath(arena, state_dir) catch return;
+    if (state_dir.len > 0) base.createDirPath(io, state_dir) catch |err| {
+        log.log(.warn, "[stats] mkdir failed: {s}", .{@errorName(err)});
+        return;
+    };
+    const path = subPath(arena, state_dir) catch |err| {
+        log.log(.warn, "[stats] path build failed: {s}", .{@errorName(err)});
+        return;
+    };
 
     // Trim the log when it outgrows the cap. Done before the file is opened
     // below, because trimming rewrites the file and would otherwise contend
@@ -79,7 +85,10 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     var line_buf: [1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&line_buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    s.write(rec) catch return;
+    s.write(rec) catch |err| {
+        log.log(.warn, "[stats] encode failed: {s}", .{@errorName(err)});
+        return;
+    };
     const line = line_buf[0..w.end];
 
     // Several clanker processes write this file at once: an agent run, the
@@ -97,13 +106,28 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
         return;
     };
     defer file.close(io);
-    const size = (file.stat(io) catch return).size;
+    const size = (file.stat(io) catch |err| {
+        log.log(.warn, "[stats] stat failed: {s}", .{@errorName(err)});
+        return;
+    }).size;
     var wbuf: [512]u8 = undefined;
     var fw = file.writer(io, &wbuf);
-    fw.seekToUnbuffered(size) catch return;
-    fw.interface.writeAll(line) catch return;
-    fw.interface.writeAll("\n") catch return;
-    fw.flush() catch return;
+    fw.seekToUnbuffered(size) catch |err| {
+        log.log(.warn, "[stats] seek failed: {s}", .{@errorName(err)});
+        return;
+    };
+    fw.interface.writeAll(line) catch |err| {
+        log.log(.warn, "[stats] write failed: {s}", .{@errorName(err)});
+        return;
+    };
+    fw.interface.writeAll("\n") catch |err| {
+        log.log(.warn, "[stats] write failed: {s}", .{@errorName(err)});
+        return;
+    };
+    fw.flush() catch |err| {
+        log.log(.warn, "[stats] flush failed: {s}", .{@errorName(err)});
+        return;
+    };
 }
 
 /// Rewrites the log keeping only the newest lines (used when it hits the cap).

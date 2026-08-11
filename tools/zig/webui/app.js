@@ -90,6 +90,8 @@ var el = {
   transcriptEmpty: document.getElementById("transcript-empty"),
   suggestions: document.getElementById("suggestions"),
   modelSelect: document.getElementById("model-select"),
+  modelSearch: document.getElementById("model-search"),
+  modelList: document.getElementById("model-list"),
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
   enterSends: document.getElementById("enter-sends"),
@@ -365,7 +367,7 @@ function renderSessionChip() {
   el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
 }
 
-var THEMES = ["system", "light", "dark"];
+var THEMES = ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day"];
 
 function loadTheme() {
   var t = null;
@@ -1348,24 +1350,15 @@ function addToolEvent(turn, names) {
   return row;
 }
 
-/* A streaming run called ask_user: the server sent an `ask` control event
-   and is now holding the run until POST /api/ask answers it or the server's
-   ask timeout fires. One button per option, grouped and labelled with the
-   question so focusing a button announces both. Focus moves to the first
-   option because the run is blocked — there is nothing else on the page the
-   user can usefully do first. */
-function addAskEvent(turn, evt) {
-  if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
-  var row = document.createElement("div");
-  row.className = "event-ask";
-  var q = document.createElement("div");
-  q.className = "ask-question";
-  q.textContent = evt.question || "";
-  row.appendChild(q);
+/* Shared by addAskEvent and addConfirmEvent: one button per option, grouped
+   and labelled so focusing a button announces both, appended to the waiting
+   row. Focus moves to the first option because the run is blocked — there is
+   nothing else on the page the user can usefully do first. */
+function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   var group = document.createElement("div");
   group.className = "ask-options";
   group.setAttribute("role", "group");
-  group.setAttribute("aria-label", evt.question || "Choose an option");
+  group.setAttribute("aria-label", ariaLabel);
   evt.options.forEach(function (opt) {
     if (typeof opt !== "string") return;
     var btn = document.createElement("button");
@@ -1379,6 +1372,20 @@ function addAskEvent(turn, evt) {
   turn.events.appendChild(row);
   var first = group.querySelector("button");
   if (first) first.focus();
+}
+
+/* A streaming run called ask_user: the server sent an `ask` control event
+   and is now holding the run until POST /api/ask answers it or the server's
+   ask timeout fires. */
+function addAskEvent(turn, evt) {
+  if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
+  var row = document.createElement("div");
+  row.className = "event-ask";
+  var q = document.createElement("div");
+  q.className = "ask-question";
+  q.textContent = evt.question || "";
+  row.appendChild(q);
+  addAskOptionsGroup(turn, row, evt, evt.question || "Choose an option");
 }
 
 /* Confirm-before-write (agent.confirm_writes): the run is holding a
@@ -1401,25 +1408,7 @@ function addConfirmEvent(turn, evt) {
     pre.textContent = evt.args_preview;
     row.appendChild(pre);
   }
-  var group = document.createElement("div");
-  group.className = "ask-options";
-  group.setAttribute("role", "group");
-  group.setAttribute("aria-label", q.textContent);
-  evt.options.forEach(function (opt) {
-    if (typeof opt !== "string") return;
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "secondary";
-    btn.textContent = opt;
-    btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
-    group.appendChild(btn);
-  });
-  row.appendChild(group);
-  turn.events.appendChild(row);
-  /* Focus the first option, i.e. "allow": the run is blocked on this row,
-     same reasoning as addAskEvent. Enter is still a deliberate keypress. */
-  var first = group.querySelector("button");
-  if (first) first.focus();
+  addAskOptionsGroup(turn, row, evt, q.textContent);
 }
 
 function answerAsk(row, id, opt) {
@@ -1786,11 +1775,14 @@ el.form.addEventListener("submit", function (e) {
     else syncScrollButton();
   });
 
+  var goalId = pendingGoalId || "";
+  pendingGoalId = "";
   fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       task: task,
+      goal: goalId,
       stream: true,
       session: sessionId,
       images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
@@ -3046,6 +3038,12 @@ function goalCard(g) {
 
   var actions = [];
   if (g.id) {
+    /* Active goals are meant to be worked: without this, adding a goal only
+       wrote state/goals.json and never started a run. */
+    if ((g.status || "active") === "active") {
+      actions.push(UI.button("Work on this", function () { workOnGoal(g); },
+        { label: "Work on goal: " + (g.objective || g.id) }));
+    }
     [["Mark done", "done", "Goal marked done."],
      ["Abandon", "abandoned", "Goal abandoned."],
      ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
@@ -3449,13 +3447,20 @@ el.toolsRefresh.addEventListener("click", function () {
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "rooms", "tools", "system"];
+var VIEWS = ["chat", "board", "goals", "runs", "fleet", "rooms", "tools", "system"];
 /* Each view's data is fetched the first time it is opened rather than all of
    it at load. The page used to fire seven requests before showing anything,
    several of which execute a WASM tool. */
 var viewLoaded = {};
 var viewLoaders = {
   runs: loadRuns,
+  fleet: function () {
+    // fleet.js is a self-contained module; call its initializer if present so hash nav works without duplicating fetch logic.
+    if (window.clankerFleet && typeof window.clankerFleet.refresh === "function") return window.clankerFleet.refresh();
+    var node = document.getElementById("fleet-status");
+    if (node) node.textContent = "";
+    return null;
+  },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
   board: function () { return loadBoardRooms(); },
@@ -3468,6 +3473,7 @@ var viewLoaders = {
    failure, so one line is enough. */
 var VIEW_CONTAINERS = {
   runs: "run-graph",
+  fleet: "fleet-runs",
   rooms: "chat-log",
   goals: "goals",
   board: "board",
@@ -3611,6 +3617,15 @@ function setTabCount(view, n) {
    composer had neither, so every run through the page used the default. */
 var providerCache = [];
 
+/* The hidden <select> stays the single source of truth for "what did the
+   user pick" (runOptions(), localStorage, the change listener below all
+   already read it) — the visible fuzzy search box is a second view onto the
+   same value, not a replacement for it, which is why loadProviders() still
+   builds every <option> exactly as before. modelIndex is the flat list the
+   search box filters; it carries the pricing/context metadata the plain
+   <select> never showed. */
+var modelIndex = [];
+
 function loadProviders() {
   return fetch("/api/providers")
     .then(readJson)
@@ -3619,15 +3634,25 @@ function loadProviders() {
       // Usage may have rendered before this arrived; its labels come from here.
       if (allUsage.length) renderUsage(null);
       el.modelSelect.textContent = "";
+      modelIndex = [];
       (d.providers || []).forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
         (prov.models || []).forEach(function (m) {
+          var value = prov.name + " " + m.name;
+          var label = m.display || m.name;
+          var meta = [];
+          if (m.context_window) meta.push(fmtInt(m.context_window) + " ctx");
+          if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
+            meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
+                       " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
+          }
           var opt = document.createElement("option");
-          opt.value = prov.name + " " + m.name;
-          opt.textContent = (m.display || m.name) + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+          opt.value = value;
+          opt.textContent = label + (meta.length ? "  .  " + meta.join("  .  ") : "");
           if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
           group.appendChild(opt);
+          modelIndex.push({ value: value, provider: prov.name, model: m.name, label: label, meta: meta.join("  ·  ") });
         });
         el.modelSelect.appendChild(group);
       });
@@ -3636,6 +3661,7 @@ function loadProviders() {
       if (saved && el.modelSelect.querySelector('option[value="' + saved.replace(/"/g, "") + '"]')) {
         el.modelSelect.value = saved;
       }
+      syncModelSearchLabel();
     })
     .catch(function () {
       // Providers are informational: a failure here must not stop a run,
@@ -3644,21 +3670,144 @@ function loadProviders() {
       opt.value = "";
       opt.textContent = "config default";
       el.modelSelect.appendChild(opt);
+      syncModelSearchLabel();
     });
 }
 
 el.modelSelect.addEventListener("change", function () {
   try { window.localStorage.setItem("clanker.model", el.modelSelect.value); } catch (e) {}
   renderContextMeter();
+  syncModelSearchLabel();
+});
+
+/* Mirrors the hidden select's current choice into the visible search box's
+   label, the way a closed <select> shows its chosen option. */
+function syncModelSearchLabel() {
+  var entry = null;
+  for (var i = 0; i < modelIndex.length; i++) {
+    if (modelIndex[i].value === el.modelSelect.value) { entry = modelIndex[i]; break; }
+  }
+  el.modelSearch.value = entry ? entry.provider + " / " + entry.label : "";
+}
+
+var modelListIndex = 0;
+
+function renderModelList() {
+  var q = el.modelSearch.value.trim().toLowerCase();
+  var matches = modelIndex.filter(function (e) { return fuzzyMatch(q, e.provider + " " + e.label); });
+  el.modelList.textContent = "";
+  if (!matches.length) { hideModelList(); return; }
+  if (modelListIndex >= matches.length) modelListIndex = 0;
+  var lastProvider = null;
+  matches.forEach(function (entry, i) {
+    if (entry.provider !== lastProvider) {
+      lastProvider = entry.provider;
+      var header = document.createElement("li");
+      header.className = "palette-kind-header";
+      header.textContent = entry.provider;
+      header.setAttribute("role", "presentation");
+      el.modelList.appendChild(header);
+    }
+    var li = document.createElement("li");
+    li.className = "palette-item";
+    li.id = "model-item-" + i;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === modelListIndex));
+    var label = document.createElement("span");
+    label.className = "palette-label";
+    label.textContent = entry.label;
+    li.appendChild(label);
+    if (entry.meta) {
+      var meta = document.createElement("span");
+      meta.className = "model-meta";
+      meta.textContent = entry.meta;
+      li.appendChild(meta);
+    }
+    li.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      selectModel(entry);
+    });
+    el.modelList.appendChild(li);
+  });
+  el.modelList.hidden = false;
+  el.modelSearch.setAttribute("aria-expanded", "true");
+  el.modelSearch.setAttribute("aria-activedescendant", "model-item-" + modelListIndex);
+  el.modelList.setAttribute("data-count", String(matches.length));
+  return matches;
+}
+
+function hideModelList() {
+  el.modelList.hidden = true;
+  el.modelList.textContent = "";
+  el.modelSearch.setAttribute("aria-expanded", "false");
+  el.modelSearch.removeAttribute("aria-activedescendant");
+}
+
+function selectModel(entry) {
+  el.modelSelect.value = entry.value;
+  // The <select> already owns persistence + the context meter; firing its
+  // own listener keeps this one source of truth instead of duplicating it.
+  el.modelSelect.dispatchEvent(new Event("change"));
+  hideModelList();
+  el.modelSearch.blur();
+}
+
+el.modelSearch.addEventListener("focus", function () {
+  el.modelSearch.select();
+  renderModelList();
+});
+el.modelSearch.addEventListener("input", function () { modelListIndex = 0; renderModelList(); });
+el.modelSearch.addEventListener("focusout", function (e) {
+  if (e.relatedTarget && el.modelList.contains(e.relatedTarget)) return;
+  window.setTimeout(function () {
+    if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
+    hideModelList(); syncModelSearchLabel();
+  }, 0);
+});
+el.modelSearch.addEventListener("blur", function () {
+  window.setTimeout(function () {
+    if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
+    hideModelList(); syncModelSearchLabel();
+  }, 120);
+});
+el.modelSearch.addEventListener("keydown", function (e) {
+  if (el.modelList.hidden) return;
+  var items = el.modelList.querySelectorAll(".palette-item");
+  if (!items.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    modelListIndex = (modelListIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    renderModelList();
+    return;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hideModelList();
+    syncModelSearchLabel();
+    el.modelSearch.blur();
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    var matches = renderModelList() || [];
+    if (matches[modelListIndex]) selectModel(matches[modelListIndex]);
+    return;
+  }
 });
 
 /* Everything the composer adds to a run, in one place, so the submit handler
    and any future caller cannot disagree about it. */
 function runOptions() {
   var out = {};
-  var pair = (el.modelSelect.value || "").split(" ");
-  if (pair[0]) out.provider = pair[0];
-  if (pair[1]) out.model = pair[1];
+  var raw = (el.modelSelect.value || "").trim();
+  var sp = raw.indexOf(" ");
+  if (sp !== -1) {
+    out.provider = raw.slice(0, sp);
+    out.model = raw.slice(sp + 1).trim();
+    if (!out.model) delete out.model;
+  } else if (raw) {
+    out.provider = raw;
+  }
   var t = parseFloat(el.paramTemp.value);
   if (!isNaN(t)) out.temperature = t;
   var tp = parseFloat(el.paramTopP.value);
@@ -3867,8 +4016,29 @@ if (window.MutationObserver) {
 
 /* ---------- goals ---------- */
 
-/* The view could only read. Every goal in the file was put there by the
-   `goal` tool or the CLI, so setting one from the page meant leaving it. */
+/* Goal id for the next /api/run. Set by workOnGoal so the server attaches that
+   goal's preamble (and can fill an empty task). Cleared when the request goes
+   out so a later chat turn does not keep reusing it. */
+var pendingGoalId = "";
+
+/* Starts a run that executes an active goal: switches to Chat, fills a work
+   order, and submits through the same path as the composer. */
+function workOnGoal(g) {
+  if (!g || !g.id) return;
+  if (busy) {
+    el.goalsStatus.textContent = "A run is already in progress; wait for it to finish.";
+    return;
+  }
+  pendingGoalId = g.id;
+  showView("chat", true);
+  var task = "Work on this goal until the completion criterion is met.\n\nObjective: " +
+    (g.objective || "") + "\nDone when: " + (g.completion_criterion || "");
+  el.task.value = task;
+  el.goalsStatus.textContent = "Starting work on goal…";
+  syncControls();
+  el.form.requestSubmit();
+}
+
 function postGoal(payload, status) {
   return fetch("/api/goals", {
     method: "POST",
@@ -3879,11 +4049,11 @@ function postGoal(payload, status) {
     .then(function (d) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
+      return d;
     })
-    .then(function () { return true; })
     .catch(function (err) {
       el.goalsStatus.textContent = "Goal failed: " + err.message;
-      return false;
+      return null;
     });
 }
 
@@ -3892,12 +4062,23 @@ el.goalForm.addEventListener("submit", function (e) {
   var objective = el.goalObjective.value.trim();
   var criterion = el.goalCriterion.value.trim();
   if (!objective || !criterion) return;
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (ok) {
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (d) {
     // A refused goal keeps what was typed: the criterion is the field most
     // likely to be refused, and retyping the objective to fix it is a tax.
-    if (!ok) return;
+    if (!d) return;
     el.goalObjective.value = "";
     el.goalCriterion.value = "";
+    // Newest first after renderGoals — start work so defining a goal is not
+    // just writing state/goals.json.
+    var goals = goalState.val || [];
+    var created = null;
+    for (var i = 0; i < goals.length; i++) {
+      if ((goals[i].status || "active") === "active" && goals[i].objective === objective) {
+        created = goals[i];
+        break;
+      }
+    }
+    if (created) workOnGoal(created);
   });
 });
 

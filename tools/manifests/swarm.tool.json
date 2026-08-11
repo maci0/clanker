@@ -1,0 +1,28 @@
+{
+  "name": "swarm",
+  "description": "Fan a batch of independent, self-contained tasks out to nested agents running concurrently, each with its own context and a short iteration budget; returns once every member finishes. WHEN TO USE: several sub-problems that do not depend on each other's output and can run at once — checking a handful of unrelated files, drafting several independent patches, running the same check across several targets. WHEN NOT TO USE: a single task (use subagent instead), or tasks where a later one needs an earlier one's result (that is sequential, not parallel — do it yourself or chain subagent calls). Each task starts with an EMPTY transcript and cannot see the other members or your own transcript: write every task as a complete, standalone brief, the way you would for subagent. Members writing the same file race with no lock — give each task its own file, or say what not to touch. Input: {\"tasks\": [\"...\", \"...\"], \"provider\": \"kimi-k3\"}. Up to 8 tasks per call.",
+  "wasm": "zig-out/tools/swarm.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "tasks": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Self-contained task briefs, one per nested agent, run concurrently. Up to 8."
+      },
+      "provider": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "tasks"
+    ]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "category": "agent",
+  "llm": true,
+  "confirm": true
+}

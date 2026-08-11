@@ -19,9 +19,9 @@
       "body": {
         "type": "string"
       },
-      "assignee": {
+      "who": {
         "type": "string",
-        "description": "Instance name, or empty to unassign"
+        "description": "Instance name to assign to, or empty to unassign"
       },
       "priority": {
         "type": "string",

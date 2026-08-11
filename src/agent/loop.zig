@@ -137,9 +137,10 @@ pub const Agent = struct {
     /// The graph run id of the run in flight, handed to tool sandboxes so
     /// ck_subagent can tell the nested run who spawned it.
     current_run_id: []const u8 = "",
-    /// This run's private todo list, wired by subagent.runNested and null for
-    /// top-level agents. Handed to every tool sandbox so todo_* calls that
-    /// name no "room" reach it (see src/agent/private_todos.zig).
+    /// This run's private todo list. `run` creates one for a top-level run;
+    /// subagent.runNested attaches its own before calling `run`. Handed to
+    /// every tool sandbox so todo_* calls that name no "room" reach it (see
+    /// src/agent/private_todos.zig).
     private_todos: ?*private_todos.List = null,
     /// A nested run's channel to the agent that spawned it, wired by
     /// subagent.runNested and null for top-level agents. Handed to every tool
@@ -207,6 +208,8 @@ pub const Agent = struct {
         }
 
         log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
+        const home = ctx.environ_map.get("HOME") orelse "";
+        const global_path = (try system_prompt.resolveGlobalInstructionsPath(arena, home, cfg.agent.global_instructions_file)) orelse "";
         const base_prompt = try system_prompt.build(arena, ctx.io, .{
             .system_prompt_file = cfg.agent.system_prompt_file,
             .skills_dir = cfg.agent.skills_dir,
@@ -215,6 +218,8 @@ pub const Agent = struct {
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
             .catalog = catalog,
+            .global_instructions_file = global_path,
+            .home = home,
         }, defs);
         const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
@@ -251,6 +256,8 @@ pub const Agent = struct {
     }
 
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
+        const home = self.ctx.environ_map.get("HOME") orelse "";
+        const global_path = (system_prompt.resolveGlobalInstructionsPath(self.arena, home, self.cfg.agent.global_instructions_file) catch null) orelse "";
         const base_prompt = system_prompt.build(self.arena, self.ctx.io, .{
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
@@ -259,6 +266,8 @@ pub const Agent = struct {
             .instance_id = self.instance_id,
             .peers = self.peer_names,
             .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
+            .global_instructions_file = global_path,
+            .home = home,
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
@@ -280,6 +289,17 @@ pub const Agent = struct {
     }
 
     pub fn run(self: *Agent, messages: *std.ArrayList(types.Message), task: []const u8, err_detail: *?[]const u8) !types.ChatResponse {
+        // A top-level run needs the same private scratch checklist as a nested
+        // run. Keep an injected sub-agent list intact, but create a fresh
+        // arena-owned list when there is none and detach it at the end so a
+        // later REPL turn never sees this turn's work.
+        const inherited_private_todos = self.private_todos;
+        if (self.private_todos == null) {
+            const todos = try self.arena.create(private_todos.List);
+            todos.* = .{ .alloc = self.arena };
+            self.private_todos = todos;
+        }
+        defer self.private_todos = inherited_private_todos;
         // Each run() call is self-contained: `stats` counts only this run's
         // tokens, so per-run logging, autolearn records, and the defer that
         // folds `stats` into `session_stats` are all correct. Without this
@@ -668,10 +688,15 @@ pub const Agent = struct {
                         });
                     }
                 }
+                // Cap tool results entering the conversation so a single huge
+                // output cannot dominate the next LLM call's context. Graph,
+                // check-verdict, and multimodal paths above used the uncapped
+                // content; only the message to the model is bounded.
+                const capped = try capToolResult(self.arena, content);
                 try messages.append(self.arena, .{
                     .role = .tool,
                     .tool_call_id = tc.id,
-                    .content = content,
+                    .content = capped,
                 });
                 // Multimodal: attach the image after its tool result so the
                 // assistant(tool_calls) -> tool(result) ordering is preserved.
@@ -1237,7 +1262,15 @@ pub const Agent = struct {
             var in_str = false;
             var end: usize = 0;
             for (s[start..], 0..) |ch, i| {
-                if (ch == '"' and (i == 0 or s[start + i - 1] != '\\')) in_str = !in_str;
+                // Track string state: a `"` toggles unless it's preceded by an
+                // odd number of backslashes (escaped). Checking only the single
+                // preceding char mis-handles `\\"` (escaped backslash + real
+                // quote), so count the full backslash run.
+                if (ch == '"') {
+                    var bs: usize = 0;
+                    while (bs < i and s[start + i - 1 - bs] == '\\') bs += 1;
+                    if (bs % 2 == 0) in_str = !in_str;
+                }
                 if (in_str) continue;
                 if (ch == '{' or ch == '[') {
                     depth += 1;
@@ -1970,8 +2003,18 @@ pub const Agent = struct {
                 .wasm_bytes = p.wasm_bytes,
                 .subagent_runner = self.subagent_runner,
             };
-            const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
-            try handles.append(self.ctx.gpa, .{ .slot = p.slot, .thread = thread, .worker = worker, .wasm_bytes = p.wasm_bytes });
+            const thread = std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker}) catch |err| {
+                self.ctx.gpa.destroy(worker);
+                return err;
+            };
+            handles.append(self.ctx.gpa, .{ .slot = p.slot, .thread = thread, .worker = worker, .wasm_bytes = p.wasm_bytes }) catch |err| {
+                // The worker already owns pointers into this Agent. It must
+                // finish before error unwinding can release that state.
+                thread.join();
+                if (worker.out) |out| self.ctx.gpa.free(out);
+                self.ctx.gpa.destroy(worker);
+                return err;
+            };
         }
 
         // Join every worker and move its output into the matching slot.
@@ -2211,6 +2254,25 @@ pub const parallel_tool_stack_floor_bytes: usize = 32 * 1024 * 1024;
 /// total is still under budget. Complements cfg.agent.max_total_tokens and
 /// the byte-based history compaction in maybeCompactMessages.
 const max_per_turn_tokens: u32 = 32768;
+
+/// Hard cap on a single tool result before it enters the conversation. A huge
+/// result (large file read, verbose search dump) can dominate the context
+/// window and inflate cost on the very next LLM call — before compaction has a
+/// chance to act (and compaction preserves the last 6 messages, so a recent
+/// giant result stays in context regardless). The model sees the first
+/// `max_tool_result_bytes` plus a truncation notice so it can ask for specific
+/// parts (offset, line range) if it needs more.
+const max_tool_result_bytes: usize = 32768;
+
+/// Caps a tool result to `max_tool_result_bytes` with a truncation marker.
+/// Returns the original slice when it fits or is close enough that the marker
+/// would make it larger (defeats the purpose).
+fn capToolResult(arena: std.mem.Allocator, content: []const u8) ![]const u8 {
+    // Upper bound on the marker text (two decimal fields + static prose).
+    const marker_overhead = 200;
+    if (content.len <= max_tool_result_bytes + marker_overhead) return content;
+    return try std.fmt.allocPrint(arena, "{s}\n\n[... result truncated: {d} bytes total, showing first {d}. Ask for specific parts (offset, line range) if you need more. ...]", .{ content[0..max_tool_result_bytes], content.len, max_tool_result_bytes });
+}
 
 const WorkerHandle = struct {
     slot: usize,
@@ -2500,7 +2562,13 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
 
-    const path = "test_wasm_bytes_cache.tmp";
+    // A hardcoded relative path in the repo's cwd was shared across every
+    // run of this test, so two overlapping runs (or a leftover file from a
+    // crashed run) raced on the same file and read back empty or stale
+    // bytes. A per-test temp dir removes the collision.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(arena_state.allocator(), ".zig-cache/tmp/{s}/test_wasm_bytes_cache.tmp", .{tmp.sub_path});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "fake-wasm-bytes" });
     defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
 
@@ -2614,6 +2682,32 @@ test "maybeCompactMessages drops the middle, keeps the system prompt and the rec
     try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 1].content.?);
     try std.testing.expect(messages.items[messages.items.len - 2].role == .user);
     try std.testing.expectEqualStrings(filler, messages.items[messages.items.len - 2].content.?);
+}
+
+test "capToolResult leaves small results untouched and truncates large ones" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Small result: returned verbatim.
+    const small = "{\"ok\":true,\"result\":\"hi\"}";
+    try std.testing.expectEqualStrings(small, try capToolResult(arena, small));
+
+    // Exactly at the cap: still verbatim (boundary is inclusive).
+    const exact = try arena.alloc(u8, max_tool_result_bytes);
+    @memset(exact, 'x');
+    try std.testing.expectEqualStrings(exact, try capToolResult(arena, exact));
+
+    // Well over the cap + marker overhead: truncated, with the marker and the original size.
+    const big = try arena.alloc(u8, max_tool_result_bytes * 4);
+    @memset(big, 'x');
+    const capped = try capToolResult(arena, big);
+    try std.testing.expect(capped.len > max_tool_result_bytes); // includes marker
+    try std.testing.expect(capped.len < big.len); // but much smaller than original
+    try std.testing.expect(std.mem.indexOf(u8, capped, "truncated") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capped, "Ask for specific parts") != null);
+    // The first max_tool_result_bytes bytes are preserved.
+    try std.testing.expectEqualStrings(big[0..max_tool_result_bytes], capped[0..max_tool_result_bytes]);
 }
 
 test "compactionKeepStart never splits a tool-call exchange" {

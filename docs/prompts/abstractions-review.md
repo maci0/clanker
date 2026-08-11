@@ -200,6 +200,21 @@ naming and ownership (`allocator`, caller frees; arena vs `gpa` per AGENTS.md).
 
 Fixed maps known at compile time (level-to-prefix, provider-kind-to-string)
 should be `comptime`/`switch`, not a runtime plugin registry built at `init`.
+This is narrower than the comptime-*style* question
+(`zig-idiomatic-review.md` section 1, `zig-best-practices-review.md` section
+D) — here it's specifically an abstraction-shape call: does the closed set
+justify a named type/function at all, and if so, is comptime the right
+mechanism for it.
+
+- `log.Level` ordering + a `comptime`-known prefix table beats a runtime
+  `std.StringHashMap(u8)` built once at startup for a set that never changes
+- A provider-kind `switch` returning a handler function pointer beats a
+  registry of `fn` values populated in `init()`, when the kind set is closed
+  (not third-party-extensible)
+- Counter-signal: if the "closed" set is actually going to grow from
+  user/plugin config (WASM tool descriptors, `cfg.providers`), it is not
+  closed, and reaching for comptime here is "speculative generality" (below,
+  § When you should NOT abstract, item 1) in different clothes
 
 ---
 

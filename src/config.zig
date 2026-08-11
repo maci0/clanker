@@ -118,10 +118,14 @@ pub const Agent = struct {
     /// How many of the most-used tools keep their schemas loaded without
     /// being asked for. Measured, not configured: see tools/usage.zig.
     hot_tools: u32 = 10,
-    tools_dir: []const u8 = "tools",
+    tools_dir: []const u8 = "tools/manifests",
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
     learnings_file: []const u8 = "state/learnings.md",
+    /// Device-global operator instructions file. Empty (default) means
+    /// `$HOME/.agents/AGENTS.md` when HOME is set; missing/empty files are
+    /// skipped at prompt build time. Project-root `AGENTS.md` stays separate.
+    global_instructions_file: []const u8 = "",
     /// Directory (relative to the process cwd) holding harness state:
     /// chatroom logs, run records, cursors.
     state_dir: []const u8 = "state",
@@ -137,12 +141,41 @@ pub const Agent = struct {
     /// Gate write-capable tool calls (a descriptor with exec or filesystem
     /// access, or `"confirm": true`) on a human's allow/deny. `never` is
     /// today's behaviour; `browser` gates streaming web runs, where the
-    /// question travels the run's own stream like ask_user; `always` also
-    /// gates interactive REPL sessions at the terminal. Runs with no human
-    /// channel — headless one-shots, the improve loop, nested sub-agents —
-    /// are never gated, whatever this says: a confirm nobody can answer
-    /// would deny every write instead of protecting anything.
+    /// question travels the run's own stream like ask_user. `always` is
+    /// reserved for also gating interactive REPL sessions at the terminal,
+    /// but src/tui/repl_vaxis.zig has no prompt-rendering path to answer it
+    /// yet (see docs/ROADMAP.md, "vaxis REPL: close the gap left by the
+    /// deleted REPL"): only cli.zig's serve path reads this field, gated on
+    /// `!= .never`, so `always` behaves identically to `browser` until the
+    /// REPL wires a confirm_fn of its own. Runs with no human channel —
+    /// headless one-shots, the improve loop, nested sub-agents — are never
+    /// gated, whatever this says: a confirm nobody can answer would deny
+    /// every write instead of protecting anything.
     confirm_writes: ConfirmWrites = .never,
+};
+
+/// Which agent keys a config file actually set. Used so a partial
+/// `config.local.json` `"agent"` object does not replace the whole agent
+/// struct (and reset `tools_dir` etc. to struct defaults).
+pub const AgentFields = struct {
+    max_iterations: bool = false,
+    compact_threshold_bytes: bool = false,
+    max_total_tokens: bool = false,
+    max_tokens_per_turn: bool = false,
+    max_history_tokens: bool = false,
+    tool_catalog: bool = false,
+    hot_tools: bool = false,
+    tools_dir: bool = false,
+    skills_dir: bool = false,
+    system_prompt_file: bool = false,
+    learnings_file: bool = false,
+    global_instructions_file: bool = false,
+    state_dir: bool = false,
+    sandbox_root: bool = false,
+    git_commit: bool = false,
+    seed: bool = false,
+    ask_timeout_seconds: bool = false,
+    confirm_writes: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -227,14 +260,33 @@ pub const Modules = struct {
     token_stats: bool = true,
 };
 
+/// Online-research web access. The sandbox denies network to a tool by
+/// default: a tool reaches a host only when its descriptor names it
+/// (`network_allow`) or the harness adds it from config (`network_from_config`).
+/// This section is the config side of that second channel for the web/research
+/// tools: every host listed here is added to `fetch_web` and `web_search`'s
+/// allowlists at load, so granting a research site is a config edit, not a
+/// manifest edit.
+pub const Web = struct {
+    /// Hostnames (no scheme, no path — matched against the URL's host) the
+    /// research tools may reach. Default empty: out of the box the sandbox
+    /// still lets a tool reach only its own `network_allow` hosts, which for
+    /// `fetch_web` is a small static set. Adding a host here widens research
+    /// without touching any manifest.
+    allow: []const []const u8 = &.{},
+};
+
 pub const Config = struct {
     agent_present: bool = false,
+    /// Which keys inside `"agent"` were set when this Config was parsed.
+    agent_fields: AgentFields = .{},
     improve_present: bool = false,
     default_provider: []const u8 = "deepseek",
     providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
     agent: Agent = .{},
     improve: Improve = .{},
     peers: []const Peer = &.{},
+    web: Web = .{},
     instance: Instance = .{},
     notify: Notify = .{},
     chatrooms: Chatrooms = .{},
@@ -244,6 +296,7 @@ pub const Config = struct {
     instance_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
+    web_present: bool = false,
     notify_present: bool = false,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
@@ -296,7 +349,7 @@ pub const Config = struct {
         warnUnknownKeys(obj, &.{
             "default_provider", "agent", "improve", "providers",
             "instance",         "peers", "notify",  "chatrooms",
-            "modules",
+            "modules",          "web",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -304,7 +357,9 @@ pub const Config = struct {
             cfg.default_provider_present = true;
         }
         if (obj.get("agent")) |v| {
-            cfg.agent = try parseAgent(arena, v);
+            const parsed = try parseAgent(arena, v);
+            cfg.agent = parsed.agent;
+            cfg.agent_fields = parsed.fields;
             cfg.agent_present = true;
         }
         if (obj.get("improve")) |v| {
@@ -334,6 +389,10 @@ pub const Config = struct {
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
             cfg.peers_present = true;
+        }
+        if (obj.get("web")) |v| {
+            cfg.web = try parseWeb(arena, v);
+            cfg.web_present = true;
         }
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
@@ -506,6 +565,35 @@ pub const Config = struct {
         return out.toOwnedSlice(arena);
     }
 
+    fn parseWeb(arena: std.mem.Allocator, v: json.Value) !Web {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.WebNotObject,
+        };
+        var web = Web{};
+        warnUnknownKeys(obj, &.{"allow"}, "web");
+        if (obj.get("allow")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.WebAllowNotArray,
+            };
+            var allow: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| {
+                const host = try jsonStr(item, "web.allow[]");
+                if (!isBareHost(host)) return error.WebAllowHostInvalid;
+                try allow.append(arena, host);
+            }
+            web.allow = try allow.toOwnedSlice(arena);
+        }
+        return web;
+    }
+
+    /// `ck_http` compares this exact string with the parsed URL hostname, so
+    /// a URL, path, or host:port entry would never grant the intended access.
+    fn isBareHost(host: []const u8) bool {
+        return host.len > 0 and std.mem.indexOfAny(u8, host, ":/?#@% \t\r\n") == null;
+    }
+
     fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
         _ = arena;
         const obj = switch (v) {
@@ -552,49 +640,129 @@ pub const Config = struct {
         return std.fmt.allocPrint(arena, "clanker-{d}", .{std.c.getpid()});
     }
 
-    fn parseAgent(arena: std.mem.Allocator, v: json.Value) !Agent {
+    const ParsedAgent = struct {
+        agent: Agent,
+        fields: AgentFields,
+    };
+
+    fn parseAgent(arena: std.mem.Allocator, v: json.Value) !ParsedAgent {
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.AgentNotObject,
         };
         var a = Agent{};
+        var f = AgentFields{};
         warnUnknownKeys(obj, &.{
             "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
             "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
             "hot_tools",           "tools_dir",               "skills_dir",
-            "system_prompt_file",  "learnings_file",          "state_dir",
-            "sandbox_root",        "git_commit",              "seed",
-            "ask_timeout_seconds", "confirm_writes",
+            "system_prompt_file",  "learnings_file",          "global_instructions_file",
+            "state_dir",           "sandbox_root",            "git_commit",
+            "seed",                "ask_timeout_seconds",     "confirm_writes",
         }, "agent");
-        if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
-        if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
-        if (obj.get("max_total_tokens")) |k| a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
-        if (obj.get("max_tokens_per_turn")) |k| a.max_tokens_per_turn = @intCast(try jsonInt(k, "max_tokens_per_turn"));
-        if (obj.get("max_history_tokens")) |k| a.max_history_tokens = @intCast(try jsonInt(k, "max_history_tokens"));
-        if (obj.get("tools_dir")) |k| a.tools_dir = try jsonStr(k, "tools_dir");
-        if (obj.get("skills_dir")) |k| a.skills_dir = try jsonStr(k, "skills_dir");
-        if (obj.get("system_prompt_file")) |k| a.system_prompt_file = try jsonStr(k, "system_prompt_file");
-        if (obj.get("learnings_file")) |k| a.learnings_file = try jsonStr(k, "learnings_file");
-        if (obj.get("state_dir")) |k| a.state_dir = try jsonStr(k, "state_dir");
-        if (obj.get("sandbox_root")) |k| a.sandbox_root = try jsonStr(k, "sandbox_root");
-        if (obj.get("git_commit")) |k| a.git_commit = switch (k) {
-            .bool => |b| b,
-            else => a.git_commit,
-        };
-        if (obj.get("tool_catalog")) |k| a.tool_catalog = switch (k) {
-            .bool => |b| b,
-            else => a.tool_catalog,
-        };
-        if (obj.get("hot_tools")) |k| a.hot_tools = @intCast(try jsonInt(k, "hot_tools"));
-        if (obj.get("seed")) |k| a.seed = @intCast(try jsonInt(k, "seed"));
-        if (obj.get("ask_timeout_seconds")) |k| a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
+        if (obj.get("max_iterations")) |k| {
+            a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
+            f.max_iterations = true;
+        }
+        if (obj.get("compact_threshold_bytes")) |k| {
+            a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
+            f.compact_threshold_bytes = true;
+        }
+        if (obj.get("max_total_tokens")) |k| {
+            a.max_total_tokens = @intCast(try jsonInt(k, "max_total_tokens"));
+            f.max_total_tokens = true;
+        }
+        if (obj.get("max_tokens_per_turn")) |k| {
+            a.max_tokens_per_turn = @intCast(try jsonInt(k, "max_tokens_per_turn"));
+            f.max_tokens_per_turn = true;
+        }
+        if (obj.get("max_history_tokens")) |k| {
+            a.max_history_tokens = @intCast(try jsonInt(k, "max_history_tokens"));
+            f.max_history_tokens = true;
+        }
+        if (obj.get("tools_dir")) |k| {
+            a.tools_dir = try jsonStr(k, "tools_dir");
+            f.tools_dir = true;
+        }
+        if (obj.get("skills_dir")) |k| {
+            a.skills_dir = try jsonStr(k, "skills_dir");
+            f.skills_dir = true;
+        }
+        if (obj.get("system_prompt_file")) |k| {
+            a.system_prompt_file = try jsonStr(k, "system_prompt_file");
+            f.system_prompt_file = true;
+        }
+        if (obj.get("learnings_file")) |k| {
+            a.learnings_file = try jsonStr(k, "learnings_file");
+            f.learnings_file = true;
+        }
+        if (obj.get("global_instructions_file")) |k| {
+            a.global_instructions_file = try jsonStr(k, "global_instructions_file");
+            f.global_instructions_file = true;
+        }
+        if (obj.get("state_dir")) |k| {
+            a.state_dir = try jsonStr(k, "state_dir");
+            f.state_dir = true;
+        }
+        if (obj.get("sandbox_root")) |k| {
+            a.sandbox_root = try jsonStr(k, "sandbox_root");
+            f.sandbox_root = true;
+        }
+        if (obj.get("git_commit")) |k| {
+            a.git_commit = switch (k) {
+                .bool => |b| b,
+                else => a.git_commit,
+            };
+            f.git_commit = true;
+        }
+        if (obj.get("tool_catalog")) |k| {
+            a.tool_catalog = switch (k) {
+                .bool => |b| b,
+                else => a.tool_catalog,
+            };
+            f.tool_catalog = true;
+        }
+        if (obj.get("hot_tools")) |k| {
+            a.hot_tools = @intCast(try jsonInt(k, "hot_tools"));
+            f.hot_tools = true;
+        }
+        if (obj.get("seed")) |k| {
+            a.seed = @intCast(try jsonInt(k, "seed"));
+            f.seed = true;
+        }
+        if (obj.get("ask_timeout_seconds")) |k| {
+            a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
+            f.ask_timeout_seconds = true;
+        }
         if (obj.get("confirm_writes")) |k| {
             const s = try jsonStr(k, "confirm_writes");
             a.confirm_writes = std.meta.stringToEnum(ConfirmWrites, s) orelse
                 return error.ConfirmWritesInvalid;
+            f.confirm_writes = true;
         }
-        return a;
+        return .{ .agent = a, .fields = f };
+    }
+
+    fn applyAgentFields(dst: *Agent, src: Agent, fields: AgentFields) void {
+        if (fields.max_iterations) dst.max_iterations = src.max_iterations;
+        if (fields.compact_threshold_bytes) dst.compact_threshold_bytes = src.compact_threshold_bytes;
+        if (fields.max_total_tokens) dst.max_total_tokens = src.max_total_tokens;
+        if (fields.max_tokens_per_turn) dst.max_tokens_per_turn = src.max_tokens_per_turn;
+        if (fields.max_history_tokens) dst.max_history_tokens = src.max_history_tokens;
+        if (fields.tool_catalog) dst.tool_catalog = src.tool_catalog;
+        if (fields.hot_tools) dst.hot_tools = src.hot_tools;
+        if (fields.tools_dir) dst.tools_dir = src.tools_dir;
+        if (fields.skills_dir) dst.skills_dir = src.skills_dir;
+        if (fields.system_prompt_file) dst.system_prompt_file = src.system_prompt_file;
+        if (fields.learnings_file) dst.learnings_file = src.learnings_file;
+        if (fields.global_instructions_file) dst.global_instructions_file = src.global_instructions_file;
+        if (fields.state_dir) dst.state_dir = src.state_dir;
+        if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
+        if (fields.git_commit) dst.git_commit = src.git_commit;
+        if (fields.seed) dst.seed = src.seed;
+        if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
+        if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
     }
 
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
@@ -626,11 +794,15 @@ pub const Config = struct {
         while (it.next()) |kv| {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
-        // Only override agent/improve when the local file actually defined
-        // them; otherwise the local defaults would clobber the global file.
-        if (src.agent_present) dst.agent = src.agent;
+        // Agent is field-merged: a local file that only sets e.g. sandbox_root
+        // must not reset tools_dir (and the rest) to Agent{} defaults — that
+        // made every tool disappear when tools_dir fell back to the struct
+        // default instead of config.json's "tools/manifests".
+        if (src.agent_present) applyAgentFields(&dst.agent, src.agent, src.agent_fields);
+        // Improve is still whole-section: it is small and rarely partial.
         if (src.improve_present) dst.improve = src.improve;
         if (src.peers_present) dst.peers = src.peers;
+        if (src.web_present) dst.web = src.web;
         // Only override the instance when the local file actually named one:
         // a bare config.local.json must not replace a stable name with a
         // pid-based default on every restart.
@@ -735,6 +907,34 @@ pub const Config = struct {
 // tests
 // ---------------------------------------------------------------------------
 
+test "agent.global_instructions_file parses and defaults empty" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{
+        \\  "default_provider": "ollama",
+        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
+        \\  "agent": { "global_instructions_file": "/home/op/.agents/AGENTS.md" }
+        \\}
+        ,
+    });
+    const cfg = try Config.load(io, arena, dir, "config.json", "config.local.json");
+    try std.testing.expectEqualStrings("/home/op/.agents/AGENTS.md", cfg.agent.global_instructions_file);
+    try std.testing.expectEqualStrings("", (Agent{}).global_instructions_file);
+}
+
 test "config load and merge" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -777,6 +977,40 @@ test "config load and merge" {
     // provider lookup
     const found = try cfg.provider(null);
     try std.testing.expectEqualStrings("deepseek", found.name);
+}
+
+test "web.allow parses hostname entries onto Config" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    const cfg = try Config.parseConfig(arena_state.allocator(),
+        \\{"web":{"allow":["example.org","docs.example"]}}
+    );
+    try std.testing.expectEqual(@as(usize, 2), cfg.web.allow.len);
+    try std.testing.expectEqualStrings("example.org", cfg.web.allow[0]);
+    try std.testing.expectEqualStrings("docs.example", cfg.web.allow[1]);
+}
+
+test "config.local.json web.allow replaces the global web allowlist" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.json", .data =
+        \\{"web":{"allow":["global.example","keep.example"]}}
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.json", .data =
+        \\{"web":{"allow":["local.example"]}}
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
+    try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
 }
 
 test "confirm_writes parses its three values and rejects anything else" {
@@ -845,7 +1079,7 @@ pub fn configuredHosts(self: *const Config, arena: std.mem.Allocator, which: []c
 /// The hostname of a URL, without the port: `ck_http` matches against
 /// `std.Uri.host`, which excludes it, so keeping `:17932` here would deny every
 /// peer that runs on a non-default port.
-fn hostOf(url: []const u8) ?[]const u8 {
+pub fn hostOf(url: []const u8) ?[]const u8 {
     const scheme_end = std.mem.indexOf(u8, url, "://") orelse return null;
     const rest = url[scheme_end + 3 ..];
     const end = std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len;
@@ -951,6 +1185,34 @@ test "a local override with only default_provider keeps the base providers" {
     try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
     try std.testing.expectEqualStrings("b", cfg.default_provider);
     try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
+}
+
+test "partial local agent keeps base tools_dir" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"tools_dir":"tools/manifests","max_iterations":30}}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.json",
+        .data =
+        \\{"agent":{"sandbox_root":"."}}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
+    try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
+    try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
 }
 
 test "a vertex_anthropic provider missing project/location is rejected at load" {

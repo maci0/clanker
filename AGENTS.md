@@ -32,9 +32,9 @@ through a gated loop. Follow these conventions when changing this codebase.
   logging and dotenv. Peer notify/phonebook and patch application moved to
   the sandboxed `peers` and `patch_apply` WASM tools (`tools/zig/`).
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
-  `cli.zig`, and `config.zig` sit directly in `src/`. A new module with tests
-  must be added to the `comptime` block in `src/main.zig` or its tests never
-  run.
+  `cli.zig`, `config.zig`, `doctor.zig`, and `janitor.zig` sit directly in
+  `src/`. A new module with tests must be added to the `comptime` block in
+  `src/main.zig` or its tests never run.
 - `src/evals/` + `src/gate/` — the eval harness and deterministic gates
   (build/test/tools/fmt/lint). These verify every promoted change.
 - `src/improve/` — the self-improvement engine. It is deliberately protected:
@@ -70,6 +70,10 @@ So, when adding a capability:
   field points at whichever path. Zig is the default because the harness is
   Zig and `lib.zig` carries the host bindings; reach for AssemblyScript when
   the logic is easier to express in TypeScript or already exists there.
+  `clanker gate` never rebuilds `tools/ts/`, so a `.ts` edit not followed by
+  `npm run build:all` ships a stale `tools/bin/*.wasm` silently; run
+  `tools/ts/verify.sh` (rebuilds into a scratch dir and diffs against what is
+  committed) before committing a `tools/ts/` change.
 - Migrate what is already native when you touch it. `patch_apply`, `peers`, and
   `board` each began as `src/` code and moved out, deleting more from the
   harness than they added as guests.
@@ -93,3 +97,10 @@ Every promoted change must pass: `zig build`, `zig build test`,
 `zig build tools`, `zig fmt --check` (auto-formatted), and the source lint.
 Promoted changes are committed as `clanker: <summary> [imp-<id>]`. Run the
 whole gate manually with `clanker gate`.
+
+## Local operator rules (optional)
+
+Checkout-private additions (gitignored). Missing file is a soft skip for tools
+that expand `@path` imports (clanker, Claude Code, etc.).
+
+@.agents/AGENTS.md

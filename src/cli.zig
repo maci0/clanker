@@ -18,19 +18,17 @@ const subagent = @import("agent/subagent.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
-const lineedit = @import("util/lineedit.zig");
 const rawhttp = @import("util/rawhttp.zig");
-const term = @import("tui/term.zig");
-const tui_input = @import("tui/input.zig");
-const tui_region = @import("tui/region.zig");
-const tui_statusbar = @import("tui/statusbar.zig");
+// tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
+// rest of tui/* (input, region, statusbar, palette, approval, term) was
+// exclusive to the REPL that's now src/tui/repl_vaxis.zig, and was
+// removed with it.
 const tui_transcript = @import("tui/transcript.zig");
-const tui_palette = @import("tui/palette.zig");
-const tui_approval = @import("tui/approval.zig");
-const tui_theme = @import("tui/theme.zig");
-const repl_vaxis = @import("tui2/repl_vaxis.zig");
+const repl_vaxis = @import("tui/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
+const doctor_mod = @import("doctor.zig");
+const janitor_mod = @import("janitor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -71,14 +69,14 @@ pub const Command = enum {
     stats,
     phonebook,
     serve,
+    /// The libvaxis-backed REPL (docs/ROADMAP.md migration). `src/tui/repl_vaxis.zig`.
     repl,
-    /// Phase 1 of the libvaxis migration (docs/ROADMAP.md): a minimal
-    /// vaxis-backed skeleton, separate from `repl`, proving the dependency
-    /// integrates before anything user-facing moves onto it.
-    repl_vaxis,
     graph,
     gate,
     autolearn,
+    doctor,
+    setup,
+    prune,
 };
 
 pub const Options = struct {
@@ -86,7 +84,9 @@ pub const Options = struct {
     /// drop the user into a session, the way every other coding agent does,
     /// not print usage at them.
     command: Command = .repl,
-    /// Sub-command for `providers`: "check" (default) or "models".
+    /// Sub-command for `providers`: "check" (default), "models", "catalog" or
+    /// "fill". `provider` doubles as the catalog search query for "catalog"
+    /// and the provider name for "fill".
     providers_sub: []const u8 = "check",
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
@@ -107,8 +107,19 @@ pub const Options = struct {
     eval_tasks_only: bool = false,
     iters: u32 = 3,
     dry_run: bool = false,
+    /// `prune --yes`: actually delete. Absent, it only reports, because a
+    /// recursive delete is not undoable.
+    apply: bool = false,
     verbose: bool = false,
     port: u16 = 17921,
+    /// Set when `--help` followed a command: print that command's help rather
+    /// than the whole list.
+    help_for: ?Command = null,
+    /// `--continue`/`-c`: pick up the most recently updated session instead of
+    /// naming it with `--session`. Every other agent CLI has this; reaching for
+    /// `clanker sessions`, reading an id and pasting it back is the workaround
+    /// it replaces.
+    continue_last: bool = false,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -118,14 +129,55 @@ fn setDiag(diag: ?*[]const u8, token: []const u8) void {
     if (diag) |d| d.* = token;
 }
 
+/// The value belonging to `flag`, taken from `--flag=value` when that is how it
+/// was written and from the next argument otherwise.
+fn takeValue(
+    args: []const []const u8,
+    idx: *usize,
+    inline_value: ?[]const u8,
+    flag: []const u8,
+    diag: ?*[]const u8,
+) ![]const u8 {
+    if (inline_value) |v| {
+        if (v.len == 0) {
+            setDiag(diag, flag);
+            return error.MissingArg;
+        }
+        return v;
+    }
+    idx.* += 1;
+    if (idx.* >= args.len) {
+        setDiag(diag, flag);
+        return error.MissingArg;
+    }
+    return args[idx.*];
+}
+
 pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     var opts = Options{};
     var idx: usize = 1;
     var cmd_seen = false;
     var pending_sub: ?[]const u8 = null;
+    var seen_flags: [8]Flag = undefined;
+    var seen_flags_len: usize = 0;
+
+    // `--flag=value` is written as often as `--flag value`; the parser only
+    // understood the second. Split here so every flag below sees the value the
+    // same way, whichever form was typed.
+    var split_buf: [2][]const u8 = undefined;
+    var inline_value: ?[]const u8 = null;
 
     while (idx < args.len) : (idx += 1) {
-        const a = args[idx];
+        var a = args[idx];
+        if (inline_value == null and a.len > 2 and a[0] == '-' and a[1] == '-') {
+            if (std.mem.indexOfScalar(u8, a, '=')) |eq| {
+                split_buf[0] = a[0..eq];
+                split_buf[1] = a[eq + 1 ..];
+                a = split_buf[0];
+                inline_value = split_buf[1];
+            }
+        }
+        defer inline_value = null;
 
         // Once git is the active command, every remaining token — including
         // dash-prefixed ones like git's own flags/options — passes through to
@@ -139,10 +191,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
 
         // Help/version flags act as their own command regardless of position.
         if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
-            if (cmd_seen) {
-                setDiag(diag, a);
-                return error.UnknownArg;
-            }
+            // After a command, --help asks about that command rather than
+            // being an unrecognized argument, which is the least useful thing
+            // a --help can do.
+            if (cmd_seen) opts.help_for = opts.command;
             opts.command = .help;
             cmd_seen = true;
             continue;
@@ -157,65 +209,59 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             continue;
         }
 
-        // Known global flags may appear anywhere.
+        // Flags may appear before or after the command; which command they
+        // are legal for is checked once the command is known.
         if (a.len > 0 and a[0] == '-') {
+            var used: ?Flag = null;
             if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
             } else if (std.mem.eql(u8, a, "--dry-run")) {
                 opts.dry_run = true;
+                used = .dry_run;
+            } else if (std.mem.eql(u8, a, "--yes")) {
+                opts.apply = true;
+                used = .yes;
             } else if (std.mem.eql(u8, a, "--tasks")) {
                 opts.eval_tasks_only = true;
+                used = .tasks;
             } else if (std.mem.eql(u8, a, "--provider")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.provider = args[idx];
-            } else if (std.mem.eql(u8, a, "--model")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.model = args[idx];
+                opts.provider = try takeValue(args, &idx, inline_value, a, diag);
+                used = .provider;
+            } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
+                opts.continue_last = true;
+                used = .session;
+            } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
+                opts.model = try takeValue(args, &idx, inline_value, a, diag);
+                used = .model;
+            } else if (std.mem.eql(u8, a, "--session")) {
+                opts.session = try takeValue(args, &idx, inline_value, a, diag);
+                used = .session;
+            } else if (std.mem.eql(u8, a, "--goal")) {
+                opts.goal = try takeValue(args, &idx, inline_value, a, diag);
+                used = .goal;
             } else if (std.mem.eql(u8, a, "--iters")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.iters = std.fmt.parseInt(u32, args[idx], 10) catch {
-                    setDiag(diag, args[idx]);
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.iters = std.fmt.parseInt(u32, v, 10) catch {
+                    setDiag(diag, v);
                     return error.BadIters;
                 };
-            } else if (std.mem.eql(u8, a, "--session")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.session = args[idx];
-            } else if (std.mem.eql(u8, a, "--goal")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.goal = args[idx];
+                used = .iters;
             } else if (std.mem.eql(u8, a, "--port")) {
-                idx += 1;
-                if (idx >= args.len) {
-                    setDiag(diag, a);
-                    return error.MissingArg;
-                }
-                opts.port = std.fmt.parseInt(u16, args[idx], 10) catch {
-                    setDiag(diag, args[idx]);
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.port = std.fmt.parseInt(u16, v, 10) catch {
+                    setDiag(diag, v);
                     return error.BadPort;
                 };
+                used = .port;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
+            }
+            if (used) |f| {
+                if (seen_flags_len < seen_flags.len) {
+                    seen_flags[seen_flags_len] = f;
+                    seen_flags_len += 1;
+                }
             }
             continue;
         }
@@ -226,6 +272,12 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             cmd_seen = true;
             if (std.mem.eql(u8, a, "init")) {
                 opts.command = .init;
+            } else if (std.mem.eql(u8, a, "doctor")) {
+                opts.command = .doctor;
+            } else if (std.mem.eql(u8, a, "janitor") or std.mem.eql(u8, a, "prune")) {
+                opts.command = .prune;
+            } else if (std.mem.eql(u8, a, "setup")) {
+                opts.command = .setup;
             } else if (std.mem.eql(u8, a, "provide") or std.mem.eql(u8, a, "providers")) {
                 opts.command = .providers_check;
                 pending_sub = "";
@@ -266,9 +318,22 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "repl")) {
                 opts.command = .repl;
             } else if (std.mem.eql(u8, a, "repl-vaxis")) {
-                opts.command = .repl_vaxis;
+                // Compatibility alias from when the vaxis REPL was a
+                // separate opt-in command; now `repl` itself.
+                opts.command = .repl;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
+            } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
+                // Not a command: treat it as the task, the way every other
+                // agent CLI takes a bare prompt (`clanker "fix the bug"`).
+                // Only when it cannot be a command name, so a typo'd command
+                // is still reported rather than silently run as a prompt.
+                if (std.mem.indexOfScalar(u8, a, ' ') == null and a.len < 24) {
+                    setDiag(diag, a);
+                    return error.UnknownCommand;
+                }
+                opts.command = .run;
+                opts.task = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownCommand;
@@ -276,7 +341,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         } else if (pending_sub) |sub| {
             if (std.mem.eql(u8, a, sub)) {
                 pending_sub = null;
-            } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models"))) {
+            } else if (opts.command == .providers_check and sub.len == 0 and (std.mem.eql(u8, a, "check") or std.mem.eql(u8, a, "models") or std.mem.eql(u8, a, "catalog") or std.mem.eql(u8, a, "fill"))) {
                 opts.providers_sub = a;
                 pending_sub = null; // sub consumed; next token is the provider name
             } else if (opts.command == .chat and sub.len == 0 and (std.mem.eql(u8, a, "send") or std.mem.eql(u8, a, "history") or std.mem.eql(u8, a, "rooms") or std.mem.eql(u8, a, "subscribe"))) {
@@ -314,10 +379,24 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         }
     }
 
-    if (pending_sub != null) {
+    // `clanker chat --help` asks what the subcommands are, so a missing
+    // subcommand is the question rather than the error.
+    if (pending_sub != null and opts.command != .help) {
         setDiag(diag, "<subcommand>");
         return error.BadSubcommand;
     }
+    // A flag the chosen command does not take is refused rather than ignored.
+    // `clanker stats --model x` used to exit 0 having done nothing with it,
+    // which reads as "the model was honoured" to whoever typed it.
+    if (opts.command != .help and opts.command != .version and opts.command != .git) {
+        for (seen_flags[0..seen_flags_len]) |f| {
+            if (!commandAccepts(opts.command, f)) {
+                setDiag(diag, f.name());
+                return error.FlagNotForCommand;
+            }
+        }
+    }
+
     if (opts.command == .run and opts.task == null) return error.MissingTask;
     if (opts.command == .notify and opts.peer == null) {
         setDiag(diag, "<peer>");
@@ -341,50 +420,182 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     return opts;
 }
 
+/// The whole command list, grouped. Rendered from `specs` so a new command
+/// cannot be added without appearing here.
 pub fn printUsage(io: std.Io) void {
-    writeStdErr(io, usage_text) catch {};
+    var buf: [8192]u8 = undefined;
+    writeStdErr(io, renderUsage(&buf)) catch {};
 }
 
-const usage_text =
-    \\clanker — self-improving AI agent harness
-    \\
-    \\usage:
-    \\  clanker init                    create config.local.json + state/
-    \\  clanker providers check [name]  verify provider connectivity
-    \\  clanker run "<task>"            run the agent on a task
-    \\  clanker run --goal <id> "<task>"  run with an active goal
-    \\  clanker run --session <id> "<task>"  continue a saved session
-    \\  clanker repl                    interactive multi-turn chat (streams tokens)
-    \\  clanker sessions                list saved sessions
-    \\  clanker tools list              list registered WASM tools
-    \\  clanker eval [name] [--tasks]   run evals (all, one by name, --tasks = capability only)
-    \\  clanker improve-self [--iters N] [--dry-run] "<instructions>"  self-improvement loop
-    \\  clanker revert <id>             revert a previously applied improvement
-    \\  clanker goal "<intent>"         design and persist a structured goal
-    \\  clanker graph [run-id]          list runs or render one as an ASCII timeline
-    \\  clanker gate                    run deterministic gates (build/test/tools/fmt/lint)
-    \\  clanker mcp                     serve tools over MCP (stdio)
-    \\  clanker serve [--port N]        HTTP API + web UI (default port 17921)
-    \\  clanker notify <peer> "<message>" send a notification to a peer
-    \\  clanker chat send <room> "<text>"  send a message to a chatroom
-    \\  clanker chat history <room> [after]  read chatroom history (newest first)
-    \\  clanker chat rooms              list chatrooms + subscriptions
-    \\  clanker chat subscribe <room> [on]  join/leave a chatroom (on = true/false)
-    \\  clanker stats                   token usage per provider/model
-    \\  clanker phonebook               list peer agent cards
-    \\  clanker git <args...>           passthrough to git (e.g. clanker git status)
-    \\  clanker --verbose               enable debug logging
-    \\  clanker --help                  show this usage text
-    \\  clanker --version               print the clanker version
-    \\
-;
+fn renderUsage(buf: []u8) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    w.writeAll("clanker - self-improving AI agent harness\n\nusage: clanker [command] [options]\n       clanker            with no command, starts the REPL\n") catch {};
+    for (std.enums.values(Group)) |g| {
+        w.print("\n{s}\n", .{g.title()}) catch {};
+        for (&specs) |*s| {
+            if (s.group != g) continue;
+            // A usage string that fills or overruns the 34-wide column would
+            // otherwise butt straight into the blurb with no separating
+            // space (e.g. "...fill] [name]verify connectivity..."); wrap the
+            // blurb onto its own aligned line instead.
+            if (s.usage.len >= 32) {
+                w.print("  {s}\n  {s: <34}{s}\n", .{ s.usage, "", s.blurb }) catch {};
+            } else {
+                w.print("  {s: <34}{s}\n", .{ s.usage, s.blurb }) catch {};
+            }
+        }
+    }
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    return buf[0..w.end];
+}
+
+/// `clanker <command> --help`: what that one command takes, rather than the
+/// whole list. Previously this errored with "unrecognized argument '--help'",
+/// which is the least helpful thing a --help can do.
+fn printCommandHelp(io: std.Io, cmd: Command) void {
+    const s = specFor(cmd) orelse return printUsage(io);
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
+    if (s.detail.len > 0) w.print("\n{s}\n", .{s.detail}) catch {};
+    if (s.flags.len > 0) {
+        w.writeAll("\noptions:\n") catch {};
+        for (s.flags) |f| {
+            w.print("  {s}\n", .{f.name()}) catch {};
+        }
+    }
+    w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
+    writeStdOut(io, buf[0..w.end]) catch {};
+}
+
+/// Every flag the parser knows. A command declares the ones it accepts, so
+/// `clanker stats --model x` is refused instead of silently ignored: a flag
+/// that does nothing is worse than one that is rejected, because the user
+/// believes it took effect.
+const Flag = enum {
+    provider,
+    model,
+    session,
+    goal,
+    iters,
+    dry_run,
+    tasks,
+    port,
+    yes,
+
+    fn name(self: Flag) []const u8 {
+        return switch (self) {
+            .provider => "--provider",
+            .model => "--model",
+            .session => "--session",
+            .goal => "--goal",
+            .iters => "--iters",
+            .dry_run => "--dry-run",
+            .tasks => "--tasks",
+            .port => "--port",
+            .yes => "--yes",
+        };
+    }
+};
+
+/// Which section of `--help` a command is listed under. A flat list of 22
+/// commands makes the reader scan all of them to find the one they want.
+const Group = enum {
+    work,
+    inspect,
+    peers,
+    maintain,
+
+    fn title(self: Group) []const u8 {
+        return switch (self) {
+            .work => "Working with the agent",
+            .inspect => "Looking at what happened",
+            .peers => "Talking to other instances",
+            .maintain => "Setting up and maintaining",
+        };
+    }
+};
+
+const Spec = struct {
+    command: Command,
+    /// How it is typed, including positional arguments.
+    usage: []const u8,
+    blurb: []const u8,
+    group: Group,
+    flags: []const Flag = &.{},
+    /// Longer help shown by `clanker <command> --help`, when the blurb alone
+    /// leaves a real question unanswered.
+    detail: []const u8 = "",
+};
+
+/// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
+/// so are not listed per command.
+const specs = [_]Spec{
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .goal }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--session <id>   continue that saved conversation\n--continue, -c   continue the most recently touched one\n--goal <id>      run against a persisted goal\n--model, -m      <model>, or <provider>/<model> (--model zai/glm-5.2)" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "--continue, -c picks up the most recently touched session." },
+    .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
+    .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
+    .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. Default port 17921." },
+    .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
+
+    .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
+    .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
+    .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
+    .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
+    .{ .command = .providers_check, .usage = "providers <check|models|catalog|fill> [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
+
+    .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
+    .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
+    .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
+
+    .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can actually reach,\nand finishes with the same checks `clanker doctor` runs." },
+    .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, and improve logs\nbeyond the newest 20. Sessions, goals, learnings and chat history are never touched." },
+    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can guard a\nscript or a CI step. Connectivity is `clanker providers check`." },
+    .{ .command = .init, .usage = "init", .blurb = "create config.local.json and state/", .group = .maintain },
+    .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
+    .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{.tasks}, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates." },
+    .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
+    .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
+    .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
+};
+
+fn specFor(cmd: Command) ?*const Spec {
+    for (&specs) |*s| {
+        if (s.command == cmd) return s;
+    }
+    return null;
+}
+
+fn commandAccepts(cmd: Command, flag: Flag) bool {
+    const s = specFor(cmd) orelse return false;
+    for (s.flags) |f| {
+        if (f == flag) return true;
+    }
+    return false;
+}
 
 pub fn run(init: std.process.Init, opts: Options) !void {
     switch (opts.command) {
         // Requested output (--help, --version), not an error: stdout, exit 0.
-        .help => try writeStdOut(init.io, usage_text),
+        .help => {
+            if (opts.help_for) |c| {
+                printCommandHelp(init.io, c);
+            } else {
+                var buf: [8192]u8 = undefined;
+                try writeStdOut(init.io, renderUsage(&buf));
+            }
+        },
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
-        .init => try cmdInit(init),
+        .init => try cmdInit(init, true),
+        .doctor => try doctor_mod.cmdDoctor(init),
+        .prune => try janitor_mod.cmdPrune(init, opts.apply),
+        .setup => {
+            // Scaffolding first: setup is the one command a new checkout runs,
+            // and sending them to `init` and back is a step that exists only
+            // because the code was split that way.
+            try cmdInit(init, false);
+            try doctor_mod.cmdSetup(init);
+        },
         .providers_check => try cmdProvidersCheck(init, opts),
         .run => try cmdRun(init, opts),
         .sessions => try cmdSessions(init),
@@ -400,8 +611,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .stats => try cmdStats(init),
         .phonebook => try phonebook.cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
-        .repl => try cmdRepl(init, opts),
-        .repl_vaxis => try repl_vaxis.cmdReplVaxis(init),
+        .repl => try repl_vaxis.cmdReplVaxis(init),
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
@@ -523,7 +733,7 @@ const local_template =
     \\{{
     \\  "default_provider": "deepseek",
     \\  "providers": {{
-    \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat", "max_tokens": 2048 }}
+    \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat", "models": {{ "deepseek-chat": {{ "max_tokens": 2048 }} }} }}
     \\  }},
     \\  "instance": {{ "name": "{s}", "id": "{s}" }},
     \\  "agent": {{ "max_iterations": 12 }}
@@ -531,7 +741,7 @@ const local_template =
     \\
 ;
 
-fn cmdInit(init: std.process.Init) !void {
+fn cmdInit(init: std.process.Init, announce: bool) !void {
     const io = init.io;
     const dir = std.Io.Dir.cwd();
     const arena = init.arena.allocator();
@@ -545,8 +755,9 @@ fn cmdInit(init: std.process.Init) !void {
         },
         else => return err,
     };
-    dir.createDirPath(io, "state") catch {};
-    log.log(.info, "clanker initialized. Export DEEPSEEK_API_KEY, then run: clanker run \"hello\"", .{});
+    dir.createDirPath(io, "state") catch |err|
+        log.log(.warn, "init: mkdir 'state' failed: {s}", .{@errorName(err)});
+    if (announce) log.log(.info, "clanker initialized. Run `clanker setup` to check it over.", .{});
 }
 
 // --------------------------------------------------------- providers check --
@@ -554,6 +765,12 @@ fn cmdInit(init: std.process.Init) !void {
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "models")) {
         return cmdProvidersModels(init, opts);
+    }
+    if (std.mem.eql(u8, opts.providers_sub, "catalog")) {
+        return cmdProvidersCatalog(init, opts);
+    }
+    if (std.mem.eql(u8, opts.providers_sub, "fill")) {
+        return cmdProvidersFill(init, opts);
     }
     const gpa = init.gpa;
     const io = init.io;
@@ -688,6 +905,200 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
     }
 }
 
+/// Public, unauthenticated directory of provider/model specs (context window,
+/// pricing, capabilities) maintained outside this repo. Used so a model's
+/// metadata does not have to be hand-typed into config.json and kept in sync
+/// by hand.
+const models_dev_url = "https://models.dev/api.json";
+
+/// `clanker providers catalog <query>` — search the models.dev directory for
+/// provider or model ids/families containing `query` (case-insensitive) and
+/// print what it knows about each match. Read-only; nothing here touches
+/// config.json.
+fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const query = opts.provider orelse {
+        log.log(.error_, "usage: clanker providers catalog <query>  (e.g. \"kimi\", \"deepseek\")", .{});
+        return error.MissingCatalogQuery;
+    };
+
+    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
+    if (catalog != .object) return error.CatalogNotObject;
+
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, "provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n");
+    var it = catalog.object.iterator();
+    while (it.next()) |kv| {
+        const provider_id = kv.key_ptr.*;
+        const provider_entry = kv.value_ptr.*;
+        if (provider_entry != .object) continue;
+        const models_v = provider_entry.object.get("models") orelse continue;
+        if (models_v != .object) continue;
+        var mit = models_v.object.iterator();
+        while (mit.next()) |mkv| {
+            const model_id = mkv.key_ptr.*;
+            const family = if (mkv.value_ptr.* == .object) fieldStr(mkv.value_ptr.object, "family") orelse "" else "";
+            if (std.ascii.indexOfIgnoreCase(provider_id, query) == null and
+                std.ascii.indexOfIgnoreCase(model_id, query) == null and
+                std.ascii.indexOfIgnoreCase(family, query) == null) continue;
+            try out.writeStreamingAll(io, try renderCatalogRow(arena, provider_id, model_id, mkv.value_ptr.*));
+        }
+    }
+}
+
+/// One `provider/model\tctx\tout\tin $/1M\tout $/1M\treasoning\n` line for the
+/// catalog table.
+fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id: []const u8, m: std.json.Value) ![]const u8 {
+    if (m != .object) return std.fmt.allocPrint(arena, "{s}/{s}\t?\t?\t?\t?\t?\n", .{ provider_id, model_id });
+    var ctx: f64 = 0;
+    var out_limit: f64 = 0;
+    if (m.object.get("limit")) |l| if (l == .object) {
+        ctx = jsonNum(l.object, "context") orelse 0;
+        out_limit = jsonNum(l.object, "output") orelse 0;
+    };
+    var cost_in: f64 = 0;
+    var cost_out: f64 = 0;
+    if (m.object.get("cost")) |c| if (c == .object) {
+        cost_in = jsonNum(c.object, "input") orelse 0;
+        cost_out = jsonNum(c.object, "output") orelse 0;
+    };
+    const reasoning = if (m.object.get("reasoning")) |r| (r == .bool and r.bool) else false;
+    return std.fmt.allocPrint(arena, "{s}/{s}\t{d}\t{d}\t{d:.2}\t{d:.2}\t{s}\n", .{
+        provider_id, model_id, @as(i64, @trunc(ctx)),          @as(i64, @trunc(out_limit)),
+        cost_in,     cost_out, if (reasoning) "yes" else "no",
+    });
+}
+
+/// `clanker providers fill <name>` — for a provider already declared in
+/// config.json, print each of its configured models' specs as known by the
+/// models.dev catalog, ready to paste into `models.<name>`. Never writes
+/// config.json itself: reformatting the whole file to insert a few fields
+/// risks losing whatever hand structure/comments-adjacent ordering it had,
+/// so the human stays in the loop for the merge.
+fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const provider_name = opts.provider orelse {
+        log.log(.error_, "usage: clanker providers fill <provider>", .{});
+        return error.MissingCatalogQuery;
+    };
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const p = try cfg.provider(provider_name);
+
+    const body = try httpGet(io, gpa, arena, models_dev_url, null);
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true });
+    const cat_provider = findCatalogProvider(catalog, p) orelse {
+        log.log(.warn, "{s}: no models.dev entry matches base_url {s}", .{ provider_name, p.base_url });
+        return;
+    };
+
+    const out = std.Io.File.stdout();
+    var it = p.models.iterator();
+    while (it.next()) |kv| {
+        const model_name = kv.key_ptr.*;
+        const cat_model = findCatalogModel(cat_provider, model_name) orelse {
+            try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "// {s}: no catalog match\n", .{model_name}));
+            continue;
+        };
+        try out.writeStreamingAll(io, try renderModelSnippet(arena, model_name, cat_model));
+    }
+}
+
+/// The models.dev provider entry whose API this clanker provider talks to:
+/// an exact `base_url` match first (most precise), then same host, then (for
+/// providers with no fixed public host, e.g. a local relay) a shared
+/// `api_key_env` name. Ambiguous on env alone — several models.dev entries
+/// can share one vendor's env var name — so it is only the last resort.
+fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.json.Value {
+    if (catalog != .object) return null;
+    const want_base = std.mem.trimEnd(u8, p.base_url, "/");
+    const want_host = config.hostOf(p.base_url);
+    var env_fallback: ?std.json.Value = null;
+    var it = catalog.object.iterator();
+    while (it.next()) |kv| {
+        const entry = kv.value_ptr.*;
+        if (entry != .object) continue;
+        const api = fieldStr(entry.object, "api") orelse "";
+        if (api.len > 0 and std.mem.eql(u8, std.mem.trimEnd(u8, api, "/"), want_base)) return entry;
+        if (want_host) |wh| {
+            if (config.hostOf(api)) |eh| {
+                if (std.mem.eql(u8, eh, wh)) return entry;
+            }
+        }
+        if (env_fallback == null) {
+            if (p.api_key_env) |want_env| {
+                if (entry.object.get("env")) |envs| {
+                    if (envs == .array) {
+                        for (envs.array.items) |e| {
+                            if (e == .string and std.mem.eql(u8, e.string, want_env)) {
+                                env_fallback = entry;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return env_fallback;
+}
+
+/// A catalog provider's model matching `model_name`, trying the exact key
+/// first and then the part after the last `/` — config model names are
+/// sometimes written OpenRouter-style (`moonshotai/kimi-k3`) even against a
+/// vendor's own API, which the catalog keys bare (`kimi-k3`).
+fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std.json.Value {
+    if (provider_entry != .object) return null;
+    const models_v = provider_entry.object.get("models") orelse return null;
+    if (models_v != .object) return null;
+    if (models_v.object.get(model_name)) |m| return m;
+    if (std.mem.lastIndexOfScalar(u8, model_name, '/')) |slash| {
+        return models_v.object.get(model_name[slash + 1 ..]);
+    }
+    return null;
+}
+
+/// A pastable `"<name>": { ... }` block for `models.<provider>.<name>` in
+/// config.json, built from a models.dev model entry.
+fn renderModelSnippet(arena: std.mem.Allocator, name: []const u8, m: std.json.Value) ![]const u8 {
+    if (m != .object) return std.fmt.allocPrint(arena, "// {s}: malformed catalog entry\n", .{name});
+    var fields: std.ArrayList([]const u8) = .empty;
+    if (m.object.get("limit")) |l| if (l == .object) {
+        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"context_window\": {d}", .{@as(i64, @trunc(c))}));
+        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"max_tokens\": {d}", .{@as(i64, @trunc(o))}));
+    };
+    if (m.object.get("cost")) |c| if (c == .object) {
+        if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_input\": {d}", .{v}));
+        if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_output\": {d}", .{v}));
+    };
+    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"display\": \"{s}\"", .{disp}));
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    try w.writer.print("\"{s}\": {{\n", .{name});
+    for (fields.items, 0..) |f, i| {
+        try w.writer.writeAll(f);
+        if (i < fields.items.len - 1) try w.writer.writeAll(",");
+        try w.writer.writeAll("\n");
+    }
+    try w.writer.writeAll("}\n");
+    return w.toOwnedSlice();
+}
+
+/// A JSON number field, accepting the string-encoded numbers some catalog
+/// entries use. Absent or non-numeric reads as `null`, distinct from a
+/// legitimate `0` (which no context window or price ever is in practice).
+fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
+    const v = obj.get(key) orelse return null;
+    return switch (v) {
+        .integer, .float, .number_string, .string => numToF64(v),
+        else => null,
+    };
+}
+
 fn fieldStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     if (obj.get(key)) |v| {
         if (v == .string) return v.string;
@@ -708,8 +1119,11 @@ fn numToF64(v: std.json.Value) f64 {
 fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8, bearer: ?[]const u8) ![]const u8 {
     var http: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http.deinit();
-    var buf: [1 << 20]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
+    // Growable: a fixed buffer here used to cap every response at 1 MiB,
+    // which silently truncated (or outright failed) anything past it — the
+    // models.dev catalog alone runs to several MiB.
+    var body: std.Io.Writer.Allocating = .init(gpa);
+    defer body.deinit();
     var headers: std.http.Client.Request.Headers = .{
         .user_agent = .{ .override = "clanker/" ++ version },
     };
@@ -718,10 +1132,10 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
         .location = .{ .url = url },
         .method = .GET,
         .headers = headers,
-        .response_writer = &w,
+        .response_writer = &body.writer,
     });
     if (@intFromEnum(res.status) >= 400) return error.HttpError;
-    return arena.dupe(u8, buf[0..w.end]);
+    return arena.dupe(u8, body.written());
 }
 
 /// `clanker autolearn` — review usage observations, refresh the roadmap
@@ -799,19 +1213,117 @@ fn reportUnfinishedRun(
     }
 }
 
+/// The id `--continue` means: the session touched most recently. Returns null
+/// when there are none, so a first `clanker -c "..."` starts a session rather
+/// than failing at someone who has not made one yet.
+fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
+    const metas = session.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
+    var best: ?session.SessionMeta = null;
+    for (metas) |m| {
+        if (best == null or m.updated > best.?.updated) best = m;
+    }
+    return if (best) |b| b.id else null;
+}
+
 /// The provider named by `--provider` (or the config default), with
 /// `--model` applied as a one-off override of its `default_model`.
+///
+/// `--model <provider>/<model>` picks both at once, so `--model zai/glm-5.2`
+/// needs no separate `--provider`. The prefix is only read as a provider when
+/// config actually has one by that name and `--provider` was not given: a
+/// model id can contain a slash of its own (`moonshotai/kimi-k3` is a model,
+/// served by the provider named `kimi-k3`), and splitting those would send a
+/// request for a model that does not exist to a provider that does not either.
 fn resolveProvider(cfg: *const config.Config, opts: Options) !config.Provider {
-    var provider = (try cfg.provider(opts.provider)).*;
-    if (opts.model) |m| provider.default_model = m;
+    var want_provider = opts.provider;
+    var want_model = opts.model;
+    if (want_provider == null) {
+        if (want_model) |m| {
+            if (std.mem.indexOfScalar(u8, m, '/')) |slash| {
+                const head = m[0..slash];
+                const tail = m[slash + 1 ..];
+                if (head.len > 0 and tail.len > 0 and cfg.providers.getPtr(head) != null) {
+                    want_provider = head;
+                    want_model = tail;
+                }
+            }
+        }
+    }
+    var provider = (try cfg.provider(want_provider)).*;
+    if (want_model) |m| provider.default_model = m;
     return provider;
 }
 
-/// Looks up `goal_id` in state/goals.json and formats its objective,
-/// completion criterion and boundaries as a task-prompt preamble. Returns
-/// null if the file, the entry, or the JSON shape isn't there.
+/// One goal loaded from `state/goals.json` and ready to steer a run.
+const GoalContext = struct {
+    id: []const u8,
+    objective: []const u8,
+    completion_criterion: []const u8,
+    boundaries: []const u8,
+    /// Task-prompt preamble (`## Active goal` …). Arena-owned.
+    section: []const u8,
+};
+
+/// Formats goal fields as the preamble prepended to a run task.
+fn formatGoalSection(
+    arena: std.mem.Allocator,
+    objective: []const u8,
+    completion: []const u8,
+    boundaries: []const u8,
+) ![]const u8 {
+    return try std.fmt.allocPrint(
+        arena,
+        "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n",
+        .{ objective, completion, boundaries },
+    );
+}
+
+fn goalField(obj: std.json.ObjectMap, key: []const u8) []const u8 {
+    if (obj.get(key)) |v| if (v == .string) return v.string;
+    return "";
+}
+
+fn goalUpdated(obj: std.json.ObjectMap) i64 {
+    if (obj.get("updated")) |v| switch (v) {
+        .integer => |n| return n,
+        .float => |f| return @intFromFloat(f),
+        // Web UI / goal tool write timestamps as JSON numbers that may arrive
+        // as strings when the file was hand-edited.
+        .string => |s| return std.fmt.parseInt(i64, s, 10) catch 0,
+        else => {},
+    };
+    return 0;
+}
+
+fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalContext {
+    const idv = obj.get("id") orelse return null;
+    if (idv != .string or idv.string.len == 0) return null;
+    const objective = goalField(obj, "objective");
+    if (objective.len == 0) return null;
+    const completion = goalField(obj, "completion_criterion");
+    const boundaries = goalField(obj, "boundaries");
+    return .{
+        .id = idv.string,
+        .objective = objective,
+        .completion_criterion = completion,
+        .boundaries = boundaries,
+        .section = try formatGoalSection(arena, objective, completion, boundaries),
+    };
+}
+
+/// Looks up `goal_id` in `dir`/`state/goals.json`. Returns null if the file,
+/// the entry, or the JSON shape is missing.
+fn findGoalSectionIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?[]const u8 {
+    const g = try loadGoalById(arena, io, dir, goal_id) orelse return null;
+    return g.section;
+}
+
 fn findGoalSection(arena: std.mem.Allocator, io: std.Io, goal_id: []const u8) !?[]const u8 {
-    const goals_raw = std.Io.Dir.cwd().readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
+    return findGoalSectionIn(arena, io, std.Io.Dir.cwd(), goal_id);
+}
+
+fn loadGoalById(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?GoalContext {
+    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
     const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
     if (root != .array) return null;
     for (root.array.items) |item| {
@@ -819,12 +1331,81 @@ fn findGoalSection(arena: std.mem.Allocator, io: std.Io, goal_id: []const u8) !?
         const obj = item.object;
         const idv = obj.get("id") orelse continue;
         if (idv != .string or !std.mem.eql(u8, idv.string, goal_id)) continue;
-        const objective = if (obj.get("objective")) |v| if (v == .string) v.string else "" else "";
-        const completion = if (obj.get("completion_criterion")) |v| if (v == .string) v.string else "" else "";
-        const boundaries = if (obj.get("boundaries")) |v| if (v == .string) v.string else "" else "";
-        return try std.fmt.allocPrint(arena, "## Active goal\n\nobjective: {s}\ncompletion_criterion: {s}\nboundaries: {s}\n\n", .{ objective, completion, boundaries });
+        return try goalFromObject(arena, obj);
     }
     return null;
+}
+
+/// Newest `status=active` goal in `dir`/`state/goals.json`, by `updated`
+/// then array order. This is what "the goal most recently set is steering
+/// runs" means in the web UI copy.
+fn findNewestActiveGoalIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !?GoalContext {
+    const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
+    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;
+    if (root != .array) return null;
+    var best: ?GoalContext = null;
+    var best_updated: i64 = std.math.minInt(i64);
+    var best_index: usize = 0;
+    for (root.array.items, 0..) |item, i| {
+        if (item != .object) continue;
+        const obj = item.object;
+        const status = goalField(obj, "status");
+        // Default status is active when the field is missing (older files).
+        if (status.len > 0 and !std.mem.eql(u8, status, "active")) continue;
+        const g = try goalFromObject(arena, obj) orelse continue;
+        const updated = goalUpdated(obj);
+        if (best == null or updated > best_updated or (updated == best_updated and i >= best_index)) {
+            best = g;
+            best_updated = updated;
+            best_index = i;
+        }
+    }
+    return best;
+}
+
+fn findNewestActiveGoal(arena: std.mem.Allocator, io: std.Io) !?GoalContext {
+    return findNewestActiveGoalIn(arena, io, std.Io.Dir.cwd());
+}
+
+/// Prepends a goal preamble to `task`. When `task` is empty, builds a default
+/// work order from the goal's objective and completion criterion so a web UI
+/// "Work on this" click (or a goal-only POST) can execute without inventing text.
+fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]const u8 {
+    const body = if (std.mem.trim(u8, task, " \t\r\n").len > 0)
+        task
+    else
+        try std.fmt.allocPrint(
+            arena,
+            "Work on this goal until the completion criterion is met.\n\nObjective: {s}\nDone when: {s}\n",
+            .{ g.objective, g.completion_criterion },
+        );
+    return try std.fmt.allocPrint(arena, "{s}{s}", .{ g.section, body });
+}
+
+/// Resolves which goal steers this run: explicit id, else newest active when
+/// `auto` is true. Returns the task text with the preamble applied (or the
+/// original task when no goal applies).
+fn resolveRunTask(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    task: []const u8,
+    goal_id: ?[]const u8,
+    auto: bool,
+) ![]const u8 {
+    if (goal_id) |id| {
+        if (try loadGoalById(arena, io, dir, id)) |g| {
+            return try taskWithGoal(arena, task, g);
+        }
+        log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{id});
+        return task;
+    }
+    if (!auto) return task;
+    if (try findNewestActiveGoalIn(arena, io, dir)) |g| {
+        log.log(.info, "steering run with active goal {s}", .{g.id});
+        return try taskWithGoal(arena, task, g);
+    }
+    return task;
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -838,16 +1419,23 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const provider = &provider_val;
 
     // Make sure the sandbox root exists.
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "cmdRun: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
 
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
 
     var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
+    defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
     var created: i64 = 0;
-    if (opts.session) |sid| {
+    var opts_session = opts.session;
+    if (opts_session == null and opts.continue_last) {
+        opts_session = latestSessionId(io, arena);
+        if (opts_session) |sid| log.log(.info, "continuing session {s}", .{sid});
+    }
+    if (opts_session) |sid| {
         const maybe_s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
@@ -863,14 +1451,17 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         }
     }
-    var task_text = opts.task.?;
-    if (opts.goal) |goal_id| {
-        if (try findGoalSection(arena, io, goal_id)) |goal_section| {
-            task_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ goal_section, opts.task.? });
-        } else {
-            log.log(.warn, "goal '{s}' not found in state/goals.json — running without goal context", .{goal_id});
-        }
-    }
+    // Explicit `--goal <id>` wins; otherwise the newest active goal steers
+    // the run automatically when the goal module is on (same rule the web UI
+    // describes: the goal most recently set is what runs are steered toward).
+    const task_text = try resolveRunTask(
+        arena,
+        io,
+        std.Io.Dir.cwd(),
+        opts.task.?,
+        opts.goal,
+        cfg.modules.goal and opts.goal == null,
+    );
     compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
 
@@ -883,15 +1474,17 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     var out_buf: [4096]u8 = undefined;
     var out_w = stdout_file.writerStreaming(io, &out_buf);
     run_out = &out_w;
-    run_stdout_color = stdout_file.isTty(io) catch false;
+    // NO_COLOR (https://no-color.org) is the standard opt-out; honour it
+    // ahead of the isTty check rather than requiring a clanker-specific flag.
+    run_stdout_color = init.environ_map.get("NO_COLOR") == null and (stdout_file.isTty(io) catch false);
     a.on_token = &runDelta;
 
     // The spinner and the live tool-status line belong to the REPL. `run` is
     // a one-shot command that gets piped, redirected and read by scripts, so
     // it stays plain: streamed answer on stdout, log lines on stderr, no
     // animation to clean up out of a captured log.
-    repl_answer_started = false;
-    repl_md = .{};
+    run_answer_started = false;
+    run_md = .{};
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         // Running out of iterations or budget is an outcome, not a crash. The
         // run did real work — often minutes of it and a measurable amount of
@@ -939,694 +1532,6 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     }
 }
 
-/// The REPL's opening banner. On a terminal it reuses the left-bar card
-/// style already established for tool calls and the input box (`╭─`/`│`/
-/// `╰─`, no right-hand border — transcript.zig's doc comment explains why a
-/// closed box was rejected); piped output degrades to one dense plain line,
-/// so scripts get a header without box art.
-fn printReplBanner(w: *std.Io.Writer, theme: *const tui_theme.Theme, provider_name: []const u8, model_name: []const u8, sid: []const u8, tty: bool) void {
-    if (!tty) {
-        w.print("{s}clanker repl \xc2\xb7 {s}/{s}{s}\n", .{ theme.dim, provider_name, model_name, theme.reset }) catch {};
-        return;
-    }
-    w.print("{s}\xe2\x95\xad\xe2\x94\x80 {s}{s}\xe2\x9a\xa1 clanker{s} {s}repl{s}\n", .{ theme.tool, theme.reset, theme.answer_marker, theme.reset, theme.dim, theme.reset }) catch {};
-    w.print("{s}\xe2\x94\x82{s}  {s}{s}/{s} \xc2\xb7 session {s}{s}\n", .{ theme.tool, theme.reset, theme.dim, provider_name, model_name, sid, theme.reset }) catch {};
-    w.print("{s}\xe2\x95\xb0\xe2\x94\x80{s} {s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n", .{ theme.tool, theme.reset, theme.dim, theme.reset }) catch {};
-}
-
-test "printReplBanner draws a left-bar card on a tty" {
-    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer out.deinit();
-    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", true);
-    const bytes = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad\xe2\x94\x80") != null); // ╭─
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x9a\xa1 clanker") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "openai/gpt-x") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "session repl-42") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xb0\xe2\x94\x80") != null); // ╰─
-}
-
-test "printReplBanner degrades to one dense line when piped" {
-    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer out.deinit();
-    printReplBanner(&out.writer, &tui_theme.Theme.mono, "openai", "gpt-x", "repl-42", false);
-    const bytes = out.written();
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "\xe2\x95\xad") == null);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "clanker repl \xc2\xb7 openai/gpt-x") != null);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\n"));
-}
-
-fn cmdRepl(init: std.process.Init, opts: Options) !void {
-    const gpa = init.gpa;
-    const io = init.io;
-    const arena = init.arena.allocator();
-    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
-
-    var provider_val = try resolveProvider(&cfg, opts);
-    const provider = &provider_val;
-
-    // Make sure the sandbox root exists.
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
-
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    const tool_defs = try reg.toToolDefs(arena);
-
-    var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
-    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
-    var messages: std.ArrayList(types.Message) = .empty;
-
-    const exe_path = try std.process.executablePathAlloc(io, gpa);
-    defer gpa.free(exe_path);
-
-    var created: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    var sid: []const u8 = undefined;
-    if (opts.session) |sid_arg| {
-        // Resuming a hot-reloaded session: load its transcript.
-        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid_arg)) |s| {
-            created = s.created;
-            for (s.messages) |m| {
-                if (m.role == .system) continue;
-                try messages.append(arena, m);
-            }
-        } else |_| {}
-        sid = sid_arg;
-    } else {
-        sid = try std.fmt.allocPrint(arena, "repl-{d}", .{created});
-    }
-
-    // Hot-reload: a background thread watches the binary and re-execs into
-    // `repl --session <sid>` (resuming this exact session) once a rebuild
-    // lands and it's safe to do so (see HotReload doc comment).
-    if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildReplArgvTail(arena, sid, opts));
-    }
-
-    const stdin_file = std.Io.File.stdin();
-    var stdout_file = std.Io.File.stdout();
-    var out_buf: [4096]u8 = undefined;
-    var out_w = stdout_file.writerStreaming(io, &out_buf);
-
-    repl_theme = tui_theme.select(null, init.environ_map);
-    repl_md.theme = repl_theme;
-    repl_prompt = std.fmt.bufPrint(&repl_prompt_buf, "{s}clanker> {s}", .{ repl_theme.prompt, repl_theme.reset }) catch "clanker> ";
-
-    // Stream the model's tokens to stdout as they arrive.
-    repl_out = &out_w;
-    repl_io = io;
-    ask_out = &out_w;
-    ask_stdin = stdin_file;
-    ask_gpa = gpa;
-    // Only a terminal can answer; a piped session would block forever on a
-    // prompt nobody sees.
-    ask_interactive = stdin_file.isTty(io) catch false;
-    if (ask_interactive) a.ask_fn = &replAsk;
-    // Confirm-before-write reaches the terminal only at "always": "browser"
-    // means the web surface alone, and a piped session has nobody to answer.
-    if (ask_interactive and cfg.agent.confirm_writes == .always) a.confirm_fn = &replConfirm;
-    a.on_token = &replDelta;
-    a.on_tool_call = &replToolCall;
-    a.on_tool_results = &replToolResults;
-    a.on_tool_result = &replToolResult;
-
-    printReplBanner(&out_w.interface, &repl_theme, provider.name, provider.activeModelName(), sid, stdout_file.isTty(io) catch false);
-    try out_w.interface.flush();
-
-    // On a terminal, keystrokes go through the line editor: a cooked TTY hands
-    // over whole lines and leaves arrow keys as literal escape bytes in the
-    // buffer, which is why history recall did nothing. Piped input keeps the
-    // plain read loop below, so scripts and the improvement loop are
-    // unaffected by any of this.
-    var editor = lineedit.Editor{ .gpa = gpa };
-    defer editor.deinit();
-    var region = tui_region.BottomRegion{ .gpa = gpa };
-    defer region.deinit();
-    const interactive = (stdin_file.isTty(io) catch false) and (stdout_file.isTty(io) catch false);
-    if (interactive) {
-        term.installResizeHandler();
-        // A turn runs with the terminal back in cooked mode, where Ctrl-C is a
-        // real SIGINT: without this it killed clanker outright and took the
-        // unsaved turn with it. The agent loop reads the same flag and stops
-        // between iterations.
-        term.installInterruptHandler();
-        a.stop_flag = &term.interrupt_pending;
-        loadReplHistory(io, gpa, &editor);
-        refreshStatusline(io, gpa, arena, &cfg, init.environ_map, &reg);
-        repl_palette = tui_palette.index(arena, &reg) catch &.{};
-        while (true) {
-            const status = ReplStatus{
-                .model_name = provider.activeModelName(),
-                .session_id = sid,
-                .stats = &a.stats,
-                .session_stats = &a.session_stats,
-                .budget = cfg.agent.max_total_tokens,
-            };
-            const entered = readLineRaw(io, gpa, stdin_file, &out_w, &editor, &region, status) catch |err| {
-                if (err == error.EndOfStream) break;
-                log.log(.error_, "repl read error: {s}", .{@errorName(err)});
-                break;
-            } orelse break;
-            const trimmed = std.mem.trim(u8, entered, " \t\r\n");
-            if (trimmed.len == 0) continue;
-            editor.remember(trimmed);
-            saveReplHistory(io, gpa, &editor);
-            const owned = try arena.dupe(u8, trimmed);
-            if (try replHandleLine(io, gpa, arena, &out_w, &a, &messages, &cfg, init.environ_map, &reg, owned, &created, &sid)) return;
-        }
-        try out_w.interface.writeAll("\n");
-        try out_w.interface.flush();
-        return;
-    }
-
-    // Accumulate raw stdin and split on newlines: readSliceShort can return
-    // several lines at once (piped input), and each task line must be copied
-    // into the arena before the accumulator buffer is shifted (messages keep
-    // referencing it across turns).
-    var acc: std.ArrayList(u8) = .empty;
-    defer acc.deinit(gpa);
-    var tmp: [4096]u8 = undefined;
-
-    while (true) {
-        // repl_prompt already carries the theme (built in cmdRepl above), so
-        // NO_COLOR/--theme mono strips the piped prompt the same as raw mode.
-        try out_w.interface.writeAll(repl_prompt);
-        try out_w.interface.flush();
-
-        // Short read on the raw fd: readSliceShort blocks until the buffer is
-        // full or EOF, which never happens on an interactive TTY (it reads the
-        // first line, then blocks for more) — the REPL would silently swallow
-        // input. posix.read returns whatever is available (one canonical line
-        // on a TTY), retrying on EINTR.
-        const n = std.posix.read(stdin_file.handle, &tmp) catch |err| {
-            log.log(.error_, "repl read error: {s}", .{@errorName(err)});
-            return err;
-        };
-        if (n == 0) {
-            // EOF: flush a trailing partial line, then exit.
-            const last = std.mem.trim(u8, acc.items, " \t\r\n");
-            if (last.len > 0) {
-                const owned = try arena.dupe(u8, last);
-                const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
-                if (quit) return;
-            }
-            try out_w.interface.writeAll("\n");
-            try out_w.interface.flush();
-            return;
-        }
-        try acc.appendSlice(gpa, tmp[0..n]);
-        while (std.mem.indexOfScalar(u8, acc.items, '\n')) |nl| {
-            const line = std.mem.trim(u8, acc.items[0..nl], " \t\r\n");
-            // Use `line` only before the buffer is shifted below: it is a
-            // view into acc.items, so the copyForwards would overwrite it.
-            if (line.len == 0) {
-                const rest0 = acc.items[nl + 1 ..];
-                std.mem.copyForwards(u8, acc.items[0..rest0.len], rest0);
-                acc.items.len = rest0.len;
-                continue;
-            }
-            if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) {
-                try out_w.interface.writeAll("\n");
-                try out_w.interface.flush();
-                return;
-            }
-            if (std.mem.eql(u8, line, ":help")) {
-                try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\n");
-                try out_w.interface.flush();
-                const rest1 = acc.items[nl + 1 ..];
-                std.mem.copyForwards(u8, acc.items[0..rest1.len], rest1);
-                acc.items.len = rest1.len;
-                continue;
-            }
-            if (line[0] == '/') {
-                // Slash commands: /quit|/exit leave the REPL, /goal runs the
-                // agent (which persists via the goal WASM tool), everything
-                // else dispatches to an internal cmd_<name> WASM tool.
-                // NOTE: `line` is a view into acc.items and must be fully
-                // consumed BEFORE the buffer is shifted below.
-                if (std.mem.eql(u8, line, "/quit") or std.mem.eql(u8, line, "/q") or std.mem.eql(u8, line, "/exit")) {
-                    try out_w.interface.writeAll("\n");
-                    try out_w.interface.flush();
-                    return;
-                }
-                if (std.mem.startsWith(u8, line, "/autolearn")) {
-                    const arg = std.mem.trimStart(u8, line["/autolearn".len..], " ");
-                    if (std.mem.eql(u8, arg, "on") or std.mem.eql(u8, arg, "off")) {
-                        const on = std.mem.eql(u8, arg, "on");
-                        cfg.modules.autolearn = on;
-                        persistModules(io, gpa, arena, &cfg);
-                        try out_w.interface.writeAll(if (on) "autolearn enabled\n" else "autolearn disabled\n");
-                        try out_w.interface.flush();
-                    } else {
-                        try out_w.interface.writeAll(if (cfg.modules.autolearn) "autolearn is ON\n" else "autolearn is OFF\n");
-                        try out_w.interface.flush();
-                    }
-                    const al_rest = acc.items[nl + 1 ..];
-                    std.mem.copyForwards(u8, acc.items[0..al_rest.len], al_rest);
-                    acc.items.len = al_rest.len;
-                    continue;
-                }
-                var goal_task: ?[]const u8 = null;
-                if (std.mem.startsWith(u8, line, "/goal")) {
-                    const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
-                    if (intent.len == 0) {
-                        try out_w.interface.writeAll("usage: /goal <intent>\n");
-                        try out_w.interface.flush();
-                    } else {
-                        goal_task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
-                    }
-                } else {
-                    const toggled = std.mem.startsWith(u8, line, "/plugins ");
-                    try replSlashTool(io, gpa, arena, &cfg, init.environ_map, &reg, line, &out_w);
-                    if (toggled) {
-                        // /plugins rewrote state/plugins.json; reload so the
-                        // next turn's tool catalog reflects it without a restart.
-                        reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-                        a.tool_defs = try reg.toToolDefs(arena);
-                    }
-                }
-                const slash_rest = acc.items[nl + 1 ..];
-                std.mem.copyForwards(u8, acc.items[0..slash_rest.len], slash_rest);
-                acc.items.len = slash_rest.len;
-                if (goal_task) |gt| {
-                    const owned = try arena.dupe(u8, gt);
-                    const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
-                    if (quit) return;
-                }
-                continue;
-            }
-            // A bare number answers the last multiple-choice question: send
-            // the option's own words, so the model reads an answer rather
-            // than a digit with no referent.
-            const picked: ?[]const u8 = blk: {
-                if (repl_choices.items.len == 0) break :blk null;
-                const digits = std.mem.trimEnd(u8, line, ".)");
-                const idx = std.fmt.parseInt(usize, digits, 10) catch break :blk null;
-                if (idx < 1 or idx > repl_choices.items.len) break :blk null;
-                break :blk repl_choices.items[idx - 1];
-            };
-            // Copy the task text into the arena BEFORE shifting the buffer:
-            // messages keep referencing it across turns.
-            const owned = try arena.dupe(u8, picked orelse line);
-            if (picked) |choice| {
-                a.pending_decision = .{ .question = repl_last_question, .answer = owned };
-                const echo = try std.fmt.allocPrint(arena, "{s}→ {s}{s}\n", .{ repl_theme.dim, choice, repl_theme.reset });
-                try out_w.interface.writeAll(echo);
-                try out_w.interface.flush();
-            }
-            const rest = acc.items[nl + 1 ..];
-            std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
-            acc.items.len = rest.len;
-            const quit = try replRunTurn(io, &out_w, &a, &messages, owned, created, sid);
-            if (quit) return;
-        }
-    }
-}
-
-/// One line typed at the interactive prompt. Returns true when the REPL should
-/// exit. The buffered (piped) path keeps its own inline handling; this covers
-/// the same commands for the raw-mode path.
-fn replHandleLine(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    out_w: *std.Io.File.Writer,
-    a: *agent.Agent,
-    messages: *std.ArrayList(types.Message),
-    cfg: *config.Config,
-    environ_map: *std.process.Environ.Map,
-    reg: *registry.Registry,
-    line: []const u8,
-    created: *i64,
-    sid: *[]const u8,
-) !bool {
-    if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) return true;
-    if (std.mem.eql(u8, line, ":help")) {
-        try out_w.interface.writeAll(":quit  :help  /goal <intent>  /session switch <id>  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete; Tab completes a slash command.\n");
-        const text = try tui_palette.helpText(arena, repl_palette);
-        try out_w.interface.writeAll(text);
-        try out_w.interface.flush();
-        return false;
-    }
-    if (line.len > 0 and line[0] == '/') {
-        if (std.mem.startsWith(u8, line, "/quit") or std.mem.startsWith(u8, line, "/exit")) return true;
-        if (std.mem.startsWith(u8, line, "/goal")) {
-            const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
-            if (intent.len == 0) {
-                try out_w.interface.writeAll("usage: /goal <intent>\n");
-                try out_w.interface.flush();
-                return false;
-            }
-            const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
-            const quit = try replRunTurn(io, out_w, a, messages, task, created.*, sid.*);
-            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-            runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
-            return quit;
-        }
-        if (std.mem.startsWith(u8, line, "/session")) {
-            const rest = std.mem.trim(u8, line["/session".len..], " \t");
-            const target = if (std.mem.startsWith(u8, rest, "switch "))
-                std.mem.trim(u8, rest["switch ".len..], " \t")
-            else
-                "";
-            if (target.len == 0) {
-                try out_w.interface.writeAll("usage: /session switch <id>  (see /sessions for the list)\n");
-                try out_w.interface.flush();
-                return false;
-            }
-            const loaded = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), target) catch {
-                try out_w.interface.writeAll("no such session\n");
-                try out_w.interface.flush();
-                return false;
-            };
-            messages.clearRetainingCapacity();
-            for (loaded.messages) |m| {
-                if (m.role == .system) continue;
-                try messages.append(arena, m);
-            }
-            created.* = loaded.created;
-            sid.* = try arena.dupe(u8, target);
-            // Token totals belong to a run, not a transcript: switching
-            // sessions starts a fresh count rather than carrying over
-            // whatever the previous session had spent.
-            a.session_stats = .{};
-            try out_w.interface.print("{s}switched to session {s} ({d} message(s)){s}\n", .{ repl_theme.dim, target, messages.items.len, repl_theme.reset });
-            try out_w.interface.flush();
-            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-            return false;
-        }
-        const toggled = std.mem.startsWith(u8, line, "/plugins ");
-        try replSlashTool(io, gpa, arena, cfg, environ_map, reg, line, out_w);
-        if (toggled) {
-            reg.* = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-            a.tool_defs = try reg.toToolDefs(arena);
-            refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-            repl_palette = tui_palette.index(arena, reg) catch repl_palette;
-        }
-        return false;
-    }
-    // A bare number answers the last multiple-choice question.
-    var task = line;
-    if (repl_choices.items.len > 0) {
-        const digits = std.mem.trimEnd(u8, line, ".)");
-        if (std.fmt.parseInt(usize, digits, 10) catch null) |idx| {
-            if (idx >= 1 and idx <= repl_choices.items.len) {
-                task = try arena.dupe(u8, repl_choices.items[idx - 1]);
-                const echo = try std.fmt.allocPrint(arena, "{s}\xe2\x86\x92 {s}{s}\n", .{ repl_theme.dim, task, repl_theme.reset });
-                try out_w.interface.writeAll(echo);
-                try out_w.interface.flush();
-                // The run this starts exists because of that pick; the graph
-                // says so instead of showing a task with no visible cause.
-                a.pending_decision = .{ .question = repl_last_question, .answer = task };
-            }
-        }
-    }
-    const quit = try replRunTurn(io, out_w, a, messages, task, created.*, sid.*);
-    refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
-    runTurnHooks(io, gpa, arena, out_w, cfg, environ_map, reg);
-    return quit;
-}
-
-/// REPL history file: recall survives restarts, which is most of the point.
-const repl_history_path = "state/repl_history";
-
-fn loadReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *lineedit.Editor) void {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, repl_history_path, gpa, .limited(1 << 20)) catch return;
-    defer gpa.free(raw);
-    var it = std.mem.splitScalar(u8, raw, '\n');
-    while (it.next()) |l| {
-        const t = std.mem.trim(u8, l, " \t\r");
-        if (t.len > 0) editor.remember(t);
-    }
-    editor.reset();
-}
-
-fn saveReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *const lineedit.Editor) void {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(gpa);
-    for (editor.history.items) |h| {
-        buf.appendSlice(gpa, h) catch return;
-        buf.append(gpa, '\n') catch return;
-    }
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    atomic_write.writeFile(io, std.Io.Dir.cwd(), repl_history_path, buf.items) catch {};
-}
-
-/// What the status bar shows while `readLineRaw` waits for a line — read
-/// fresh on every redraw rather than snapshotted once, so token counts from
-/// a prior turn are already visible while typing the next one.
-pub const ReplStatus = struct {
-    model_name: []const u8,
-    session_id: []const u8,
-    stats: *const agent.RunStats,
-    session_stats: *const agent.RunStats,
-    budget: ?u32,
-};
-
-/// Reads one line in raw mode, redrawing as it is edited. Returns null on EOF
-/// or Ctrl-C, so the caller can leave. The line can span multiple rows (a
-/// bracketed paste, or a line longer than the terminal is wide); `region`
-/// repaints exactly the rows the status bar + input box occupy, diffing
-/// against its own previous frame rather than redrawing everything.
-fn readLineRaw(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    stdin_file: std.Io.File,
-    out_w: *std.Io.File.Writer,
-    editor: *lineedit.Editor,
-    region: *tui_region.BottomRegion,
-    status: ReplStatus,
-) !?[]const u8 {
-    const raw_guard = try term.enterRaw(stdin_file.handle);
-    defer raw_guard.exit();
-    // Bracketed paste: the terminal wraps a pasted block in ESC[200~/201~,
-    // which the line editor reads as literal newlines instead of submits, so
-    // a multi-line paste lands as one input rather than one turn per line.
-    try out_w.interface.writeAll("\x1b[?2004h");
-    try out_w.interface.flush();
-    defer {
-        out_w.interface.writeAll("\x1b[?2004l") catch {};
-        out_w.interface.flush() catch {};
-    }
-    _ = io;
-
-    editor.reset();
-    region.reset();
-    try redrawRegion(gpa, out_w, editor, region, status);
-
-    var key_reader = tui_input.KeyReader{};
-    while (true) {
-        const key = try key_reader.next(stdin_file) orelse return null;
-
-        switch (key) {
-            .interrupt => {
-                // Advance past whatever region rows still sit below the
-                // cursor (the input box's closing "╰─" line) before writing
-                // "^C" as its own clean line, same as the Enter handler
-                // below — otherwise "^C" lands glued onto the box's input
-                // row instead of visibly below the whole box.
-                const extra = region.lineCount() - 1 - region.cursorRow();
-                if (extra > 0) try out_w.interface.print("\x1b[{d}B", .{extra});
-                try out_w.interface.writeAll("\n^C\n");
-                try out_w.interface.flush();
-                editor.reset();
-                region.reset(); // the ^C line above is outside the region's own tracking
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            .eof => if (editor.len == 0) return null,
-            .tab => {
-                // Mid-paste, a tab byte is pasted content, not a completion
-                // request — leave it alone (matches lineedit.Editor.apply's
-                // existing no-op for .tab; nothing new to insert either way).
-                if (!editor.in_paste) tryComplete(gpa, editor, repl_palette);
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            .clear_screen => {
-                // Ctrl-L: wipe the screen and repaint the prompt with the
-                // line being edited, as every cooked shell does.
-                try out_w.interface.writeAll("\x1b[2J\x1b[H");
-                region.reset(); // the screen is blank; nothing to move up past
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            .resize => {
-                // A SIGWINCH wakeup while idle at the prompt: redrawRegion
-                // itself consumes term.resize_pending and resets the region
-                // at the new width, so there's nothing else to do here.
-                try redrawRegion(gpa, out_w, editor, region, status);
-                continue;
-            },
-            else => {},
-        }
-        const done = editor.apply(key);
-        try redrawRegion(gpa, out_w, editor, region, status);
-        if (done) {
-            // Advance past whatever region rows still sit below the
-            // cursor's row (e.g. the input box's closing "╰─" line) before
-            // moving one further row down, so a following print (spinner,
-            // response) doesn't land on top of and erase them.
-            const extra = region.lineCount() - 1 - region.cursorRow();
-            if (extra > 0) try out_w.interface.print("\x1b[{d}B", .{extra});
-            try out_w.interface.writeAll("\n");
-            try out_w.interface.flush();
-            return editor.line();
-        }
-    }
-}
-
-var repl_prompt_buf: [32]u8 = undefined;
-var repl_prompt: []const u8 = "clanker> "; // overwritten once `repl_theme` is known (cmdRepl)
-const repl_prompt_width = 9; // "clanker> " display width, ANSI codes excluded
-
-/// Tab-completes a slash command in place: `/he` + Tab -> `/help `. A no-op
-/// once args have started (a space is already in the line) or when nothing
-/// in `entries` starts with what's typed.
-fn tryComplete(gpa: std.mem.Allocator, editor: *lineedit.Editor, entries: []const tui_palette.Entry) void {
-    const line = editor.line();
-    if (line.len == 0 or line[0] != '/') return;
-    if (std.mem.indexOfScalar(u8, line, ' ') != null) return;
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const completed = tui_palette.complete(arena_state.allocator(), entries, line[1..]) catch return orelse return;
-
-    editor.reset();
-    _ = editor.apply(.{ .char = '/' });
-    for (completed) |c| _ = editor.apply(.{ .char = c });
-}
-
-/// One redraw call gets its own small arena: row slices are cheap and
-/// short-lived, and a fresh arena per keystroke beats growing one arena for
-/// the lifetime of the whole line.
-fn redrawRegion(
-    gpa: std.mem.Allocator,
-    out_w: *std.Io.File.Writer,
-    editor: *const lineedit.Editor,
-    region: *tui_region.BottomRegion,
-    status: ReplStatus,
-) !void {
-    // A resized terminal invalidates any diff against the previous frame
-    // (its content assumed the old width) — force a full repaint at
-    // whatever width `term.getSize` reports now.
-    if (term.resize_pending.swap(false, .acquire)) region.reset();
-
-    var frame_arena = std.heap.ArenaAllocator.init(gpa);
-    defer frame_arena.deinit();
-    const arena = frame_arena.allocator();
-    const cols: usize = if (term.getSize(out_w.file.handle)) |sz| sz.cols else tui_input.default_cols;
-
-    const status_line = try tui_statusbar.render(arena, &repl_theme, cols, .{
-        .model = status.model_name,
-        .session_id = status.session_id,
-        .total_tokens = status.session_stats.total_tokens + status.stats.total_tokens,
-        .budget = if (status.budget) |b| @intCast(b) else null,
-        .extra = repl_statusline_extra,
-    });
-    // Reserve 2 columns for the "│ " left-bar border (same style as tool
-    // cards — see transcript.zig's doc comment on why a left bar, not a
-    // full right-hand-bordered box) so wrapped rows don't overflow it.
-    const box_cols = if (cols > 2) cols - 2 else 1;
-    const f = try tui_input.frame(arena, editor, box_cols, repl_prompt, repl_prompt_width);
-
-    var lines = try arena.alloc([]const u8, 3 + f.rows.len);
-    lines[0] = status_line;
-    lines[1] = try std.fmt.allocPrint(arena, "{s}\xe2\x95\xad\xe2\x94\x80{s}", .{ repl_theme.dim, repl_theme.reset });
-    for (f.rows, 0..) |r, i| lines[2 + i] = try std.fmt.allocPrint(arena, "{s}\xe2\x94\x82 {s}{s}", .{ repl_theme.dim, repl_theme.reset, r });
-    lines[2 + f.rows.len] = try std.fmt.allocPrint(arena, "{s}\xe2\x95\xb0\xe2\x94\x80{s}", .{ repl_theme.dim, repl_theme.reset });
-    try region.render(&out_w.interface, lines, 2 + f.cursor_row, 2 + f.cursor_col);
-    try out_w.interface.flush();
-}
-
-/// Set for the duration of a REPL session so the ask_user tool can reach the
-/// terminal. A tool call runs deep inside the sandbox with no writer of its
-/// own, so the pieces it needs are parked here.
-var ask_out: ?*std.Io.File.Writer = null;
-var ask_stdin: ?std.Io.File = null;
-var ask_gpa: ?std.mem.Allocator = null;
-var ask_interactive = false;
-
-/// ask_user's terminal side: print the question, collect a pick through the
-/// inline approval widget (re-prompts on bad input instead of defaulting),
-/// return the chosen option. The returned slice is gpa-owned; ckAsk frees it.
-fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
-    const gpa = ask_gpa orelse return error.NoUser;
-    const out_w = ask_out orelse return error.NoUser;
-    const stdin_file = ask_stdin orelse return error.NoUser;
-
-    replClearThinking();
-    const chosen = try tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, options);
-    replShowThinking();
-    return chosen;
-}
-
-/// Confirm-before-write's terminal side (agent.confirm_writes = "always"):
-/// the same approval widget as replAsk, asking whether one write-capable
-/// tool call may run. Anything short of an explicit "allow" — including a
-/// prompt that fails — refuses the call.
-fn replConfirm(tool_name: []const u8, args_preview: []const u8) bool {
-    const gpa = ask_gpa orelse return false;
-    const out_w = ask_out orelse return false;
-    const stdin_file = ask_stdin orelse return false;
-
-    var qbuf: [512]u8 = undefined;
-    const question = std.fmt.bufPrint(&qbuf, "Run '{s}' with {s}?", .{ tool_name, args_preview }) catch
-        std.fmt.bufPrint(&qbuf, "Run '{s}'?", .{tool_name}) catch "Run this tool?";
-
-    replClearThinking();
-    const chosen = tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, confirm_options) catch {
-        replShowThinking();
-        return false;
-    };
-    replShowThinking();
-    defer gpa.free(chosen);
-    return std.mem.eql(u8, chosen, "allow");
-}
-
-/// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
-/// prints its `{"ok":true,"text":"..."}` output.
-const ToolExecError = error{ WasmMissing, LoadFailed, ExecFailed };
-
-/// Runs one internal WASM tool (a slash command's `cmd_*` handler, or a
-/// `statusline: true` contributor) with `{"args": args}` as input. Returns
-/// the raw JSON response (gpa-owned; caller frees). Shared by `replSlashTool`
-/// and `statuslineSegments` so the sandbox/module-load/JSON-envelope dance
-/// exists in exactly one place.
-fn runInternalTool(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    cfg: *const config.Config,
-    environ_map: *std.process.Environ.Map,
-    tool: *const registry.Tool,
-    args: []const u8,
-) (ToolExecError || error{ OutOfMemory, WriteFailed })![]u8 {
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch return error.WasmMissing;
-    defer gpa.free(wasm_bytes);
-
-    var sb = host.Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = cfg.agent.sandbox_root,
-        .network_allow = tool.network_allow,
-        .fs_prefixes = tool.fs_prefixes,
-        .environ_map = environ_map,
-        .seed = cfg.agent.seed,
-        .fuel = tool.fuel,
-    };
-    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch return error.LoadFailed;
-    defer mod.deinit();
-
-    var ibuf: [8192]u8 = undefined;
-    var iw: std.Io.Writer = .fixed(&ibuf);
-    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
-    try is.beginObject();
-    try is.objectField("args");
-    try is.write(args);
-    try is.endObject();
-
-    return mod.executeTool(ibuf[0..iw.end]) catch return error.ExecFailed;
-}
-
 const ToolResult = struct { ok: bool = false, text: []const u8 = "", err: []const u8 = "" };
 
 /// Parses the `{"ok":bool,"text":string}` / `{"ok":false,"error":string}`
@@ -1652,141 +1557,6 @@ fn parseToolResult(arena: std.mem.Allocator, raw: []const u8) ToolResult {
     return r;
 }
 
-fn replSlashTool(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, line: []const u8, out_w: *std.Io.File.Writer) !void {
-    const rest_start = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
-    const name = line[1..rest_start];
-    const args = std.mem.trimStart(u8, line[rest_start..], " ");
-
-    const tool_name = try std.fmt.allocPrint(arena, "cmd_{s}", .{name});
-    const tool = reg.get(tool_name) orelse {
-        try out_w.interface.writeAll("unknown command: /");
-        try out_w.interface.writeAll(name);
-        try out_w.interface.writeAll("   (try :help)\n");
-        try out_w.interface.flush();
-        return;
-    };
-
-    const out = runInternalTool(io, gpa, cfg, environ_map, tool, args) catch |err| {
-        const msg = switch (err) {
-            error.WasmMissing => "slash tool wasm missing (run zig build tools)\n",
-            error.LoadFailed => "slash tool load failed\n",
-            error.ExecFailed => "slash tool execution failed\n",
-            error.OutOfMemory => return error.OutOfMemory,
-            error.WriteFailed => return error.WriteFailed,
-        };
-        try out_w.interface.writeAll(msg);
-        try out_w.interface.flush();
-        return;
-    };
-    defer gpa.free(out);
-
-    const result = parseToolResult(arena, out);
-    if (!result.ok and result.err.len > 0) {
-        try out_w.interface.writeAll("error: ");
-        try out_w.interface.writeAll(result.err);
-        try out_w.interface.writeAll("\n");
-        try out_w.interface.flush();
-        return;
-    }
-    try out_w.interface.writeAll(result.text);
-    try out_w.interface.writeAll("\n");
-    try out_w.interface.flush();
-}
-
-/// Recomputes `repl_statusline_extra` from every `statusline: true` tool.
-/// Called once per turn (not per keystroke): these are ordinary sandboxed
-/// WASM calls, the same cost as a slash command, and the status line's
-/// dynamic parts (tokens, activity) already update every redraw without
-/// this, so a plugin segment only needs to be as fresh as the last turn.
-/// A tool that fails to load or run just contributes nothing — one broken
-/// plugin should not blank the whole status line.
-fn refreshStatusline(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) void {
-    repl_statusline_extra = statuslineSegments(io, gpa, arena, cfg, environ_map, reg) catch "";
-}
-
-fn statuslineSegments(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) ![]const u8 {
-    const tools = try reg.statuslineTools(arena);
-    if (tools.len == 0) return "";
-    var parts: std.ArrayList([]const u8) = .empty;
-    for (tools) |tool| {
-        const out = runInternalTool(io, gpa, cfg, environ_map, tool, "") catch continue;
-        defer gpa.free(out);
-        const result = parseToolResult(arena, out);
-        if (result.ok and result.text.len > 0) try parts.append(arena, try arena.dupe(u8, result.text));
-    }
-    if (parts.items.len == 0) return "";
-    return std.mem.join(arena, " \xc2\xb7 ", parts.items);
-}
-
-/// Runs every `turn_hook: true` tool once after a turn completes and prints
-/// any non-empty result into the transcript — a general REPL-behavior
-/// plugin surface (as opposed to `statuslineSegments`'s fixed one-line
-/// contribution), for a plugin that reacts to what just happened rather
-/// than only decorating the status line. Same cadence and same "one broken
-/// plugin contributes nothing" tolerance as the statusline path.
-fn runTurnHooks(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, out_w: *std.Io.File.Writer, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry) void {
-    const hooks = reg.turnHookTools(arena) catch return;
-    for (hooks) |tool| {
-        const out = runInternalTool(io, gpa, cfg, environ_map, tool, "") catch continue;
-        defer gpa.free(out);
-        const result = parseToolResult(arena, out);
-        if (!result.ok or result.text.len == 0) continue;
-        out_w.interface.writeAll(repl_theme.dim) catch continue;
-        out_w.interface.writeAll(result.text) catch {};
-        out_w.interface.writeAll(repl_theme.reset) catch {};
-        out_w.interface.writeAll("\n") catch {};
-    }
-    out_w.interface.flush() catch {};
-}
-
-/// Writes the effective modules set (from the merged cfg) into
-/// config.local.json so runtime toggles like `/autolearn on|off` survive
-/// restarts. Local modules fully override the base, so we persist the whole
-/// effective set.
-fn persistModules(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config) void {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, "config.local.json", arena, .limited(1 << 20)) catch return;
-    const root = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(gpa);
-    const wbuf = gpa.alloc(u8, 1 << 20) catch return;
-    defer gpa.free(wbuf);
-    var w: std.Io.Writer = .fixed(wbuf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    if (root == .object) {
-        s.beginObject() catch return;
-        var it = root.object.iterator();
-        while (it.next()) |kv| {
-            if (std.mem.eql(u8, kv.key_ptr.*, "modules")) continue;
-            s.objectField(kv.key_ptr.*) catch return;
-            s.write(kv.value_ptr.*) catch return;
-        }
-        s.objectField("modules") catch return;
-        s.beginObject() catch return;
-        const fields = [_]struct { key: []const u8, v: bool }{
-            .{ .key = "mcp", .v = cfg.modules.mcp },
-            .{ .key = "peers", .v = cfg.modules.peers },
-            .{ .key = "a2a", .v = cfg.modules.a2a },
-            .{ .key = "webui", .v = cfg.modules.webui },
-            .{ .key = "graphs", .v = cfg.modules.graphs },
-            .{ .key = "sessions", .v = cfg.modules.sessions },
-            .{ .key = "goal", .v = cfg.modules.goal },
-            .{ .key = "token_budget", .v = cfg.modules.token_budget },
-            .{ .key = "streaming", .v = cfg.modules.streaming },
-            .{ .key = "dotenv", .v = cfg.modules.dotenv },
-            .{ .key = "hot_reload", .v = cfg.modules.hot_reload },
-            .{ .key = "autolearn", .v = cfg.modules.autolearn },
-        };
-        for (fields) |f| {
-            s.objectField(f.key) catch return;
-            s.write(f.v) catch return;
-        }
-        s.endObject() catch return;
-        s.endObject() catch return;
-    }
-    atomic_write.writeFile(io, std.Io.Dir.cwd(), "config.local.json", w.buffer[0..w.end]) catch |err| log.log(.warn, "failed to persist config.local.json: {s}", .{@errorName(err)});
-}
-
-/// True if `exe_path`'s mtime differs from `start_mtime` and the file has
 /// settled into a stable, valid ELF. The binary may be mid-write (e.g.
 /// clanker's own improve loop rebuilds it constantly); exec'ing a
 /// half-written file kills the process silently, so this only reports an
@@ -1966,22 +1736,6 @@ const HotReload = struct {
 /// already used for other REPL cross-cutting state.
 var hot_reload_active: ?*HotReload = null;
 
-fn buildReplArgvTail(arena: std.mem.Allocator, sid: []const u8, opts: Options) ![]const []const u8 {
-    var argv: std.ArrayList([]const u8) = .empty;
-    try argv.append(arena, "repl");
-    try argv.append(arena, "--session");
-    try argv.append(arena, sid);
-    if (opts.provider) |p| {
-        try argv.append(arena, "--provider");
-        try argv.append(arena, p);
-    }
-    if (opts.model) |m| {
-        try argv.append(arena, "--model");
-        try argv.append(arena, m);
-    }
-    return argv.items;
-}
-
 fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
@@ -1990,215 +1744,16 @@ fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
     return argv.items;
 }
 
-/// Streams REPL output: the model's content deltas land here (via
-/// Agent.on_token) while the run is still in flight.
-var repl_out: ?*std.Io.File.Writer = null;
-
-/// Braille spinner frames, animated on a background thread while waiting on
-/// the LLM or a tool: covers the otherwise silent gap with visible motion.
-const spinner_frames = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
-const spinner_interval_ns = 80 * std.time.ns_per_ms;
-
-var spinner_thread: ?std.Thread = null;
-var spinner_stop = std.atomic.Value(bool).init(false);
-/// Set once in cmdRepl; the spinner thread needs an Io handle to sleep with
-/// (std.Thread has no sleep of its own in std.Io-based Zig).
-var repl_io: std.Io = undefined;
-/// Live spinner state: when the current turn started and what it is doing.
-var repl_turn_start_ns: i128 = 0;
-var repl_activity: []const u8 = "thinking";
-/// Scratch for a batch label like "read_file +2" (see replToolCall): the
-/// status line names the first tool and counts the rest of the batch.
-var repl_activity_buf: [256]u8 = undefined;
-/// True while the spinner is on screen; only touched from the REPL's single
-/// main thread (show/clear calls never overlap with the spinner thread,
-/// which is always joined before the writer is touched again).
-var repl_thinking_shown = false;
-
-fn spinnerLoop() callconv(.c) void {
-    var i: usize = 0;
-    while (!spinner_stop.load(.acquire)) {
-        const w = repl_out orelse return;
-        const elapsed_ns = std.Io.Timestamp.now(repl_io, .awake).nanoseconds - repl_turn_start_ns;
-        const secs: u64 = if (elapsed_ns <= 0) 0 else @intCast(@divTrunc(elapsed_ns, 1_000_000_000));
-        const activity = repl_activity;
-        const verb: []const u8 = if (std.mem.eql(u8, activity, "thinking")) "" else "running ";
-        w.interface.print("\r{s}{s}{s} {s}{d}s \xc2\xb7 {s}{s}\xe2\x80\xa6{s}", .{ repl_theme.answer_marker, spinner_frames[i % spinner_frames.len], repl_theme.reset, repl_theme.dim, secs, verb, activity, repl_theme.reset }) catch return;
-        w.interface.flush() catch {};
-        i += 1;
-        std.Io.sleep(repl_io, .{ .nanoseconds = spinner_interval_ns }, .awake) catch return;
-    }
-}
-
-fn replShowThinking() void {
-    if (repl_thinking_shown) return;
-    repl_thinking_shown = true;
-    spinner_stop.store(false, .release);
-    spinner_thread = std.Thread.spawn(.{}, spinnerLoop, .{}) catch {
-        repl_thinking_shown = false;
-        return;
-    };
-}
-
-fn replClearThinking() void {
-    if (!repl_thinking_shown) return;
-    repl_thinking_shown = false;
-    spinner_stop.store(true, .release);
-    if (spinner_thread) |t| t.join();
-    spinner_thread = null;
-    const w = repl_out orelse return;
-    w.interface.writeAll("\r\x1b[K") catch {};
-}
-
 /// The streaming markdown renderer now lives in tui/transcript.zig, next to
 /// the tool-call card renderer it shares a "print-once transcript element"
-/// role with.
+/// role with. Still used by `cmdRun`'s own `run_md` below even though the
+/// REPL that used to also use this type is gone.
 const MdStream = tui_transcript.MdStream;
 
 /// True once the current turn's assistant text has started streaming, so the
 /// colored "›" gutter is only printed once, right before the first token.
-var repl_answer_started = false;
-var repl_md: MdStream = .{};
-
-/// Segments from `statusline: true` WASM tools, joined and appended to the
-/// built-in status line. Refreshed once per turn (see `refreshStatusline`),
-/// not per keystroke — matches `Registry.statuslineTools`'s documented
-/// cadence and avoids a WASM invocation on every redraw. arena-owned: lives
-/// as long as the REPL process, same as everything else `replHandleLine`
-/// hands to `arena.dupe`.
-/// `NO_COLOR`-aware; set once at REPL startup (see `cmdRepl`) and read by
-/// every tui/ renderer the REPL calls into.
-var repl_theme: tui_theme.Theme = tui_theme.Theme.default;
-
-var repl_statusline_extra: []const u8 = "";
-
-/// Zig-side index of `cmd_*` slash commands, for Tab-completion and a live
-/// `:help` listing. Built once at REPL startup and refreshed whenever
-/// `/plugins` changes what's registered, same lifecycle as
-/// `repl_statusline_extra`.
-var repl_palette: []const tui_palette.Entry = &.{};
-
-/// Options offered by the last answer, so the next line can be a bare number.
-/// gpa-owned: replaced (and freed) on every turn that ends in a question.
-var repl_choices: std.ArrayList([]u8) = .empty;
-/// The question those options answered, for the graph's decision node.
-var repl_last_question: []const u8 = "";
-
-fn replClearChoices(gpa: std.mem.Allocator) void {
-    for (repl_choices.items) |c| gpa.free(c);
-    repl_choices.clearRetainingCapacity();
-}
-
-/// The last line of an answer, which is the question its options belong to.
-fn lastQuestion(text: []const u8) []const u8 {
-    const trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
-    const start = if (std.mem.lastIndexOfScalar(u8, trimmed, '\n')) |nl| nl + 1 else 0;
-    return std.mem.trim(u8, trimmed[start..], " \t");
-}
-
-/// The options a multiple-choice answer offers, or null when the answer does
-/// not end in a question.
-///
-/// Two shapes cover what models actually produce: an enumerated list under a
-/// question ("1. ... 2. ..."), and the inline form ("do X, or dig into Y?").
-/// Anything else is left alone — a wrong guess here would put words in the
-/// user's mouth on the next turn.
-fn parseChoices(arena: std.mem.Allocator, text: []const u8) !?[]const []const u8 {
-    const trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
-    if (trimmed.len == 0 or trimmed[trimmed.len - 1] != '?') return null;
-
-    // The question is the last non-empty line.
-    const q_start = if (std.mem.lastIndexOfScalar(u8, trimmed, '\n')) |nl| nl + 1 else 0;
-    const question = std.mem.trim(u8, trimmed[q_start..], " \t\r\n");
-
-    var out: std.ArrayList([]const u8) = .empty;
-
-    // Enumerated options anywhere above the question: "1. foo" / "2) bar".
-    var lines = std.mem.splitScalar(u8, trimmed[0..q_start], '\n');
-    var want: u8 = '1';
-    while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \t\r\n");
-        if (line.len < 3) continue;
-        if (line[0] != want) continue;
-        if (line[1] != '.' and line[1] != ')') continue;
-        const body = std.mem.trim(u8, line[2..], " \t");
-        if (body.len == 0) continue;
-        try out.append(arena, body);
-        if (want == '9') break;
-        want += 1;
-    }
-    if (out.items.len >= 2) return try out.toOwnedSlice(arena);
-    out.clearRetainingCapacity();
-
-    // Inline: "... A, or B?" — split the question itself.
-    const body = std.mem.trim(u8, question[0 .. question.len - 1], " \t");
-    var it = std.mem.splitSequence(u8, body, ", or ");
-    while (it.next()) |part| {
-        const opt = std.mem.trim(u8, part, " \t");
-        // A fragment this short is punctuation, not an option worth offering.
-        if (opt.len < 3) return null;
-        try out.append(arena, opt);
-        if (out.items.len > 4) return null;
-    }
-    if (out.items.len >= 2) return try out.toOwnedSlice(arena);
-    return null;
-}
-
-fn replDelta(delta: []const u8) void {
-    replClearThinking();
-    const w = repl_out orelse return;
-    if (!repl_answer_started) {
-        repl_answer_started = true;
-        w.interface.print("{s}\xe2\x80\xba {s}", .{ repl_theme.answer_marker, repl_theme.reset }) catch return;
-    }
-    repl_md.feed(&w.interface, delta);
-    w.interface.flush() catch {};
-}
-
-fn replCols(w: *std.Io.File.Writer) usize {
-    return if (term.getSize(w.file.handle)) |sz| sz.cols else tui_input.default_cols;
-}
-
-/// Opens one bordered card per tool call about to run, showing the tool name
-/// and a truncated preview of its arguments so the user can see what is
-/// being searched / read / written before it happens.
-fn replToolCall(calls: []const types.ToolCall) void {
-    replClearThinking();
-    const w = repl_out orelse return;
-    if (calls.len == 1) {
-        repl_activity = calls[0].name;
-    } else if (calls.len > 1) {
-        repl_activity = std.fmt.bufPrint(&repl_activity_buf, "{s} +{d}", .{ calls[0].name, calls.len - 1 }) catch calls[0].name;
-    }
-    const cols = replCols(w);
-    for (calls) |tc| tui_transcript.printCallCard(&w.interface, &repl_theme, tc.name, tc.arguments, cols);
-    w.interface.flush() catch {};
-    replShowThinking();
-}
-
-/// Fills each open card with a truncated preview of what the tool actually
-/// returned, so the card shows what happened rather than only how long it
-/// took.
-fn replToolResults(calls: []const types.ToolCall, results: []const ?[]const u8) void {
-    const w = repl_out orelse return;
-    const cols = replCols(w);
-    for (calls, results) |tc, result| {
-        _ = tc;
-        tui_transcript.printResultBody(&w.interface, &repl_theme, result, cols);
-    }
-    w.interface.flush() catch {};
-}
-
-/// Closes the tool batch's card(s) with the elapsed time, then resumes the
-/// spinner while the next LLM call is in flight.
-fn replToolResult(ms: u64) void {
-    replClearThinking();
-    repl_activity = "thinking";
-    const w = repl_out orelse return;
-    tui_transcript.printCardFooter(&w.interface, &repl_theme, ms);
-    w.interface.flush() catch {};
-    replShowThinking();
-}
+/// Shared with `cmdRun` (see `runDelta`), not REPL-exclusive despite the name.
+var run_answer_started = false;
 
 /// `clanker run`'s stdout content writer: kept separate from `repl_out`
 /// (which, in `run`, points at stderr for the spinner/tool-status line) so
@@ -2209,10 +1764,9 @@ var run_stdout_color = false;
 var run_md: MdStream = .{};
 
 fn runDelta(delta: []const u8) void {
-    replClearThinking();
     const w = run_out orelse return;
-    if (run_stdout_color and !repl_answer_started) {
-        repl_answer_started = true;
+    if (run_stdout_color and !run_answer_started) {
+        run_answer_started = true;
         w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
     }
     if (run_stdout_color) {
@@ -2260,85 +1814,6 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) v
     }
 }
 
-fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages: *std.ArrayList(types.Message), task: []const u8, created: i64, sid: []const u8) !bool {
-    // A hot-reload must never interrupt a turn in progress (would lose the
-    // response before its session save below); see HotReload's doc comment.
-    if (hot_reload_active) |hr| hr.begin();
-    defer if (hot_reload_active) |hr| hr.end();
-
-    compactMessages(messages, max_turn_tokens);
-    const gpa = a.ctx.gpa;
-    // NOTE: a.run() appends the user task (and each assistant reply) to
-    // `messages` itself; appending here would duplicate them in the
-    // transcript and the persisted session.
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    var err_detail: ?[]const u8 = null;
-    repl_answer_started = false;
-    repl_turn_start_ns = t0.nanoseconds;
-    repl_activity = "thinking";
-    replShowThinking();
-    const resp = a.run(messages, task, &err_detail) catch |err| {
-        replClearThinking();
-        log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
-        return false;
-    };
-    const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
-
-    replClearThinking();
-    const streamed = a.on_token != null and a.cfg.modules.streaming;
-    const content = resp.message.content orelse "";
-    if (!streamed) {
-        try out_w.interface.print("{s}\xe2\x80\xba {s}", .{ repl_theme.answer_marker, repl_theme.reset });
-        repl_md.feed(&out_w.interface, content);
-    }
-    repl_md.flush(&out_w.interface);
-    try out_w.interface.writeAll("\n\n");
-    // Dim turn stats (tokens + wall time) so each turn reports its cost.
-    // a.stats is reset to zero at the top of Agent.run(), so it already
-    // holds exactly this turn's numbers here — no diffing needed.
-    const turn_prompt = a.stats.total_prompt_tokens;
-    const turn_completion = a.stats.total_completion_tokens;
-    const turn_cost = a.stats.cost;
-    const turn_cache_hit = a.stats.total_cache_hit_tokens;
-    const turn_cache_miss = a.stats.total_cache_miss_tokens;
-    const tps: f64 = if (ms > 0) @as(f64, @floatFromInt(turn_completion)) / (@as(f64, @floatFromInt(ms)) / 1000.0) else 0;
-    const cache_total = turn_cache_hit + turn_cache_miss;
-    const hit_rate: f64 = if (cache_total > 0) @as(f64, @floatFromInt(turn_cache_hit)) / @as(f64, @floatFromInt(cache_total)) * 100.0 else 0;
-    const stats = if (turn_prompt + turn_completion > 0)
-        try std.fmt.allocPrint(a.arena, "{s}  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 cache {d:.0}% \xc2\xb7 ${d:.4}]{s}\n", .{ repl_theme.dim, turn_prompt, turn_completion, ms, tps, hit_rate, turn_cost, repl_theme.reset })
-    else
-        try std.fmt.allocPrint(a.arena, "{s}  [{d}ms]{s}\n", .{ repl_theme.dim, ms, repl_theme.reset });
-    try out_w.interface.writeAll(stats);
-
-    // A turn that ends in a multiple-choice question gets numbered options,
-    // so the reply can be "2" instead of retyping the option.
-    replClearChoices(gpa);
-    if (try parseChoices(a.arena, content)) |choices| {
-        repl_last_question = lastQuestion(content);
-        for (choices, 1..) |c, n| {
-            const line = try std.fmt.allocPrint(a.arena, "  {s}{d}{s} {s}\xc2\xb7{s} {s}\n", .{ repl_theme.ask_pick, n, repl_theme.reset, repl_theme.dim, repl_theme.reset, c });
-            try out_w.interface.writeAll(line);
-            repl_choices.append(gpa, try gpa.dupe(u8, c)) catch {};
-        }
-        try out_w.interface.print("  {s}reply with a number, or type anything else{s}\n", .{ repl_theme.dim, repl_theme.reset });
-    }
-    try out_w.interface.flush();
-    // run() already appended (and finish()-cleaned) the assistant message.
-
-    const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    if (!a.cfg.modules.sessions) return false;
-    compactMessages(messages, max_session_tokens);
-    const title = try std.fmt.allocPrint(a.arena, "repl: {s}", .{task[0..@min(task.len, 60)]});
-    try session.saveSession(io, gpa, a.arena, std.Io.Dir.cwd(), .{
-        .id = sid,
-        .title = title,
-        .messages = messages.items,
-        .created = created,
-        .updated = updated,
-    });
-    return false;
-}
-
 fn cmdSessions(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
@@ -2374,7 +1849,12 @@ fn toolJson(
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
     const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
-        log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+        if (err == error.UnknownTool) {
+            // Descriptor missing from tools_dir — not a missing .wasm rebuild.
+            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
+        } else {
+            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+        }
         return error.ToolWasmMissing;
     };
     defer mod.deinit();
@@ -2470,7 +1950,8 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "cmdEval: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
 
     const evals = try scorers.Eval.loadAll(arena, io, "evals");
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
@@ -2513,9 +1994,12 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    std.Io.Dir.cwd().createDirPath(io, "state/staging") catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "improve-self: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
+    std.Io.Dir.cwd().createDirPath(io, "state") catch |err|
+        log.log(.warn, "improve-self: mkdir 'state' failed: {s}", .{@errorName(err)});
+    std.Io.Dir.cwd().createDirPath(io, "state/staging") catch |err|
+        log.log(.warn, "improve-self: mkdir 'state/staging' failed: {s}", .{@errorName(err)});
 
     // Before any staging or gate work: two runs against one tree gate each
     // other's half-applied patches and promote over each other.
@@ -2777,6 +2261,10 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // Parked for serveConfirm, which frees answers that connection threads
     // duped with this same allocator (see handleAsk).
     serve_gpa = gpa;
+    // Config is immutable for the server lifetime. Publish the callback's
+    // timeout before accepting connections instead of having every streaming
+    // request race to rewrite the same global.
+    serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
 
     log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
     // Bare clickable URL (no log prefix) so terminals render it as a link.
@@ -2833,7 +2321,7 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     const in_flight = connection_threads.fetchAdd(1, .acq_rel);
     if (in_flight >= max_connection_threads) {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        respond(stream, 503, "Service Unavailable", "{\"error\":\"too many concurrent connections\"}");
+        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
         stream.close(io);
         return;
     }
@@ -2908,12 +2396,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // (curl, or the raw API used directly) is not a browser cross-site
         // request and is let through.
         if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port)) {
-            respond(stream, 403, "Forbidden", "{\"error\":\"cross-origin request refused\"}");
+            respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
             return;
         }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
@@ -2929,6 +2418,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
+        const is_janitor = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/janitor");
         const is_board = std.mem.eql(u8, path, "/api/board") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugins = std.mem.eql(u8, path, "/api/webui/plugins") and
@@ -2938,15 +2428,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
-            respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"webui module disabled\"}");
         } else if (is_a2a and !cfg.modules.a2a) {
-            respond(stream, 404, "Not Found", "{\"error\":\"a2a module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"a2a module disabled\"}");
         } else if (is_notify and !cfg.modules.peers) {
-            respond(stream, 404, "Not Found", "{\"error\":\"peers module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"peers module disabled\"}");
         } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
-            respond(stream, 404, "Not Found", "{\"error\":\"chatrooms module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
-            respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van.js")) {
@@ -2955,7 +2445,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-                std.mem.eql(u8, path, "/webui/van-boot.js")))
+                std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or
+                std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
@@ -3000,22 +2491,24 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
             handleProviders(cfg, stream);
+        } else if (is_janitor) {
+            handleJanitor(io, gpa, cfg, stream);
         } else if (is_board) {
             handleBoard(io, gpa, cfg, environ_map, method, target, body, stream);
         } else if (is_webui_plugins) {
             handleWebuiPlugins(io, gpa, method, body, stream);
         } else if (is_webui_plugin_asset) {
-            handleWebuiPluginAsset(io, gpa, target, stream);
+            handleWebuiPluginAsset(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
-            handleA2AMessage(gpa, stream, body);
+            handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
             handleAsk(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
-            respond(stream, 404, "Not Found", "{\"error\":\"not found\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         }
     } else {
         respond(stream, 400, "Bad Request", "{}");
@@ -3028,6 +2521,7 @@ const NotifyRequestBody = struct {
     topic: ?[]const u8 = null,
     payload: ?std.json.Value = null,
     ts: ?i64 = null,
+    id: ?[]const u8 = null,
 };
 
 const NotificationRecord = struct {
@@ -3037,7 +2531,54 @@ const NotificationRecord = struct {
     payload: std.json.Value,
     ts: i64,
     received_at: i64,
+    id: ?[]const u8 = null,
 };
+
+const notifications_max_bytes = 1 << 20;
+
+fn storeNotification(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: NotificationRecord) !void {
+    try base.createDirPath(io, "state");
+    var guard = filelock.acquire(io, base, "state", "notifications", gpa);
+    defer guard.release();
+
+    const file_path = "state/notifications.jsonl";
+    const maybe_existing = base.readFileAlloc(io, file_path, gpa, .limited(notifications_max_bytes)) catch null;
+    defer if (maybe_existing) |e| gpa.free(e);
+    const existing = maybe_existing orelse &[_]u8{};
+
+    // The log itself is the bounded delivery ledger. The check and rewrite
+    // share one lock, so simultaneous redeliveries cannot both append.
+    if (record.id) |id| if (id.len > 0) {
+        var lines = std.mem.splitScalar(u8, existing, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            var parsed_arena = std.heap.ArenaAllocator.init(gpa);
+            defer parsed_arena.deinit();
+            const prior = std.json.parseFromSliceLeaky(NotificationRecord, parsed_arena.allocator(), line, .{ .ignore_unknown_fields = true }) catch continue;
+            if (prior.id) |prior_id| if (std.mem.eql(u8, prior_id, id)) return;
+        }
+    };
+
+    var line_buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&line_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(record);
+
+    var out_list = std.ArrayList(u8).empty;
+    defer out_list.deinit(gpa);
+    try out_list.appendSlice(gpa, existing);
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
+    try out_list.appendSlice(gpa, line_buf[0..w.end]);
+    try out_list.append(gpa, '\n');
+    if (out_list.items.len > notifications_max_bytes) {
+        const floor = out_list.items.len - notifications_max_bytes;
+        const newline = std.mem.indexOfScalarPos(u8, out_list.items, floor, '\n') orelse floor;
+        const keep = @min(newline + 1, out_list.items.len);
+        std.mem.copyForwards(u8, out_list.items[0 .. out_list.items.len - keep], out_list.items[keep..]);
+        out_list.shrinkRetainingCapacity(out_list.items.len - keep);
+    }
+    try atomic_write.writeFile(io, base, file_path, out_list.items);
+}
 
 const A2ARequest = struct {
     id: ?std.json.Value = null,
@@ -3059,27 +2600,38 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     // Seconds since epoch, matching the `ts` field cmdNotify sends and the
     // units used for session created/updated timestamps elsewhere.
     const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at };
+    const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at, .id = parsed.id };
+    try storeNotification(io, gpa, std.Io.Dir.cwd(), record);
+}
 
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    const file_path = "state/notifications.jsonl";
-    const maybe_existing = std.Io.Dir.cwd().readFileAlloc(io, file_path, gpa, .limited(1 << 20)) catch null;
-    defer if (maybe_existing) |e| gpa.free(e);
-    const existing = maybe_existing orelse &[_]u8{};
+test "notification redelivery is stored once" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    var line_buf: [1 << 20]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&line_buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.write(record);
-    const line = line_buf[0..w.end];
+    const first = NotificationRecord{
+        .from = "peer",
+        .kind = "message",
+        .topic = "",
+        .payload = .{ .string = "hello" },
+        .ts = 1,
+        .received_at = 2,
+        .id = "delivery-1",
+    };
+    try storeNotification(io, std.testing.allocator, tmp.dir, first);
+    try storeNotification(io, std.testing.allocator, tmp.dir, first);
 
-    var out_list = std.ArrayList(u8).empty;
-    defer out_list.deinit(gpa);
-    try out_list.appendSlice(gpa, existing);
-    if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
-    try out_list.appendSlice(gpa, line);
-    try out_list.append(gpa, '\n');
-    try atomic_write.writeFile(io, std.Io.Dir.cwd(), file_path, out_list.items);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const raw = try tmp.dir.readFileAlloc(io, "state/notifications.jsonl", arena_state.allocator(), .limited(notifications_max_bytes));
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| if (line.len > 0) {
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
 }
 
 const ChatMessageBody = struct {
@@ -3415,13 +2967,13 @@ fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16,
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8) void {
+fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     const parsed = std.json.parseFromSliceLeaky(A2ARequest, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"error\":\"bad request\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const id = parsed.id orelse .null;
@@ -3443,6 +2995,49 @@ fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []c
             }
         }
     }
+
+    // Run the incoming message through the agent model instead of echoing
+    // it back. The agent card advertises real skills; echoing raw input
+    // makes the peer receive its own message as the "answer".
+    if (text.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
+        return;
+    }
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+    var provider = cfg.provider(null) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"provider unavailable\"}");
+        return;
+    };
+    var provider_copy = provider.*;
+    provider = &provider_copy;
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "a2a: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "POST /api/a2a/message: registry load failed: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
+        return;
+    };
+    const tool_defs = reg.toToolDefs(arena) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tool defs failed\"}");
+        return;
+    };
+    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch |err| {
+        log.log(.error_, "POST /api/a2a/message: agent init failed: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
+        return;
+    };
+    defer a.deinit();
+    a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
+    var messages: std.ArrayList(types.Message) = .empty;
+    var err_detail: ?[]const u8 = null;
+    const resp = a.run(&messages, text, &err_detail) catch |err| {
+        const detail = err_detail orelse @errorName(err);
+        log.log(.error_, "POST /api/a2a/message: agent run failed: {s}", .{detail});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent run failed\"}");
+        return;
+    };
+    const content = resp.message.content orelse "";
+
     var buf: [1 << 20]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -3465,7 +3060,7 @@ fn handleA2AMessage(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []c
     s.beginArray() catch return;
     s.beginObject() catch return;
     s.objectField("text") catch return;
-    s.write(text) catch return;
+    s.write(content) catch return;
     s.endObject() catch return;
     s.endArray() catch return;
     s.endObject() catch return;
@@ -3493,6 +3088,11 @@ const RunRequestBody = struct {
     /// saved after, so the web UI can hold a real multi-turn conversation
     /// instead of one-shot, context-free requests.
     session: []const u8 = "",
+    /// Optional goal id from `state/goals.json`. When set, that goal's
+    /// preamble is prepended and an empty `task` becomes a work order for
+    /// the goal. When empty and the goal module is on, the newest active
+    /// goal steers the run automatically.
+    goal: []const u8 = "",
     /// Images the composer attached to this task (multimodal runs).
     images: []const RunImage = &.{},
     /// Optional per-run overrides, the request-shaped equivalent of
@@ -3748,6 +3348,33 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     }
 }
 
+/// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
+/// from the tools registry (wrong/empty `tools_dir`, zero manifests).
+/// Distinct from a missing guest `.wasm`, which still wants `zig build tools`.
+fn webuiMissingRegistryError(allocator: std.mem.Allocator, tools_dir: []const u8) ![]const u8 {
+    const detail = try std.fmt.allocPrint(
+        allocator,
+        "webui tool not found in registry (tools_dir={s}). Check agent.tools_dir points at the *.tool.json manifests directory.",
+        .{tools_dir},
+    );
+    defer allocator.free(detail);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(false);
+    try s.objectField("error");
+    try s.write(detail);
+    try s.endObject();
+    return try out.toOwnedSlice();
+}
+
+/// JSON body when the webui descriptor exists but its wasm module cannot be read.
+fn webuiMissingWasmError() []const u8 {
+    return "{\"ok\":false,\"error\":\"webui wasm missing (run zig build tools)\"}";
+}
+
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
 /// resulting HTML page.
 /// Renders one of the page's files through the webui tool. Returns the body,
@@ -3764,16 +3391,20 @@ fn renderWebui(
 ) ?[]const u8 {
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
         log.log(.error_, "renderWebui path={s}: registry load failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"tools registry unavailable\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
         return null;
     };
     const tool = reg.get("webui") orelse {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui tool not found (run zig build tools)\"}");
+        const body = webuiMissingRegistryError(arena, cfg.agent.tools_dir) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui tool not found in registry\"}");
+            return null;
+        };
+        respond(stream, 500, "Internal Server Error", body);
         return null;
     };
     const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm read failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui wasm missing (run zig build tools)\"}");
+        respond(stream, 500, "Internal Server Error", webuiMissingWasmError());
         return null;
     };
     defer gpa.free(wasm_bytes);
@@ -3788,7 +3419,7 @@ fn renderWebui(
     };
     const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm load failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui load failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui load failed\"}");
         return null;
     };
     defer mod.deinit();
@@ -3796,34 +3427,34 @@ fn renderWebui(
     // The path is one of this server's own route literals, never anything a
     // request supplied, so it needs no escaping to sit inside this JSON.
     const req = std.fmt.allocPrint(arena, "{{\"path\":\"{s}\"}}", .{path}) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return null;
     };
     const out = mod.executeTool(req) catch |err| {
         log.log(.error_, "renderWebui path={s}: wasm exec failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui render failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui render failed\"}");
         return null;
     };
     defer gpa.free(out);
 
     // Output: {"ok":true,"content_type":"...","body":"..."}
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui bad output\"}");
         return null;
     };
     const body = switch (parsed) {
         .object => |o| if (o.get("body")) |b| switch (b) {
             .string => |s| s,
             else => {
-                respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad body\"}");
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui bad body\"}");
                 return null;
             },
         } else {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui no body\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui no body\"}");
             return null;
         },
         else => {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"webui bad output\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui bad output\"}");
             return null;
         },
     };
@@ -3881,8 +3512,10 @@ fn handleWebuiAsset(
 
     const is_css = std.mem.endsWith(u8, target, ".css");
     const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else &gzip_js;
+    const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
+    const is_utils = std.mem.endsWith(u8, target, "utils.js");
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -3932,7 +3565,7 @@ fn handleRuns(
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.graphs) {
-        respond(stream, 404, "Not Found", "{\"error\":\"graphs module disabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"graphs module disabled\"}");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -3943,30 +3576,34 @@ fn handleRuns(
     var args: []const u8 = "json";
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
-        // Run ids are `run-<digits>`; anything else is refused before it can
+        // Run ids are `run-<digits>` or `sub-<digits>` (nested runs; see
+        // src/agent/subagent.zig). Anything else is refused before it can
         // reach the filesystem as a path fragment.
-        if (!std.mem.startsWith(u8, id, "run-") or id.len > 64) {
-            respond(stream, 400, "Bad Request", "{\"error\":\"bad run id\"}");
+        const is_run = std.mem.startsWith(u8, id, "run-");
+        const is_sub = std.mem.startsWith(u8, id, "sub-");
+        if ((!is_run and !is_sub) or id.len > 64) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad run id\"}");
             return;
         }
-        for (id["run-".len..]) |c| {
+        const prefix_len: usize = if (is_run) "run-".len else "sub-".len;
+        for (id[prefix_len..]) |c| {
             if (!std.ascii.isDigit(c)) {
-                respond(stream, 400, "Bad Request", "{\"error\":\"bad run id\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad run id\"}");
                 return;
             }
         }
         args = std.fmt.allocPrint(arena, "json {s}", .{id}) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
     } else if (rest.len != 0) {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
     const body = toolText(io, gpa, arena, cfg, environ_map, "cmd_graph", args) catch |err| {
         log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"graph read failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"graph read failed\"}");
         return;
     };
     respondCompressible(arena, stream, accepts_gzip, body);
@@ -4089,6 +3726,14 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
                 s.objectField("top_p") catch return;
                 s.write(t) catch return;
             }
+            if (m.value_ptr.cost_per_1m_input) |c| {
+                s.objectField("cost_per_1m_input") catch return;
+                s.write(c) catch return;
+            }
+            if (m.value_ptr.cost_per_1m_output) |c| {
+                s.objectField("cost_per_1m_output") catch return;
+                s.write(c) catch return;
+            }
             s.endObject() catch return;
         }
         s.endArray() catch return;
@@ -4143,20 +3788,33 @@ test validPluginName {
     try std.testing.expect(!validPluginName("x" ** 65));
 }
 
-/// Only these two files are served from a plugin directory. Anything else it
-/// happens to contain — notes, sources, a stray key — stays on disk.
+/// Only these files are served from a plugin directory. Anything else it
+/// happens to contain — notes, sources, a stray key — stays on disk. The list
+/// is exact names rather than extensions on purpose: a plugin cannot serve
+/// arbitrary files by naming them well, and adding a kind of asset is a
+/// deliberate edit here.
 fn pluginAssetType(file: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, file, "app.js")) return "text/javascript; charset=utf-8";
     if (std.mem.eql(u8, file, "app.css")) return "text/css; charset=utf-8";
+    // A view that draws needs its art. The handler already reads the file as
+    // bytes and writes them through verbatim, so nothing else has to change;
+    // the page's CSP allows img-src 'self'.
+    if (std.mem.eql(u8, file, "sprites.png")) return "image/png";
+    if (std.mem.eql(u8, file, "characters.png")) return "image/png";
     return null;
 }
 
 test pluginAssetType {
     try std.testing.expect(pluginAssetType("app.js") != null);
     try std.testing.expect(pluginAssetType("app.css") != null);
+    try std.testing.expectEqualStrings("image/png", pluginAssetType("sprites.png").?);
+    try std.testing.expectEqualStrings("image/png", pluginAssetType("characters.png").?);
     try std.testing.expect(pluginAssetType("plugin.json") == null);
     try std.testing.expect(pluginAssetType("../app.js") == null);
     try std.testing.expect(pluginAssetType("secrets.env") == null);
+    // Named exactly, so a lookalike is still refused.
+    try std.testing.expect(pluginAssetType("other.png") == null);
+    try std.testing.expect(pluginAssetType("../sprites.png") == null);
 }
 
 fn pluginEnabled(state: WebuiPluginState, name: []const u8) bool {
@@ -4268,46 +3926,85 @@ fn handleWebuiPlugins(
 /// embedded: a plugin can be dropped in without rebuilding clanker, which is
 /// the point of it being a plugin. Only an enabled plugin's assets are served,
 /// so turning one off actually stops its code reaching the browser.
-fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     const rest = target["/webui/plugins/".len..];
     const slash = std.mem.indexOfScalar(u8, rest, '/') orelse {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
     const name = rest[0..slash];
     const file = rest[slash + 1 ..];
     if (!validPluginName(name)) {
-        respond(stream, 400, "Bad Request", "{\"error\":\"bad plugin name\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
         return;
     }
     const content_type = pluginAssetType(file) orelse {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
 
     const raw_state = std.Io.Dir.cwd().readFileAlloc(io, webui_plugins_state, arena, .limited(1 << 16)) catch "{}";
     const state = std.json.parseFromSliceLeaky(WebuiPluginState, arena, raw_state, .{ .ignore_unknown_fields = true }) catch WebuiPluginState{};
     if (!pluginEnabled(state, name)) {
-        respond(stream, 404, "Not Found", "{\"error\":\"plugin is not enabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"plugin is not enabled\"}");
         return;
     }
 
     const path = std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ webui_plugins_dir, name, file }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such plugin asset\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
+    // Re-read from disk on every request (see the comment above), so there is
+    // nothing stable to key a compression cache on. Compressed fresh each
+    // time instead, same as respondCompressible, and skipped below a
+    // packet's worth where gzip's overhead would outweigh the saving. sprites.png
+    // is already compressed, so gzipping it again would only cost CPU.
+    const is_image = std.mem.eql(u8, content_type, "image/png");
+    const worth_it = accepts_gzip and !is_image and bytes.len >= 1024;
+    const gzipped = if (worth_it) gzipAlloc(arena, bytes, .default) else null;
+    const out = gzipped orelse bytes;
+    const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, bytes.len }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
-    rawhttp.writeAllFd(stream.socket.handle, bytes);
+    rawhttp.writeAllFd(stream.socket.handle, out);
+}
+
+/// `GET /api/janitor` — how much litter is lying around, so the office view can
+/// show the janitor working when there is work and sitting down when there is
+/// not. Read-only: it never deletes. `clanker janitor --yes` is the only thing
+/// that removes anything.
+fn handleJanitor(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const candidates = janitor_mod.scan(io, arena, cfg.agent.state_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not scan\"}");
+        return;
+    };
+    var total: u64 = 0;
+    for (candidates) |c| total += c.bytes;
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("items") catch return;
+    s.write(candidates.len) catch return;
+    s.objectField("bytes") catch return;
+    s.write(total) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 /// The shared Kanban board.
@@ -4480,7 +4177,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
 
     if (rest.len > 1 and rest[0] == '/') {
         const want = percentDecode(arena, rest[1..]) catch {
-            respond(stream, 400, "Bad Request", "{\"error\":\"bad log name\"}");
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad log name\"}");
             return;
         };
         var it = dir.iterate();
@@ -4490,11 +4187,11 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
             if (std.mem.eql(u8, entry.name, want)) found = true;
         }
         if (!found) {
-            respond(stream, 404, "Not Found", "{\"error\":\"no such log\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such log\"}");
             return;
         }
         const raw = dir.readFileAlloc(io, want, arena, .limited(log_tail_bytes * 8)) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"log read failed\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"log read failed\"}");
             return;
         };
         // Tail only, cut at a line boundary so the view never opens mid-line.
@@ -4518,7 +4215,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
         return;
     }
     if (rest.len != 0) {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
@@ -4558,7 +4255,7 @@ fn handleSessions(
     stream: std.Io.net.Stream,
 ) void {
     if (!cfg.modules.sessions) {
-        respond(stream, 404, "Not Found", "{\"error\":\"sessions module disabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"sessions module disabled\"}");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -4574,7 +4271,7 @@ fn handleSessions(
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/fork")) {
             const src_id = id[0 .. id.len - "/fork".len];
             if (!validSessionId(src_id)) {
-                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
             const new_id = session.forkSession(io, gpa, arena, std.Io.Dir.cwd(), src_id) catch {
@@ -4592,7 +4289,7 @@ fn handleSessions(
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, id, "/compact")) {
             const src_id = id[0 .. id.len - "/compact".len];
             if (!validSessionId(src_id)) {
-                respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
             const bytes = compactSession(io, gpa, arena, src_id, cfg.agent.compact_threshold_bytes) catch {
@@ -4605,7 +4302,7 @@ fn handleSessions(
             return;
         }
         if (!validSessionId(id)) {
-            respond(stream, 400, "Bad Request", "{\"error\":\"bad session id\"}");
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
             return;
         }
         if (std.mem.eql(u8, method, "DELETE")) {
@@ -4649,29 +4346,29 @@ fn handleSessions(
             return;
         }
         const s = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id) catch {
-            respond(stream, 404, "Not Found", "{\"error\":\"no such session\"}");
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
             return;
         };
         const one = sessionJSON(arena, s) catch {
-            respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session encode failed\"}");
             return;
         };
         respondCompressible(arena, stream, accepts_gzip, one);
         return;
     }
     if (rest.len != 0) {
-        respond(stream, 404, "Not Found", "{\"error\":\"no such endpoint\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
     }
 
     const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch |err| {
         log.log(.error_, "GET /api/sessions: list failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"session list failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session list failed\"}");
         return;
     };
     const listing = sessionListJSON(arena, list) catch |err| {
         log.log(.error_, "GET /api/sessions: encode failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"error\":\"session encode failed\"}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session encode failed\"}");
         return;
     };
     respondCompressible(arena, stream, accepts_gzip, listing);
@@ -5013,7 +4710,7 @@ test validGoalStatus {
 
 fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!cfg.modules.goal) {
-        respond(stream, 404, "Not Found", "{\"error\":\"goal module disabled\"}");
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal module disabled\"}");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -5087,7 +4784,25 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
         return;
     };
-    if (req.task.len == 0) {
+    // A goal-only POST is enough to start work: taskWithGoal fills the body.
+    if (req.task.len == 0 and req.goal.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");
+        return;
+    }
+
+    const goal_id: ?[]const u8 = if (req.goal.len > 0) req.goal else null;
+    const task_text = resolveRunTask(
+        arena,
+        io,
+        std.Io.Dir.cwd(),
+        req.task,
+        goal_id,
+        cfg.modules.goal and goal_id == null,
+    ) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
+        return;
+    };
+    if (std.mem.trim(u8, task_text, " \t\r\n").len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");
         return;
     }
@@ -5115,7 +4830,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         provider_copy.models.put(arena, provider_copy.default_model, m) catch {};
     }
 
-    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
+        log.log(.warn, "run: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });
     var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
         log.log(.error_, "POST /api/run: registry load failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
@@ -5132,6 +4848,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
     };
+    defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     // Plan mode makes the run a proposal: the agent loop refuses
     // write-capable tools and the system prompt says why, so the answer is
@@ -5170,7 +4887,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     var session_lock: filelock.Guard = .{ .io = io };
     defer session_lock.release();
     if (has_session) {
-        std.Io.Dir.cwd().createDirPath(io, "state/sessions") catch {};
+        std.Io.Dir.cwd().createDirPath(io, "state/sessions") catch |err|
+            log.log(.warn, "run: mkdir 'state/sessions' failed: {s}", .{@errorName(err)});
         session_lock = filelock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
         if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
             created = s.created;
@@ -5192,7 +4910,6 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // somebody to ask: the question goes down as an `ask` control event
         // and the answer comes back through POST /api/ask. Streaming runs
         // only — without the stream there is no channel to carry a question.
-        serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
         a.ask_fn = &serveAsk;
         // Confirm-before-write: with a browser on the stream, write-capable
         // tool calls wait for its allow/deny (`browser` and `always` both
@@ -5203,7 +4920,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
         const t0 = std.Io.Timestamp.now(io, .awake);
-        const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+        const resp = a.run(&messages, task_text, &err_detail) catch |err| {
             const detail = err_detail orelse @errorName(err);
             writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
             return;
@@ -5215,7 +4932,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
         }
         if (has_session) {
-            const title = req.task[0..@min(req.task.len, 60)];
+            const title_src = if (req.task.len > 0) req.task else task_text;
+            const title = title_src[0..@min(title_src.len, 60)];
             const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
             session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
                 .id = req.session,
@@ -5238,7 +4956,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    const resp = a.run(&messages, req.task, &err_detail) catch |err| {
+    const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         const detail = err_detail orelse @errorName(err);
         // Escape `detail` through the JSON stringifier: provider error text
         // can contain quotes, backslashes, or newlines that plain bufPrint
@@ -5260,7 +4978,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     };
 
     if (has_session) {
-        const title = req.task[0..@min(req.task.len, 60)];
+        const title_src = if (req.task.len > 0) req.task else task_text;
+        const title = title_src[0..@min(title_src.len, 60)];
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
             .id = req.session,
@@ -5376,11 +5095,15 @@ var render_page: RenderCache = .{};
 var render_css: RenderCache = .{};
 var render_js: RenderCache = .{};
 var render_van_boot: RenderCache = .{};
+var render_fleet: RenderCache = .{};
+var render_utils: RenderCache = .{};
 
 var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
 var gzip_js: GzipCache = .{};
 var gzip_van_boot: GzipCache = .{};
+var gzip_fleet: GzipCache = .{};
+var gzip_utils: GzipCache = .{};
 var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
@@ -5601,58 +5324,107 @@ test "a turn that read a large file does not wipe the conversation" {
     try std.testing.expect(messages.items.len >= 3);
 }
 
-test "parseChoices reads an inline 'A, or B?' question" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const answer =
-        \\Here is the snapshot.
-        \\
-        \\Want me to draft the eval definition for chatrooms, or dig into the Vertex caching issue?
-    ;
-    const choices = (try parseChoices(arena, answer)).?;
-    try std.testing.expectEqual(@as(usize, 2), choices.len);
-    try std.testing.expectEqualStrings("Want me to draft the eval definition for chatrooms", choices[0]);
-    try std.testing.expectEqualStrings("dig into the Vertex caching issue", choices[1]);
+test "flags take their value in either form" {
+    const a = try parse(&.{ "clanker", "serve", "--port=9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), a.port);
+    const b = try parse(&.{ "clanker", "serve", "--port", "9099" }, null);
+    try std.testing.expectEqual(@as(u16, 9099), b.port);
+    // An empty value is missing, not empty.
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--port=" }, null));
 }
 
-test "parseChoices prefers an enumerated list over splitting the question" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const answer =
-        \\Three options:
-        \\
-        \\1. Prune the stale learnings
-        \\2) Add an eval for chat_send
-        \\3. Audit the Vertex cache hit rate
-        \\
-        \\Which one, or something else?
-    ;
-    const choices = (try parseChoices(arena, answer)).?;
-    try std.testing.expectEqual(@as(usize, 3), choices.len);
-    try std.testing.expectEqualStrings("Prune the stale learnings", choices[0]);
-    try std.testing.expectEqualStrings("Add an eval for chat_send", choices[1]);
-    try std.testing.expectEqualStrings("Audit the Vertex cache hit rate", choices[2]);
+test "a flag the command does not take is refused, not ignored" {
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--model", "x" }, &diag));
+    try std.testing.expectEqualStrings("--model", diag);
+    // The same flag on a command that does take it is fine.
+    const ok = try parse(&.{ "clanker", "run", "--model", "x", "do a thing" }, null);
+    try std.testing.expectEqualStrings("x", ok.model.?);
 }
 
-test "parseChoices stays quiet when the answer is not a choice question" {
+test "--help after a command asks about that command" {
+    const opts = try parse(&.{ "clanker", "run", "--help" }, null);
+    try std.testing.expectEqual(Command.help, opts.command);
+    try std.testing.expectEqual(Command.run, opts.help_for.?);
+    // Alone, it is the whole list.
+    const all = try parse(&.{ "clanker", "--help" }, null);
+    try std.testing.expectEqual(Command.help, all.command);
+    try std.testing.expect(all.help_for == null);
+}
+
+test "a bare prompt runs, a mistyped command does not" {
+    const opts = try parse(&.{ "clanker", "fix the failing eval please" }, null);
+    try std.testing.expectEqual(Command.run, opts.command);
+    try std.testing.expectEqualStrings("fix the failing eval please", opts.task.?);
+    // A single short word is a command that does not exist, not a prompt:
+    // silently running "relp" as a task would hide the typo.
+    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "relp" }, null));
+}
+
+test "-m and -c are the short forms every other agent CLI uses" {
+    const opts = try parse(&.{ "clanker", "run", "-m", "zai/glm-5.2", "-c", "keep going" }, null);
+    try std.testing.expectEqualStrings("zai/glm-5.2", opts.model.?);
+    try std.testing.expect(opts.continue_last);
+}
+
+test "every command is listed in the help table" {
+    // A command with no spec would be invisible in --help; the table is the
+    // only place the list lives, so this is what keeps it honest.
+    for (std.enums.values(Command)) |c| {
+        if (c == .help or c == .version) continue;
+        if (specFor(c) == null) {
+            std.debug.print("command {s} has no spec entry\n", .{@tagName(c)});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "--model provider/model picks both, and leaves a slashed model id alone" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // No question at all.
-    try std.testing.expect((try parseChoices(arena, "Done. The eval passes.")) == null);
-    // A question with a single answer is not a menu.
-    try std.testing.expect((try parseChoices(arena, "Should I start on the eval?")) == null);
-    // A numbered list with no closing question is a report, not a prompt.
-    const report =
-        \\1. built the tool
-        \\2. ran the gate
-    ;
-    try std.testing.expect((try parseChoices(arena, report)) == null);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{
+        \\  "default_provider": "zai",
+        \\  "providers": {
+        \\    "zai": { "base_url": "http://x/v1", "models": { "glm-5.2": {} } },
+        \\    "kimi-k3": { "base_url": "http://y/v1", "models": { "moonshotai/kimi-k3": {} } }
+        \\  }
+        \\}
+        ,
+    });
+    const cfg = try config.Config.load(io, arena, tmp.dir, "config.json", "absent.json");
+
+    // The prefix names a provider, so it selects one.
+    const split = try resolveProvider(&cfg, .{ .model = "zai/glm-5.2" });
+    try std.testing.expectEqualStrings("zai", split.name);
+    try std.testing.expectEqualStrings("glm-5.2", split.default_model);
+
+    // The prefix does not name a provider: this is a model id that contains a
+    // slash, and splitting it would ask a provider that does not exist for a
+    // model that does not either.
+    const whole = try resolveProvider(&cfg, .{ .provider = "kimi-k3", .model = "moonshotai/kimi-k3" });
+    try std.testing.expectEqualStrings("kimi-k3", whole.name);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", whole.default_model);
+
+    // Same, without --provider: the default provider keeps the whole string.
+    const bare = try resolveProvider(&cfg, .{ .model = "moonshotai/kimi-k3" });
+    try std.testing.expectEqualStrings("zai", bare.name);
+    try std.testing.expectEqualStrings("moonshotai/kimi-k3", bare.default_model);
+
+    // An explicit --provider always wins; the model is never split then.
+    const explicit = try resolveProvider(&cfg, .{ .provider = "kimi-k3", .model = "zai/glm-5.2" });
+    try std.testing.expectEqualStrings("kimi-k3", explicit.name);
+    try std.testing.expectEqualStrings("zai/glm-5.2", explicit.default_model);
 }
 
 test "a bare invocation starts the REPL, and --help still asks for help" {
@@ -5709,6 +5481,62 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expect(!bare.plan);
     const plan = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"plan\":true}", .{ .ignore_unknown_fields = true });
     try std.testing.expect(plan.plan);
+
+    // Goal id is optional and empty by default so older clients keep working.
+    try std.testing.expectEqualStrings("", bare.goal);
+    const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("g1", with_goal.goal);
+}
+
+test "resolveRunTask attaches explicit and newest-active goals from real goals.json" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    // Two active goals; the higher `updated` must win auto-steer. One done
+    // goal must never be selected.
+    const goals_json =
+        \\[
+        \\  {"id":"old","objective":"old objective","completion_criterion":"old done","status":"active","updated":10},
+        \\  {"id":"done","objective":"finished work","completion_criterion":"done when","status":"done","updated":99},
+        \\  {"id":"new","objective":"ship the feature","completion_criterion":"tests green","boundaries":"docs only","status":"active","updated":50}
+        \\]
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+
+    // Explicit id: that goal only, even if not the newest.
+    const explicit = try resolveRunTask(arena, io, tmp.dir, "do the thing", "old", false);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "## Active goal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "old objective") != null);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "do the thing") != null);
+    try std.testing.expect(std.mem.indexOf(u8, explicit, "ship the feature") == null);
+
+    // Auto: newest active (updated=50), not the done goal with updated=99.
+    const auto = try resolveRunTask(arena, io, tmp.dir, "chat task", null, true);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "ship the feature") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "tests green") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "chat task") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto, "finished work") == null);
+
+    // Goal-only: empty task becomes a work order for that goal.
+    const goal_only = try resolveRunTask(arena, io, tmp.dir, "", "new", false);
+    try std.testing.expect(std.mem.indexOf(u8, goal_only, "Work on this goal until the completion criterion is met.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, goal_only, "ship the feature") != null);
+
+    // Missing id leaves the task alone (warns on stderr via log).
+    const missing = try resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false);
+    try std.testing.expectEqualStrings("plain", missing);
+
+    // Auto with no active goals leaves the task alone.
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
+    const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    try std.testing.expectEqualStrings("plain", none);
 }
 
 test "an ask accepts only its own options and hands the pick to the waiter" {
@@ -5768,4 +5596,125 @@ test "sessionListJSON carries each conversation's byte weight" {
     const first = parsed.object.get("sessions").?.array.items[0];
     try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
     try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
+}
+
+// ------------------------------------------------------- providers catalog --
+
+const fake_models_dev_catalog =
+    \\{
+    \\  "moonshotai": {
+    \\    "id": "moonshotai", "name": "Moonshot AI", "api": "https://api.moonshot.ai/v1",
+    \\    "env": ["MOONSHOT_API_KEY"],
+    \\    "models": {
+    \\      "kimi-k3": {
+    \\        "id": "kimi-k3", "name": "Kimi K3", "family": "kimi-k3", "reasoning": true,
+    \\        "limit": {"context": 1048576, "output": 131072},
+    \\        "cost": {"input": 3, "output": 15}
+    \\      }
+    \\    }
+    \\  },
+    \\  "moonshotai-cn": {
+    \\    "id": "moonshotai-cn", "name": "Moonshot AI (China)", "api": "https://api.moonshot.cn/v1",
+    \\    "env": ["MOONSHOT_API_KEY"],
+    \\    "models": { "kimi-k3": { "limit": {"context": 1048576, "output": 131072}, "cost": {"input": 3, "output": 15} } }
+    \\  },
+    \\  "local-relay": {
+    \\    "id": "local-relay", "name": "Local Relay", "api": "http://127.0.0.1:9/v1",
+    \\    "env": ["RELAY_API_KEY"],
+    \\    "models": { "solo": {} }
+    \\  }
+    \\}
+;
+
+test "findCatalogProvider prefers an exact base_url match over a shared env var" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    // Both moonshotai and moonshotai-cn share the MOONSHOT_API_KEY env var;
+    // only the .ai host matches this provider's base_url exactly.
+    const p = try config.Provider.single(arena, "kimi-k3", "https://api.moonshot.ai/v1", .openai_compat, "kimi-k3", .{});
+    var p_env = p;
+    p_env.api_key_env = "MOONSHOT_API_KEY";
+    const found = findCatalogProvider(catalog, &p_env) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Moonshot AI", found.object.get("name").?.string);
+}
+
+test "findCatalogProvider falls back to the env var when no host matches" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    var p = try config.Provider.single(arena, "relay", "http://10.0.0.5:8000/v1", .openai_compat, "solo", .{});
+    p.api_key_env = "RELAY_API_KEY";
+    const found = findCatalogProvider(catalog, &p) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Local Relay", found.object.get("name").?.string);
+}
+
+test "findCatalogProvider returns null with neither a host nor an env match" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const p = try config.Provider.single(arena, "mystery", "https://example.test/v1", .openai_compat, "m", .{});
+    try std.testing.expect(findCatalogProvider(catalog, &p) == null);
+}
+
+test "findCatalogModel tries the bare id when the config name carries an OpenRouter-style prefix" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const provider_entry = catalog.object.get("moonshotai").?;
+    try std.testing.expect(findCatalogModel(provider_entry, "kimi-k3") != null);
+    try std.testing.expect(findCatalogModel(provider_entry, "moonshotai/kimi-k3") != null);
+    try std.testing.expect(findCatalogModel(provider_entry, "no-such-model") == null);
+}
+
+test "renderModelSnippet emits valid, pasteable JSON with no trailing comma" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
+    const model = catalog.object.get("moonshotai").?.object.get("models").?.object.get("kimi-k3").?;
+    const snippet = try renderModelSnippet(arena, "kimi-k3", model);
+
+    // The point of the test: a naive "one field per line, always trailing
+    // comma" writer produces `..."display": "Kimi K3",\n}`, which is not
+    // valid JSON and fails to paste back into config.json.
+    const wrapped = try std.fmt.allocPrint(arena, "{{{s}}}", .{snippet});
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, wrapped, .{});
+    const entry = parsed.object.get("kimi-k3").?;
+    try std.testing.expectEqual(@as(i64, 1048576), entry.object.get("context_window").?.integer);
+    try std.testing.expectEqual(@as(i64, 131072), entry.object.get("max_tokens").?.integer);
+    try std.testing.expectEqualStrings("Kimi K3", entry.object.get("display").?.string);
+}
+
+test "webui registry-miss error names tools_dir and does not sole-blame zig build tools" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Drive the real helper renderWebui uses for the HTTP error body when
+    // reg.get("webui") is null — not a reimplementation of the string.
+    const body = try webuiMissingRegistryError(arena, "tools/no-such-manifests");
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    const err_msg = parsed.object.get("error").?.string;
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "tools/no-such-manifests") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "registry") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "tools_dir") != null);
+    // Sole-blaming guest rebuilds is the bug this test locks out.
+    try std.testing.expect(std.mem.indexOf(u8, err_msg, "zig build tools") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") == null);
+}
+
+test "webui wasm-miss error still points at zig build tools" {
+    const body = webuiMissingWasmError();
+    try std.testing.expect(std.mem.indexOf(u8, body, "wasm") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") != null);
 }

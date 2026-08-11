@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const json = std.json;
+const strField = @import("../util/json.zig").strField;
 
 pub const Criterion = union(enum) {
     /// The response must contain all listed substrings.
@@ -125,10 +126,6 @@ pub const Eval = struct {
             }
         }
         return e;
-    }
-
-    fn strField(obj: json.ObjectMap, key: []const u8) ![]const u8 {
-        return strVal(obj.get(key) orelse return error.MissingField);
     }
 
     fn strVal(v: json.Value) ![]const u8 {

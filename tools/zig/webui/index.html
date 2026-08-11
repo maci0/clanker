@@ -4,25 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>clanker</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='2' fill='%23e8e2d6'/%3E%3Cg stroke='%23b4531f' stroke-width='2.5' fill='none' stroke-linecap='square'%3E%3Cpath d='M9 5v22'/%3E%3Cpath d='M9 10h7'/%3E%3Cpath d='M9 16h11'/%3E%3Cpath d='M9 22h6'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%231d2225'/%3E%3Crect x='3' y='3' width='26' height='26' rx='2' fill='none' stroke='%2377827b' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='13' r='5.5' fill='%232fae4d'/%3E%3Ccircle cx='14' cy='11' r='2' fill='%23c9f2d3'/%3E%3Crect x='9' y='22' width='14' height='3' rx='1' fill='%2377827b'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/webui/app.css">
 </head>
 <body>
 <!--
-THESIS: A machine editing itself lays down strata; you read the column and
-decide which layers hold. Refuses the dark agent console with a chat column.
-OWN-WORLD: Field-log paper (#e8e2d6) and drafting film (#1a1714), printed
-depth rules, oxide-orange (#c9622b) for the active mark, lichen (#7d8b74) for
-a gate that held, grease-pencil red for one that did not.
-Measurements set in mono; prose set in the system text face. Drawn icons, one
-stroke weight. No glyph stands in for an icon.
-STORY: The owner sees what the agent deposited, what it cost, and whether it
-held, then decides to keep or discard it.
-FIRST VIEWPORT: Ruled depth column down the left of the sheet, numbered by
-turn. The layer being deposited carries an oxide rule. Composer sits at the
-foot of the column, where the next layer lands.
-FORM: Core Log, candidate 6 of the grounded list, seed key 33b8b5ac.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+THESIS: clanker is a fleet of small machine workers; this page is the
+switchgear panel you run it from. Refuses both the dark agent console and
+the paper log it replaces.
+OWN-WORLD: A control cabinet's vocabulary, used literally. RAL-grey panel
+faces on a brushed backplane; engraved legend plates (mono, caps, tracked)
+for every label; IEC 60073 indicator lamps for state — green healthy, amber
+abnormal, red fault, and blue for operator action, which is why blue is the
+interactive colour: the standard already assigns it.
+SIGNATURE: the lamps. Radial-gradient domes that glow when a thing is live —
+the instance gauge, an engaged rail channel, a tool's breaker, a verdict.
+Everything around them stays flat and disciplined.
+STORY: The operator reads the lamps, presses the blue actuator, and the
+panel records what each job cost and whether it held.
+VARIANTS: day shift (light grey cabinet, default) and night shift (graphite,
+lamps carry further). The seven named palettes ride the same tokens.
 -->
 
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -40,7 +41,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
   <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
   <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
-  <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
+  <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark / mocha / latte / frappe / macchiato / tokyonight / tokyonight-storm / tokyonight-day">theme: system</button>
 </header>
 
 <div class="shell">
@@ -63,6 +64,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <button type="button" class="rail-tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals">Goals</button>
     <p class="rail-group" role="presentation">Watch</p>
     <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
@@ -143,8 +145,14 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                 role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
-        <label for="model-select">Model</label>
-        <select id="model-select" title="Which provider and model runs this task"></select>
+        <label for="model-search">Model</label>
+        <div class="model-picker">
+          <input type="text" id="model-search" class="model-search" placeholder="config default" autocomplete="off"
+                 role="combobox" aria-controls="model-list" aria-autocomplete="list" aria-expanded="false"
+                 title="Which provider and model runs this task — type to fuzzy-search">
+          <ul class="palette-list model-list" id="model-list" role="listbox" aria-label="Provider and model" hidden></ul>
+        </div>
+        <select id="model-select" hidden aria-hidden="true" tabindex="-1"></select>
         <details class="more" id="params">
           <summary>Options</summary>
           <div class="more-actions params-grid">
@@ -199,6 +207,32 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         </div>
         <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
         <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-fleet" role="tabpanel" aria-labelledby="tab-fleet" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Fleet</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="fleet-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="runs">
+        <section aria-labelledby="fleet-roster-head">
+          <h3 id="fleet-roster-head" class="sr-only">Peers</h3>
+          <div id="fleet-roster"></div>
+        </section>
+        <section aria-labelledby="fleet-dms-head">
+          <h3 id="fleet-dms-head" class="sr-only">DMs</h3>
+          <div id="fleet-dms"></div>
+        </section>
+        <section aria-labelledby="fleet-runs-head">
+          <h3 id="fleet-runs-head" class="sr-only">Runs</h3>
+          <div id="fleet-runs"></div>
+        </section>
+        <div id="fleet-detail" class="run-detail" role="region" aria-label="Fleet run detail" hidden></div>
+        <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
       </div>
     </section>
   </div>
@@ -405,6 +439,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
      app.js uses both. -->
 <script type="module" src="/webui/van-boot.js"></script>
 <script src="/webui/vendor/van-ui.js" defer></script>
+<script type="module" src="/webui/core/utils.js"></script>
+<script type="module" src="/webui/core/vendor.js"></script>
+<script type="module" src="/webui/core/theme.js"></script>
+<script type="module" src="/webui/features/fleet.js"></script>
 <script src="/webui/app.js" defer></script>
 </body>
 </html>

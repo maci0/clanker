@@ -255,12 +255,10 @@ pub fn sandboxFor(
     var net = tool.network_allow;
     if (tool.network_from_config.len > 0) {
         const extra = try config_mod.configuredHosts(cfg, arena, tool.network_from_config);
-        if (extra.len > 0) {
-            var list: std.ArrayList([]const u8) = .empty;
-            try list.appendSlice(arena, tool.network_allow);
-            try list.appendSlice(arena, extra);
-            net = try list.toOwnedSlice(arena);
-        }
+        net = try appendNetworkAllow(arena, net, extra);
+    }
+    if (isResearchTool(tool.name)) {
+        net = try appendNetworkAllow(arena, net, cfg.web.allow);
     }
     var llm_access: ?LlmAccess = null;
     if (tool.llm) {
@@ -286,6 +284,77 @@ pub fn sandboxFor(
         .cfg = cfg,
         .config_json = tool.config_json,
     };
+}
+
+fn appendNetworkAllow(
+    arena: std.mem.Allocator,
+    current: []const []const u8,
+    extra: []const []const u8,
+) ![]const []const u8 {
+    if (extra.len == 0) return current;
+    var list: std.ArrayList([]const u8) = .empty;
+    try list.appendSlice(arena, current);
+    try list.appendSlice(arena, extra);
+    return list.toOwnedSlice(arena);
+}
+
+fn isResearchTool(name: []const u8) bool {
+    return std.mem.eql(u8, name, "fetch_web") or std.mem.eql(u8, name, "web_search");
+}
+
+test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    const cfg = config_mod.Config{ .web = .{ .allow = &.{ "github.com", "raw.githubusercontent.com" } } };
+    const fetch = registry.Tool{
+        .name = "fetch_web",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+        .network_allow = &.{"api.github.com"},
+    };
+    const search = registry.Tool{
+        .name = "web_search",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+        .network_allow = &.{"html.duckduckgo.com"},
+    };
+    const unrelated = registry.Tool{
+        .name = "peers",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+        .network_allow = &.{"peer.static"},
+    };
+
+    const fetch_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &fetch, null);
+    try std.testing.expectEqual(@as(usize, 3), fetch_sb.network_allow.len);
+    try std.testing.expectEqualStrings("api.github.com", fetch_sb.network_allow[0]);
+    try std.testing.expectEqualStrings("github.com", fetch_sb.network_allow[1]);
+    try std.testing.expectEqualStrings("raw.githubusercontent.com", fetch_sb.network_allow[2]);
+
+    const search_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &search, null);
+    try std.testing.expectEqual(@as(usize, 3), search_sb.network_allow.len);
+    try std.testing.expectEqualStrings("html.duckduckgo.com", search_sb.network_allow[0]);
+    try std.testing.expectEqualStrings("github.com", search_sb.network_allow[1]);
+    try std.testing.expectEqualStrings("raw.githubusercontent.com", search_sb.network_allow[2]);
+
+    const unrelated_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &unrelated, null);
+    try std.testing.expectEqual(@as(usize, 1), unrelated_sb.network_allow.len);
+    try std.testing.expectEqualStrings("peer.static", unrelated_sb.network_allow[0]);
+
+    const no_web_cfg = config_mod.Config{};
+    const no_web_fetch_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &no_web_cfg, &fetch, null);
+    try std.testing.expectEqual(@as(usize, 1), no_web_fetch_sb.network_allow.len);
+    try std.testing.expectEqualStrings("api.github.com", no_web_fetch_sb.network_allow[0]);
 }
 
 /// Per-module execution context; passed to host functions via
@@ -653,6 +722,7 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 const ChatOp = struct {
     op: ?[]const u8 = null,
     room: ?[]const u8 = null,
+    to: ?[]const u8 = null,
     text: ?[]const u8 = null,
     after: ?i64 = null,
     on: ?bool = null,
@@ -660,13 +730,30 @@ const ChatOp = struct {
     todo: ?[]const u8 = null,
 };
 
+/// A direct message remains an ordinary chatroom so history, persistence and
+/// peer fan-out need no second transport. Sorting the two participants gives
+/// both callers exactly one room name, regardless of who sends first.
+fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []const u8) ![]const u8 {
+    const from = std.mem.trim(u8, from_raw, " \t\r\n");
+    const to = std.mem.trim(u8, to_raw, " \t\r\n");
+    if (from.len == 0 or to.len == 0 or std.mem.eql(u8, from, to)) return error.InvalidDirectMessage;
+    const pair = if (std.mem.lessThan(u8, from, to)) .{ from, to } else .{ to, from };
+    return std.fmt.allocPrint(arena, "dm:{s}|{s}", pair);
+}
+
+/// The agent-facing history response is deliberately small to protect its
+/// context budget. Read one extra record internally so callers that must fold
+/// a complete log can tell whether another page exists without guessing from
+/// a full final page.
+const chat_history_page_size = 20;
+
 /// ck_chat(op_json) — chatroom operations for the chat_* tools, plus the
 /// private-list todo_* ops (see below).
 /// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
-///          "room":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
+///          "room"|"to":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
 /// Output (in the host arena):
 ///   send:      {"ok":true,"ts":...,"id":"..."}
-///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...]}
+///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...],"has_more":bool}
 ///   rooms:     {"ok":true,"rooms":[{room,messages,last_ts,last_from,last_text}],
 ///               "subscribed":["dev"]}
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
@@ -687,7 +774,9 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const parsed = std.json.parseFromSliceLeaky(ChatOp, arena, input, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.warn, "[chat] json parse failed: '{s}'", .{input});
+        // Log only the length, never the input: chat payloads contain
+        // user-generated messages (personal data).
+        log.log(.warn, "[chat] json parse failed ({d} bytes)", .{input.len});
         return Err.invalid;
     };
     const op = parsed.op orelse return Err.invalid;
@@ -698,7 +787,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     // message, so it neither needs the module nor touches its log.
     if (std.mem.startsWith(u8, op, "todo_") and (parsed.room == null or parsed.room.?.len == 0)) {
         const list = h.sandbox.private_todos orelse
-            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"no \\\"room\\\" given, and private todo lists exist only inside sub-agent runs; pass \\\"room\\\" to use a shared room list\"}");
+            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"this run has no private todo list attached; this is a host wiring error, not a room todo\"}");
         const out = private_todos_mod.applyTodoOp(list, arena, op, parsed.title, parsed.todo) catch return Err.too_large;
         return h.writeResult(bytes, out);
     }
@@ -719,7 +808,16 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const state_dir = h.sandbox.state_dir;
 
     if (std.mem.eql(u8, op, "send")) {
-        const room = parsed.room orelse return Err.invalid;
+        // `to` is the direct-message spelling. It resolves to the same
+        // ordinary room on either participant, so senders never need to know
+        // or manually order the `dm:<a>|<b>` convention.
+        if (parsed.room != null and parsed.to != null) return Err.invalid;
+        const room = if (parsed.room) |r|
+            r
+        else if (parsed.to) |to|
+            directMessageRoom(arena, cfg.instance.name, to) catch return Err.invalid
+        else
+            return Err.invalid;
         const text = parsed.text orelse return Err.invalid;
         if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
         const msg = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
@@ -738,7 +836,9 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.eql(u8, op, "history")) {
         const room = parsed.room orelse return Err.invalid;
         const after = parsed.after orelse 0;
-        const msgs = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, 20) catch return Err.invalid;
+        const page = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, chat_history_page_size + 1) catch return Err.invalid;
+        const has_more = page.len > chat_history_page_size;
+        const msgs = page[0..@min(page.len, chat_history_page_size)];
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
         s.write(true) catch return Err.too_large;
@@ -759,6 +859,8 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.endObject() catch return Err.too_large;
         }
         s.endArray() catch return Err.too_large;
+        s.objectField("has_more") catch return Err.too_large;
+        s.write(has_more) catch return Err.too_large;
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "rooms")) {
@@ -983,6 +1085,19 @@ test "parseCustomHeaders parses valid JSON object into headers" {
     }
     try std.testing.expect(found_auth);
     try std.testing.expect(found_ct);
+}
+
+test "directMessageRoom canonicalizes the two participants" {
+    const arena = std.testing.allocator;
+    const alice_to_bob = try directMessageRoom(arena, "alice", "bob");
+    defer arena.free(alice_to_bob);
+    const bob_to_alice = try directMessageRoom(arena, "bob", "alice");
+    defer arena.free(bob_to_alice);
+    try std.testing.expectEqualStrings("dm:alice|bob", alice_to_bob);
+    try std.testing.expectEqualStrings(alice_to_bob, bob_to_alice);
+
+    try std.testing.expectError(error.InvalidDirectMessage, directMessageRoom(arena, "alice", "alice"));
+    try std.testing.expectError(error.InvalidDirectMessage, directMessageRoom(arena, "alice", "  \t"));
 }
 
 test "parseCustomHeaders handles null, empty, non-object, and non-string values" {
@@ -1697,6 +1812,35 @@ const exec_deny_tokens = [_][]const u8{
 /// follow it.
 const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 
+/// Resolves a bare command name (no '/') to an absolute path by searching
+/// `PATH` from the sandbox's environ map, the same way a shell would.
+///
+/// `std.process.run`'s own argv[0] resolution is documented to search PATH
+/// from "the parent environment", but that resolution did not find `zig` (on
+/// PATH, confirmed executable) when called from this sandboxed exec path,
+/// while the identical bare-name call from the non-sandboxed gate checks
+/// succeeded — every capability eval that shells out (zig_check, test_file)
+/// failed on a plain FileNotFound before ever reaching the tool's own logic.
+/// Resolving here removes the dependency on that implicit lookup entirely.
+/// Returns null (falls back to the bare name) if `cmd` already looks like a
+/// path, PATH is unset, or nothing on it matches — never a hard failure, so
+/// exec_allow commands that behave fine today keep behaving the same way.
+fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
+    if (std.mem.indexOfScalar(u8, cmd, '/') != null) return null;
+    const path_val = environ_map.get("PATH") orelse return null;
+    var it = std.mem.splitScalar(u8, path_val, ':');
+    while (it.next()) |dir| {
+        if (dir.len == 0) continue;
+        const candidate = std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, cmd }) catch return null;
+        std.Io.Dir.accessAbsolute(io, candidate, .{ .execute = true }) catch {
+            gpa.free(candidate);
+            continue;
+        };
+        return candidate;
+    }
+    return null;
+}
+
 /// Whether `cmd` would interpret its arguments as shell syntax.
 fn runsAShell(cmd: []const u8) bool {
     const base = if (std.mem.lastIndexOfScalar(u8, cmd, '/')) |i| cmd[i + 1 ..] else cmd;
@@ -1885,6 +2029,130 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     return rc;
 }
 
+/// Bound on tasks per ck_swarm call: each spawns its own 128 MiB-stack
+/// thread and a full nested agent, so this is a real resource ceiling, not
+/// an arbitrary one.
+const max_swarm_tasks: usize = 8;
+
+/// Fans `tasks` out to that many nested agents on their own threads
+/// (reusing the same subagent_runner as ck_subagent — a swarm member is
+/// just a subagent run, bounded iterations and all), running concurrently,
+/// then joins every one before returning. The join is load-bearing for the
+/// same reason ck_subagent's is: it is what keeps the parent parked on this
+/// llm:true tool call for the whole batch, so ParentAsk stays safe and the
+/// caller never observes a partially-finished swarm.
+pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
+    const runner = h.sandbox.subagent_runner orelse return Err.not_found;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, json_input, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const tasks = stringArray(arena, obj.get("tasks")) catch return Err.invalid;
+    if (tasks.len == 0) return Err.invalid;
+    if (tasks.len > max_swarm_tasks) return Err.too_large;
+    var provider_name: ?[]const u8 = null;
+    if (obj.get("provider")) |p| {
+        if (p == .string and p.string.len > 0) provider_name = p.string;
+    }
+    const cfg = h.sandbox.cfg orelse return Err.not_found;
+    // Each member gets the same brief a lone subagent would: what larger
+    // work this serves. Unlike subagent, there is no per-task context/files
+    // — a swarm task is expected to be a complete, self-contained brief
+    // since members cannot see each other or the parent's transcript.
+    const brief = Brief{ .parent_task = h.sandbox.parent_task };
+
+    const SwarmCall = struct {
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        environ_map: *std.process.Environ.Map,
+        cfg: *const config_mod.Config,
+        task: []const u8,
+        provider_name: ?[]const u8,
+        brief: Brief,
+        parent_ask: ?ParentAsk,
+        parent_run_id: []const u8,
+        runner: SubagentRunner,
+        result: ?[]const u8 = null,
+        err: ?anyerror = null,
+        fn run(self: *@This()) void {
+            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask, self.parent_run_id) catch |e| {
+                self.err = e;
+                return;
+            };
+        }
+    };
+
+    const calls = arena.alloc(SwarmCall, tasks.len) catch return Err.too_large;
+    for (tasks, 0..) |task, i| {
+        calls[i] = .{
+            .io = h.sandbox.io,
+            .gpa = h.sandbox.gpa,
+            .environ_map = h.sandbox.environ_map,
+            .cfg = cfg,
+            .task = task,
+            .provider_name = provider_name,
+            .brief = brief,
+            .parent_ask = h.sandbox.own_ask,
+            .parent_run_id = h.sandbox.parent_run_id,
+            .runner = runner,
+        };
+    }
+
+    const threads = arena.alloc(std.Thread, calls.len) catch return Err.too_large;
+    var spawned: usize = 0;
+    while (spawned < calls.len) : (spawned += 1) {
+        threads[spawned] = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SwarmCall.run, .{&calls[spawned]}) catch break;
+    }
+    for (threads[0..spawned]) |th| th.join();
+    // Any call past `spawned` never ran: result and err both stay null,
+    // which the encoding loop below reports as "spawn failed" — the same
+    // shape as a member that ran and errored, so the batch's other results
+    // are never lost to one thread-spawn failure.
+
+    defer for (calls) |call| {
+        if (call.result) |r| h.sandbox.gpa.free(@constCast(r));
+    };
+
+    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    var w: std.Io.Writer = .fixed(buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginArray() catch return Err.too_large;
+    var failures: usize = 0;
+    for (calls) |call| {
+        s.beginObject() catch return Err.too_large;
+        s.objectField("task") catch return Err.too_large;
+        s.write(call.task) catch return Err.too_large;
+        if (call.result) |r| {
+            s.objectField("ok") catch return Err.too_large;
+            s.write(true) catch return Err.too_large;
+            s.objectField("text") catch return Err.too_large;
+            s.write(r) catch return Err.too_large;
+        } else {
+            failures += 1;
+            s.objectField("ok") catch return Err.too_large;
+            s.write(false) catch return Err.too_large;
+            s.objectField("error") catch return Err.too_large;
+            const msg: []const u8 = if (call.err) |e| @errorName(e) else "spawn failed";
+            s.write(msg) catch return Err.too_large;
+        }
+        s.endObject() catch return Err.too_large;
+    }
+    s.endArray() catch return Err.too_large;
+    if (failures > 0) log.log(.warn, "swarm: {d}/{d} members failed", .{ failures, calls.len });
+
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
 pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -1924,7 +2192,9 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(h.sandbox.gpa);
-    argv.append(h.sandbox.gpa, cmd) catch return Err.invalid;
+    const resolved_cmd = resolveExecPath(h.sandbox.gpa, h.sandbox.io, h.sandbox.environ_map, cmd);
+    defer if (resolved_cmd) |rc| h.sandbox.gpa.free(rc);
+    argv.append(h.sandbox.gpa, resolved_cmd orelse cmd) catch return Err.invalid;
     if (obj.get("args")) |a| {
         switch (a) {
             .array => |arr| {

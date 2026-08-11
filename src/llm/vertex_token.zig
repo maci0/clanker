@@ -94,7 +94,10 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
     };
     const response = buf[0..w.end];
     if (@intFromEnum(res.status) >= 400) {
-        log.log(.error_, "vertex: token endpoint returned {d}: {s}", .{ @intFromEnum(res.status), response });
+        // The raw body from the token endpoint may mirror or include sensitive
+        // credential material on some error paths.  Log the status and length
+        // only — never the response body — so logs cannot leak secrets.
+        log.log(.error_, "vertex: token endpoint returned {d} ({d} bytes)", .{ @intFromEnum(res.status), response.len });
         return error.VertexTokenFailed;
     }
 

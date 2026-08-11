@@ -7,6 +7,12 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 
+/// A cold `zig build test` can print more than one MiB while rebuilding its
+/// dependency graph. Gate output is retained only until the result is logged
+/// or reduced to an error tail, so this ceiling must accommodate a clean
+/// checkout instead of making a healthy gate fail with `StreamTooLong`.
+const max_captured_gate_output = 16 << 20;
+
 pub const GateResult = struct {
     ok: bool,
     label: []const u8,
@@ -161,8 +167,8 @@ fn runZigArgs(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const
     const result = try std.process.run(gpa, io, .{
         .argv = argv,
         .cwd = .{ .dir = dir },
-        .stdout_limit = .limited(1 << 20),
-        .stderr_limit = .limited(1 << 20),
+        .stdout_limit = .limited(max_captured_gate_output),
+        .stderr_limit = .limited(max_captured_gate_output),
     });
     const ok = switch (result.term) {
         .exited => |c| c == 0,
