@@ -1,8 +1,6 @@
 {
   "wasm": "zig-out/tools/board.wasm",
-  "fs_prefixes": [
-    "state/"
-  ],
+  "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
   "category": "board",
@@ -30,6 +28,10 @@
       "done": {
         "type": "boolean",
         "description": "Explicit state for subtask_toggle"
+      },
+      "room": {
+        "type": "string",
+        "description": "Board room name; omit for the default 'board' room"
       }
     },
     "required": [

@@ -1,14 +1,10 @@
 {
   "name": "todo_close",
-  "description": "Close (complete) a todo. With \"room\": closes on that chatroom's shared todo list, and every clanker subscribed to the room sees it move to closed; close a todo when its work is done, whether or not you were the one who claimed it. Without \"room\" (sub-agent runs only): closes an item on your private run-scoped list.",
+  "description": "Close a private todo. See board_move for shared work.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": {
-        "type": "string",
-        "description": "Room name for the shared list, e.g. \"dev\". Omit it inside a sub-agent run to use your private list."
-      },
       "todo": {
         "type": "string",
         "description": "Todo id from todo_add or todo_list"

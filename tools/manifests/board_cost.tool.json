@@ -1,8 +1,6 @@
 {
   "wasm": "zig-out/tools/board.wasm",
-  "fs_prefixes": [
-    "state/"
-  ],
+  "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
   "category": "board",
@@ -28,6 +26,10 @@
       "run_id": {
         "type": "string",
         "description": "Run this usage came from, e.g. run-1786422588"
+      },
+      "room": {
+        "type": "string",
+        "description": "Board room name; omit for the default 'board' room"
       }
     },
     "required": [

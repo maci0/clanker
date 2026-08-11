@@ -8,13 +8,15 @@
     "properties": {
       "op": {
         "type": "string"
+      },
+      "room": {
+        "type": "string",
+        "description": "Board room name; omit for the default 'board' room"
       }
     },
     "required": []
   },
-  "fs_prefixes": [
-    "state/"
-  ],
+  "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
   "category": "board"

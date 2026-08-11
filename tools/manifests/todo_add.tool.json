@@ -1,14 +1,10 @@
 {
   "name": "todo_add",
-  "description": "Add a todo. With \"room\": adds to that chatroom's shared todo list, visible to every clanker subscribed to the room (it rides the chatroom log and peer fan-out); share the returned id or use todo_list so others can claim or close it. Without \"room\" (sub-agent runs only): adds to your private run-scoped list, which is discarded when you return — its final state is appended to your answer so your caller sees your progress.",
+  "description": "Add a todo to this run's own private checklist. Private to the run and gone when it ends: it is your working plan, not shared work. For work other clankers should see, use board_add.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": {
-        "type": "string",
-        "description": "Room name for the shared list, e.g. \"dev\". Omit it inside a sub-agent run to use your private list."
-      },
       "title": {
         "type": "string",
         "description": "Short description of the task (max 512 chars)"

@@ -1,8 +1,6 @@
 {
   "wasm": "zig-out/tools/board.wasm",
-  "fs_prefixes": [
-    "state/"
-  ],
+  "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
   "category": "board",
@@ -22,6 +20,10 @@
       "position": {
         "type": "integer",
         "description": "Index within the column; omit to append"
+      },
+      "room": {
+        "type": "string",
+        "description": "Board room name; omit for the default 'board' room"
       }
     },
     "required": [

@@ -4,18 +4,14 @@
   "network_allow": [],
   "sequential": true,
   "category": "board",
-  "name": "board_log",
-  "description": "Record what you did on a card. This is how a run leaves a trail another clanker can read: the entry is stamped with your name and the time, and announced in the board's chatroom.",
+  "name": "board_claim",
+  "description": "Claim a card so other clankers know you are working on it. Claims race: if another clanker claimed it first, that claim stands and the answer shows who holds it.",
   "input_schema": {
     "type": "object",
     "properties": {
       "id": {
         "type": "string",
-        "description": "Card id"
-      },
-      "what": {
-        "type": "string",
-        "description": "What happened (max 2000 chars)"
+        "description": "Card id from board_list"
       },
       "room": {
         "type": "string",
@@ -23,11 +19,10 @@
       }
     },
     "required": [
-      "id",
-      "what"
+      "id"
     ]
   },
   "config": {
-    "op": "log"
+    "op": "claim"
   }
 }

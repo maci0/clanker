@@ -4,18 +4,14 @@
   "network_allow": [],
   "sequential": true,
   "category": "board",
-  "name": "board_log",
-  "description": "Record what you did on a card. This is how a run leaves a trail another clanker can read: the entry is stamped with your name and the time, and announced in the board's chatroom.",
+  "name": "board_delete",
+  "description": "Remove a card from the board for everyone. Permanent: a deleted card cannot be brought back, because a peer that already dropped it would never learn to restore it.",
   "input_schema": {
     "type": "object",
     "properties": {
       "id": {
         "type": "string",
-        "description": "Card id"
-      },
-      "what": {
-        "type": "string",
-        "description": "What happened (max 2000 chars)"
+        "description": "Card id from board_list"
       },
       "room": {
         "type": "string",
@@ -23,11 +19,10 @@
       }
     },
     "required": [
-      "id",
-      "what"
+      "id"
     ]
   },
   "config": {
-    "op": "log"
+    "op": "delete"
   }
 }
