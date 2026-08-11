@@ -558,6 +558,88 @@ test "fmtGate catches unformatted code and formatFiles fixes it" {
     try std.testing.expect(check2.ok);
 }
 
+/// Rejects a proposal that would add a git command to `exec_pattern_allow` in
+/// config files. The config loader refuses such patterns at load time, but a
+/// proposal that only touches config.json is still allowed into the staged
+/// tree; this gate prevents a config change from silently widening the git
+/// deny list.
+pub fn gitDenyGuardGate(
+    gpa: std.mem.Allocator,
+    files: []const []const u8,
+    new_texts: []const []const u8,
+) GateResult {
+    if (files.len != new_texts.len) return .{ .ok = false, .label = "git-deny-guard", .detail = "mismatched files/new_text count" };
+    for (files, new_texts) |f, new| {
+        if (!std.mem.eql(u8, f, "config.json") and !std.mem.eql(u8, f, "config.local.json")) continue;
+        if (std.mem.indexOf(u8, new, "\"exec_pattern_allow\"") == null) continue;
+        var arena_state = std.heap.ArenaAllocator.init(gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, new, .{}) catch continue;
+        const obj = switch (parsed) {
+            .object => |o| o,
+            else => continue,
+        };
+        const agent = obj.get("agent") orelse continue;
+        const agent_obj = switch (agent) {
+            .object => |o| o,
+            else => continue,
+        };
+        const epa = agent_obj.get("exec_pattern_allow") orelse continue;
+        const arr = switch (epa) {
+            .array => |a| a,
+            else => continue,
+        };
+        for (arr.items) |item| {
+            const s = switch (item) {
+                .string => |str| str,
+                else => continue,
+            };
+            if (std.mem.eql(u8, s, "git") or std.mem.startsWith(u8, s, "git ") or std.mem.startsWith(u8, s, "git\t")) {
+                return .{ .ok = false, .label = "git-deny-guard", .detail = "exec_pattern_allow must not name git commands" };
+            }
+        }
+    }
+    return .{ .ok = true, .label = "git-deny-guard" };
+}
+
+test "gitDenyGuardGate rejects git patterns in exec_pattern_allow" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.json"};
+    const new_texts = [_][]const u8{
+        \\{"agent":{"exec_pattern_allow":["gh pr create*","git checkout*"]}}
+    };
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+    try std.testing.expectEqualStrings("exec_pattern_allow must not name git commands", result.detail);
+}
+
+test "gitDenyGuardGate allows non-git patterns and non-config files" {
+    const gpa = std.testing.allocator;
+    // Non-git pattern passes.
+    const files = [_][]const u8{"config.json"};
+    const new_texts = [_][]const u8{
+        \\{"agent":{"exec_pattern_allow":["gh pr create*"]}}
+    };
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(result.ok);
+
+    // A file that is not config is ignored.
+    const files2 = [_][]const u8{"src/main.zig"};
+    const new_texts2 = [_][]const u8{"const x = 1;"};
+    const result2 = gitDenyGuardGate(gpa, &files2, &new_texts2);
+    try std.testing.expect(result2.ok);
+
+    // config.local.json is checked too.
+    const files3 = [_][]const u8{"config.local.json"};
+    const new_texts3 = [_][]const u8{
+        \\{"agent":{"exec_pattern_allow":["git push"]}}
+    };
+    const result3 = gitDenyGuardGate(gpa, &files3, &new_texts3);
+    try std.testing.expect(!result3.ok);
+}
+
 fn runZig(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, args: []const []const u8, label: []const u8) !GateResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
