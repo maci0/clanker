@@ -1,0 +1,17 @@
+{
+  "name": "turn_hook_echo",
+  "description": "prints a line into the transcript after every turn (demo turn_hook plugin)",
+  "wasm": "zig-out/tools/turn_hook_echo.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      }
+    }
+  },
+  "internal": true,
+  "turn_hook": true,
+  "enabled": false,
+  "category": "harness"
+}

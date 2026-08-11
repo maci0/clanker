@@ -32,6 +32,9 @@ pub const Key = union(enum) {
     kill_to_start,
     kill_word,
     clear_screen,
+    /// The caller owns what Tab means (completion); the editor itself has no
+    /// notion of it and never inserts a literal tab character for it.
+    tab,
     /// Bracketed-paste delimiters; the caller owns the paste-mode flag.
     paste_start,
     paste_end,
@@ -51,6 +54,7 @@ pub fn decode(buf: []const u8) ?Decoded {
     const c = buf[0];
     return switch (c) {
         '\r', '\n' => .{ .key = .enter, .len = 1 },
+        0x09 => .{ .key = .tab, .len = 1 }, // Tab
         0x7f, 0x08 => .{ .key = .backspace, .len = 1 },
         0x01 => .{ .key = .home, .len = 1 }, // Ctrl-A
         0x03 => .{ .key = .interrupt, .len = 1 }, // Ctrl-C
@@ -240,7 +244,9 @@ pub const Editor = struct {
             },
             .paste_start => self.in_paste = true,
             .paste_end => self.in_paste = false,
-            .clear_screen, .interrupt, .eof, .ignored => return false,
+            // Tab has no meaning to the editor itself; a caller that wants
+            // completion intercepts it before calling apply (not yet wired).
+            .clear_screen, .interrupt, .eof, .ignored, .tab => return false,
         }
         return false;
     }
@@ -348,6 +354,15 @@ test "kill_to_start with cursor in middle" {
 
 test "Ctrl-L decodes to clear_screen" {
     try std.testing.expectEqual(Key.clear_screen, decode("\x0c").?.key);
+}
+
+test "tab decodes to tab, not a literal character" {
+    try std.testing.expectEqual(Key.tab, decode("\t").?.key);
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+    try std.testing.expect(!ed.apply(.tab));
+    try std.testing.expectEqualStrings("", ed.line());
 }
 
 test "kill_to_start at position 0 is a no-op" {

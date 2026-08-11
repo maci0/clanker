@@ -26,6 +26,7 @@ const tui_statusbar = @import("tui/statusbar.zig");
 const tui_transcript = @import("tui/transcript.zig");
 const tui_palette = @import("tui/palette.zig");
 const tui_approval = @import("tui/approval.zig");
+const tui_theme = @import("tui/theme.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const room_todos = @import("peers/todos.zig");
 const token_stats = @import("stats/tokens.zig");
@@ -903,6 +904,10 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     var out_buf: [4096]u8 = undefined;
     var out_w = stdout_file.writerStreaming(io, &out_buf);
 
+    repl_theme = tui_theme.select(null, init.environ_map);
+    repl_md.theme = repl_theme;
+    repl_prompt = std.fmt.bufPrint(&repl_prompt_buf, "{s}clanker> {s}", .{ repl_theme.prompt, repl_theme.reset }) catch "clanker> ";
+
     // Stream the model's tokens to stdout as they arrive.
     repl_out = &out_w;
     repl_io = io;
@@ -919,8 +924,8 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     a.on_tool_result = &replToolResult;
 
     try out_w.interface.print(
-        "\x1b[1;35m\xe2\x9a\xa1 clanker\x1b[0m \x1b[2mrepl \xc2\xb7 {s}/{s}\x1b[0m\n\x1b[2mtype a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave\x1b[0m\n\n",
-        .{ provider.name, provider.activeModelName() },
+        "{s}\xe2\x9a\xa1 clanker{s} {s}repl \xc2\xb7 {s}/{s}{s}\n{s}type a task \xc2\xb7 :help for commands \xc2\xb7 :quit to leave{s}\n\n",
+        .{ repl_theme.answer_marker, repl_theme.reset, repl_theme.dim, provider.name, provider.activeModelName(), repl_theme.reset, repl_theme.dim, repl_theme.reset },
     );
     try out_w.interface.flush();
 
@@ -935,6 +940,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     defer region.deinit();
     const interactive = (stdin_file.isTty(io) catch false) and (stdout_file.isTty(io) catch false);
     if (interactive) {
+        term.installResizeHandler();
         loadReplHistory(io, gpa, &editor);
         refreshStatusline(io, gpa, arena, &cfg, init.environ_map, &reg);
         repl_palette = tui_palette.index(arena, &reg) catch &.{};
@@ -1172,7 +1178,7 @@ fn replHandleLine(
             // sessions starts a fresh count rather than carrying over
             // whatever the previous session had spent.
             a.session_stats = .{};
-            try out_w.interface.print("\x1b[2mswitched to session {s} ({d} message(s))\x1b[0m\n", .{ target, messages.items.len });
+            try out_w.interface.print("{s}switched to session {s} ({d} message(s)){s}\n", .{ repl_theme.dim, target, messages.items.len, repl_theme.reset });
             try out_w.interface.flush();
             refreshStatusline(io, gpa, arena, cfg, environ_map, reg);
             return false;
@@ -1194,7 +1200,7 @@ fn replHandleLine(
         if (std.fmt.parseInt(usize, digits, 10) catch null) |idx| {
             if (idx >= 1 and idx <= repl_choices.items.len) {
                 task = try arena.dupe(u8, repl_choices.items[idx - 1]);
-                const echo = try std.fmt.allocPrint(arena, "\x1b[2m\xe2\x86\x92 {s}\x1b[0m\n", .{task});
+                const echo = try std.fmt.allocPrint(arena, "{s}\xe2\x86\x92 {s}{s}\n", .{ repl_theme.dim, task, repl_theme.reset });
                 try out_w.interface.writeAll(echo);
                 try out_w.interface.flush();
                 // The run this starts exists because of that pick; the graph
@@ -1317,7 +1323,8 @@ fn readLineRaw(
     }
 }
 
-const repl_prompt = "\x1b[32mclanker> \x1b[0m";
+var repl_prompt_buf: [32]u8 = undefined;
+var repl_prompt: []const u8 = "clanker> "; // overwritten once `repl_theme` is known (cmdRepl)
 const repl_prompt_width = 9; // "clanker> " display width, ANSI codes excluded
 
 /// Tab-completes a slash command in place: `/he` + Tab -> `/help `. A no-op
@@ -1347,12 +1354,17 @@ fn redrawRegion(
     region: *tui_region.BottomRegion,
     status: ReplStatus,
 ) !void {
+    // A resized terminal invalidates any diff against the previous frame
+    // (its content assumed the old width) — force a full repaint at
+    // whatever width `term.getSize` reports now.
+    if (term.resize_pending.swap(false, .acquire)) region.reset();
+
     var frame_arena = std.heap.ArenaAllocator.init(gpa);
     defer frame_arena.deinit();
     const arena = frame_arena.allocator();
     const cols: usize = if (term.getSize(out_w.file.handle)) |sz| sz.cols else tui_input.default_cols;
 
-    const status_line = try tui_statusbar.render(arena, cols, .{
+    const status_line = try tui_statusbar.render(arena, &repl_theme, cols, .{
         .model = status.model_name,
         .session_id = status.session_id,
         .total_tokens = status.session_stats.total_tokens + status.stats.total_tokens,
@@ -1385,7 +1397,7 @@ fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u
     const stdin_file = ask_stdin orelse return error.NoUser;
 
     replClearThinking();
-    const chosen = try tui_approval.ask(gpa, out_w, stdin_file, question, options);
+    const chosen = try tui_approval.ask(gpa, out_w, stdin_file, &repl_theme, question, options);
     replShowThinking();
     return chosen;
 }
@@ -1537,9 +1549,10 @@ fn runTurnHooks(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, ou
         defer gpa.free(out);
         const result = parseToolResult(arena, out);
         if (!result.ok or result.text.len == 0) continue;
-        out_w.interface.writeAll("\x1b[2m") catch continue;
+        out_w.interface.writeAll(repl_theme.dim) catch continue;
         out_w.interface.writeAll(result.text) catch {};
-        out_w.interface.writeAll("\x1b[0m\n") catch {};
+        out_w.interface.writeAll(repl_theme.reset) catch {};
+        out_w.interface.writeAll("\n") catch {};
     }
     out_w.interface.flush() catch {};
 }
@@ -1828,7 +1841,7 @@ fn spinnerLoop() callconv(.c) void {
         const secs: u64 = if (elapsed_ns <= 0) 0 else @intCast(@divTrunc(elapsed_ns, 1_000_000_000));
         const activity = repl_activity;
         const verb: []const u8 = if (std.mem.eql(u8, activity, "thinking")) "" else "running ";
-        w.interface.print("\r\x1b[35m{s}\x1b[0m \x1b[2m{d}s · {s}{s}\xe2\x80\xa6\x1b[0m", .{ spinner_frames[i % spinner_frames.len], secs, verb, activity }) catch return;
+        w.interface.print("\r{s}{s}{s} {s}{d}s \xc2\xb7 {s}{s}\xe2\x80\xa6{s}", .{ repl_theme.answer_marker, spinner_frames[i % spinner_frames.len], repl_theme.reset, repl_theme.dim, secs, verb, activity, repl_theme.reset }) catch return;
         w.interface.flush() catch {};
         i += 1;
         std.Io.sleep(repl_io, .{ .nanoseconds = spinner_interval_ns }, .awake) catch return;
@@ -1871,6 +1884,10 @@ var repl_md: MdStream = .{};
 /// cadence and avoids a WASM invocation on every redraw. arena-owned: lives
 /// as long as the REPL process, same as everything else `replHandleLine`
 /// hands to `arena.dupe`.
+/// `NO_COLOR`-aware; set once at REPL startup (see `cmdRepl`) and read by
+/// every tui/ renderer the REPL calls into.
+var repl_theme: tui_theme.Theme = tui_theme.Theme.default;
+
 var repl_statusline_extra: []const u8 = "";
 
 /// Zig-side index of `cmd_*` slash commands, for Tab-completion and a live
@@ -1950,7 +1967,7 @@ fn replDelta(delta: []const u8) void {
     const w = repl_out orelse return;
     if (!repl_answer_started) {
         repl_answer_started = true;
-        w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
+        w.interface.print("{s}\xe2\x80\xba {s}", .{ repl_theme.answer_marker, repl_theme.reset }) catch return;
     }
     repl_md.feed(&w.interface, delta);
     w.interface.flush() catch {};
@@ -1972,7 +1989,7 @@ fn replToolCall(calls: []const types.ToolCall) void {
         repl_activity = std.fmt.bufPrint(&repl_activity_buf, "{s} +{d}", .{ calls[0].name, calls.len - 1 }) catch calls[0].name;
     }
     const cols = replCols(w);
-    for (calls) |tc| tui_transcript.printCallCard(&w.interface, tc.name, tc.arguments, cols);
+    for (calls) |tc| tui_transcript.printCallCard(&w.interface, &repl_theme, tc.name, tc.arguments, cols);
     w.interface.flush() catch {};
     replShowThinking();
 }
@@ -1985,7 +2002,7 @@ fn replToolResults(calls: []const types.ToolCall, results: []const ?[]const u8) 
     const cols = replCols(w);
     for (calls, results) |tc, result| {
         _ = tc;
-        tui_transcript.printResultBody(&w.interface, result, cols);
+        tui_transcript.printResultBody(&w.interface, &repl_theme, result, cols);
     }
     w.interface.flush() catch {};
 }
@@ -1996,7 +2013,7 @@ fn replToolResult(ms: u64) void {
     replClearThinking();
     repl_activity = "thinking";
     const w = repl_out orelse return;
-    tui_transcript.printCardFooter(&w.interface, ms);
+    tui_transcript.printCardFooter(&w.interface, &repl_theme, ms);
     w.interface.flush() catch {};
     replShowThinking();
 }
@@ -2088,7 +2105,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const streamed = a.on_token != null and a.cfg.modules.streaming;
     const content = resp.message.content orelse "";
     if (!streamed) {
-        try out_w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m");
+        try out_w.interface.print("{s}\xe2\x80\xba {s}", .{ repl_theme.answer_marker, repl_theme.reset });
         repl_md.feed(&out_w.interface, content);
     }
     repl_md.flush(&out_w.interface);
@@ -2103,9 +2120,9 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     const cache_total = turn_cache_hit + turn_cache_miss;
     const hit_rate: f64 = if (cache_total > 0) @as(f64, @floatFromInt(turn_cache_hit)) / @as(f64, @floatFromInt(cache_total)) * 100.0 else 0;
     const stats = if (turn_prompt + turn_completion > 0)
-        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 cache {d:.0}% \xc2\xb7 ${d:.4}]\x1b[0m\n", .{ turn_prompt, turn_completion, ms, tps, hit_rate, turn_cost })
+        try std.fmt.allocPrint(a.arena, "{s}  [{d} prompt + {d} completion \xc2\xb7 {d}ms \xc2\xb7 {d:.1} tok/s \xc2\xb7 cache {d:.0}% \xc2\xb7 ${d:.4}]{s}\n", .{ repl_theme.dim, turn_prompt, turn_completion, ms, tps, hit_rate, turn_cost, repl_theme.reset })
     else
-        try std.fmt.allocPrint(a.arena, "\x1b[2m  [{d}ms]\x1b[0m\n", .{ms});
+        try std.fmt.allocPrint(a.arena, "{s}  [{d}ms]{s}\n", .{ repl_theme.dim, ms, repl_theme.reset });
     try out_w.interface.writeAll(stats);
 
     // A turn that ends in a multiple-choice question gets numbered options,
@@ -2114,11 +2131,11 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     if (try parseChoices(a.arena, content)) |choices| {
         repl_last_question = lastQuestion(content);
         for (choices, 1..) |c, n| {
-            const line = try std.fmt.allocPrint(a.arena, "  \x1b[1;36m{d}\x1b[0m \x1b[2m·\x1b[0m {s}\n", .{ n, c });
+            const line = try std.fmt.allocPrint(a.arena, "  {s}{d}{s} {s}\xc2\xb7{s} {s}\n", .{ repl_theme.ask_pick, n, repl_theme.reset, repl_theme.dim, repl_theme.reset, c });
             try out_w.interface.writeAll(line);
             repl_choices.append(gpa, try gpa.dupe(u8, c)) catch {};
         }
-        try out_w.interface.writeAll("  \x1b[2mreply with a number, or type anything else\x1b[0m\n");
+        try out_w.interface.print("  {s}reply with a number, or type anything else{s}\n", .{ repl_theme.dim, repl_theme.reset });
     }
     try out_w.interface.flush();
     // run() already appended (and finish()-cleaned) the assistant message.
@@ -2340,6 +2357,11 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
     try cmdRun(init, goal_opts);
 }
 
+/// `clanker notify <peer> <message>` sends through the same sandboxed
+/// `peers` WASM tool the model uses, rather than a second hand-rolled HTTP
+/// client: one code path for "POST a notify to a peer", gated by that
+/// tool's own `network_from_config` allowlist instead of an unrestricted
+/// `std.http.Client`.
 fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -2352,56 +2374,41 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const peer_name = opts.peer orelse return error.MissingPeer;
     const message = opts.message orelse return error.MissingMessage;
 
-    var found: ?*const config.Peer = null;
-    for (cfg.peers) |*p| {
-        if (std.mem.eql(u8, p.name, peer_name)) {
-            found = p;
-            break;
-        }
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    const tool = reg.get("peers") orelse {
+        log.log(.error_, "internal tool 'peers' not found in {s}", .{cfg.agent.tools_dir});
+        return error.UnknownTool;
+    };
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20)) catch {
+        log.log(.error_, "'peers' wasm missing: {s} (run `zig build tools`)", .{tool.wasm});
+        return error.ToolWasmMissing;
+    };
+    defer gpa.free(wasm_bytes);
+
+    var sb = try host.sandboxFor(gpa, io, arena, init.environ_map, &cfg, tool, null);
+    const mod = try runtime.ToolModule.load(gpa, io, &sb, wasm_bytes);
+    defer mod.deinit();
+
+    var ibuf: [4096]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    try is.objectField("action");
+    try is.write("notify");
+    try is.objectField("peer");
+    try is.write(peer_name);
+    try is.objectField("message");
+    try is.write(message);
+    try is.endObject();
+
+    const raw = try mod.executeTool(ibuf[0..iw.end]);
+    defer gpa.free(raw);
+    const result = parseToolResult(arena, raw);
+    if (!result.ok) {
+        log.log(.error_, "notify to '{s}' failed: {s}", .{ peer_name, result.err });
+        return error.ToolFailed;
     }
-    const peer = found orelse {
-        log.log(.error_, "unknown peer '{s}'", .{peer_name});
-        return error.UnknownPeer;
-    };
-
-    const url = try std.fmt.allocPrint(arena, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});
-
-    const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-
-    var body_buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&body_buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("from");
-    try s.write(cfg.instance.name);
-    try s.objectField("kind");
-    try s.write("notify");
-    try s.objectField("topic");
-    try s.write(cfg.notify.topic);
-    try s.objectField("payload");
-    try s.write(message);
-    try s.objectField("ts");
-    try s.print("{d}", .{ts});
-    try s.endObject();
-    const payload = body_buf[0..w.end];
-
-    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer http_client.deinit();
-    var response_buf: [64 * 1024]u8 = undefined;
-    var rw: std.Io.Writer = .fixed(&response_buf);
-    const result = http_client.fetch(.{
-        .location = .{ .url = url },
-        .method = .POST,
-        .payload = payload,
-        .headers = .{ .content_type = .{ .override = "application/json" }, .user_agent = .{ .override = "clanker/0.1.0" } },
-        .response_writer = &rw,
-    }) catch |err| {
-        log.log(.error_, "notify to '{s}' failed: {s}", .{ peer.name, @errorName(err) });
-        return err;
-    };
-    const status = result.status;
-    const response = response_buf[0..rw.end];
-    log.log(.info, "notify {s}: HTTP {d} ({s})", .{ peer.name, @intFromEnum(status), response });
+    log.log(.info, "notify {s}: sent", .{peer_name});
 }
 
 fn cmdMcp(init: std.process.Init, opts: Options) !void {

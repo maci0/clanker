@@ -33,6 +33,11 @@ pub const Tool = struct {
     /// Contributes a segment to the REPL status line. Pair with
     /// `"internal": true` so the model never calls it.
     statusline: bool = false,
+    /// Runs once after each REPL turn (empty input) and may print a line
+    /// into the transcript — a general REPL-behavior plugin, as opposed to
+    /// `statusline`'s fixed one-line segment. Pair with `"internal": true`
+    /// so the model never calls it.
+    turn_hook: bool = false,
     /// Free-form per-plugin settings from the descriptor's `config` object,
     /// handed to the guest verbatim via `ck_config`. The harness only reads the
     /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
@@ -219,6 +224,26 @@ pub const Registry = struct {
         while (it.next()) |kv| {
             const t = kv.value_ptr;
             if (t.statusline and t.enabled) try out.append(arena, t);
+        }
+        std.mem.sort(*const Tool, out.items, {}, struct {
+            fn lt(_: void, a: *const Tool, b: *const Tool) bool {
+                return std.mem.order(u8, a.name, b.name) == .lt;
+            }
+        }.lt);
+        return out.toOwnedSlice(arena);
+    }
+
+    /// Returns all enabled tools that have `turn_hook: true`. Same cadence
+    /// as `statuslineTools` (invoked with empty input once after each turn),
+    /// but the caller treats a non-empty result as a line to print into the
+    /// transcript rather than a status-bar segment — for plugins that react
+    /// to what just happened instead of only decorating the status line.
+    pub fn turnHookTools(self: *const Registry, arena: std.mem.Allocator) ![]const *const Tool {
+        var out: std.ArrayList(*const Tool) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr;
+            if (t.turn_hook and t.enabled) try out.append(arena, t);
         }
         std.mem.sort(*const Tool, out.items, {}, struct {
             fn lt(_: void, a: *const Tool, b: *const Tool) bool {
@@ -447,6 +472,12 @@ pub const Registry = struct {
         if (obj.get("statusline")) |sv| {
             switch (sv) {
                 .bool => |b| t.statusline = b,
+                else => {},
+            }
+        }
+        if (obj.get("turn_hook")) |sv| {
+            switch (sv) {
+                .bool => |b| t.turn_hook = b,
                 else => {},
             }
         }
@@ -791,4 +822,39 @@ test "descriptor statusline flag parses and defaults off" {
     const b = try Registry.parseDescriptor(arena, bare, "tools");
     try std.testing.expect(!b.statusline);
     try std.testing.expect(!b.internal);
+}
+
+test "descriptor turn_hook flag parses and defaults off" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\{ "name": "th", "description": "d", "wasm": "th.wasm", "input_schema": {}, "turn_hook": true, "internal": true }
+    ;
+    const t = try Registry.parseDescriptor(arena, raw, "tools");
+    try std.testing.expect(t.turn_hook);
+
+    const bare =
+        \\{ "name": "plain2", "description": "d", "wasm": "p.wasm" }
+    ;
+    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    try std.testing.expect(!b.turn_hook);
+}
+
+test "turnHookTools returns only enabled turn_hook tools, sorted by name" {
+    var reg = Registry{};
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try reg.tools.put(arena, "z_hook", .{ .name = "z_hook", .description = "d", .wasm = "z.wasm", .input_schema = .{ .object = .{} }, .turn_hook = true, .internal = true });
+    try reg.tools.put(arena, "a_hook", .{ .name = "a_hook", .description = "d", .wasm = "a.wasm", .input_schema = .{ .object = .{} }, .turn_hook = true, .internal = true });
+    try reg.tools.put(arena, "disabled_hook", .{ .name = "disabled_hook", .description = "d", .wasm = "d.wasm", .input_schema = .{ .object = .{} }, .turn_hook = true, .internal = true, .enabled = false });
+    try reg.tools.put(arena, "not_a_hook", .{ .name = "not_a_hook", .description = "d", .wasm = "n.wasm", .input_schema = .{ .object = .{} } });
+
+    const hooks = try reg.turnHookTools(arena);
+    try std.testing.expectEqual(@as(usize, 2), hooks.len);
+    try std.testing.expectEqualStrings("a_hook", hooks[0].name);
+    try std.testing.expectEqualStrings("z_hook", hooks[1].name);
 }

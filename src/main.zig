@@ -40,6 +40,15 @@ comptime {
     _ = @import("peers/chatrooms.zig");
     _ = @import("peers/todos.zig");
     _ = @import("stats/tokens.zig");
+    _ = @import("tui/term.zig");
+    _ = @import("tui/width.zig");
+    _ = @import("tui/input.zig");
+    _ = @import("tui/region.zig");
+    _ = @import("tui/statusbar.zig");
+    _ = @import("tui/transcript.zig");
+    _ = @import("tui/palette.zig");
+    _ = @import("tui/approval.zig");
+    _ = @import("tui/theme.zig");
     _ = @import("cli.zig");
 }
 
