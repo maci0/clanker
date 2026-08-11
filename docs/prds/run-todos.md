@@ -7,10 +7,9 @@ half-true. Two layers, meant to be deliberately separate:
 
 - **Private todos** — `todo_add` / `todo_claim` / `todo_close` / `todo_list`
   with no `room`. Routed host-side to the run's own in-memory list
-  (`src/agent/private_todos.zig`, capped at 100 items). Gone when the run
-  ends. **Only wired for sub-agent runs** (`subagent.runNested` attaches the
-  list); a top-level run never gets one, so `todo_*` without `room` fails
-  there too (see Design).
+  (`src/agent/private_todos.zig`, capped at 100 items). `Agent.run` attaches
+  a fresh list for every top-level run and `subagent.runNested` supplies its
+  own list for nested work. It is gone when that run ends.
 - **Shared work** — the Kanban board (`docs/prds/kanban-board.md`): cards,
   columns (`backlog`, `ready`, `doing`, `review`, `done` — five, not the
   three this doc originally said), claims, subtasks, cost, replicated to
@@ -43,22 +42,15 @@ be both; conflating them was the original `state/board.json` mistake.
 
 ## Design
 
-**Routing on absence — narrower than "on absence".** The `todo_*` tools
+**Routing on absence.** The `todo_*` tools
 share the chat module. Naming `room` now unconditionally hard-errors
 (`src/sandbox/host.zig`: "room todo lists are board cards now: use
 board_add, board_move, board_claim or board_list instead") — the shared
 room-list path this doc originally described no longer exists. Omitting
-`room` routes to `src/agent/private_todos.zig`, but **only if a private list
-is attached**, which only happens for sub-agent runs launched via
-`subagent.runNested`. A top-level run's `Agent.private_todos` is always
-`null`; nothing in the top-level agent loop ever sets it. So a top-level
-`todo_*` call with no `room` also fails today, with an error
-("no room given, and private todo lists exist only inside sub-agent runs;
-pass room to use a shared room list") that is itself wrong on both branches:
-private lists aren't available at the top level, and passing `room` also
-errors. **Net effect: `todo_*` is currently usable only from inside a
-sub-agent run.** Sub-agent runs do get their own private list, not the
-parent's.
+`room` routes to `src/agent/private_todos.zig`. `Agent.run` attaches a fresh
+list for every top-level run and removes it when the run returns;
+`subagent.runNested` attaches a distinct list for its nested run. A missing
+list is therefore a host wiring error, not a cue to pass `room`.
 
 **Lifecycle.** Private: open → claimed → closed, per run, in memory, capped
 at 100 items (error: "private todo list is full; close items instead of
@@ -71,18 +63,6 @@ your working plan, gone when the run ends; if another clanker should see or
 claim it, it belongs on the board. This rule of thumb still holds even
 though the room-scoped middle ground it used to also cover is gone.
 
-## Known issues
-
-- **Top-level runs can't use `todo_*` at all.** No code path ever attaches a
-  private list to a top-level `Agent` (only `subagent.zig` does, after
-  calling `runNested`). Every `todo_*` call outside a sub-agent run fails
-  regardless of whether `room` is given.
-- **The failure error recommends a dead option.** `src/sandbox/host.zig`'s
-  message for "no private list attached" tells the caller to pass `room`
-  instead — but passing `room` unconditionally errors too (room-scoped todos
-  were replaced by the board). Fix the message regardless of how the
-  top-level-support open question below resolves.
-
 ## Acceptance criteria
 
 - [x] Omitting `room` never touches any room log.
@@ -91,18 +71,10 @@ though the room-scoped middle ground it used to also cover is gone.
       whenever the list is non-empty (in practice this covers, but is not
       conditioned on, hitting the iteration cap).
 - [x] Board claims resolve races deterministically across peers.
-- [ ] A top-level run can use private todos. Not true today — see Known
-      issues.
+- [x] A top-level run can use private todos.
 
 ## Open questions
 
-- Should a top-level (non-sub-agent) run be able to use private todos at
-  all, or is "private todos" meant to stay a sub-agent-only concept with
-  top-level work always going straight to the board? Right now it's neither
-  decision on purpose — it's an unwired path plus a stale error message
-  (Known issues). This needs an explicit answer, since the current state is
-  silently broken rather than deliberately scoped.
 - Should a top-level run's final answer also summarise its leftover open
-  private todos, once/if the above is resolved? The sub-agent path already
-  does this via the answer appendix; the top-level path has no list to
-  summarise.
+  private todos? The sub-agent path already does this via the answer
+  appendix; top-level runs currently keep the checklist private until return.

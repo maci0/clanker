@@ -408,8 +408,9 @@ test "chat wasm tool routes roomless todo ops to the private list" {
         try std.testing.expect(std.mem.indexOf(u8, out, step.expect) != null);
     }
 
-    // Without a private list attached (a top-level agent), the same roomless
-    // call answers ok:false and points at the shared lists.
+    // A sandbox without a list is a host wiring error. Top-level Agent.run
+    // attaches one before it can execute a tool; this defensive response must
+    // never direct callers to the removed room-scoped todo path.
     var sb = host.Sandbox{
         .gpa = std.testing.allocator,
         .io = io,
@@ -424,7 +425,7 @@ test "chat wasm tool routes roomless todo ops to the private list" {
     const out = try mod.executeTool("{\"title\":\"nope\"}");
     defer std.testing.allocator.free(out);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "sub-agent") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "host wiring error") != null);
 }
 
 fn stubParentAnswer(ctx: *anyopaque, gpa: std.mem.Allocator, question: []const u8, options: []const []const u8) anyerror![]const u8 {
