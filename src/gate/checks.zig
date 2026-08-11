@@ -87,7 +87,7 @@ pub fn formatFiles(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_
 pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_files: []const []const u8) !GateResult {
     // Split so this file does not match its own scan: spelled whole, the
     // needles make lintGate fail on checks.zig every single run.
-    const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME" };
+    const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME", "HACK", "XXX" };
     var hits: usize = 0;
     var hit_buf: [2048]u8 = undefined;
     var hit_w: std.Io.Writer = .fixed(&hit_buf);
@@ -136,6 +136,12 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     const dirty = try lintGate(gpa, io, tmp.dir, &.{"dirty.zig"});
     try std.testing.expect(!dirty.ok);
     try std.testing.expectEqualStrings("lint", dirty.label);
+
+    // HACK and XXX are equally debt markers and must trip the gate.
+    try tmp.dir.writeFile(io, .{ .sub_path = "hacky.zig", .data = "// HACK: quick fix\nconst x = 1;\n" });
+    const hacky = try lintGate(gpa, io, tmp.dir, &.{"hacky.zig"});
+    try std.testing.expect(!hacky.ok);
+    try std.testing.expectEqualStrings("lint", hacky.label);
 }
 
 /// Runs `zig ast-check` on each changed `.zig` file individually. A syntax
