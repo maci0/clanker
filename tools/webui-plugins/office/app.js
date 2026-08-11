@@ -337,9 +337,11 @@ clanker.registerView({
       var foot = drawn ? py + TILE - 2 : py + 14;
       var hand = drawn ? py + TILE / 2 : py + 3;
       // Stepped in 2px blocks rather than stroked: a smooth antialiased
-      // diagonal is the one thing on this floor that is not pixel art.
+      // diagonal is the one thing on this floor that is not pixel art. Held
+      // out past the sprite's shoulder, because a handle crossing his torso
+      // is a dark line on dark cloth and disappears.
       ctx2d.fillStyle = cssVar("--fg-muted", "#666");
-      var x0 = cx + janitor.dir * 14, x1 = cx + janitor.dir * 5;
+      var x0 = cx + janitor.dir * 15, x1 = cx + janitor.dir * 9;
       for (var s = 0; s <= 12; s++) {
         var t = s / 12;
         ctx2d.fillRect(
@@ -348,7 +350,7 @@ clanker.registerView({
           2, 2);
       }
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
-      ctx2d.fillRect(cx + janitor.dir * 14 - 4, foot - 2, 9, 4); // mop head
+      ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
       if (janitor.quip && offices.length > 0) bubble(px, py, janitor.quip, ox, offices[0].layout.w);
     }
 
