@@ -830,7 +830,15 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function switchSession(id) {
-    if (busy || id === sessionId) return;
+    if (id === sessionId) return;
+    if (busy) {
+      // Refused mid-run, so put the control back on the conversation that is
+      // actually still running rather than leaving it pointing at one the
+      // composer is not using.
+      el.sessionSelect.value = sessionId;
+      el.sessionStatus.textContent = "Finish or stop the current run before switching conversation.";
+      return;
+    }
     sessionId = id;
     try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
     renderSessionChip();

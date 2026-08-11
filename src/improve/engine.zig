@@ -371,6 +371,12 @@ pub const Engine = struct {
         for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {
             try collectFile(self, f, keywords.items, &cands);
         }
+        // A file the instruction names by path is the one being patched, and
+        // an exact-match patch against a file the model never saw cannot
+        // succeed. Keyword scoring alone does not guarantee it lands in
+        // context, so pin it: gather it if it was missed, then rank it first.
+        try self.pinNamedFiles(instructions, keywords.items, &cands);
+
         std.mem.sort(Candidate, cands.items, {}, struct {
             fn lt(_: void, a: Candidate, b: Candidate) bool {
                 return a.score > b.score;
@@ -411,6 +417,33 @@ pub const Engine = struct {
         return buf.toOwnedSlice(self.arena);
     }
 
+    /// Boosts (and if necessary reads) every repository path mentioned in the
+    /// instruction, so "fix X in src/agent/loop.zig" always ships loop.zig.
+    fn pinNamedFiles(self: *Engine, instructions: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate)) !void {
+        const pin_score: usize = 1_000_000;
+        var it = std.mem.tokenizeAny(u8, instructions, " \n\r\t,;:'\"()[]{}`*");
+        while (it.next()) |tok| {
+            const path = std.mem.trim(u8, tok, ".");
+            if (std.mem.indexOfScalar(u8, path, '/') == null) continue;
+            if (!std.mem.endsWith(u8, path, ".zig") and !std.mem.endsWith(u8, path, ".json") and
+                !std.mem.endsWith(u8, path, ".md") and !std.mem.endsWith(u8, path, ".zon")) continue;
+            if (!proposal_mod.validatePath(path)) continue;
+
+            var found = false;
+            for (cands.items) |*c| {
+                if (std.mem.eql(u8, c.path, path)) {
+                    c.score += pin_score;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+            const before = cands.items.len;
+            try self.collectFile(path, keywords, cands);
+            if (cands.items.len > before) cands.items[cands.items.len - 1].score += pin_score;
+        }
+    }
+
     fn collectFile(self: *Engine, rel: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate)) !void {
         const data = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, rel, self.arena, .limited(96 * 1024)) catch return;
         var score: usize = 0;
@@ -442,7 +475,7 @@ pub const Engine = struct {
         }
     }
 
-    const Candidate = struct { path: []const u8, score: usize, data: []const u8 };
+    pub const Candidate = struct { path: []const u8, score: usize, data: []const u8 };
 
     fn isStopword(w: []const u8) bool {
         const stopwords = [_][]const u8{
@@ -725,4 +758,40 @@ test "errorTail falls back to the end when nothing looks like an error" {
     const tail = errorTail(arena, long);
     try std.testing.expectEqual(@as(usize, 1500), tail.len);
     try std.testing.expectEqual(@as(u8, 'Z'), tail[tail.len - 1]);
+}
+
+test "a file named in the instruction is pinned into the context" {
+    // Exact-match patching cannot work against a file the model never saw, so
+    // "fix X in src/agent/loop.zig" has to ship loop.zig even when keyword
+    // scoring would have ranked it out.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+    var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = undefined, .instructions = "" };
+
+    var cands: std.ArrayList(Engine.Candidate) = .empty;
+    try engine.pinNamedFiles("rename the export in tools/zig/lib.zig and update build.zig", &.{}, &cands);
+
+    var saw_lib = false;
+    for (cands.items) |c| {
+        if (std.mem.eql(u8, c.path, "tools/zig/lib.zig")) {
+            saw_lib = true;
+            try std.testing.expect(c.score >= 1_000_000);
+        }
+    }
+    try std.testing.expect(saw_lib);
+
+    // A path outside the modifiable surface is not pulled in.
+    try engine.pinNamedFiles("do not touch ~/.secrets/key.json or state/plugins.json", &.{}, &cands);
+    for (cands.items) |c| {
+        try std.testing.expect(std.mem.indexOf(u8, c.path, ".secrets") == null);
+    }
 }
