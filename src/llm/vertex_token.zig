@@ -49,7 +49,7 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
     // Held across the whole exchange, not just the store: two callers that
     // both miss would otherwise both mint, and the loser would free a token
     // the winner is already using.
-    cache_mutex.lock(io) catch {};
+    cache_mutex.lockUncancelable(io);
     defer cache_mutex.unlock(io);
     if (cached_token) |tok| {
         if (cacheHit(now, expires_at, cached_for, service_account_file)) return tok;

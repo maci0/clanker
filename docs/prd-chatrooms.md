@@ -8,7 +8,14 @@ side: `tools/zig/chat.zig` backs eight descriptors — `chat_send`,
 `chat_history`, `chat_rooms`, `chat_subscribe`, `todo_add`, `todo_claim`,
 `todo_close`, `todo_list` — each pinning its op in the descriptor `config`
 (e.g. `{"op":"send"}`). Local log: `state/chatrooms.jsonl`. Peer delivery:
-`POST /api/chat/message` to every configured peer.
+`POST /api/chat/message` to every configured peer (the web UI also has
+`POST /api/chat/send` and `POST /api/chat/subscribe`, not just the peer-fanout
+endpoint).
+
+**Since this was written, the `todo_*` ops' shared/room-scoped path was
+removed in favor of the board** (see Design below and
+`docs/prd-run-todos.md`). This revision updates the ops table and Design
+section to match; see Open questions for what that removal leaves unresolved.
 
 ## Problem
 
@@ -49,35 +56,61 @@ its reach.
 
 | Tool | Input |
 |---|---|
-| `chat_send` | `{"room":"dev","text":"hello"}` (or `"to"` for a DM) |
+| `chat_send` | `{"room":"dev","text":"hello"}` |
 | `chat_history` | `{"room":"dev","after":0}` — newest first; pass the last seen ts to get only newer |
 | `chat_rooms` | `{}` — per-room count, last sender, preview, subscriptions |
 | `chat_subscribe` | `{"room":"dev","on":true}` |
-| `todo_add` | `{"room":"dev","title":"ship it"}` |
-| `todo_claim` / `todo_close` | `{"room":"dev","todo":"<id>"}` |
-| `todo_list` | `{"room":"dev"}` |
+| `todo_add` / `todo_claim` / `todo_close` / `todo_list` | `{"title":"..."}` etc., **no `room`** — see Private todos below |
 
-**Private todos.** The `todo_*` ops may omit `room`: inside a sub-agent run
-the host routes to the run's private in-memory list instead of a shared room
-list (`src/agent/private_todos.zig`, wired only by `subagent.runNested`).
-Nothing is logged or fanned out; the list is discarded when the run returns,
-and its final state is appended to the sub-agent's answer so the parent sees
-progress even when the run hits its iteration cap. Ids are `p1`, `p2`, ... to
-keep them distinct from shared-list message ids. A private todo is the run's
-working plan; shared work goes on the board.
+**DM rooms are a manual convention, not a feature.** The original design
+called for `chat_send` to accept a `"to"` field and build `dm:<a>|<b>`
+automatically; that was never implemented (`ChatOp` in `src/sandbox/host.zig`
+and the `chat_send` manifest have no `to` field — only a stale error string
+in `tools/zig/chat.zig` still mentions it). A DM today is just two callers
+manually agreeing on and sending to the same `dm:<a>|<b>` room string; there
+is no canonicalization (e.g. sorted participant order), so mismatched
+ordering silently creates two different rooms.
+
+**Private todos.** The `todo_*` ops no longer accept `room` at all —
+`src/sandbox/host.zig` hard-errors any `todo_*` call that names one
+("room todo lists are board cards now: use board_add, board_move,
+board_claim or board_list instead"). The shared/room-scoped todo list this
+section originally described has been fully replaced by the board (see
+`docs/prd-kanban-board.md`). What remains: inside a sub-agent run, the host
+routes a room-less `todo_*` call to the run's private in-memory list
+(`src/agent/private_todos.zig`, wired only by `subagent.runNested`, capped
+at 100 items). Nothing is logged or fanned out; the list is discarded when
+the run returns, and its final state is appended to the sub-agent's answer
+whenever the list is non-empty (not only when the run hits its iteration
+cap). Ids are `p1`, `p2`, ... to keep them distinct from shared-list message
+ids. A private todo is the run's working plan; shared work goes on the
+board. **Outside a sub-agent run** (a top-level run), no private list is ever
+attached, so `todo_*` without `room` fails too — see `docs/prd-run-todos.md`
+for the gap this leaves.
 
 **Inbox.** Each agent run injects a `[chatroom inbox]` user message with
 messages newer than the cursor (`state/chatrooms-cursor.json`), so a
 subscribed clanker notices what its peers said.
 
-**HTTP surface.** `POST /api/chat/message` (delivery),
-`GET /api/chat/messages?room=..&after=..`, `GET /api/chat/rooms`. CLI:
+**HTTP surface.** `POST /api/chat/message` (peer delivery),
+`GET /api/chat/messages?room=..&after=..`, `GET /api/chat/rooms`,
+`POST /api/chat/send` and `POST /api/chat/subscribe` (web UI). CLI:
 `clanker chat send|history|rooms|subscribe`.
 
-**Errors name the missing field.** `InvalidArg` alone told a caller nothing;
-each op maps it to a message that names the field and the operation that
-wanted it (e.g. "chat send needs \"room\" (or \"to\" for a direct message)
-and \"text\"").
+**History limits differ by surface — not one number.** Despite
+`chatrooms.zig`'s `history_limit = 50` constant, the effective page size is
+20 for the agent-facing `chat_history` tool (`src/sandbox/host.zig`), 50 for
+the CLI and for `GET /api/chat/messages`. The tool path also truncates each
+message to 600 chars; the CLI/HTTP paths don't truncate. The chatroom inbox
+injected into agent runs caps at the 5 newest messages, each preview
+truncated to 300 chars.
+
+**Errors name the missing field — mostly.** `InvalidArg` alone told a caller
+nothing; `send`/`history`/`subscribe` map it to a message naming the field
+and op that wanted it. `rooms` and the `todo_*` ops fall through to a
+generic message. When chatrooms are disabled at the sandbox level, chat
+tools surface a bare `SandboxDenied` with no friendly text, unlike the
+board's custom "chatrooms are disabled, and the board is a chatroom".
 
 ## Failure modes
 
@@ -86,22 +119,38 @@ and \"text\"").
 | Peer unreachable | Local log still written; the peer misses the message until it is sent something later — there is no redelivery |
 | Unsubscribed peer | Keeps nothing: a peer retains a message only for rooms it subscribes to |
 | Missing room/text | Named error per op, no write |
-| Chatrooms disabled in config | Tools that depend on them fail loudly (board: "chatrooms are disabled, and the board is a chatroom") |
+| `todo_*` called with a `room` | Hard error: room todo lists are gone, use the board |
+| `todo_*` called with no `room` outside a sub-agent run | Hard error, and the error text itself is stale (see `docs/prd-run-todos.md`) |
+| Chatrooms disabled in config | Tools that depend on them fail loudly (board: "chatrooms are disabled, and the board is a chatroom"); bare chat tools do not, see above |
 | Duplicate delivery | Consumers deduplicate by message id (the board fold does) |
 
 ## Acceptance criteria
 
 - [x] A message sent in a room appears in `state/chatrooms.jsonl` and at
       every subscribed peer.
-- [x] `dm:<a>|<b>` requires no special-casing by senders.
+- [ ] `dm:<a>|<b>` requires no special-casing by senders — not true today;
+      there is no `to` field or canonicalization, only a manual convention.
 - [x] Eight descriptors share one wasm module via descriptor `config`.
 - [x] Sub-agent private todos never leak to a room.
 
 ## Open questions / future work
 
-- History retention: rooms grow unboundedly toward `max_history` (default
-  500); the board's `max_pages` cap is the first place log growth bites.
+- Implement `chat_send`'s `to` field (with sorted-pair canonicalization) or
+  drop the "DM" framing to "shared room by convention" and update this PRD
+  and the tool descriptions accordingly. Right now the code, the manifest,
+  and this PRD's stated goal disagree with each other.
+- History retention is not actually unbounded: `chatrooms.zig`'s `trimLog`
+  caps `state/chatrooms.jsonl` at `max_history` (default 500) **combined
+  across all rooms** on every append — a busy room can push a quiet room's
+  history out entirely. Worth deciding whether the cap should be per-room.
 - Read cursors per subscriber are the caller's job (`after`); the host-held
   inbox cursor covers agent runs but not ad-hoc polling loops.
 - No redelivery to a peer that was down; a catch-up sync would need a
   history fetch on reconnect.
+- Reconcile the three different "history" limits (20 / 50 / 50-but-unused)
+  into one, or document why the tool path deliberately differs.
+- The `todo_*` op table above documents a shared/room-scoped path that no
+  longer exists in code. Either the ops table (now fixed in this revision)
+  needed catching up, or — if a shared room-scoped todo is still wanted for
+  some case the board doesn't cover — that's a real design question, not
+  just a doc fix.

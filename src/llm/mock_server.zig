@@ -87,7 +87,7 @@ pub const MockServer = struct {
     }
 
     pub fn lastCaptured(self: *MockServer) ?Captured {
-        self.mutex.lock(self.io) catch {};
+        self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.captured.items.len == 0) return null;
         return self.captured.items[self.captured.items.len - 1];
@@ -138,7 +138,7 @@ pub const MockServer = struct {
             .headers_raw = self.gpa.dupe(u8, headers_raw) catch return,
             .body = self.gpa.dupe(u8, body) catch return,
         };
-        self.mutex.lock(self.io) catch {};
+        self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.captured.append(self.gpa, cap) catch {};
     }
