@@ -37,7 +37,18 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // ------------------------------------------------------------------ tests
-    const exe_tests = b.addTest(.{ .root_module = exe.root_module });
+    // Tests run on the host. The x86_64-linux-musl pin above is a workaround for
+    // a linux-host lld problem with the shipped binary; reusing it here made
+    // `zig build test` unrunnable on any non-x86_64-linux dev machine.
+    const test_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = b.graph.host,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zwasm", .module = zwasm_mod },
+        },
+    });
+    const exe_tests = b.addTest(.{ .root_module = test_mod });
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);

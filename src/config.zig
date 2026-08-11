@@ -475,7 +475,7 @@ pub const Config = struct {
     }
 
     fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
-        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.os.linux.getpid()});
+        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.c.getpid()});
     }
 
     fn parseAgent(arena: std.mem.Allocator, v: json.Value) !Agent {

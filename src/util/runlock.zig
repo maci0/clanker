@@ -89,7 +89,7 @@ fn readOwner(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, path: []const 
 }
 
 fn selfPid() u32 {
-    return @intCast(std.os.linux.getpid());
+    return @intCast(std.c.getpid());
 }
 
 /// Whether a process with this id is alive, read from /proc rather than probed
