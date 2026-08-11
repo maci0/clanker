@@ -2711,7 +2711,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_goals = std.mem.eql(u8, target, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/providers");
-        const is_todos = std.mem.eql(u8, target, "/api/todos") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_board = std.mem.eql(u8, target, "/api/board") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
@@ -2766,8 +2766,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
             handleProviders(cfg, stream);
-        } else if (is_todos) {
-            handleTodos(io, gpa, method, body, stream);
+        } else if (is_board) {
+            handleBoard(io, gpa, cfg, method, body, stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
@@ -3479,23 +3479,6 @@ test "compactSession keeps whole messages and the last exchange" {
     try std.testing.expectEqual(@as(usize, 200), transcriptBytes(msgs[2..]));
 }
 
-const TodoPost = struct {
-    text: ?[]const u8 = null,
-    id: ?[]const u8 = null,
-    done: ?bool = null,
-    remove: ?bool = null,
-};
-
-const Todo = struct {
-    id: []const u8,
-    text: []const u8,
-    done: bool = false,
-    created: i64 = 0,
-};
-
-/// A shared checklist at `state/todos.json`, readable and writable by the page
-/// and by anything else that opens the file. One POST shape covers add, toggle
-/// and remove: which one it is follows from which fields are present.
 /// Every configured provider and its models, so the composer can offer the
 /// same choice `--provider` does instead of always running the default.
 fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
@@ -3546,9 +3529,198 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-fn handleTodos(
+/// A card on the shared board. Everything an agent or a person needs to know
+/// about one piece of work, in the file both of them read.
+const Card = struct {
+    id: []const u8,
+    title: []const u8,
+    body: []const u8 = "",
+    /// Column id. Free-form so the board's columns can be renamed without a
+    /// migration, validated against the board's own column list on write.
+    column: []const u8 = "backlog",
+    /// Position within the column, low first. Reassigned densely on every
+    /// move so two cards cannot claim one slot.
+    order: i64 = 0,
+    /// Instance name of the clanker that picked this up, or "" for nobody.
+    assignee: []const u8 = "",
+    labels: []const []const u8 = &.{},
+    priority: []const u8 = "normal",
+    /// Unix seconds, or 0 for no deadline.
+    deadline: i64 = 0,
+    created: i64 = 0,
+    updated: i64 = 0,
+    subtasks: []const Subtask = &.{},
+    /// Ids of cards that must finish first. A card whose dependencies are
+    /// unmet is still movable: the board reports the conflict rather than
+    /// forbidding the move, because the person moving it may know better.
+    depends_on: []const []const u8 = &.{},
+    log: []const LogEntry = &.{},
+    usage: Usage = .{},
+};
+
+const Subtask = struct {
+    id: []const u8,
+    text: []const u8,
+    done: bool = false,
+};
+
+const LogEntry = struct {
+    ts: i64 = 0,
+    who: []const u8 = "",
+    what: []const u8 = "",
+};
+
+/// What this card has cost so far. Accrued by whoever did the work, which is
+/// usually a run reporting its own totals.
+const Usage = struct {
+    prompt_tokens: u64 = 0,
+    completion_tokens: u64 = 0,
+    cost: f64 = 0,
+    runs: []const []const u8 = &.{},
+};
+
+const Column = struct {
+    id: []const u8,
+    title: []const u8,
+    /// Work-in-progress limit, 0 for none. Exceeding it is reported, not
+    /// refused, for the same reason an unmet dependency is.
+    wip: u32 = 0,
+};
+
+const Board = struct {
+    columns: []const Column = &.{},
+    cards: []const Card = &.{},
+};
+
+const board_path = "state/board.json";
+const todos_path = "state/todos.json";
+
+const default_columns = [_]Column{
+    .{ .id = "backlog", .title = "Backlog" },
+    .{ .id = "ready", .title = "Ready" },
+    .{ .id = "doing", .title = "Doing", .wip = 3 },
+    .{ .id = "review", .title = "Review" },
+    .{ .id = "done", .title = "Done" },
+};
+
+const BoardPost = struct {
+    /// Which mutation this is. Named rather than inferred from which fields
+    /// are present: a board has too many shapes for that to stay readable.
+    op: []const u8 = "",
+    id: []const u8 = "",
+    title: ?[]const u8 = null,
+    body: ?[]const u8 = null,
+    column: ?[]const u8 = null,
+    /// Target index within the column for a move; -1 appends.
+    position: ?i64 = null,
+    assignee: ?[]const u8 = null,
+    priority: ?[]const u8 = null,
+    deadline: ?i64 = null,
+    labels: ?[]const []const u8 = null,
+    text: ?[]const u8 = null,
+    subtask_id: ?[]const u8 = null,
+    done: ?bool = null,
+    depends_on: ?[]const u8 = null,
+    who: ?[]const u8 = null,
+    what: ?[]const u8 = null,
+    prompt_tokens: ?u64 = null,
+    completion_tokens: ?u64 = null,
+    cost: ?f64 = null,
+    run_id: ?[]const u8 = null,
+};
+
+fn validPriority(s: []const u8) bool {
+    return std.mem.eql(u8, s, "low") or std.mem.eql(u8, s, "normal") or std.mem.eql(u8, s, "high");
+}
+
+test validPriority {
+    try std.testing.expect(validPriority("low"));
+    try std.testing.expect(validPriority("normal"));
+    try std.testing.expect(validPriority("high"));
+    try std.testing.expect(!validPriority("urgent"));
+    try std.testing.expect(!validPriority(""));
+}
+
+fn columnExists(cols: []const Column, id: []const u8) bool {
+    for (cols) |c| {
+        if (std.mem.eql(u8, c.id, id)) return true;
+    }
+    return false;
+}
+
+test columnExists {
+    const cols = [_]Column{ .{ .id = "a", .title = "A" }, .{ .id = "b", .title = "B" } };
+    try std.testing.expect(columnExists(&cols, "a"));
+    try std.testing.expect(!columnExists(&cols, "c"));
+}
+
+/// Reads the board, seeding it from the columns above on first use and
+/// carrying any `state/todos.json` list into the backlog, so the checklist the
+/// board replaces is not silently dropped.
+fn loadBoard(io: std.Io, arena: std.mem.Allocator) Board {
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, board_path, arena, .limited(1 << 22)) catch {
+        return seedBoard(io, arena);
+    };
+    const parsed = std.json.parseFromSliceLeaky(Board, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        return seedBoard(io, arena);
+    };
+    if (parsed.columns.len == 0) return .{ .columns = &default_columns, .cards = parsed.cards };
+    return parsed;
+}
+
+fn seedBoard(io: std.Io, arena: std.mem.Allocator) Board {
+    var cards: std.ArrayList(Card) = .empty;
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, todos_path, arena, .limited(1 << 20)) catch "";
+    if (raw.len > 0) {
+        const OldTodo = struct { id: []const u8, text: []const u8, done: bool = false, created: i64 = 0 };
+        if (std.json.parseFromSliceLeaky([]OldTodo, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |old| {
+            for (old, 0..) |t, i| {
+                cards.append(arena, .{
+                    .id = t.id,
+                    .title = t.text,
+                    .column = if (t.done) "done" else "backlog",
+                    .order = @intCast(i),
+                    .created = t.created,
+                    .updated = t.created,
+                }) catch {};
+            }
+        }
+    }
+    return .{ .columns = &default_columns, .cards = cards.items };
+}
+
+fn writeBoard(io: std.Io, arena: std.mem.Allocator, b: Board) !void {
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    try std.json.Stringify.value(b, .{}, &enc.writer);
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), board_path, enc.written());
+}
+
+/// Renumbers a column's cards 0,1,2… in their current order. Called after
+/// every move so `order` stays a total order rather than a pile of ties.
+fn resequence(cards: []Card, column: []const u8) void {
+    var n: i64 = 0;
+    // Cards are kept sorted by order within a column by the caller; this only
+    // closes the gaps left by inserts and removals.
+    for (cards) |*c| {
+        if (!std.mem.eql(u8, c.column, column)) continue;
+        c.order = n;
+        n += 1;
+    }
+}
+
+fn boardError(stream: std.Io.net.Stream, status: u16, reason: []const u8, message: []const u8) void {
+    var buf: [256]u8 = undefined;
+    const body = std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{message}) catch "{\"ok\":false}";
+    respond(stream, status, reason, body);
+}
+
+/// The shared Kanban board: `GET` returns the whole thing, `POST` applies one
+/// named operation. Both agents and the page use this, which is the point —
+/// a card moved by a clanker is the same card a person sees move.
+fn handleBoard(
     io: std.Io,
     gpa: std.mem.Allocator,
+    cfg: *const config.Config,
     method: []const u8,
     body: []const u8,
     stream: std.Io.net.Stream,
@@ -3557,86 +3729,251 @@ fn handleTodos(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, todos_path, arena, .limited(1 << 20)) catch "[]";
-    var list: std.ArrayList(Todo) = .empty;
-    if (std.json.parseFromSliceLeaky([]Todo, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |existing| {
-        list.appendSlice(arena, existing) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
-            return;
-        };
-    }
+    const loaded = loadBoard(io, arena);
+    var cards: std.ArrayList(Card) = .empty;
+    cards.appendSlice(arena, loaded.cards) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    var b = Board{ .columns = loaded.columns, .cards = cards.items };
 
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(TodoPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        const req = std.json.parseFromSliceLeaky(BoardPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            boardError(stream, 400, "Bad Request", "bad request");
             return;
         };
-        if (req.text) |text| {
-            const trimmed = std.mem.trim(u8, text, " \t\r\n");
-            if (trimmed.len == 0 or trimmed.len > 500) {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text must be 1-500 characters\"}");
+        const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        const actor = if (req.who) |w| w else cfg.instance.name;
+
+        if (std.mem.eql(u8, req.op, "create")) {
+            const title = std.mem.trim(u8, req.title orelse "", " \t\r\n");
+            if (title.len == 0 or title.len > 500) {
+                boardError(stream, 400, "Bad Request", "title must be 1-500 characters");
                 return;
             }
-            const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-            const id = std.fmt.allocPrint(arena, "t-{d}-{d}", .{ now, list.items.len }) catch {
-                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+            const col = req.column orelse "backlog";
+            if (!columnExists(b.columns, col)) {
+                boardError(stream, 400, "Bad Request", "no such column");
                 return;
-            };
-            list.append(arena, .{ .id = id, .text = trimmed, .created = now }) catch {
-                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
-                return;
-            };
-        } else if (req.id) |id| {
-            var kept: std.ArrayList(Todo) = .empty;
-            var hit = false;
-            for (list.items) |t| {
-                if (!std.mem.eql(u8, t.id, id)) {
-                    kept.append(arena, t) catch continue;
-                    continue;
+            }
+            if (req.priority) |pr| {
+                if (!validPriority(pr)) {
+                    boardError(stream, 400, "Bad Request", "priority must be low, normal or high");
+                    return;
                 }
-                hit = true;
-                if (req.remove orelse false) continue;
-                var updated = t;
-                updated.done = req.done orelse !t.done;
-                kept.append(arena, updated) catch continue;
             }
-            if (!hit) {
-                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such todo\"}");
+            var order: i64 = 0;
+            for (cards.items) |c| {
+                if (std.mem.eql(u8, c.column, col)) order += 1;
+            }
+            const id = std.fmt.allocPrint(arena, "c-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+            var log0: std.ArrayList(LogEntry) = .empty;
+            log0.append(arena, .{ .ts = now, .who = actor, .what = "created" }) catch {};
+            cards.append(arena, .{
+                .id = id,
+                .title = title,
+                .body = req.body orelse "",
+                .column = col,
+                .order = order,
+                .assignee = req.assignee orelse "",
+                .priority = req.priority orelse "normal",
+                .deadline = req.deadline orelse 0,
+                .labels = req.labels orelse &.{},
+                .created = now,
+                .updated = now,
+                .log = log0.items,
+            }) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+                return;
+            };
+        } else if (req.op.len == 0) {
+            boardError(stream, 400, "Bad Request", "missing op");
+            return;
+        } else {
+            // Every remaining operation names one card.
+            var at: ?usize = null;
+            for (cards.items, 0..) |c, i| {
+                if (std.mem.eql(u8, c.id, req.id)) at = i;
+            }
+            const idx = at orelse {
+                boardError(stream, 404, "Not Found", "no such card");
+                return;
+            };
+            const card = &cards.items[idx];
+
+            if (std.mem.eql(u8, req.op, "update")) {
+                if (req.title) |t| {
+                    const trimmed = std.mem.trim(u8, t, " \t\r\n");
+                    if (trimmed.len == 0 or trimmed.len > 500) {
+                        boardError(stream, 400, "Bad Request", "title must be 1-500 characters");
+                        return;
+                    }
+                    card.title = trimmed;
+                }
+                if (req.body) |v| card.body = v;
+                if (req.assignee) |v| card.assignee = v;
+                if (req.deadline) |v| card.deadline = v;
+                if (req.labels) |v| card.labels = v;
+                if (req.priority) |pr| {
+                    if (!validPriority(pr)) {
+                        boardError(stream, 400, "Bad Request", "priority must be low, normal or high");
+                        return;
+                    }
+                    card.priority = pr;
+                }
+            } else if (std.mem.eql(u8, req.op, "move")) {
+                const col = req.column orelse card.column;
+                if (!columnExists(b.columns, col)) {
+                    boardError(stream, 400, "Bad Request", "no such column");
+                    return;
+                }
+                const from = card.column;
+                card.column = col;
+                // Sort the destination by order, then place this card at the
+                // requested index and close the gaps in both columns.
+                const want = req.position orelse -1;
+                card.order = if (want < 0) std.math.maxInt(i64) else want * 2 - 1;
+                std.mem.sort(Card, cards.items, {}, cardLessThan);
+                resequence(cards.items, col);
+                if (!std.mem.eql(u8, from, col)) resequence(cards.items, from);
+                var entry: std.ArrayList(LogEntry) = .empty;
+                entry.appendSlice(arena, card.log) catch {};
+                entry.append(arena, .{ .ts = now, .who = actor, .what = std.fmt.allocPrint(arena, "moved to {s}", .{col}) catch "moved" }) catch {};
+                card.log = entry.items;
+            } else if (std.mem.eql(u8, req.op, "delete")) {
+                _ = cards.orderedRemove(idx);
+                b.cards = cards.items;
+                writeBoard(io, arena, b) catch {
+                    boardError(stream, 500, "Internal Server Error", "write failed");
+                    return;
+                };
+                respondBoard(arena, b, stream);
+                return;
+            } else if (std.mem.eql(u8, req.op, "subtask_add")) {
+                const text = std.mem.trim(u8, req.text orelse "", " \t\r\n");
+                if (text.len == 0 or text.len > 500) {
+                    boardError(stream, 400, "Bad Request", "subtask text must be 1-500 characters");
+                    return;
+                }
+                var subs: std.ArrayList(Subtask) = .empty;
+                subs.appendSlice(arena, card.subtasks) catch {};
+                const sid = std.fmt.allocPrint(arena, "s-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds}) catch "s-0";
+                subs.append(arena, .{ .id = sid, .text = text }) catch {};
+                card.subtasks = subs.items;
+            } else if (std.mem.eql(u8, req.op, "subtask_toggle") or std.mem.eql(u8, req.op, "subtask_remove")) {
+                const sid = req.subtask_id orelse {
+                    boardError(stream, 400, "Bad Request", "missing subtask_id");
+                    return;
+                };
+                var subs: std.ArrayList(Subtask) = .empty;
+                var hit = false;
+                for (card.subtasks) |s| {
+                    if (!std.mem.eql(u8, s.id, sid)) {
+                        subs.append(arena, s) catch {};
+                        continue;
+                    }
+                    hit = true;
+                    if (std.mem.eql(u8, req.op, "subtask_remove")) continue;
+                    var updated = s;
+                    updated.done = req.done orelse !s.done;
+                    subs.append(arena, updated) catch {};
+                }
+                if (!hit) {
+                    boardError(stream, 404, "Not Found", "no such subtask");
+                    return;
+                }
+                card.subtasks = subs.items;
+            } else if (std.mem.eql(u8, req.op, "depend_add") or std.mem.eql(u8, req.op, "depend_remove")) {
+                const dep = req.depends_on orelse {
+                    boardError(stream, 400, "Bad Request", "missing depends_on");
+                    return;
+                };
+                if (std.mem.eql(u8, dep, card.id)) {
+                    boardError(stream, 400, "Bad Request", "a card cannot depend on itself");
+                    return;
+                }
+                var deps: std.ArrayList([]const u8) = .empty;
+                var present = false;
+                for (card.depends_on) |d| {
+                    if (std.mem.eql(u8, d, dep)) {
+                        present = true;
+                        if (std.mem.eql(u8, req.op, "depend_remove")) continue;
+                    }
+                    deps.append(arena, d) catch {};
+                }
+                if (std.mem.eql(u8, req.op, "depend_add")) {
+                    if (!present) {
+                        var exists = false;
+                        for (cards.items) |c| {
+                            if (std.mem.eql(u8, c.id, dep)) exists = true;
+                        }
+                        if (!exists) {
+                            boardError(stream, 404, "Not Found", "no such card to depend on");
+                            return;
+                        }
+                        deps.append(arena, dep) catch {};
+                    }
+                }
+                card.depends_on = deps.items;
+            } else if (std.mem.eql(u8, req.op, "log")) {
+                const what = std.mem.trim(u8, req.what orelse "", " \t\r\n");
+                if (what.len == 0 or what.len > 2000) {
+                    boardError(stream, 400, "Bad Request", "log text must be 1-2000 characters");
+                    return;
+                }
+                var entry: std.ArrayList(LogEntry) = .empty;
+                entry.appendSlice(arena, card.log) catch {};
+                entry.append(arena, .{ .ts = now, .who = actor, .what = what }) catch {};
+                card.log = entry.items;
+            } else if (std.mem.eql(u8, req.op, "usage")) {
+                // Accrued, not replaced: a card is worked on by more than one
+                // run, and the total is what the card cost.
+                card.usage.prompt_tokens += req.prompt_tokens orelse 0;
+                card.usage.completion_tokens += req.completion_tokens orelse 0;
+                card.usage.cost += req.cost orelse 0;
+                if (req.run_id) |rid| {
+                    var runs: std.ArrayList([]const u8) = .empty;
+                    var seen = false;
+                    for (card.usage.runs) |r| {
+                        runs.append(arena, r) catch {};
+                        if (std.mem.eql(u8, r, rid)) seen = true;
+                    }
+                    if (!seen) runs.append(arena, rid) catch {};
+                    card.usage.runs = runs.items;
+                }
+            } else {
+                boardError(stream, 400, "Bad Request", "unknown op");
                 return;
             }
-            list = kept;
-        } else {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"need text or id\"}");
-            return;
+            card.updated = now;
         }
-        var enc: std.Io.Writer.Allocating = .init(arena);
-        std.json.Stringify.value(list.items, .{}, &enc.writer) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
-            return;
-        };
-        atomic_write.writeFile(io, std.Io.Dir.cwd(), todos_path, enc.written()) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write failed\"}");
+
+        b.cards = cards.items;
+        writeBoard(io, arena, b) catch {
+            boardError(stream, 500, "Internal Server Error", "write failed");
             return;
         };
     }
 
-    var out: std.Io.Writer.Allocating = .init(arena);
-    out.writer.writeAll("{\"ok\":true,\"todos\":") catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
-        return;
-    };
-    std.json.Stringify.value(list.items, .{}, &out.writer) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
-        return;
-    };
-    out.writer.writeAll("}") catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
-        return;
-    };
-    respond(stream, 200, "OK", out.written());
+    respondBoard(arena, b, stream);
 }
 
-const todos_path = "state/todos.json";
+fn cardLessThan(_: void, a: Card, c: Card) bool {
+    const col = std.mem.order(u8, a.column, c.column);
+    if (col != .eq) return col == .lt;
+    return a.order < c.order;
+}
+
+fn respondBoard(arena: std.mem.Allocator, b: Board, stream: std.Io.net.Stream) void {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    out.writer.writeAll("{\"ok\":true,\"board\":") catch return;
+    std.json.Stringify.value(b, .{}, &out.writer) catch return;
+    out.writer.writeAll("}") catch return;
+    respond(stream, 200, "OK", out.written());
+}
 const goals_path = "state/goals.json";
 
 /// Adding a goal and changing one's status, the two things the `goal` tool and
