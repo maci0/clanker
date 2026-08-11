@@ -17,6 +17,47 @@ const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
 pub const Theme = theme_mod.Theme;
 
+// -------------------------------------------------------- control stripping --
+//
+// Everything this file renders is text clanker didn't generate itself — LLM
+// responses, tool output, peer chat received over HTTP — so a raw ESC byte in
+// that text would otherwise print straight to the user's terminal (CWE-150,
+// terminal injection). Control bytes are dropped at these chokepoints; the
+// printable remainder of an escape sequence (e.g. the "[31m" after a stripped
+// ESC) stays as inert visible text, which keeps the pass stateless instead of
+// having to track CSI sequences across stream chunks. The ANSI clanker
+// intentionally emits comes from Theme and is written around the sanitized
+// text, never through it.
+
+/// A C0 control or DEL that must not reach the terminal. `\n` stays (line
+/// structure) and `\t` stays (layout, can't start an escape sequence).
+fn strippedControl(c: u8) bool {
+    return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
+}
+
+/// Writes `bytes` with C0 controls (except \n and \t), DEL, and UTF-8-encoded
+/// C1 controls (0xC2 0x80..0x9F, i.e. U+0080..U+009F) removed. Bare
+/// continuation bytes in that range are left alone — they are the tails of
+/// legitimate multi-byte codepoints like "€" (0xE2 0x82 0xAC).
+fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < bytes.len) {
+        if (strippedControl(bytes[i])) {
+            if (i > start) w.writeAll(bytes[start..i]) catch {};
+            i += 1;
+            start = i;
+        } else if (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F) {
+            if (i > start) w.writeAll(bytes[start..i]) catch {};
+            i += 2;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if (start < bytes.len) w.writeAll(bytes[start..]) catch {};
+}
+
 /// Renders the same markdown subset as the `format` WASM tool (bold, italic,
 /// inline code, fenced blocks, "- " bullets) straight into ANSI as content
 /// streams in, one delta at a time. A marker can split across two deltas
@@ -66,6 +107,21 @@ pub const MdStream = struct {
                 self.at_line_start = (c == '\n');
                 i += 1;
                 continue;
+            }
+
+            // Untrusted control bytes never reach the terminal, in or out of
+            // a fence. A lone 0xC2 at the chunk boundary is held back like a
+            // split marker: the next chunk decides if it completes a C1.
+            if (strippedControl(c)) {
+                i += 1;
+                continue;
+            }
+            if (c == 0xC2) {
+                if (remaining < 2) break;
+                if (self.at(chunk, i + 1) >= 0x80 and self.at(chunk, i + 1) <= 0x9F) {
+                    i += 2;
+                    continue;
+                }
             }
 
             // Inside a fence everything is literal: a code block full of *,
@@ -212,7 +268,10 @@ pub const MdStream = struct {
     /// (keeping the theme it was constructed with).
     pub fn flush(self: *MdStream, w: *std.Io.Writer) void {
         if (self.hold_len > 0) {
-            w.writeAll(self.hold[0..self.hold_len]) catch {};
+            // Held bytes can carry a control that arrived right behind a
+            // possible marker at a chunk end; they get the same stripping
+            // they'd have gotten had more input resolved the marker.
+            writeSanitized(w, self.hold[0..self.hold_len]);
         }
         if (self.in_code) w.writeAll(self.theme.reset) catch {};
         if (self.in_italic) w.writeAll(self.theme.reset) catch {};
@@ -249,7 +308,7 @@ pub fn printCallCard(w: *std.Io.Writer, theme: *const Theme, tool_name: []const 
         const budget = if (cw > tool_name.len + 8) cw - tool_name.len - 8 else 20;
         w.writeAll(theme.dim) catch {};
         w.writeAll("  ") catch {};
-        w.writeAll(width.truncateToWidth(args_json, budget)) catch {};
+        writeSanitized(w, width.truncateToWidth(args_json, budget));
         w.writeAll(theme.reset) catch {};
     }
     w.writeAll("\n") catch {};
@@ -277,7 +336,7 @@ pub fn printResultBody(w: *std.Io.Writer, theme: *const Theme, result_json: ?[]c
         }
         w.writeAll(theme.dim) catch {};
         w.writeAll("\xe2\x94\x82  ") catch {};
-        w.writeAll(width.truncateToWidth(line, budget)) catch {};
+        writeSanitized(w, width.truncateToWidth(line, budget));
         w.writeAll(theme.reset) catch {};
         w.writeAll("\n") catch {};
         shown += 1;
@@ -404,6 +463,47 @@ test "MdStream under the mono theme emits no ANSI codes at all" {
     try std.testing.expect(std.mem.indexOf(u8, buf[0..w.end], "\x1b") == null);
 }
 
+test "MdStream strips C0 controls and DEL from prose, keeping newline and tab" {
+    const allocator = std.testing.allocator;
+    // The ESC is dropped; the "[31m" behind it survives as inert text.
+    const out = try mdStreamRender(allocator, &.{"a\x1b[31mb\x07c\x00d\x7fe\tf\ng"});
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("a[31mb" ++ "c" ++ "d" ++ "e\tf\ng", out);
+}
+
+test "MdStream strips controls inside a fence too" {
+    const allocator = std.testing.allocator;
+    const out = try mdStreamRender(allocator, &.{"```\nx\x1b[2Jy\n```\n"});
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "x[2Jy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2J") == null);
+}
+
+test "MdStream strips C1 controls but keeps multi-byte codepoints intact" {
+    const allocator = std.testing.allocator;
+    // 0xC2 0x9B is U+009B (CSI), stripped; "©" (0xC2 0xA9) and "€"
+    // (0xE2 0x82 0xAC, whose middle byte falls in 0x80..0x9F) are text.
+    const out = try mdStreamRender(allocator, &.{"a\xc2\x9bb \xc2\xa9 \xe2\x82\xac"});
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("ab \xc2\xa9 \xe2\x82\xac", out);
+}
+
+test "MdStream strips a C1 control split across two feeds" {
+    const allocator = std.testing.allocator;
+    const out = try mdStreamRender(allocator, &.{ "a\xc2", "\x9bb" });
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("ab", out);
+}
+
+test "MdStream strips a control held back behind an unresolved marker" {
+    const allocator = std.testing.allocator;
+    // The chunk ends while "`\x1b" could still become a fence, so both bytes
+    // are held; flush must not write the ESC out raw.
+    const out = try mdStreamRender(allocator, &.{"x`\x1b"});
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("x`", out);
+}
+
 test "printCallCard shows the tool name and a truncated args preview" {
     var out = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer out.deinit();
@@ -442,6 +542,25 @@ test "printResultBody is a no-op for a null or empty result" {
     printResultBody(&out.writer, &Theme.default, null, 80);
     printResultBody(&out.writer, &Theme.default, "", 80);
     try std.testing.expectEqual(@as(usize, 0), out.written().len);
+}
+
+test "printResultBody strips control bytes from tool output" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    printResultBody(&out.writer, &Theme.mono, "x\x1b[2Jy\r\nnext\x07line\n", 80);
+    const bytes = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "x[2Jy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "nextline") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b") == null);
+}
+
+test "printCallCard strips control bytes from the args preview" {
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    printCallCard(&out.writer, &Theme.mono, "exec", "{\"cmd\":\"\x1b]0;owned\x07\"}", 80);
+    const bytes = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "]0;owned") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b") == null);
 }
 
 test "printCardFooter reports elapsed time" {
