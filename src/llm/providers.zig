@@ -259,7 +259,10 @@ const OpenAIResponse = struct {
 fn parseOpenAI(arena: std.mem.Allocator, body: []const u8) !types.ChatResponse {
     const parsed = try json.parseFromSliceLeaky(OpenAIResponse, arena, body, .{ .ignore_unknown_fields = true });
     if (parsed.@"error") |e| {
-        _ = e;
+        // A 200 carrying an error body never reaches the HTTP error path, so
+        // this is the only place the provider's reason is visible — do not
+        // discard it, or a rate limit reads identically to a bad key.
+        log.log(.error_, "openai provider error ({s}): {s}", .{ e.type orelse "unknown", e.message orelse "no message" });
         return error.ApiError;
     }
     if (parsed.choices.len == 0) return error.EmptyChoices;
