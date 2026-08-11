@@ -475,6 +475,97 @@ test "proposalDiffGate rejects no-op and empty proposals" {
     try std.testing.expect(!mismatch.ok);
 }
 
+/// Rejects a proposal where the old text contains a declaration name (fn/const/var)
+/// that is removed by the new text but still referenced elsewhere in the file after
+/// the substitution. Catches the common LLM mistake of deleting a helper that is
+/// still called, before the expensive build gate runs.
+pub fn removedDeclGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, files: []const []const u8, old_texts: []const []const u8, new_texts: []const []const u8) !GateResult {
+    if (files.len != old_texts.len or files.len != new_texts.len)
+        return .{ .ok = true, .label = "removed-decl" };
+    for (files, old_texts, new_texts) |f, old, new| {
+        if (!std.mem.endsWith(u8, f, ".zig")) continue;
+        if (old.len == 0) continue; // append-mode
+        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch continue;
+        defer gpa.free(content);
+        // Build file content after substitution.
+        const pos = std.mem.indexOf(u8, content, old) orelse continue;
+        const after = gpa.alloc(u8, content.len - old.len + new.len) catch continue;
+        defer gpa.free(after);
+        @memcpy(after[0..pos], content[0..pos]);
+        @memcpy(after[pos..][0..new.len], new);
+        @memcpy(after[pos + new.len ..], content[pos + old.len ..]);
+        // Extract declaration names from old that are absent in new.
+        var decls_removed = extractDeclNames(old, gpa) catch continue;
+        defer decls_removed.deinit(gpa);
+        for (decls_removed.items) |name| {
+            // If the name still appears in new text, it wasn't removed.
+            if (std.mem.indexOf(u8, new, name) != null) continue;
+            // Check if the name is still referenced in the rest of the file
+            // (outside the replacement region).
+            const before_region = after[0..pos];
+            const after_region = if (pos + new.len < after.len) after[pos + new.len ..] else "";
+            if (std.mem.indexOf(u8, before_region, name) != null or
+                std.mem.indexOf(u8, after_region, name) != null)
+            {
+                return .{ .ok = false, .label = "removed-decl", .detail = name };
+            }
+        }
+    }
+    return .{ .ok = true, .label = "removed-decl" };
+}
+
+fn extractDeclNames(src: []const u8, gpa: std.mem.Allocator) !std.ArrayList([]const u8) {
+    var out: std.ArrayList([]const u8) = .empty;
+    const prefixes = [_][]const u8{ "fn ", "const ", "var " };
+    for (prefixes) |prefix| {
+        var offset: usize = 0;
+        while (offset < src.len) {
+            const found = std.mem.indexOfPos(u8, src, offset, prefix) orelse break;
+            const name_start = found + prefix.len;
+            if (name_start >= src.len) break;
+            var name_end = name_start;
+            while (name_end < src.len and isIdentChar(src[name_end])) : (name_end += 1) {}
+            if (name_end > name_start) {
+                const name = src[name_start..name_end];
+                // Skip very short names and keywords to reduce false positives.
+                if (name.len >= 2 and !std.mem.eql(u8, name, "if") and
+                    !std.mem.eql(u8, name, "or") and !std.mem.eql(u8, name, "of"))
+                {
+                    try out.append(gpa, name);
+                }
+            }
+            offset = name_end;
+        }
+    }
+    return out;
+}
+
+fn isIdentChar(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_';
+}
+
+test "removedDeclGate catches a deleted function still referenced" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.zig", .data = "fn helper() void {}\nfn main() void { helper(); }\n" });
+
+    // Removing helper while main still calls it: fail
+    const bad = try removedDeclGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"fn helper() void {}\n"}, &.{""});
+    try std.testing.expect(!bad.ok);
+    try std.testing.expectEqualStrings("removed-decl", bad.label);
+
+    // Removing helper AND its call site: pass
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.zig", .data = "fn helper() void {}\nfn main() void { helper(); }\n" });
+    const ok = try removedDeclGate(io, gpa, tmp.dir, &.{"b.zig"}, &.{"fn helper() void {}\nfn main() void { helper(); }\n"}, &.{"fn main() void {}\n"});
+    try std.testing.expect(ok.ok);
+}
+
 test "fmtGate and formatFiles short-circuit when there is nothing to format" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
