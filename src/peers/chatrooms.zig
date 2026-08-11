@@ -17,6 +17,10 @@ const std = @import("std");
 const config_mod = @import("../config.zig");
 const log = @import("../util/log.zig");
 
+/// Guards the read-modify-write in `append`. Separate from the log so that
+/// trimming, which replaces the log, cannot invalidate a held lock.
+const lock_file_name = "chatrooms.lock";
+
 pub const log_path = "chatrooms.jsonl";
 pub const sub_path = "chatrooms-sub.json";
 pub const cursor_path = "chatrooms-cursor.json";
@@ -173,6 +177,25 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
     if (state_dir.len > 0) try base.createDirPath(io, state_dir);
     const path = try subPath(arena, state_dir, log_path);
+
+    // This reads the whole log, adds a line, and writes the whole log back.
+    // Two instances doing that at once both start from the same contents and
+    // the second write discards the first message: chatrooms exist so that
+    // separate clanker processes can talk to each other, so the concurrent
+    // case is the ordinary one, not the exception.
+    //
+    // The lock is held on a file of its own rather than on the log, because
+    // trimming replaces the log and a lock taken on the replaced file no
+    // longer guards anything.
+    const lock_path = try subPath(arena, state_dir, lock_file_name);
+    const lock = base.createFile(io, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
+        // Best effort: a chat message is worth delivering unserialised rather
+        // than dropping outright, but say so.
+        log.log(.warn, "[chat] could not lock {s} ({s}); a concurrent write may be lost", .{ lock_path, @errorName(err) });
+        break :blk null;
+    };
+    defer if (lock) |f| f.close(io);
+
     const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(1 << 20)) catch null;
     defer if (maybe_existing) |e| gpa.free(e);
     const existing = maybe_existing orelse &[_]u8{};
@@ -520,4 +543,69 @@ test "receive filters by subscription" {
 
     const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "other", 0, 10);
     try std.testing.expectEqual(@as(usize, 0), hist.len);
+}
+
+test "messages from concurrent senders are all kept" {
+    // append reads the whole log, adds a line and writes it back. Two senders
+    // racing both start from the same contents, so the second write drops the
+    // first message. Chatrooms exist for separate clanker processes to talk,
+    // which makes that the ordinary case rather than an unlucky one.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.max_history = 10_000;
+
+    const senders = 6;
+    const per_sender = 10;
+
+    const Sender = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        cfg: *const config_mod.Config,
+        id: usize,
+
+        fn run(self: *@This()) void {
+            var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            var i: usize = 0;
+            while (i < per_sender) : (i += 1) {
+                const id = std.fmt.allocPrint(arena, "s{d}-{d}", .{ self.id, i }) catch return;
+                append(self.dir, self.io, self.gpa, arena, "state", self.cfg, .{
+                    .room = "dev",
+                    .from = "tester",
+                    .text = "hello",
+                    .ts = @intCast(i),
+                    .id = id,
+                }) catch return;
+            }
+        }
+    };
+
+    var senders_buf: [senders]Sender = undefined;
+    var threads: [senders]std.Thread = undefined;
+    for (&senders_buf, 0..) |*w, i| {
+        w.* = .{ .dir = tmp.dir, .io = io, .gpa = std.testing.allocator, .cfg = &cfg, .id = i };
+        threads[i] = try std.Thread.spawn(.{}, Sender.run, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/chatrooms.jsonl", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+
+    var kept: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        kept += 1;
+    }
+    try std.testing.expectEqual(@as(usize, senders * per_sender), kept);
 }
