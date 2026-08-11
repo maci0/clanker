@@ -2990,7 +2990,9 @@ function goalCard(g) {
           title: "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations."
         }),
         UI.button("Work on this", function () { workOnGoal(g); },
-          { label: "Work on goal: " + (g.objective || g.id) })));
+          { label: "Work on goal: " + (g.objective || g.id) }),
+        UI.button("Re-evaluate", function () { reEvaluateGoal(g); },
+          { label: "Re-evaluate whether goal is done: " + (g.objective || g.id) })));
     }
     [["Mark done", "done", "Goal marked done."],
      ["Abandon", "abandoned", "Goal abandoned."],
@@ -4031,13 +4033,13 @@ function runGoal(g, opts) {
     el.goalsStatus.textContent = "A run for this goal is already in progress; wait for it to finish.";
     return;
   }
-  var task = "Work on this goal until the completion criterion is met.\n\nObjective: " +
-    (g.objective || "") + "\nDone when: " + (g.completion_criterion || "");
+  var task = opts.task || ("Work on this goal until the completion criterion is met.\n\nObjective: " +
+    (g.objective || "") + "\nDone when: " + (g.completion_criterion || ""));
   var controller = new AbortController();
   goalRuns[g.id] = { controller: controller, status: "running", text: "" };
   showView("goals", true);
   renderGoals(goalState.val);
-  el.goalsStatus.textContent = "Starting work on goal…";
+  el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
   if (opts.onStart) opts.onStart();
 
   var splitter = makeLineSplitter(function (line) {
@@ -4102,6 +4104,22 @@ function workOnGoal(g) {
   var box = el.goals.querySelector('input[data-goal-budget="' + g.id + '"]');
   var n = box ? parseInt(box.value, 10) : NaN;
   runGoal(g, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
+}
+
+/* Re-evaluates whether the goal is already done: runs the agent against the
+   completion criterion and asks it to inspect the current state and give a
+   verdict, rather than doing the work. Streams into the goal's own panel like
+   any other run, and if the agent concludes it is met the user can mark it
+   done from the same card. */
+function reEvaluateGoal(g) {
+  if (!g || !g.id) return;
+  runGoal(g, {
+    task: "Re-evaluate whether this goal is already done. Do NOT do the work " +
+      "or make changes unless strictly needed to verify. Inspect the current " +
+      "state (files, board, recorded runs) and report clearly whether the " +
+      "completion criterion is met, and why.\n\nObjective: " +
+      (g.objective || "") + "\nDone when: " + (g.completion_criterion || "")
+  });
 }
 
 /* Turns a board card into a goal and starts a run on it, moving the card
