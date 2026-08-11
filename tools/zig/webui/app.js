@@ -1,6 +1,21 @@
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
 
+/* Pure helpers live in core/utils.js. It executes before this classic
+   script (module scripts and deferred scripts run in document order) and
+   bridges its exports through window.ckUtil, van-boot-style; these locals
+   keep every call site below unchanged until this file becomes a module
+   itself. */
+var readJson = window.ckUtil.readJson;
+var newSessionId = window.ckUtil.newSessionId;
+var fmtBytes = window.ckUtil.fmtBytes;
+var clip = window.ckUtil.clip;
+var sessionLabel = window.ckUtil.sessionLabel;
+var recencyGroup = window.ckUtil.recencyGroup;
+var isSafeLinkUrl = window.ckUtil.isSafeLinkUrl;
+var splitRow = window.ckUtil.splitRow;
+var prettyJsonIfPossible = window.ckUtil.prettyJsonIfPossible;
+
 var el = {
   form: document.getElementById("task-form"),
   task: document.getElementById("task"),
@@ -306,20 +321,8 @@ function scrollTo(node, block) {
    exactly what `clanker serve` is when reached over a LAN address rather
    than localhost. Failing silently there left a dead button, so the text
    gets selected instead and the label says what to press. */
-/* The server explains itself — "sessions module disabled", "no such model for
-   that provider", "an image exceeds the 4 MB limit" — and the page used to
-   replace all of it with a status code, so a switched-off module read as a
-   broken page. Every response goes through here. */
-function readJson(r) {
-  return r.json().then(function (d) {
-    if (!r.ok) throw new Error((d && d.error) || "HTTP " + r.status);
-    return d;
-  }, function () {
-    // A body that is not JSON at all still has to fail with something useful.
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return {};
-  });
-}
+/* readJson lives in core/utils.js: the server explains itself, and every response
+   goes through it so a switched-off module never reads as a broken page. */
 
 function copyText(text, btn, restoreLabel, selectTarget) {
   function restore() {
@@ -349,11 +352,6 @@ var busy = false;
 var controller = null;
 var elapsedTimer = null;
 var sessionId = loadSession();
-
-function newSessionId() {
-  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
-  return "sess-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-}
 
 function loadSession() {
   var id = null;
@@ -412,50 +410,13 @@ el.newChat.addEventListener("click", function () {
 
 var knownSessions = [];
 
-function fmtBytes(n) {
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
-  return (n / (1024 * 1024)).toFixed(1) + " MB";
-}
-
-/* Shortening that ends on a word. Slicing at a fixed character cut names in
-   half ("repl: write a markdow…"), which reads as a rendering fault rather
-   than as a title too long to show. Falls back to the hard cut when a single
-   word is longer than the budget. */
-function clip(text, max) {
-  if (text.length <= max) return text;
-  var cut = text.slice(0, max);
-  var space = cut.lastIndexOf(" ");
-  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-]+$/, "") + "\u2026";
-}
-
-function sessionLabel(s) {
-  var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
-  title = clip(title, 56);
-  var label = title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
-  // Transcript weight, because agent.compact_threshold_bytes is measured in
-  // exactly these bytes and compaction is otherwise invisible until it fires.
-  if (typeof s.bytes === "number" && s.bytes > 0) label += "  ·  " + fmtBytes(s.bytes);
-  return label;
-}
+/* fmtBytes, clip, sessionLabel live in core/utils.js. */
 
 /* The live session is always selectable even when the server has never seen
    it — a brand new chat has no saved file until its first turn completes,
    and dropping it from the list would make the picker disagree with what the
    composer is actually continuing. */
-/* Conversations group by when they were last touched, because that is how
-   you look for one: "the thing I was doing this morning", not an id. */
-function recencyGroup(updated) {
-  if (!updated) return "Undated";
-  var day = 24 * 60 * 60;
-  var now = Math.floor(Date.now() / 1000);
-  var age = now - updated;
-  if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return "Today";
-  if (age < 2 * day) return "Yesterday";
-  if (age < 7 * day) return "Previous 7 days";
-  if (age < 30 * day) return "Previous 30 days";
-  return "Older";
-}
+/* recencyGroup lives in core/utils.js. */
 
 
 /* Pinning lives in this browser rather than on the server: which few
@@ -1020,14 +981,8 @@ function showCaret(turn, on) {
 
 var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
 
-/* Answers are model output, and a prompt-injected tool result or RAG
-   document can steer the model into emitting a markdown link or image whose
-   target is a `javascript:` URL. Mirrors the scheme allowlist already used
-   for peer URLs below: only a scheme that cannot execute script is ever
-   assigned to href/src. */
-function isSafeLinkUrl(url) {
-  return /^(https?:|mailto:)/i.test(url);
-}
+/* isSafeLinkUrl lives in core/utils.js: only a scheme that cannot execute script
+   is ever assigned to href/src. */
 
 function inlineInto(parent, text) {
   while (text.length) {
@@ -1109,10 +1064,7 @@ function tableRow(tr, cells, cellTag) {
   });
 }
 
-function splitRow(line) {
-  var t = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return t.split("|");
-}
+/* splitRow lives in core/utils.js. */
 
 function renderMarkdown(text) {
   var frag = document.createDocumentFragment();
@@ -1266,18 +1218,7 @@ function finalizeAnswer(turn) {
   turn.answer.appendChild(frag);
 }
 
-/* JSON-shaped text (a tool result, most often) is unreadable as one line
-   and hljs has no way to know it's JSON without a fence's language tag.
-   Only untagged text is tried against JSON.parse: reformatting a block the
-   author explicitly fenced as something else overrides a stated intent, and
-   bare `42` or `"a"` parses as JSON too. */
-function prettyJsonIfPossible(text) {
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch (e) {
-    return null;
-  }
-}
+/* prettyJsonIfPossible lives in core/utils.js. */
 
 /* Fills codeEl with the text to display and kicks off highlighting once
    hljs has loaded. Returns what it decided, because the language is needed
