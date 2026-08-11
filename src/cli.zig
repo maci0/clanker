@@ -2261,6 +2261,10 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // Parked for serveConfirm, which frees answers that connection threads
     // duped with this same allocator (see handleAsk).
     serve_gpa = gpa;
+    // Config is immutable for the server lifetime. Publish the callback's
+    // timeout before accepting connections instead of having every streaming
+    // request race to rewrite the same global.
+    serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
 
     log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
     // Bare clickable URL (no log prefix) so terminals render it as a link.
@@ -2517,6 +2521,7 @@ const NotifyRequestBody = struct {
     topic: ?[]const u8 = null,
     payload: ?std.json.Value = null,
     ts: ?i64 = null,
+    id: ?[]const u8 = null,
 };
 
 const NotificationRecord = struct {
@@ -2526,7 +2531,54 @@ const NotificationRecord = struct {
     payload: std.json.Value,
     ts: i64,
     received_at: i64,
+    id: ?[]const u8 = null,
 };
+
+const notifications_max_bytes = 1 << 20;
+
+fn storeNotification(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: NotificationRecord) !void {
+    try base.createDirPath(io, "state");
+    var guard = filelock.acquire(io, base, "state", "notifications", gpa);
+    defer guard.release();
+
+    const file_path = "state/notifications.jsonl";
+    const maybe_existing = base.readFileAlloc(io, file_path, gpa, .limited(notifications_max_bytes)) catch null;
+    defer if (maybe_existing) |e| gpa.free(e);
+    const existing = maybe_existing orelse &[_]u8{};
+
+    // The log itself is the bounded delivery ledger. The check and rewrite
+    // share one lock, so simultaneous redeliveries cannot both append.
+    if (record.id) |id| if (id.len > 0) {
+        var lines = std.mem.splitScalar(u8, existing, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            var parsed_arena = std.heap.ArenaAllocator.init(gpa);
+            defer parsed_arena.deinit();
+            const prior = std.json.parseFromSliceLeaky(NotificationRecord, parsed_arena.allocator(), line, .{ .ignore_unknown_fields = true }) catch continue;
+            if (prior.id) |prior_id| if (std.mem.eql(u8, prior_id, id)) return;
+        }
+    };
+
+    var line_buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&line_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(record);
+
+    var out_list = std.ArrayList(u8).empty;
+    defer out_list.deinit(gpa);
+    try out_list.appendSlice(gpa, existing);
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
+    try out_list.appendSlice(gpa, line_buf[0..w.end]);
+    try out_list.append(gpa, '\n');
+    if (out_list.items.len > notifications_max_bytes) {
+        const floor = out_list.items.len - notifications_max_bytes;
+        const newline = std.mem.indexOfScalarPos(u8, out_list.items, floor, '\n') orelse floor;
+        const keep = @min(newline + 1, out_list.items.len);
+        std.mem.copyForwards(u8, out_list.items[0 .. out_list.items.len - keep], out_list.items[keep..]);
+        out_list.shrinkRetainingCapacity(out_list.items.len - keep);
+    }
+    try atomic_write.writeFile(io, base, file_path, out_list.items);
+}
 
 const A2ARequest = struct {
     id: ?std.json.Value = null,
@@ -2548,28 +2600,38 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8) !void {
     // Seconds since epoch, matching the `ts` field cmdNotify sends and the
     // units used for session created/updated timestamps elsewhere.
     const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at };
+    const record = NotificationRecord{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at, .id = parsed.id };
+    try storeNotification(io, gpa, std.Io.Dir.cwd(), record);
+}
 
-    std.Io.Dir.cwd().createDirPath(io, "state") catch |err|
-        log.log(.warn, "notify: mkdir 'state' failed: {s}", .{@errorName(err)});
-    const file_path = "state/notifications.jsonl";
-    const maybe_existing = std.Io.Dir.cwd().readFileAlloc(io, file_path, gpa, .limited(1 << 20)) catch null;
-    defer if (maybe_existing) |e| gpa.free(e);
-    const existing = maybe_existing orelse &[_]u8{};
+test "notification redelivery is stored once" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-    var line_buf: [1 << 20]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&line_buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.write(record);
-    const line = line_buf[0..w.end];
+    const first = NotificationRecord{
+        .from = "peer",
+        .kind = "message",
+        .topic = "",
+        .payload = .{ .string = "hello" },
+        .ts = 1,
+        .received_at = 2,
+        .id = "delivery-1",
+    };
+    try storeNotification(io, std.testing.allocator, tmp.dir, first);
+    try storeNotification(io, std.testing.allocator, tmp.dir, first);
 
-    var out_list = std.ArrayList(u8).empty;
-    defer out_list.deinit(gpa);
-    try out_list.appendSlice(gpa, existing);
-    if (existing.len > 0 and existing[existing.len - 1] != '\n') try out_list.append(gpa, '\n');
-    try out_list.appendSlice(gpa, line);
-    try out_list.append(gpa, '\n');
-    try atomic_write.writeFile(io, std.Io.Dir.cwd(), file_path, out_list.items);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const raw = try tmp.dir.readFileAlloc(io, "state/notifications.jsonl", arena_state.allocator(), .limited(notifications_max_bytes));
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| if (line.len > 0) {
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
 }
 
 const ChatMessageBody = struct {
@@ -4847,7 +4909,6 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // somebody to ask: the question goes down as an `ask` control event
         // and the answer comes back through POST /api/ask. Streaming runs
         // only — without the stream there is no channel to carry a question.
-        serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
         a.ask_fn = &serveAsk;
         // Confirm-before-write: with a browser on the stream, write-capable
         // tool calls wait for its allow/deny (`browser` and `always` both

@@ -1350,24 +1350,15 @@ function addToolEvent(turn, names) {
   return row;
 }
 
-/* A streaming run called ask_user: the server sent an `ask` control event
-   and is now holding the run until POST /api/ask answers it or the server's
-   ask timeout fires. One button per option, grouped and labelled with the
-   question so focusing a button announces both. Focus moves to the first
-   option because the run is blocked — there is nothing else on the page the
-   user can usefully do first. */
-function addAskEvent(turn, evt) {
-  if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
-  var row = document.createElement("div");
-  row.className = "event-ask";
-  var q = document.createElement("div");
-  q.className = "ask-question";
-  q.textContent = evt.question || "";
-  row.appendChild(q);
+/* Shared by addAskEvent and addConfirmEvent: one button per option, grouped
+   and labelled so focusing a button announces both, appended to the waiting
+   row. Focus moves to the first option because the run is blocked — there is
+   nothing else on the page the user can usefully do first. */
+function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   var group = document.createElement("div");
   group.className = "ask-options";
   group.setAttribute("role", "group");
-  group.setAttribute("aria-label", evt.question || "Choose an option");
+  group.setAttribute("aria-label", ariaLabel);
   evt.options.forEach(function (opt) {
     if (typeof opt !== "string") return;
     var btn = document.createElement("button");
@@ -1381,6 +1372,20 @@ function addAskEvent(turn, evt) {
   turn.events.appendChild(row);
   var first = group.querySelector("button");
   if (first) first.focus();
+}
+
+/* A streaming run called ask_user: the server sent an `ask` control event
+   and is now holding the run until POST /api/ask answers it or the server's
+   ask timeout fires. */
+function addAskEvent(turn, evt) {
+  if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
+  var row = document.createElement("div");
+  row.className = "event-ask";
+  var q = document.createElement("div");
+  q.className = "ask-question";
+  q.textContent = evt.question || "";
+  row.appendChild(q);
+  addAskOptionsGroup(turn, row, evt, evt.question || "Choose an option");
 }
 
 /* Confirm-before-write (agent.confirm_writes): the run is holding a
@@ -1403,25 +1408,7 @@ function addConfirmEvent(turn, evt) {
     pre.textContent = evt.args_preview;
     row.appendChild(pre);
   }
-  var group = document.createElement("div");
-  group.className = "ask-options";
-  group.setAttribute("role", "group");
-  group.setAttribute("aria-label", q.textContent);
-  evt.options.forEach(function (opt) {
-    if (typeof opt !== "string") return;
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "secondary";
-    btn.textContent = opt;
-    btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
-    group.appendChild(btn);
-  });
-  row.appendChild(group);
-  turn.events.appendChild(row);
-  /* Focus the first option, i.e. "allow": the run is blocked on this row,
-     same reasoning as addAskEvent. Enter is still a deliberate keypress. */
-  var first = group.querySelector("button");
-  if (first) first.focus();
+  addAskOptionsGroup(turn, row, evt, q.textContent);
 }
 
 function answerAsk(row, id, opt) {
@@ -3770,8 +3757,18 @@ el.modelSearch.addEventListener("focus", function () {
   renderModelList();
 });
 el.modelSearch.addEventListener("input", function () { modelListIndex = 0; renderModelList(); });
+el.modelSearch.addEventListener("focusout", function (e) {
+  if (e.relatedTarget && el.modelList.contains(e.relatedTarget)) return;
+  window.setTimeout(function () {
+    if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
+    hideModelList(); syncModelSearchLabel();
+  }, 0);
+});
 el.modelSearch.addEventListener("blur", function () {
-  window.setTimeout(function () { hideModelList(); syncModelSearchLabel(); }, 120);
+  window.setTimeout(function () {
+    if (document.activeElement === el.modelSearch || el.modelList.contains(document.activeElement)) return;
+    hideModelList(); syncModelSearchLabel();
+  }, 120);
 });
 el.modelSearch.addEventListener("keydown", function (e) {
   if (el.modelList.hidden) return;
@@ -3802,9 +3799,15 @@ el.modelSearch.addEventListener("keydown", function (e) {
    and any future caller cannot disagree about it. */
 function runOptions() {
   var out = {};
-  var pair = (el.modelSelect.value || "").split(" ");
-  if (pair[0]) out.provider = pair[0];
-  if (pair[1]) out.model = pair[1];
+  var raw = (el.modelSelect.value || "").trim();
+  var sp = raw.indexOf(" ");
+  if (sp !== -1) {
+    out.provider = raw.slice(0, sp);
+    out.model = raw.slice(sp + 1).trim();
+    if (!out.model) delete out.model;
+  } else if (raw) {
+    out.provider = raw;
+  }
   var t = parseFloat(el.paramTemp.value);
   if (!isNaN(t)) out.temperature = t;
   var tp = parseFloat(el.paramTopP.value);

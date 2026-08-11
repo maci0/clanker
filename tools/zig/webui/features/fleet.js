@@ -1,16 +1,7 @@
 // Fleet / cross-agent view — ES module, no bundler.
-// Owns #view-fleet: roster + grouped runs. Works without app.js.
+// Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
 import { clip } from "../core/utils.js";
-
-function readJson(r) {
-  return r.json().then(function (d) {
-    if (!r.ok) throw new Error((d && d.error) || "HTTP " + r.status);
-    return d;
-  }, function () {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return {};
-  });
-}
+import { readJson } from "../core/vendor.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -110,6 +101,112 @@ function renderRoster(container, status) {
   container.appendChild(ul);
 }
 
+function isDmRoom(room) { return typeof room === "string" && room.indexOf("dm:") === 0; }
+function dmNames(room) { return isDmRoom(room) ? room.slice(3).split("|").join(" \u2194 ") : room; }
+function navToRooms(room) {
+  try {
+    if (typeof window.showView === "function") window.showView("rooms");
+    else if (window.clankerApp && typeof window.clankerApp.showView === "function") window.clankerApp.showView("rooms");
+    else window.location.hash = "#rooms";
+  } catch (_) { window.location.hash = "#rooms"; }
+  if (!room) return;
+  var sel = document.getElementById("chat-room");
+  if (!sel) return;
+  try {
+    for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === room) {
+      sel.value = room; sel.dispatchEvent(new Event("change", { bubbles: true })); break;
+    }
+  } catch (_) {}
+}
+function normalizeChatData(d) {
+  if (d == null) return null;
+  if (Array.isArray(d)) return { rooms: d, subscribed: [] };
+  if (typeof d === "object") {
+    var rooms = d.rooms; if (!Array.isArray(rooms) && Array.isArray(d.data)) rooms = d.data;
+    if (!Array.isArray(rooms)) rooms = [];
+    var subs = d.subscribed || d.subscriptions || d.subs || [];
+    if (!Array.isArray(subs)) subs = [];
+    return { rooms: rooms, subscribed: subs };
+  }
+  return { rooms: [], subscribed: [] };
+}
+
+function renderDMs(container, chatData) {
+  if (!container) return;
+  container.textContent = "";
+  container.className = "fleet-dms";
+  if (chatData === null) {
+    container.appendChild(el("p", "run-empty", "DMs unavailable — chat module disabled."));
+    return;
+  }
+  var norm = normalizeChatData(chatData);
+  if (!norm) {
+    container.appendChild(el("p", "run-empty", "No DM data."));
+    return;
+  }
+  var rooms = norm.rooms || [];
+  var subs = norm.subscribed || [];
+  var dmRooms = rooms.filter(function (r) { return isDmRoom(r.room); });
+  if (!dmRooms.length) {
+    var empty = el("p", "run-empty", "No DM channels yet.");
+    container.appendChild(empty);
+    if (rooms.length && !dmRooms.length) {
+      var hint = el("p", "fleet-meta", rooms.length + " room(s), none are DMs.");
+      container.appendChild(hint);
+    }
+    return;
+  }
+  var subSet = {};
+  subs.forEach(function (s) { subSet[s] = true; });
+  var list = el("div", "fleet-dm-list");
+  list.setAttribute("role", "list");
+  dmRooms.forEach(function (r) {
+    var card = el("div", "tool-row fleet-card fleet-dm-card");
+    card.setAttribute("role", "listitem");
+    card.setAttribute("aria-label", "Open DM " + r.room);
+    card.tabIndex = 0;
+    var left = el("div", "fleet-card__main");
+    var titleRow = el("div", "fleet-dm-title-row");
+    var badge = el("span", "tool-tag fleet-dm-badge", "DM");
+    badge.setAttribute("aria-hidden", "true");
+    var title = el("span", "tool-name");
+    title.textContent = dmNames(r.room);
+    title.title = r.room;
+    titleRow.appendChild(badge);
+    titleRow.appendChild(title);
+    var metaText = (r.messages != null ? r.messages + " msgs" : "");
+    if (r.last_from) metaText += (metaText ? " \u00b7 " : "") + "last " + r.last_from;
+    if (subSet[r.room]) metaText += (metaText ? " \u00b7 " : "") + "subscribed";
+    var meta = el("div", "fleet-meta", metaText || r.room);
+    if (r.last_text) {
+      var preview = el("div", "fleet-meta fleet-dm-preview", clip(r.last_text, 100));
+      preview.title = r.last_text;
+      left.appendChild(titleRow);
+      left.appendChild(meta);
+      left.appendChild(preview);
+    } else {
+      left.appendChild(titleRow);
+      left.appendChild(meta);
+    }
+    var actions = el("div", "fleet-actions toolbar-actions");
+    var btn = el("button", "secondary", "Open");
+    btn.type = "button";
+    btn.addEventListener("click", function () { navToRooms(r.room); });
+    actions.appendChild(btn);
+    card.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navToRooms(r.room); }
+    });
+    card.addEventListener("click", function (e) {
+      if (e.target.closest && e.target.closest("button")) return;
+      navToRooms(r.room);
+    });
+    card.appendChild(left);
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+  container.appendChild(list);
+}
+
 function renderRuns(container, detailNode, runs) {
   container.textContent = "";
   if (!runs.length) {
@@ -150,7 +247,8 @@ function renderRuns(container, detailNode, runs) {
 
   container.setAttribute("role", "list");
   grouped.roots.forEach(function (root) {
-    var hasKids = !!(grouped.childrenOf[root.run_id] && grouped.childrenOf[root.run_id].length);
+    var children = grouped.childrenOf[root.run_id] || [];
+    var hasKids = !!children.length;
     var card = el("div", "tool-row fleet-card " + (hasKids ? "fleet-card--parent" : "fleet-card--plain"));
     card.tabIndex = 0;
     card.setAttribute("role", "listitem");
@@ -166,19 +264,30 @@ function renderRuns(container, detailNode, runs) {
     var meta = el("div", "fleet-meta", root.run_id + " \u00b7 " + fmtRunMeta(root));
     left.appendChild(title);
     left.appendChild(meta);
+    if (hasKids) {
+      var subMeta = el("div", "fleet-meta", children.length + " sub-run" + (children.length > 1 ? "s" : ""));
+      left.appendChild(subMeta);
+    }
     var actions = el("div", "fleet-actions toolbar-actions");
     var btn = el("button", "secondary", "Open");
     btn.type = "button";
     btn.addEventListener("click", function () { openRun(root.run_id); });
     actions.appendChild(btn);
+    if (hasKids) {
+      var toggle = el("button", "secondary fleet-toggle", hasKids ? "Hide" : "Show");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.setAttribute("aria-label", "Toggle sub-runs for " + root.run_id);
+      actions.appendChild(toggle);
+    }
     card._open = openRun;
     card.appendChild(left);
     card.appendChild(actions);
     container.appendChild(card);
 
-    var children = grouped.childrenOf[root.run_id] || [];
+    var sub = null;
     if (children.length) {
-      var sub = el("div", "fleet-children fleet-child-group");
+      sub = el("div", "fleet-children fleet-child-group");
       sub.setAttribute("role", "list");
       children.forEach(function (child) {
         var row = el("div", "tool-row fleet-card fleet-child");
@@ -203,6 +312,17 @@ function renderRuns(container, detailNode, runs) {
         sub.appendChild(row);
       });
       container.appendChild(sub);
+      var tBtn = actions.querySelector(".fleet-toggle");
+      if (tBtn) {
+        tBtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var isHidden = sub.hidden;
+          sub.hidden = !isHidden;
+          tBtn.textContent = isHidden ? "Hide" : "Show";
+          tBtn.setAttribute("aria-expanded", isHidden ? "true" : "false");
+          card.classList.toggle("fleet-card--collapsed", !isHidden);
+        });
+      }
     }
 
     if (!children.length && root.run_id.indexOf("sub-") !== 0) {
@@ -299,6 +419,7 @@ export function initFleet() {
   if (!view) return;
   var roster = byId("fleet-roster");
   var runsEl = byId("fleet-runs");
+  var dmsEl = byId("fleet-dms");
   var detail = byId("fleet-detail");
   var statusEl = byId("fleet-status");
   var refresh = byId("fleet-refresh");
@@ -309,17 +430,24 @@ export function initFleet() {
     if (statusEl) statusEl.textContent = "Loading\u2026";
     skeleton(roster, 2);
     skeleton(runsEl, 3);
+    if (dmsEl) skeleton(dmsEl, 2);
     var statusP = fetch("/api/status").then(readJson).catch(function (e) { return { __err: e }; });
     var runsP = fetch("/api/runs").then(readJson).then(function (d) {
       var txt = d.text || "";
       if (txt) { try { return JSON.parse(txt); } catch (_) { return []; } }
       return Array.isArray(d) ? d : (d.runs || []);
     }).catch(function (e) { return { __err: e }; });
-    return Promise.all([statusP, runsP]).then(function (vals) {
+    var roomsP = fetch("/api/chat/rooms").then(readJson).then(function (d) {
+      if (d && d.ok === false && /disabled/i.test(d.error || "")) return null;
+      return d;
+    }).catch(function () { return null; });
+    return Promise.all([statusP, runsP, roomsP]).then(function (vals) {
       var s = vals[0];
       var r = vals[1];
+      var c = vals[2];
       if (s && s.__err) renderError(roster, "Could not load roster: " + s.__err.message, doRefresh);
       else renderRoster(roster, s);
+      if (dmsEl) renderDMs(dmsEl, c);
       if (r && r.__err) renderError(runsEl, "Could not load runs: " + r.__err.message, doRefresh);
       else renderRuns(runsEl, detail, r || []);
       if (statusEl) {

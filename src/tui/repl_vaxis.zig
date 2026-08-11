@@ -68,6 +68,10 @@ var g_streaming: bool = false;
 var g_stream_buf: std.ArrayList(u8) = .empty;
 var g_tool_lines: std.ArrayList([]const u8) = .empty;
 var g_stop_flag: std.atomic.Value(bool) = .init(false);
+/// Published only after runThreadMain has finished all deferred Agent cleanup.
+/// The UI thread consumes this and joins the worker before making the model
+/// idle, so the model arena cannot be destroyed while cleanup still uses it.
+var g_turn_done: std.atomic.Value(bool) = .init(false);
 
 fn onToken(delta: []const u8) void {
     g_mutex.lockUncancelable(g_io);
@@ -99,6 +103,7 @@ const RunThreadArgs = struct {
 };
 
 fn runThreadMain(args: RunThreadArgs) void {
+    defer g_turn_done.store(true, .release);
     const self = args.model;
     const messages = &self.messages;
     var err_detail: ?[]const u8 = null;
@@ -336,11 +341,6 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
         }
         g_stream_buf.clearRetainingCapacity();
-        g_streaming = false;
-        if (self.thread) |t| {
-            t.detach();
-            self.thread = null;
-        }
     }
 
     fn submit(self: *Model, ctx: *vxfw.EventContext) !void {
@@ -403,6 +403,7 @@ const Model = struct {
         g_stream_buf.clearRetainingCapacity();
         g_tool_lines.clearRetainingCapacity();
         g_stop_flag.store(false, .release);
+        g_turn_done.store(false, .release);
         errdefer g_streaming = false;
 
         const owned_task = try self.arena.dupe(u8, task);
@@ -523,6 +524,18 @@ const Model = struct {
         switch (event) {
             .init => try ctx.requestFocus(self.text_field.widget()),
             .tick => {
+                // finishTurn only publishes transcript state. The worker may
+                // still be running Agent.deinit after that, so reclaim it on
+                // the UI thread before advertising an idle model.
+                if (g_turn_done.swap(false, .acq_rel)) {
+                    if (self.thread) |t| {
+                        t.join();
+                        self.thread = null;
+                    }
+                    g_mutex.lockUncancelable(g_io);
+                    g_streaming = false;
+                    g_mutex.unlock(g_io);
+                }
                 g_mutex.lockUncancelable(g_io);
                 const still_streaming = g_streaming;
                 g_mutex.unlock(g_io);

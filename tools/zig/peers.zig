@@ -39,6 +39,10 @@ const Request = struct {
     message: []const u8 = "",
     kind: []const u8 = "message",
     topic: []const u8 = "",
+    /// Stable per logical notification. Callers retrying an uncertain send
+    /// should reuse this value; when omitted the tool creates one once and
+    /// uses it for every peer in a broadcast.
+    id: []const u8 = "",
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -130,9 +134,16 @@ fn phonebook(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer) !void
 fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Request) !void {
     if (req.message.len == 0) return lib.fail(out, "notify needs a message");
 
+    var delivery = req;
+    if (delivery.id.len == 0) {
+        const now_bits: u64 = @bitCast(lib.nowSeconds());
+        const content_hash = std.hash.Wyhash.hash(0, req.message);
+        delivery.id = try std.fmt.allocPrint(alloc, "{x}-{x}", .{ now_bits, content_hash });
+    }
+
     // No peer named: fan out to every configured peer instead of one.
     if (req.peer.len == 0) {
-        for (peers) |p| sendNotify(alloc, p, req) catch {};
+        for (peers) |p| sendNotify(alloc, p, delivery) catch {};
         var buf: [128]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
         var s = std.json.Stringify{ .writer = &w, .options = .{} };
@@ -150,7 +161,7 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
         if (std.mem.eql(u8, p.name, req.peer)) target = p;
     }
     const peer = target orelse return lib.fail(out, "no such peer");
-    sendNotify(alloc, peer, req) catch |err| return lib.failErr(out, err, "notifying the peer");
+    sendNotify(alloc, peer, delivery) catch |err| return lib.failErr(out, err, "notifying the peer");
 
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -179,6 +190,8 @@ fn sendNotify(alloc: std.mem.Allocator, peer: Peer, req: Request) !void {
     try bs.write(req.message);
     try bs.objectField("ts");
     try bs.print("{d}", .{@as(i64, @trunc(lib.nowSeconds()))});
+    try bs.objectField("id");
+    try bs.write(req.id);
     try bs.endObject();
 
     const url = try std.fmt.allocPrint(alloc, "{s}/api/notify", .{std.mem.trimEnd(u8, peer.url, "/")});

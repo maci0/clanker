@@ -23,6 +23,10 @@
       },
       "topic": {
         "type": "string"
+      },
+      "id": {
+        "type": "string",
+        "description": "Stable notification delivery ID. Reuse it when retrying the same logical notification."
       }
     },
     "required": [

@@ -2003,8 +2003,18 @@ pub const Agent = struct {
                 .wasm_bytes = p.wasm_bytes,
                 .subagent_runner = self.subagent_runner,
             };
-            const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
-            try handles.append(self.ctx.gpa, .{ .slot = p.slot, .thread = thread, .worker = worker, .wasm_bytes = p.wasm_bytes });
+            const thread = std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker}) catch |err| {
+                self.ctx.gpa.destroy(worker);
+                return err;
+            };
+            handles.append(self.ctx.gpa, .{ .slot = p.slot, .thread = thread, .worker = worker, .wasm_bytes = p.wasm_bytes }) catch |err| {
+                // The worker already owns pointers into this Agent. It must
+                // finish before error unwinding can release that state.
+                thread.join();
+                if (worker.out) |out| self.ctx.gpa.free(out);
+                self.ctx.gpa.destroy(worker);
+                return err;
+            };
         }
 
         // Join every worker and move its output into the matching slot.

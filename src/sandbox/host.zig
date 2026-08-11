@@ -1812,6 +1812,35 @@ const exec_deny_tokens = [_][]const u8{
 /// follow it.
 const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 
+/// Resolves a bare command name (no '/') to an absolute path by searching
+/// `PATH` from the sandbox's environ map, the same way a shell would.
+///
+/// `std.process.run`'s own argv[0] resolution is documented to search PATH
+/// from "the parent environment", but that resolution did not find `zig` (on
+/// PATH, confirmed executable) when called from this sandboxed exec path,
+/// while the identical bare-name call from the non-sandboxed gate checks
+/// succeeded — every capability eval that shells out (zig_check, test_file)
+/// failed on a plain FileNotFound before ever reaching the tool's own logic.
+/// Resolving here removes the dependency on that implicit lookup entirely.
+/// Returns null (falls back to the bare name) if `cmd` already looks like a
+/// path, PATH is unset, or nothing on it matches — never a hard failure, so
+/// exec_allow commands that behave fine today keep behaving the same way.
+fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
+    if (std.mem.indexOfScalar(u8, cmd, '/') != null) return null;
+    const path_val = environ_map.get("PATH") orelse return null;
+    var it = std.mem.splitScalar(u8, path_val, ':');
+    while (it.next()) |dir| {
+        if (dir.len == 0) continue;
+        const candidate = std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, cmd }) catch return null;
+        std.Io.Dir.accessAbsolute(io, candidate, .{ .execute = true }) catch {
+            gpa.free(candidate);
+            continue;
+        };
+        return candidate;
+    }
+    return null;
+}
+
 /// Whether `cmd` would interpret its arguments as shell syntax.
 fn runsAShell(cmd: []const u8) bool {
     const base = if (std.mem.lastIndexOfScalar(u8, cmd, '/')) |i| cmd[i + 1 ..] else cmd;
@@ -2163,7 +2192,9 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(h.sandbox.gpa);
-    argv.append(h.sandbox.gpa, cmd) catch return Err.invalid;
+    const resolved_cmd = resolveExecPath(h.sandbox.gpa, h.sandbox.io, h.sandbox.environ_map, cmd);
+    defer if (resolved_cmd) |rc| h.sandbox.gpa.free(rc);
+    argv.append(h.sandbox.gpa, resolved_cmd orelse cmd) catch return Err.invalid;
     if (obj.get("args")) |a| {
         switch (a) {
             .array => |arr| {
