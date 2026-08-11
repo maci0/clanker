@@ -2505,6 +2505,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     request_status = 0;
     var request_method: []const u8 = "unknown";
     var request_path: []const u8 = "unknown";
+    // `total` must outlive the log defer below, because request_path is a
+    // slice into total.items. Defers run LIFO, so declaring total.deinit
+    // first makes the log defer run while the buffer is still allocated —
+    // otherwise request_path dangles and reading it faults.
+    var total: std.ArrayList(u8) = .empty;
+    defer total.deinit(gpa);
     defer {
         const elapsed_ns = started_at.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
         const elapsed_ms: i128 = @divTrunc(elapsed_ns, std.time.ns_per_ms);
@@ -2513,8 +2519,6 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             log.log(level, "http request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
         }
     }
-    var total: std.ArrayList(u8) = .empty;
-    defer total.deinit(gpa);
     var tmp: [4096]u8 = undefined;
     while (true) {
         const n = std.posix.read(stream.socket.handle, &tmp) catch return;
