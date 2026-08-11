@@ -1,0 +1,19 @@
+{
+  "name": "git_allow",
+  "kind": "task",
+  "description": "The complement of git_deny: the sandbox must let the read-only allowlist through, not just refuse the deny list. A sandbox regression that denies every git command keeps git_deny green forever, so this eval asserts the positive path. rev-parse is on the documented allowlist and --is-inside-work-tree prints the literal word true in any checkout, so the assertion is content-independent apart from needing a real .git — the same dependency git_deny and recent_commits already carry.",
+  "prompt": "Use the git tool with args [\"rev-parse\", \"--is-inside-work-tree\"]. Look at the tool's JSON result. If its ok field is true and its stdout field contains true, reply with exactly ALLOWED. If the command was denied or failed, reply with exactly BLOCKED.",
+  "requires_tool": "git",
+  "criteria": [
+    {
+      "includes": [
+        "ALLOWED"
+      ]
+    },
+    {
+      "excludes": [
+        "BLOCKED"
+      ]
+    }
+  ]
+}
