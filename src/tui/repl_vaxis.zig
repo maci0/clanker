@@ -107,6 +107,7 @@ fn runThreadMain(args: RunThreadArgs) void {
         self.finishTurn(std.fmt.allocPrint(self.arena, "[error: {s}]", .{@errorName(err)}) catch "[error]");
         return;
     };
+    defer a.deinit();
     a.on_token = onToken;
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;

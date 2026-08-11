@@ -49,6 +49,7 @@ pub const Runner = struct {
     fn runTask(self: *Runner, e: *const scorers.Eval) !Result {
         const tool_defs = try self.reg.toToolDefs(self.arena);
         var a = try agent.Agent.init(self.ctx, self.arena, self.provider, self.cfg, self.reg, tool_defs);
+        defer a.deinit();
         var messages: std.ArrayList(types.Message) = .empty;
         var err_detail: ?[]const u8 = null;
 
