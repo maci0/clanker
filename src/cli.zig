@@ -730,6 +730,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // animation to clean up out of a captured log.
     repl_answer_started = false;
     repl_md = .{};
+    repl_md = .{};
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         log.log(.error_, "{s}", .{err_detail orelse @errorName(err)});
         return err;
