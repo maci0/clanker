@@ -174,6 +174,58 @@ pub fn build(b: *std.Build) void {
         tools_step.dependOn(&install.step);
     }
 
+    // C and C++ tools (tools/c/*.c, tools/cpp/*.cpp) compile through Zig's
+    // bundled clang into the same wasm32-freestanding target as the Zig
+    // tools above — no separate toolchain to be missing on a checkout that
+    // can already run `zig build`, unlike the AssemblyScript tools' node
+    // dependency. A tool shares tools/c/ck.h by #include, not a
+    // build.zig.zon dependency, so nothing here needs a package entry.
+    const c_langs = [_]struct { dir: []const u8, ext: []const u8, flags: []const []const u8 }{
+        .{ .dir = "tools/c", .ext = ".c", .flags = &.{"-std=c17"} },
+        .{ .dir = "tools/cpp", .ext = ".cpp", .flags = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti" } },
+    };
+    for (c_langs) |lang| {
+        const lang_src_path = b.pathFromRoot(lang.dir);
+        var lang_dir = std.Io.Dir.openDirAbsolute(io, lang_src_path, .{ .iterate = true }) catch |err| {
+            std.debug.print("warning: cannot open {s}: {s}\n", .{ lang_src_path, @errorName(err) });
+            continue;
+        };
+        defer lang_dir.close(io);
+
+        var lang_names: std.ArrayList([]const u8) = .empty;
+        var lang_it = lang_dir.iterate();
+        while (lang_it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, lang.ext)) continue;
+            lang_names.append(b.allocator, b.dupe(entry.name[0 .. entry.name.len - lang.ext.len])) catch @panic("OOM");
+        }
+        std.mem.sort([]const u8, lang_names.items, {}, struct {
+            fn lt(_: void, a: []const u8, bb: []const u8) bool {
+                return std.mem.lessThan(u8, a, bb);
+            }
+        }.lt);
+
+        for (lang_names.items) |stem| {
+            const tool = b.addExecutable(.{
+                .name = stem,
+                .root_module = b.createModule(.{
+                    .target = tool_target,
+                    .optimize = .ReleaseSmall,
+                }),
+            });
+            tool.root_module.addCSourceFile(.{
+                .file = b.path(b.fmt("{s}/{s}{s}", .{ lang.dir, stem, lang.ext })),
+                .flags = lang.flags,
+            });
+            tool.entry = .disabled;
+            tool.rdynamic = true;
+            const install = b.addInstallArtifact(tool, .{
+                .dest_dir = .{ .override = .{ .custom = "tools" } },
+            });
+            tools_step.dependOn(&install.step);
+        }
+    }
+
     // Every tool is built before any test runs, for the reason given where the
     // test step is declared.
     run_tests.step.dependOn(tools_step);
