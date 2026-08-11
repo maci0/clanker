@@ -14,6 +14,7 @@ import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn a
 import { clearMarks as searchClear, markMatches as searchMark } from "./core/search.js";
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
 import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton } from "./core/scroll.js";
+import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -4366,61 +4367,9 @@ var closeOverlay = overlayClose;
 var focusableIn = overlayFocusableIn;
 var trapOverlayTab = overlayTrapTab;
 
-/* A styled replacement for window.prompt(): resolves to the entered text, or
-   null if cancelled or dismissed. opts.suggestions backs the input with a
-   datalist so a value that already exists (a workspace name, say) can be
-   picked rather than retyped, which is the part window.prompt could not do. */
-var textPromptResolve = null;
-function textPrompt(opts) {
-  opts = opts || {};
-  el.textPromptTitle.textContent = opts.title || "Enter a value";
-  el.textPromptLabel.textContent = opts.label || "Value";
-  el.textPromptInput.value = opts.value || "";
-  el.textPromptHint.textContent = opts.hint || "";
-  el.textPromptOptions.textContent = "";
-  (opts.suggestions || []).forEach(function (s) {
-    var o = document.createElement("option");
-    o.value = s;
-    el.textPromptOptions.appendChild(o);
-  });
-  openOverlay(el.textPrompt, el.textPromptInput);
-  el.textPromptInput.select();
-  return new Promise(function (resolve) { textPromptResolve = resolve; });
-}
-function finishTextPrompt(value) {
-  if (el.textPrompt.hidden) return;
-  closeOverlay(el.textPrompt);
-  var resolve = textPromptResolve;
-  textPromptResolve = null;
-  if (resolve) resolve(value);
-}
-el.textPromptForm.addEventListener("submit", function (e) {
-  e.preventDefault();
-  finishTextPrompt(el.textPromptInput.value);
-});
-el.textPromptCancel.addEventListener("click", function () { finishTextPrompt(null); });
-el.textPrompt.addEventListener("mousedown", function (e) {
-  if (e.target === el.textPrompt) finishTextPrompt(null);
-});
-
-var SHORTCUTS = [
-  ["Ctrl/⌘ + K", "Jump to a view, conversation, run, tool or action"],
-  ["?", "This list"],
-  ["1 – 7", "Go to a view by number"],
-  ["← →", "Move between tabs when one is focused"],
-  ["Ctrl/⌘ + Enter", "Run the task in the composer"],
-  ["Ctrl/⌘ + ← →", "Move the focused board card between columns"],
-  ["Esc", "Close an overlay, or stop a running task"]
-];
-
-SHORTCUTS.forEach(function (pair) {
-  var dt = document.createElement("dt");
-  dt.textContent = pair[0];
-  var dd = document.createElement("dd");
-  dd.textContent = pair[1];
-  el.shortcuts.appendChild(dt);
-  el.shortcuts.appendChild(dd);
-});
+var textPrompt = dialogTextPrompt;
+var finishTextPrompt = dialogFinishTextPrompt;
+dialogBindDialog(el, overlayOpen, overlayClose);
 
 van.add(el.helpOpen, icon("help", 15));
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });

@@ -43,8 +43,11 @@ const TokenReply = struct {
 };
 
 /// Returns a bearer token for `service_account_file`, minting one if the cache
-/// is empty, stale, or for a different account. The returned slice is owned by
-/// this module and stays valid until the next refresh.
+/// is empty, stale, or for a different account. The returned slice is a fresh
+/// `gpa`-owned copy the caller must free: the cache entry it was copied from
+/// can be freed by a later refresh the instant this call releases the lock, so
+/// handing back a borrowed pointer into the cache would let that refresh free
+/// memory a caller is still reading.
 pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8) ![]const u8 {
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
     // Held across the whole exchange, not just the store: two callers that
@@ -53,7 +56,7 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
     cache_mutex.lockUncancelable(io);
     defer cache_mutex.unlock(io);
     if (cached_token) |tok| {
-        if (cacheHit(now, expires_at, cached_for, service_account_file)) return tok;
+        if (cacheHit(now, expires_at, cached_for, service_account_file)) return try gpa.dupe(u8, tok);
     }
 
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -116,7 +119,7 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
     cached_for = try gpa.dupe(u8, service_account_file);
     expires_at = now + @max(0, reply.expires_in - refresh_margin_s);
     log.log(.info, "vertex: access token minted, valid ~{d}s", .{reply.expires_in});
-    return cached_token.?;
+    return try gpa.dupe(u8, cached_token.?);
 }
 
 /// Frees the cached token; call once at shutdown.

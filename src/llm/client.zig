@@ -109,15 +109,19 @@ const FetchOutcome = struct {
 /// Resolves the provider's credential (env var, or a minted Vertex access
 /// token) into a ready-to-send `Bearer ...` header value, gpa-owned.
 fn resolveBearer(ctx: *Ctx, provider: *const config.Provider) !?[]const u8 {
-    var api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
+    const api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
         ctx.environ_map.get(env_name)
     else
         null;
     // Vertex takes a GCP access token. An env var still wins (handy for a
     // short-lived token pasted in by hand); otherwise it is minted from the
-    // service account and cached until it nears expiry.
+    // service account and cached until it nears expiry. `get` hands back a
+    // fresh copy (see vertex_token.zig), so it is formatted into the header
+    // and freed here rather than carried further as `api_key`.
     if (provider.kind == .vertex_anthropic and api_key == null and provider.service_account_file.len > 0) {
-        api_key = try vertex_token.get(ctx.io, ctx.gpa, provider.service_account_file);
+        const tok = try vertex_token.get(ctx.io, ctx.gpa, provider.service_account_file);
+        defer ctx.gpa.free(tok);
+        return try std.fmt.allocPrint(ctx.gpa, "Bearer {s}", .{tok});
     }
     if (api_key == null and (provider.api_key_env != null or provider.kind == .vertex_anthropic)) {
         log.log(.error_, "no credential for provider '{s}': set {s} or service_account_file", .{

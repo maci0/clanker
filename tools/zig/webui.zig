@@ -35,6 +35,7 @@ const overlay = @embedFile("webui/core/overlay.js");
 const search = @embedFile("webui/core/search.js");
 const composer = @embedFile("webui/core/composer.js");
 const scroll = @embedFile("webui/core/scroll.js");
+const dialog = @embedFile("webui/core/dialog.js");
 const markdown = @embedFile("webui/lib/markdown.js");
 const graph = @embedFile("webui/lib/graph.js");
 const board = @embedFile("webui/lib/board.js");
@@ -61,7 +62,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, script, van_boot, fleet, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, script, van_boot, fleet, icons, ui, utils, vendor, chat, labels, goals, stream, theme, overlay, search, composer, scroll, dialog, markdown, graph, board }, [_][]const u8{ "index.html", "app.css", "app.js", "van-boot.js", "features/fleet.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/scroll.js", "core/dialog.js", "lib/markdown.js", "lib/graph.js", "lib/board.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -95,6 +96,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/search.js")) return .{ .body = search, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/composer.js")) return .{ .body = composer, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/scroll.js")) return .{ .body = scroll, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/dialog.js")) return .{ .body = dialog, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/markdown.js")) return .{ .body = markdown, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/graph.js")) return .{ .body = graph, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/board.js")) return .{ .body = board, .content_type = "text/javascript; charset=utf-8" };

@@ -2296,45 +2296,13 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
 }
 
 fn cmdStats(init: std.process.Init) !void {
-    const io = init.io;
-    const gpa = init.gpa;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
     if (!cfg.modules.token_stats) {
         log.log(.error_, "token_stats module is disabled...", .{});
         return error.ModuleDisabled;
     }
-    const base = std.Io.Dir.cwd();
-    const state_dir = cfg.agent.state_dir;
-    const stats = try token_stats.aggregate(base, io, gpa, arena, state_dir);
-    const total = token_stats.totals(stats);
-    const out = std.Io.File.stdout();
-
-    if (stats.len == 0) {
-        try out.writeStreamingAll(io, "no token usage recorded yet (run an agent task first)\n");
-        return;
-    }
-
-    var buf: [2048]u8 = undefined;
-    try out.writeStreamingAll(io, "provider        model                 calls   prompt  complet   total  cache%  tok/s       cost$\n");
-    for (stats) |st| {
-        const line = std.fmt.bufPrint(&buf, "{s:<15} {s:<20} {d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
-            st.provider,          st.model,
-            st.calls,             st.prompt_tokens,
-            st.completion_tokens, st.total_tokens,
-            st.cacheHitRate(),    st.tokensPerSec(),
-            st.cost,
-        }) catch continue;
-        try out.writeStreamingAll(io, line);
-    }
-    const tline = std.fmt.bufPrint(&buf, "{s:<15} {s:<20} {d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
-        "totals",                "",
-        total.calls,             total.prompt_tokens,
-        total.completion_tokens, total.total_tokens,
-        total.cacheHitRate(),    total.tokensPerSec(),
-        total.cost,
-    }) catch return;
-    try out.writeStreamingAll(io, tline);
+    try printInternalTool(init, &cfg, "model_stats", "");
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
@@ -2555,7 +2523,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or
             std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
@@ -2601,7 +2569,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
                 std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or
-                std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+                std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
                 std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
                 std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {

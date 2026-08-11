@@ -683,6 +683,15 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
     const out2 = try mod.executeTool("{}");
     defer std.testing.allocator.free(out2);
     try std.testing.expect(std.mem.indexOf(u8, out2, "\"calls\":1") != null);
+
+    // The CLI asks the same tool for its human-readable table. Keep the
+    // structured response above stable for model callers.
+    const text_out = try mod.executeTool("{\"args\":\"\"}");
+    defer std.testing.allocator.free(text_out);
+    try std.testing.expect(std.mem.indexOf(u8, text_out, "\"text\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text_out, "provider        model") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text_out, "kimi-k3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text_out, "totals") != null);
 }
 
 test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read host fns)" {
