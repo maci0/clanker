@@ -61,10 +61,10 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 
 ## Verification (this turn)
 
-- `zig build` EXIT 0, `zig build tools` EXIT 0, `zig build test --summary all` 375/376 pass (1 skipped).
-- `zig fmt --check src/cli.zig tools/zig/webui.zig` EXIT 0; `node --check` on `app.js`, `core/*`, `lib/*`, `features/fleet.js` → OK (all 26 js files).
-- `out_cap` per-file: all `ok` (max ~180KB well under 2MiB; 30 assets via assetFor).
-- CSP/connect: only `/api/*` + `/.well-known/agent.json` same-origin fetches; `/webui/vendor` immutable-cache + gzip; no inline script, no third-party origin.
+- `zig build` EXIT 0, `zig build tools` EXIT 0, `zig build test --summary all` 368/369 pass (1 skipped) — `clanker gate` green at `561fd11`; `zig fmt --check src/cli.zig tools/zig/webui.zig` EXIT 0.
+- `node --check` on `app.js` (3571L) + `core/*` (22) + `lib/*` (3) + `features/fleet.js` → OK (all 27 js files incl. `core/tools.js`).
+- `out_cap` per-file: all `ok` (max ~180KB well under 2MiB; 30 assets via `assetFor`+`encodedLen` comptime guard in `tools/zig/webui.zig`); 28 `type="module"` no bundler — `git status` clean multiple turns.
+- CSP/connect: `default-src 'none'; script-src 'self'` only — no inline `<script>`/`style`, no `style=` attrs; only `/api/*` + `/.well-known/agent.json` same-origin `fetch()` via existing `/api/run` stream; `/webui/vendor` gzip + `public, max-age=3600` cache, no third-party origin, no new sockets, no `eval`.
 
 ### Shipped this turn
 - `core/tools.js` — tools list delegated via `bindTools` (holds `allToolsHolder`/`toolState` live; `palette` now reads `allToolsHolder.list` so filter stays in sync); `app.js` 3571 lines (from 3897, 353-line block removed + alias fix).
