@@ -27,6 +27,7 @@ const tui_transcript = @import("tui/transcript.zig");
 const repl_vaxis = @import("tui2/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
+const doctor_mod = @import("doctor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -72,6 +73,8 @@ pub const Command = enum {
     graph,
     gate,
     autolearn,
+    doctor,
+    setup,
 };
 
 pub const Options = struct {
@@ -259,6 +262,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             cmd_seen = true;
             if (std.mem.eql(u8, a, "init")) {
                 opts.command = .init;
+            } else if (std.mem.eql(u8, a, "doctor")) {
+                opts.command = .doctor;
+            } else if (std.mem.eql(u8, a, "setup")) {
+                opts.command = .setup;
             } else if (std.mem.eql(u8, a, "provide") or std.mem.eql(u8, a, "providers")) {
                 opts.command = .providers_check;
                 pending_sub = "";
@@ -519,6 +526,8 @@ const specs = [_]Spec{
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
 
+    .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can actually reach,\nand finishes with the same checks `clanker doctor` runs." },
+    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can guard a\nscript or a CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.json and state/", .group = .maintain },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{.tasks}, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates." },
@@ -555,7 +564,15 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             }
         },
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
-        .init => try cmdInit(init),
+        .init => try cmdInit(init, true),
+        .doctor => try doctor_mod.cmdDoctor(init),
+        .setup => {
+            // Scaffolding first: setup is the one command a new checkout runs,
+            // and sending them to `init` and back is a step that exists only
+            // because the code was split that way.
+            try cmdInit(init, false);
+            try doctor_mod.cmdSetup(init);
+        },
         .providers_check => try cmdProvidersCheck(init, opts),
         .run => try cmdRun(init, opts),
         .sessions => try cmdSessions(init),
@@ -701,7 +718,7 @@ const local_template =
     \\
 ;
 
-fn cmdInit(init: std.process.Init) !void {
+fn cmdInit(init: std.process.Init, announce: bool) !void {
     const io = init.io;
     const dir = std.Io.Dir.cwd();
     const arena = init.arena.allocator();
@@ -716,7 +733,7 @@ fn cmdInit(init: std.process.Init) !void {
         else => return err,
     };
     dir.createDirPath(io, "state") catch {};
-    log.log(.info, "clanker initialized. Export DEEPSEEK_API_KEY, then run: clanker run \"hello\"", .{});
+    if (announce) log.log(.info, "clanker initialized. Run `clanker setup` to check it over.", .{});
 }
 
 // --------------------------------------------------------- providers check --
@@ -878,8 +895,11 @@ fn numToF64(v: std.json.Value) f64 {
 fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8, bearer: ?[]const u8) ![]const u8 {
     var http: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http.deinit();
-    var buf: [1 << 20]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
+    // Growable: a fixed buffer here used to cap every response at 1 MiB,
+    // which silently truncated (or outright failed) anything past it — the
+    // models.dev catalog alone runs to several MiB.
+    var body: std.Io.Writer.Allocating = .init(gpa);
+    defer body.deinit();
     var headers: std.http.Client.Request.Headers = .{
         .user_agent = .{ .override = "clanker/" ++ version },
     };
@@ -888,10 +908,10 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
         .location = .{ .url = url },
         .method = .GET,
         .headers = headers,
-        .response_writer = &w,
+        .response_writer = &body.writer,
     });
     if (@intFromEnum(res.status) >= 400) return error.HttpError;
-    return arena.dupe(u8, buf[0..w.end]);
+    return arena.dupe(u8, body.written());
 }
 
 /// `clanker autolearn` — review usage observations, refresh the roadmap
