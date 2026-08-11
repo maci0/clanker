@@ -202,10 +202,10 @@
   --border: #9ca0b0;
   --rule: #bcc0cc;
   --fg: #4c4f69;
-  --fg-muted: #6c6f85;
+  --fg-muted: #63667a;
   --accent: #8839ef;
   --accent-dim: #8839ef1f;
-  --accent-text: #8839ef;
+  --accent-text: #8534ef;
   --on-accent: #eff1f5;
   --ok: #40a02b;
   --ok-fill: #40a02b;
@@ -1616,20 +1616,32 @@ h2#session-title {
    Inline styles are not used here so CSP can stay strict and the panel's
    vocabulary (tokens, motion, borders) stays in one place. */
 #view-fleet .section-head { margin-bottom: var(--space-4); gap: var(--space-3) var(--space-4); }
+#view-fleet .runs { margin-top: var(--space-5); }
+.fleet-roster { min-width: 0; }
+.fleet-roster-head {
+  font-family: var(--mono); font-size: var(--step--1); font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-muted);
+  margin: 0 0 var(--space-2);
+}
 .fleet-roster-list { list-style: none; padding: 0; margin: var(--space-2) 0 0; }
-.fleet-card { transition: border-color 160ms ease, background 120ms ease, box-shadow 160ms ease; }
+.fleet-roster-list li + li { margin-top: var(--space-1); }
+.fleet-meta { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+.fleet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
+.fleet-card { transition: border-color 160ms ease, background 120ms ease, box-shadow 160ms ease; cursor: pointer; }
+.fleet-card:hover { background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%); border-color: var(--rule); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 .fleet-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.fleet-card--accent { border-left: 3px solid var(--accent); padding-left: var(--space-3); }
+.fleet-card--accent, .fleet-card--parent { border-left: 3px solid var(--accent); padding-left: var(--space-3); }
 .fleet-card--plain { border-left: 3px solid transparent; padding-left: var(--space-3); }
 .fleet-card__main { flex: 1 1 18rem; min-width: 0; }
-.fleet-card:hover { background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%); }
-.fleet-children { margin-left: var(--space-4); border-left: 1px dashed var(--rule); padding-left: var(--space-3); }
+.fleet-child-group, .fleet-children { margin-left: var(--space-4); border-left: 1px dashed var(--rule); padding-left: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
 .fleet-child { padding: var(--space-1) 0; }
 .fleet-child__main { flex: 1 1 18rem; min-width: 0; }
-.fleet-note { margin-left: var(--space-4); }
+.fleet-note { margin-left: var(--space-4); font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); margin-top: var(--space-2); }
 .fleet-extra-row { margin-left: var(--space-4); }
+.fleet-detail-simple { margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
 .fleet-stage { margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
-.fleet-stage__tools { margin: var(--space-2) 0 0 1rem; }
+.fleet-stage__tools { margin: var(--space-2) 0 0 1rem; list-style: disc; padding-left: 1.1rem; }
+.fleet-stage__tools li + li { margin-top: var(--space-1); }
 .fleet-fail { color: var(--danger); }
 .fleet-skeleton { height: 2.4rem; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 78%, var(--rule) 22%) 37%, var(--surface-2) 63%); background-size: 400% 100%; animation: fleet-shimmer 1.2s ease infinite; margin: var(--space-2) 0; }
 .fleet-skeleton--sm { height: 1.2rem; max-width: 18rem; }
@@ -1641,8 +1653,14 @@ h2#session-title {
 @media (prefers-reduced-motion: reduce) {
   .json-node > summary::before, .tool-config > summary::before { transition: none; }
   .fleet-card, .rail-tab[aria-selected="true"]::before { transition: none; }
-  .fleet-skeleton { animation: none; }
+  .fleet-skeleton { animation: none; background: var(--surface-2); }
+}
+@media (max-width: 900px) {
+  #view-fleet .runs { margin-top: var(--space-4); }
+  .fleet-card { flex-direction: column; align-items: flex-start; }
+  .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }
+  .fleet-child-group, .fleet-children { gap: var(--space-1); }
 }
 @media (max-width: 40rem) {
-  .fleet-children, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }
+  .fleet-children, .fleet-child-group, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }
 }

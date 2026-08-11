@@ -84,12 +84,13 @@ function renderError(container, msg, retryFn) {
 
 function renderRoster(container, status) {
   container.textContent = "";
+  container.className = "fleet-roster";
   if (!status || !status.instance) {
     container.appendChild(el("p", "run-empty", "No status yet."));
     return;
   }
   var inst = status.instance;
-  var head = el("p", "meta");
+  var head = el("p", "fleet-meta");
   head.textContent = inst.name + " (" + inst.id.slice(0, 8) + ")";
   container.appendChild(head);
   var peers = status.peers || [];
@@ -98,8 +99,10 @@ function renderRoster(container, status) {
     return;
   }
   var ul = el("ul", "fleet-roster-list");
+  ul.setAttribute("role", "list");
   peers.forEach(function (p) {
-    var li = el("li", "meta");
+    var li = el("li", "fleet-meta");
+    li.setAttribute("role", "listitem");
     li.textContent = p.name + " \u2014 " + p.url;
     li.title = p.url;
     ul.appendChild(li);
@@ -145,11 +148,12 @@ function renderRuns(container, detailNode, runs) {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openRun(id); }
   }
 
+  container.setAttribute("role", "list");
   grouped.roots.forEach(function (root) {
     var hasKids = !!(grouped.childrenOf[root.run_id] && grouped.childrenOf[root.run_id].length);
-    var card = el("div", "tool-row fleet-card " + (hasKids ? "fleet-card--accent" : "fleet-card--plain"));
+    var card = el("div", "tool-row fleet-card " + (hasKids ? "fleet-card--parent" : "fleet-card--plain"));
     card.tabIndex = 0;
-    card.setAttribute("role", "button");
+    card.setAttribute("role", "listitem");
     card.setAttribute("aria-label", "Open run " + root.run_id);
     card.addEventListener("keydown", function (e) { fleetCardKeyHandler(e, root.run_id); });
     card.addEventListener("click", function (e) {
@@ -159,10 +163,10 @@ function renderRuns(container, detailNode, runs) {
     var left = el("div", "fleet-card__main");
     var title = el("div", "tool-name", clip(root.task || root.run_id, 120));
     title.title = root.task || root.run_id;
-    var meta = el("div", "meta", root.run_id + " \u00b7 " + fmtRunMeta(root));
+    var meta = el("div", "fleet-meta", root.run_id + " \u00b7 " + fmtRunMeta(root));
     left.appendChild(title);
     left.appendChild(meta);
-    var actions = el("div", "toolbar-actions");
+    var actions = el("div", "fleet-actions toolbar-actions");
     var btn = el("button", "secondary", "Open");
     btn.type = "button";
     btn.addEventListener("click", function () { openRun(root.run_id); });
@@ -174,11 +178,12 @@ function renderRuns(container, detailNode, runs) {
 
     var children = grouped.childrenOf[root.run_id] || [];
     if (children.length) {
-      var sub = el("div", "fleet-children");
+      var sub = el("div", "fleet-children fleet-child-group");
+      sub.setAttribute("role", "list");
       children.forEach(function (child) {
         var row = el("div", "tool-row fleet-card fleet-child");
         row.tabIndex = 0;
-        row.setAttribute("role", "button");
+        row.setAttribute("role", "listitem");
         row.setAttribute("aria-label", "Open run " + child.run_id);
         row.addEventListener("keydown", function (e) { fleetCardKeyHandler(e, child.run_id); });
         row.addEventListener("click", function (e) {
@@ -187,8 +192,8 @@ function renderRuns(container, detailNode, runs) {
         });
         var l2 = el("div", "fleet-child__main");
         l2.appendChild(el("div", "tool-name", child.run_id));
-        l2.appendChild(el("div", "meta", clip(child.task || "", 100) + (child.task ? " \u00b7 " : "") + fmtRunMeta(child)));
-        var a2 = el("div", "toolbar-actions");
+        l2.appendChild(el("div", "fleet-meta", clip(child.task || "", 100) + (child.task ? " \u00b7 " : "") + fmtRunMeta(child)));
+        var a2 = el("div", "fleet-actions toolbar-actions");
         var b2 = el("button", "secondary", "Open");
         b2.type = "button";
         b2.addEventListener("click", function () { openRun(child.run_id); });
