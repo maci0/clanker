@@ -31,6 +31,7 @@ pub const Key = union(enum) {
     kill_to_end,
     kill_to_start,
     kill_word,
+    clear_screen,
     interrupt,
     eof,
     /// A byte sequence this editor has no meaning for.
@@ -53,6 +54,7 @@ pub fn decode(buf: []const u8) ?Decoded {
         0x04 => .{ .key = .eof, .len = 1 }, // Ctrl-D
         0x05 => .{ .key = .end, .len = 1 }, // Ctrl-E
         0x0b => .{ .key = .kill_to_end, .len = 1 }, // Ctrl-K
+        0x0c => .{ .key = .clear_screen, .len = 1 }, // Ctrl-L
         0x15 => .{ .key = .kill_to_start, .len = 1 }, // Ctrl-U
         0x17 => .{ .key = .kill_word, .len = 1 }, // Ctrl-W
         0x1b => decodeEscape(buf),
@@ -207,7 +209,7 @@ pub const Editor = struct {
                 }
             },
             .enter => return true,
-            .interrupt, .eof, .ignored => return false,
+            .clear_screen, .interrupt, .eof, .ignored => return false,
         }
         return false;
     }
@@ -310,6 +312,22 @@ test "kill_to_start with cursor in middle" {
     for (0..6) |_| _ = ed.apply(.right);
     _ = ed.apply(.kill_to_start);
     try std.testing.expectEqualStrings("world", ed.line());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+}
+
+test "Ctrl-L decodes to clear_screen" {
+    try std.testing.expectEqual(Key.clear_screen, decode("\x0c").?.key);
+}
+
+test "kill_to_start at position 0 is a no-op" {
+    var ed = Editor{ .gpa = std.testing.allocator };
+    defer ed.deinit();
+    ed.reset();
+
+    for ("hello") |c| _ = ed.apply(.{ .char = c });
+    _ = ed.apply(.home);
+    _ = ed.apply(.kill_to_start);
+    try std.testing.expectEqualStrings("hello", ed.line());
     try std.testing.expectEqual(@as(usize, 0), ed.cursor);
 }
 
