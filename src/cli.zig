@@ -4512,9 +4512,18 @@ fn handleBoard(
             } else if (std.mem.eql(u8, req.op, "usage")) {
                 // Accrued, not replaced: a card is worked on by more than one
                 // run, and the total is what the card cost.
-                card.usage.prompt_tokens += req.prompt_tokens orelse 0;
-                card.usage.completion_tokens += req.completion_tokens orelse 0;
-                card.usage.cost += req.cost orelse 0;
+                //
+                // Saturating, because the addends come from the request. Two
+                // posts of u64 max wrapped the counter and panicked, which took
+                // the server down the same way the move slot did. A total that
+                // sticks at the ceiling is wrong in a way someone can see; a
+                // dead server is not.
+                card.usage.prompt_tokens +|= req.prompt_tokens orelse 0;
+                card.usage.completion_tokens +|= req.completion_tokens orelse 0;
+                const add_cost = req.cost orelse 0;
+                // A NaN or an infinity in the body would poison every later
+                // total silently, so only a real number is accrued.
+                if (std.math.isFinite(add_cost)) card.usage.cost += add_cost;
                 if (req.run_id) |rid| {
                     var runs: std.ArrayList([]const u8) = .empty;
                     var seen = false;
