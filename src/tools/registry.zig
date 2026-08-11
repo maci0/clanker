@@ -39,9 +39,10 @@ pub const Tool = struct {
     /// so the model never calls it.
     turn_hook: bool = false,
     /// Free-form per-plugin settings from the descriptor's `config` object,
-    /// handed to the guest verbatim via `ck_config`. The harness only reads the
-    /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
-    /// backend; everything else is the plugin's own business.
+    /// handed to the guest verbatim via `ck_config`. The harness only reads
+    /// the `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a
+    /// specific backend, and `fuel`, to size the module's instruction budget
+    /// (host.pluginFuel); everything else is the plugin's own business.
     config: json.Value = .{ .object = .{} },
     /// `config`, pre-serialized once at registry load. `config` never changes
     /// after `Registry.load` returns (see `applyConfigOverrides`), so
@@ -922,4 +923,28 @@ test "turnHookTools returns only enabled turn_hook tools, sorted by name" {
     try std.testing.expectEqual(@as(usize, 2), hooks.len);
     try std.testing.expectEqualStrings("a_hook", hooks[0].name);
     try std.testing.expectEqualStrings("z_hook", hooks[1].name);
+}
+
+test "descriptor config.fuel parses as part of the config block" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The budget rides in `config` like max_tokens does; the harness reads it
+    // (host.pluginFuel) and everything else in the object stays the plugin's.
+    const raw =
+        \\{ "name": "heavy", "description": "d", "wasm": "h.wasm", "input_schema": {},
+        \\  "config": { "fuel": 2000000, "own_key": "kept" } }
+    ;
+    const t = try Registry.parseDescriptor(arena, raw);
+    try std.testing.expectEqual(@as(i64, 2_000_000), t.config.object.get("fuel").?.integer);
+    try std.testing.expectEqualStrings("kept", t.config.object.get("own_key").?.string);
+
+    // Absent, the config block simply has no key: downstream the sandbox
+    // default applies.
+    const bare =
+        \\{ "name": "plain3", "description": "d", "wasm": "p.wasm" }
+    ;
+    const b = try Registry.parseDescriptor(arena, bare);
+    try std.testing.expect(b.config.object.get("fuel") == null);
 }

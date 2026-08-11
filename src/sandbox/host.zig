@@ -133,6 +133,17 @@ pub const SubagentRunner = *const fn (
     parent_run_id: []const u8,
 ) anyerror![]const u8;
 
+/// Deterministic instruction budget per tool module (zwasm fuel) when the
+/// descriptor sets nothing. Exhaustion traps the call as OutOfFuel.
+pub const default_fuel: u64 = 10_000_000_000;
+/// Fuel clamp floor: enough to instantiate a module and produce an answer, so
+/// a manifest typo (`"fuel": 0`) degrades to a very small budget instead of a
+/// tool that traps before it starts.
+pub const min_fuel: u64 = 1_000_000;
+/// Fuel clamp ceiling (10x the default): a budget above this is metering in
+/// name only, so an absurd manifest value is capped rather than trusted.
+pub const max_fuel: u64 = 100_000_000_000;
+
 /// Per-tool sandbox policy, owned by the harness.
 pub const Sandbox = struct {
     gpa: std.mem.Allocator,
@@ -146,6 +157,10 @@ pub const Sandbox = struct {
     fs_prefixes: []const []const u8 = &.{},
     max_http_bytes: usize = 1 << 20,
     max_fs_bytes: usize = 1 << 20,
+    /// Instruction budget for this tool's module (zwasm fuel). `sandboxFor`
+    /// fills it from the descriptor's `config.fuel`, clamped to
+    /// [min_fuel, max_fuel]; unset manifests get `default_fuel`.
+    fuel: u64 = default_fuel,
     environ_map: *std.process.Environ.Map,
     /// Deterministic seed for the tool RNG (from agent.seed).
     seed: u64 = 0,
@@ -232,6 +247,21 @@ fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
     return null;
 }
 
+/// A plugin may size its own instruction budget with `"config": {"fuel": N}`
+/// (a heavy parser needs more headroom than a status-line segment). The value
+/// is clamped rather than trusted, in the same spirit as rlm's `max_depth`:
+/// a typo'd 0 would brick the tool — every call trapping OutOfFuel before it
+/// starts — and an absurd value would switch the meter off in practice, so a
+/// misconfigured value stays a setting, not an outage.
+pub fn pluginFuel(cfg_value: std.json.Value) u64 {
+    if (cfg_value != .object) return default_fuel;
+    const v = cfg_value.object.get("fuel") orelse return default_fuel;
+    // A non-integer is "not set", not "as low as possible": the default stands.
+    if (v != .integer) return default_fuel;
+    if (v.integer < 0) return min_fuel;
+    return std.math.clamp(@as(u64, @intCast(v.integer)), min_fuel, max_fuel);
+}
+
 /// The single place a tool's sandbox policy is assembled from its descriptor.
 /// Every caller (agent loop, parallel workers, CLI, MCP) goes through here:
 /// hand-rolled Sandbox literals drift, and a missed field is a silently
@@ -279,6 +309,7 @@ pub fn sandboxFor(
         .seed = cfg.agent.seed,
         .cfg = cfg,
         .config_json = tool.config_json,
+        .fuel = pluginFuel(tool.config),
     };
 }
 
@@ -2852,4 +2883,64 @@ test "a tool may run only the commands its manifest names" {
     const several = [_][]const u8{ "rg", "ast-grep", "semcode" };
     try std.testing.expect(execAllowed(&several, "ast-grep"));
     try std.testing.expect(!execAllowed(&several, "sh"));
+}
+
+test "pluginFuel defaults when unset and clamps typos to the floor and ceiling" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parse = struct {
+        fn v(a: std.mem.Allocator, s: []const u8) std.json.Value {
+            return std.json.parseFromSliceLeaky(std.json.Value, a, s, .{}) catch unreachable;
+        }
+    }.v;
+
+    // Unset, non-object, or the wrong type: the default stands — absence is
+    // "no opinion", never "as small as possible".
+    try std.testing.expectEqual(default_fuel, pluginFuel(.null));
+    try std.testing.expectEqual(default_fuel, pluginFuel(parse(arena, "{}")));
+    try std.testing.expectEqual(default_fuel, pluginFuel(parse(arena, "{\"fuel\":\"lots\"}")));
+
+    // A typo'd 0 (or a negative) becomes the floor, not a bricked tool whose
+    // every call traps before it starts.
+    try std.testing.expectEqual(min_fuel, pluginFuel(parse(arena, "{\"fuel\":0}")));
+    try std.testing.expectEqual(min_fuel, pluginFuel(parse(arena, "{\"fuel\":-5}")));
+    try std.testing.expectEqual(min_fuel, pluginFuel(parse(arena, "{\"fuel\":12}")));
+
+    // An absurd budget is capped: the meter stays a meter.
+    try std.testing.expectEqual(max_fuel, pluginFuel(parse(arena, "{\"fuel\":900000000000000}")));
+
+    // A sane value passes through untouched.
+    try std.testing.expectEqual(@as(u64, 50_000_000), pluginFuel(parse(arena, "{\"fuel\":50000000}")));
+}
+
+test "sandboxFor threads config.fuel from the descriptor into the sandbox" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const cfg = config_mod.Config{};
+    var tool = registry.Tool{
+        .name = "heavy",
+        .description = "d",
+        .wasm = "h.wasm",
+        .input_schema = .{ .object = .{} },
+        .config = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"fuel\":2000000}", .{}),
+    };
+    const sb = try sandboxFor(std.testing.allocator, io, arena, &env_map, &cfg, &tool, null);
+    try std.testing.expectEqual(@as(u64, 2_000_000), sb.fuel);
+
+    // Without the key the default budget applies, same as before the field
+    // existed.
+    tool.config = .{ .object = .{} };
+    const sb2 = try sandboxFor(std.testing.allocator, io, arena, &env_map, &cfg, &tool, null);
+    try std.testing.expectEqual(default_fuel, sb2.fuel);
 }

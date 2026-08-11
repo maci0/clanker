@@ -14,8 +14,6 @@ const registry = @import("../tools/registry.zig");
 const client = @import("../llm/client.zig");
 const zwasm = @import("zwasm");
 
-/// Deterministic instruction budget per tool call (OutOfFuel trap).
-const default_fuel = 10_000_000_000;
 /// Linear memory cap in wasm pages (64 KiB each): 256 pages = 16 MiB.
 const max_memory_pages = 256;
 
@@ -109,8 +107,11 @@ pub const ToolModule = struct {
         self.linker = self.engine.linker();
         self.module = try self.engine.compile(wasm_bytes);
         try linkHostFns(&self.linker, self.h);
+        // The instruction budget (OutOfFuel trap) is per-tool policy: the
+        // sandbox carries it from the descriptor's `config.fuel`, already
+        // clamped by host.pluginFuel, or host.default_fuel when unset.
         self.inst = try self.linker.instantiate(&self.module, .{
-            .fuel = .{ .limited = default_fuel },
+            .fuel = .{ .limited = sb.fuel },
             .max_memory_pages = .{ .limited = max_memory_pages },
         });
         self.inst_initialized = true;
@@ -154,7 +155,13 @@ pub const ToolModule = struct {
 
         // ---- input buffer ----
         var scratch_fn = self.inst.typedFunc(fn (u32) u32, "scratch");
-        const scratch_ptr = try scratch_fn.call(.{@intCast(input.len)});
+        // A trap here (e.g. OutOfFuel on a small per-tool budget) is the same
+        // failure as a trap in run: report it as one instead of leaking a raw
+        // zwasm error to callers that only know ToolTrap.
+        const scratch_ptr = scratch_fn.call(.{@intCast(input.len)}) catch |err| {
+            log.log(.error_, "[sandbox] tool trap in scratch: {s} (tool={s})", .{ @errorName(err), self.name });
+            return error.ToolTrap;
+        };
         if (scratch_ptr == 0) return error.ToolScratchTooSmall;
         if (@as(u64, scratch_ptr) + input.len > mem_bytes.len) return error.ToolScratchTooSmall;
         @memcpy(mem_bytes[scratch_ptr .. scratch_ptr + input.len], input);
@@ -772,4 +779,50 @@ test "assemblyscript calc_ts tool executes" {
     const out2 = try mod.executeTool("{\"expr\": \"17*23\"}");
     defer std.testing.allocator.free(out2);
     try std.testing.expectEqualStrings("391", out2);
+}
+
+test "a tool with a tiny fuel budget runs out of fuel; the default budget answers" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tools/bin/calc_ts.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // The field is set directly (below host.min_fuel) because the test needs
+    // a budget the tool cannot finish on; a manifest could never get here —
+    // sandboxFor clamps config.fuel to the floor first. 15k is measured to
+    // cover this module's instantiation and arena discovery (~10.3k) but not
+    // a run (~18.8k more), so the trap lands in executeTool, deterministically
+    // (fuel accounting is instruction-exact).
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .fuel = 15_000,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    try std.testing.expectError(error.ToolTrap, mod.executeTool("17*23"));
+
+    // The same module bytes under the default budget still answer: it was
+    // the budget that trapped above, not the tool.
+    var sb_ok = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+    };
+    try std.testing.expectEqual(host.default_fuel, sb_ok.fuel);
+    const mod_ok = try ToolModule.load(std.testing.allocator, io, &sb_ok, wasm);
+    defer mod_ok.deinit();
+    const out = try mod_ok.executeTool("17*23");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("391", out);
 }
