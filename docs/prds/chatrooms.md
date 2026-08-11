@@ -152,10 +152,6 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 
 ## Open questions / future work
 
-- Implement `chat_send`'s `to` field (with sorted-pair canonicalization) or
-  drop the "DM" framing to "shared room by convention" and update this PRD
-  and the tool descriptions accordingly. Right now the code, the manifest,
-  and this PRD's stated goal disagree with each other.
 - History retention is not actually unbounded: `chatrooms.zig`'s `trimLog`
   caps `state/chatrooms.jsonl` at `max_history` (default 500) **combined
   across all rooms** on every append — a busy room can push a quiet room's
@@ -164,10 +160,8 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
   inbox cursor covers agent runs but not ad-hoc polling loops.
 - No redelivery to a peer that was down; a catch-up sync would need a
   history fetch on reconnect.
-- Reconcile the three different "history" limits (20 / 50 / 50-but-unused)
-  into one, or document why the tool path deliberately differs.
-- The `todo_*` op table above documents a shared/room-scoped path that no
-  longer exists in code. Either the ops table (now fixed in this revision)
-  needed catching up, or — if a shared room-scoped todo is still wanted for
-  some case the board doesn't cover — that's a real design question, not
-  just a doc fix.
+- Is a shared, room-scoped todo list still wanted for any case the board
+  doesn't cover (e.g. something more transient than a card but more durable
+  than a private list), or was removing it in favor of the board a complete
+  substitution? If the latter, this PRD's history is settled; if not, that's
+  a real design gap, not just the doc catch-up this revision already did.

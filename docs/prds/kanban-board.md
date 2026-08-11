@@ -89,16 +89,6 @@ whose dependencies are unfinished — shown as blocked, not forbidden),
 `completion_tokens`, `cost`, and a `runs[]` breakdown; totals add up across
 runs — this one field is not itself an array, unlike the others above).
 
-## Failure modes and honest state
-
-| Condition | Behaviour |
-|---|---|
-| Chatrooms disabled | `list` fails: "chatrooms are disabled, and the board is a chatroom" |
-| Log exceeds page cap | **Bug:** silently returns a partial fold; no error (see Known issues) |
-| Claim race lost | Answer shows who holds the claim |
-| Move to unknown column / unknown card | Named error before any write |
-| Delete | Permanent; peers that already dropped it never restore it |
-
 ## Known issues
 
 - **Silent partial fold at the page cap.** `history()` should error when
@@ -117,6 +107,16 @@ runs — this one field is not itself an array, unlike the others above).
 - These three are manifest/implementation drift, not doc drift — the
   manifests describe a design the Zig side moved past. Fix by either
   implementing the fields or removing them from the manifests.
+
+## Failure modes
+
+| Condition | Behaviour |
+|---|---|
+| Chatrooms disabled | `list` fails: "chatrooms are disabled, and the board is a chatroom" |
+| Log exceeds page cap | **Bug:** silently returns a partial fold; no error (see Known issues) |
+| Claim race lost | Answer shows who holds the claim |
+| Move to unknown column / unknown card | Named error before any write |
+| Delete | Permanent; peers that already dropped it never restore it |
 
 ## Acceptance criteria
 
