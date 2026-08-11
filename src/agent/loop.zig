@@ -798,25 +798,6 @@ pub const Agent = struct {
     /// tool-result exchange is never split), replacing the removed middle with
     /// an LLM-generated summary (or a static placeholder when summarization
     /// fails).
-    /// Forces conversation compaction regardless of token thresholds.
-    /// Used by the REPL /compact command to let users manually reclaim
-    /// context window space. Returns true if compaction was performed.
-    pub fn forceCompact(self: *Agent, messages: *std.ArrayList(types.Message)) !bool {
-        if (messages.items.len <= 7) return false;
-        var keep_start = messages.items.len - 6;
-        while (keep_start > 1 and messages.items[keep_start].role == .tool) keep_start -= 1;
-        if (keep_start <= 1) return false;
-        const before_len = messages.items.len;
-        const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
-            log.log(.warn, "forced compaction summary failed ({s}), trying local extractive summary", .{@errorName(err)});
-            break :blk self.localSummary(messages.items[1..keep_start]);
-        };
-        const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
-        try compactMiddle(messages, self.arena, keep_start, placeholder);
-        log.log(.info, "forced compaction: {d} -> {d} messages", .{ before_len, messages.items.len });
-        return true;
-    }
-
     fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
         const estimated_tokens = estimateMessageTokens(messages.items);
         // Effective context budget in tokens: never exceed half the provider's
