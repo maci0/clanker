@@ -237,6 +237,96 @@ test "excludes rejects an answer that says both things" {
     try std.testing.expect(criterionSatisfied("YES", .{ .excludes = &.{"NO"} }));
 }
 
+test "every shipped eval definition parses and is complete" {
+    // loadAll drops a file it cannot parse (`catch continue`): a malformed
+    // eval silently stops being run and nothing goes red. This is the loud
+    // version — run from the repo root it parses every shipped definition
+    // and asserts a task eval actually asserts something.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var dir = std.Io.Dir.cwd().openDir(io, "evals", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer dir.close(io);
+
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".task.json")) continue;
+        const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const e = Eval.parse(arena, raw) catch |err| {
+            std.debug.print("eval {s}: {s}\n", .{ entry.name, @errorName(err) });
+            return err;
+        };
+        if (e.kind == .task) {
+            // A task with no prompt runs the agent on nothing; a task with no
+            // criteria passes on any non-empty answer. Neither is a case
+            // anyone wrote on purpose.
+            if (e.prompt.len == 0) {
+                std.debug.print("eval {s}: task without a prompt\n", .{entry.name});
+                return error.TaskEvalMissingPrompt;
+            }
+            if (e.criteria.len == 0) {
+                std.debug.print("eval {s}: task without criteria\n", .{entry.name});
+                return error.TaskEvalMissingCriteria;
+            }
+        }
+        count += 1;
+    }
+    try std.testing.expect(count > 0);
+}
+
+test "every eval requires_tool names a shipped tool" {
+    // requires_tool is matched against transcript tool-call names at score
+    // time, so a tool rename strands the eval at a permanent score of 0 —
+    // which the improve loop reads as its own regression. Cross-check the
+    // name against the manifests the registry actually loads.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer man_dir.close(io);
+
+    var tool_names: std.StringHashMapUnmanaged(void) = .empty;
+    var man_it = man_dir.iterate();
+    while (man_it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+        const raw = try man_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const v = json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        if (v != .object) continue;
+        const name = v.object.get("name") orelse continue;
+        if (name != .string) continue;
+        try tool_names.put(arena, name.string, {});
+    }
+
+    var dir = std.Io.Dir.cwd().openDir(io, "evals", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".task.json")) continue;
+        const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const e = Eval.parse(arena, raw) catch continue;
+        const want = e.requires_tool orelse continue;
+        if (tool_names.get(want) == null) {
+            std.debug.print("eval {s} requires tool '{s}' but no shipped manifest declares it\n", .{ entry.name, want });
+            return error.EvalRequiresUnknownTool;
+        }
+    }
+}
+
 test "equals and excludes are read from a descriptor" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
