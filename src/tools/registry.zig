@@ -43,6 +43,12 @@ pub const Tool = struct {
     /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
     /// backend; everything else is the plugin's own business.
     config: json.Value = .{ .object = .{} },
+    /// `config`, pre-serialized once at registry load. `config` never changes
+    /// after `Registry.load` returns (see `applyConfigOverrides`), so
+    /// re-serializing it on every `sandboxFor` call — previously once per
+    /// tool invocation, transform run, and worker spawn — redid the same
+    /// work every time instead of once.
+    config_json: []const u8 = "{}",
     /// Which `config` keys may be changed at runtime, from the descriptor's
     /// `config_editable` array. Empty means the plugin exposes no settings:
     /// the rest of `config` is the tool's own structure, not a control panel.
@@ -140,6 +146,10 @@ pub const Registry = struct {
         }
         reg.applyToggles(io, arena, base);
         reg.applyConfigOverrides(io, arena, base);
+        var vals = reg.tools.iterator();
+        while (vals.next()) |entry| {
+            entry.value_ptr.config_json = try std.fmt.allocPrint(arena, "{f}", .{json.fmt(entry.value_ptr.config, .{})});
+        }
         return reg;
     }
 
@@ -700,6 +710,11 @@ test "config overrides apply only to keys the descriptor opted in" {
     // chat_send cannot be turned into chat_rooms from state/.
     const chat = reg.get("chat_send").?;
     try std.testing.expectEqualStrings("send", chat.config.object.get("op").?.string);
+
+    // config_json is precomputed once at load, after overrides apply: it must
+    // reflect the overridden value, not the raw descriptor.
+    try std.testing.expect(std.mem.indexOf(u8, rlm.config_json, "\"max_depth\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rlm.config_json, "\"secret\":\"keep\"") != null);
 }
 
 test "a descriptor schema always reaches the provider with a type" {

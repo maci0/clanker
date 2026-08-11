@@ -48,6 +48,7 @@
 //!   @todo {"action":"subtask_toggle","todo":"<id>","subtask":"<id>","done":true}
 //!   @todo {"action":"subtask_remove","todo":"<id>","subtask":"<id>"}
 //!   @todo {"action":"depend","todo":"<id>","on":"<id>","off":false}
+//!   @todo {"action":"delete","todo":"<id>"}     a tombstone, never undone
 //!   @todo {"action":"log","todo":"<id>","what":"..."}
 //!   @todo {"action":"usage","todo":"<id>","prompt_tokens":0,
 //!          "completion_tokens":0,"cost":0.0,"run":"<run id>"}
@@ -241,6 +242,10 @@ const State = struct {
     /// than the latest writer; an `assign` later than it overrides it.
     claim_at: Stamp = .{},
     assign_at: Stamp = .{},
+    /// A latch, not a last-writer-wins field: an undelete would have to beat
+    /// every replica that already dropped the card, and a card recovered on
+    /// one peer but not another is worse than one that stays gone.
+    removed: bool = false,
 
     subtasks: std.ArrayListUnmanaged(SubtaskState) = .empty,
     deps: std.ArrayListUnmanaged(DepState) = .empty,
@@ -363,6 +368,8 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 c.assignee = v;
                 c.assign_at = .{ .ts = m.ts, .id = m.id };
             }
+        } else if (std.mem.eql(u8, act.action, "delete")) {
+            c.removed = true;
         } else if (std.mem.eql(u8, act.action, "subtask_add")) {
             const text = act.text orelse continue;
             if (text.len == 0) continue;
@@ -418,11 +425,19 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         }
     }
 
-    const out = try arena.alloc(Card, by_id.count());
+    var live: usize = 0;
+    {
+        var count_it = by_id.iterator();
+        while (count_it.next()) |kv| {
+            if (!kv.value_ptr.removed) live += 1;
+        }
+    }
+    const out = try arena.alloc(Card, live);
     var idx: usize = 0;
     var it = by_id.iterator();
     while (it.next()) |kv| {
         const c = kv.value_ptr;
+        if (c.removed) continue;
 
         var subs: std.ArrayListUnmanaged(Subtask) = .empty;
         for (c.subtasks.items) |s| {
@@ -643,6 +658,27 @@ test "usage cannot be made to wrap or go negative" {
     const cards = try derive(arena, &msgs);
     try std.testing.expectEqual(big, cards[0].usage.prompt_tokens);
     try std.testing.expectEqual(@as(f64, 0), cards[0].usage.cost);
+}
+
+test "delete is a tombstone that converges from either order" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const msgs_a = [_]Message{
+        .{ .from = "x", .ts = 100, .id = "m1", .text = try encodeAdd(arena, "doomed") },
+        .{ .from = "x", .ts = 101, .id = "m2", .text = try encodeAdd(arena, "kept") },
+        .{ .from = "x", .ts = 102, .id = "d1", .text = try encode(arena, .{ .action = "delete", .todo = "m1" }) },
+        .{ .from = "x", .ts = 103, .id = "u1", .text = try encode(arena, .{ .action = "update", .todo = "m1", .title = "back?" }) },
+    };
+    // The same messages, delivered with the delete last.
+    const msgs_b = [_]Message{ msgs_a[0], msgs_a[1], msgs_a[3], msgs_a[2] };
+    const ca = try derive(arena, &msgs_a);
+    const cb = try derive(arena, &msgs_b);
+    try std.testing.expectEqual(@as(usize, 1), ca.len);
+    try std.testing.expectEqual(@as(usize, 1), cb.len);
+    try std.testing.expectEqualStrings("kept", ca[0].title);
+    try std.testing.expectEqualStrings("kept", cb[0].title);
 }
 
 test "an action naming a card that does not exist is ignored" {

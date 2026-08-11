@@ -258,7 +258,7 @@ pub fn sandboxFor(
         .environ_map = environ_map,
         .seed = cfg.agent.seed,
         .cfg = cfg,
-        .config_json = try std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(tool.config, .{})}),
+        .config_json = tool.config_json,
     };
 }
 

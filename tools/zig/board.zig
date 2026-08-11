@@ -1,211 +1,217 @@
-//! board: the shared Kanban board at state/board.json.
+//! board: the shared Kanban board.
 //!
-//! This lived in src/cli.zig as HTTP handlers, which meant the board was a
-//! thing only the web UI could touch: a clanker could not read its own board,
-//! let alone move a card on it, and four hundred lines of application logic sat
-//! inside the HTTP layer. PRODUCT.md says an agent's reach is a policy decision
-//! rather than an accident of what the harness links, and that the CLI and the
-//! web UI describe the same state in the same terms. Both are true only if the
-//! board is a tool.
+//! This started as HTTP handlers in src/cli.zig, so the board was a thing only
+//! the web UI could touch: a clanker could not read its own board, let alone
+//! move a card on it. Then it was a tool with its own file, state/board.json,
+//! which fixed the reach but left two stores for one idea — a room's todo list
+//! held the same work item with a title, a claim and a closed flag, and the web
+//! UI showed both panels side by side.
 //!
-//! The HTTP endpoint now calls this the way /api/runs calls cmd_graph, so there
-//! is one implementation, sandboxed, reachable by an agent and by the page.
+//! There is one now, and it lives in the room's chat log. A card action is a
+//! chat message (`@todo {...}`, see cards.zig), so the board replicates to
+//! peers over the fan-out that already exists, resolves concurrent edits by
+//! rules that do not depend on arrival order, and needs no file of its own. The
+//! host appends and fans out; the folding and every rule about what a card is
+//! happen here, inside the sandbox, because that is application logic and the
+//! host's job is transport.
 //!
-//! Input:  {"op": "...", ...}      op defaults to the manifest's config.op
-//! Output: {"ok": true, "board": {...}}   the whole board after the change
+//! An action message is also its own announcement: anyone subscribed to the
+//! room sees the change without a second "something moved" message.
+//!
+//! Input:  {"op": "...", "room": "board", ...}   op defaults to config.op
+//! Output: {"ok": true, "board": {"columns": [...], "cards": [...]}}
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const cards = @import("cards.zig");
 
-const board_path = "state/board.json";
-const todos_path = "state/todos.json";
+/// The room a board lives in when the caller does not name one. A room per
+/// board, so a team can keep more than one without them bleeding together.
+const default_room = "board";
 
-const Subtask = struct {
-    id: []const u8,
-    text: []const u8,
-    done: bool = false,
-};
-
-const LogEntry = struct {
-    ts: i64 = 0,
-    who: []const u8 = "",
-    what: []const u8 = "",
-};
-
-const Usage = struct {
-    prompt_tokens: u64 = 0,
-    completion_tokens: u64 = 0,
-    cost: f64 = 0,
-    runs: []const []const u8 = &.{},
-};
-
-const Column = struct {
-    id: []const u8,
-    title: []const u8,
-    wip: u32 = 0,
-};
-
-const Card = struct {
-    id: []const u8,
-    title: []const u8,
-    body: []const u8 = "",
-    column: []const u8 = "backlog",
-    order: i64 = 0,
-    assignee: []const u8 = "",
-    labels: []const []const u8 = &.{},
-    priority: []const u8 = "normal",
-    deadline: i64 = 0,
-    created: i64 = 0,
-    updated: i64 = 0,
-    subtasks: []const Subtask = &.{},
-    depends_on: []const []const u8 = &.{},
-    log: []const LogEntry = &.{},
-    usage: Usage = .{},
-};
-
-const Board = struct {
-    columns: []const Column = &.{},
-    cards: []const Card = &.{},
-    announce_room: []const u8 = "board",
-};
-
-const default_columns = [_]Column{
-    .{ .id = "backlog", .title = "Backlog" },
-    .{ .id = "ready", .title = "Ready" },
-    .{ .id = "doing", .title = "Doing", .wip = 3 },
-    .{ .id = "review", .title = "Review" },
-    .{ .id = "done", .title = "Done" },
-};
+/// The guest asks for history in pages because the host answers into a 64 KB
+/// buffer, and a fold needs the whole log rather than its tail. The cap stops
+/// a pathological log from looping forever; a board that reaches it is reported
+/// rather than silently truncated, since a partial fold would quietly resurrect
+/// deleted cards and lose moves.
+const max_pages = 64;
 
 const Req = struct {
     op: []const u8 = "",
+    room: ?[]const u8 = null,
     id: []const u8 = "",
     title: ?[]const u8 = null,
     body: ?[]const u8 = null,
     column: ?[]const u8 = null,
-    position: ?i64 = null,
-    assignee: ?[]const u8 = null,
     priority: ?[]const u8 = null,
     deadline: ?i64 = null,
-    labels: ?[]const []const u8 = null,
+    who: ?[]const u8 = null,
     text: ?[]const u8 = null,
+    subtask: ?[]const u8 = null,
     subtask_id: ?[]const u8 = null,
     done: ?bool = null,
+    on: ?[]const u8 = null,
     depends_on: ?[]const u8 = null,
-    who: ?[]const u8 = null,
+    off: ?bool = null,
     what: ?[]const u8 = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
     cost: ?f64 = null,
+    run: ?[]const u8 = null,
     run_id: ?[]const u8 = null,
 };
 
-fn validPriority(s: []const u8) bool {
-    return std.mem.eql(u8, s, "low") or std.mem.eql(u8, s, "normal") or std.mem.eql(u8, s, "high");
-}
+const Config = struct { op: ?[]const u8 = null };
 
-fn columnExists(cols: []const Column, id: []const u8) bool {
-    for (cols) |c| {
-        if (std.mem.eql(u8, c.id, id)) return true;
+const History = struct {
+    ok: bool = false,
+    messages: []const cards.Message = &.{},
+};
+
+const Sent = struct {
+    ok: bool = false,
+    id: []const u8 = "",
+    ts: i64 = 0,
+};
+
+/// Reads the room's whole log, oldest first, following `after` until a page
+/// comes back empty. Messages are deduplicated by id: paging by timestamp can
+/// hand back the boundary message twice, and folding a claim twice would be
+/// harmless but folding a cost twice would not.
+fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
+    var all: std.ArrayList(cards.Message) = .empty;
+    var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var after: i64 = 0;
+
+    var page: usize = 0;
+    while (page < max_pages) : (page += 1) {
+        var req: std.Io.Writer.Allocating = .init(alloc);
+        var s = std.json.Stringify{ .writer = &req.writer };
+        try s.beginObject();
+        try s.objectField("op");
+        try s.write("history");
+        try s.objectField("room");
+        try s.write(room);
+        try s.objectField("after");
+        try s.write(after);
+        try s.endObject();
+
+        const raw = try lib.chat(req.written());
+        const parsed = std.json.parseFromSliceLeaky(History, alloc, raw, .{ .ignore_unknown_fields = true }) catch
+            return error.BadHistory;
+        if (!parsed.ok) return error.BadHistory;
+
+        var added: usize = 0;
+        for (parsed.messages) |m| {
+            const gop = try seen.getOrPut(alloc, m.id);
+            if (gop.found_existing) continue;
+            try all.append(alloc, m);
+            if (m.ts > after) after = m.ts;
+            added += 1;
+        }
+        // The host returns history newest-first or oldest-first depending on
+        // nothing this tool controls, so the fold sorts rather than assumes.
+        if (added == 0 or parsed.messages.len == 0) break;
     }
-    return false;
+
+    std.mem.sort(cards.Message, all.items, {}, struct {
+        fn lt(_: void, a: cards.Message, b: cards.Message) bool {
+            if (a.ts != b.ts) return a.ts < b.ts;
+            return std.mem.lessThan(u8, a.id, b.id);
+        }
+    }.lt);
+    return all.items;
 }
 
-/// Where a card lands when dropped at `want` among `count` cards. Odd values
-/// interleave with the even ones `resequence` assigns. Clamped first: the value
-/// comes from the caller, and `want * 2 - 1` at i64 max overflows.
-fn slot(want: i64, count: usize) i64 {
-    const limit: i64 = @intCast(@min(count, @as(usize, @intCast(std.math.maxInt(i32)))));
-    const capped = @min(@max(want, 0), limit);
-    return capped * 2 - 1;
-}
-
-fn cardLessThan(_: void, a: Card, b: Card) bool {
-    const col = std.mem.order(u8, a.column, b.column);
-    if (col != .eq) return col == .lt;
-    return a.order < b.order;
-}
-
-/// Renumbers a column 0,1,2… so `order` stays a total order rather than a pile
-/// of ties after an insert.
-fn resequence(cards: []Card, column: []const u8) void {
-    var n: i64 = 0;
-    for (cards) |*c| {
-        if (!std.mem.eql(u8, c.column, column)) continue;
-        c.order = n;
-        n += 1;
-    }
-}
-
-/// Reads the board, seeding it on first use and carrying any state/todos.json
-/// into the backlog so the checklist this replaced is not silently dropped.
-fn load(alloc: std.mem.Allocator) Board {
-    if (lib.fsRead(board_path)) |raw| {
-        if (std.json.parseFromSliceLeaky(Board, alloc, raw, .{ .ignore_unknown_fields = true })) |b| {
-            if (b.columns.len > 0) return b;
-            return .{ .columns = &default_columns, .cards = b.cards, .announce_room = b.announce_room };
-        } else |_| {}
-    } else |_| {}
-
-    var cards: std.ArrayList(Card) = .empty;
-    if (lib.fsRead(todos_path)) |raw| {
-        const OldTodo = struct { id: []const u8, text: []const u8, done: bool = false, created: i64 = 0 };
-        if (std.json.parseFromSliceLeaky([]OldTodo, alloc, raw, .{ .ignore_unknown_fields = true })) |old| {
-            for (old, 0..) |t, i| {
-                cards.append(alloc, .{
-                    .id = t.id,
-                    .title = t.text,
-                    .column = if (t.done) "done" else "backlog",
-                    .order = @intCast(i),
-                    .created = t.created,
-                    .updated = t.created,
-                }) catch {};
-            }
-        } else |_| {}
-    } else |_| {}
-    return .{ .columns = &default_columns, .cards = cards.items };
-}
-
-fn save(alloc: std.mem.Allocator, b: Board) !void {
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    try std.json.Stringify.value(b, .{}, &out.writer);
-    try lib.fsWrite(board_path, out.written());
-}
-
-/// Tells the board's room what changed. A courtesy, never part of the write:
-/// a room that cannot be reached must not fail an update that already
-/// succeeded, so every failure here is swallowed on purpose.
-fn announce(alloc: std.mem.Allocator, b: Board, action: []const u8, card: Card, detail: []const u8, actor: []const u8) void {
-    if (b.announce_room.len == 0) return;
-    var text: std.Io.Writer.Allocating = .init(alloc);
-    text.writer.writeAll("@board ") catch return;
-    var s = std.json.Stringify{ .writer = &text.writer };
-    s.beginObject() catch return;
-    s.objectField("action") catch return;
-    s.write(action) catch return;
-    s.objectField("card") catch return;
-    s.write(card.id) catch return;
-    s.objectField("title") catch return;
-    s.write(card.title) catch return;
-    s.objectField("column") catch return;
-    s.write(card.column) catch return;
-    s.objectField("by") catch return;
-    s.write(actor) catch return;
-    s.endObject() catch return;
-    text.writer.writeAll(" ") catch return;
-    text.writer.writeAll(detail) catch return;
-
+/// Appends one action to the room. The message id becomes the card id for an
+/// add, which is why the send's answer is returned rather than discarded.
+fn apply(alloc: std.mem.Allocator, room: []const u8, act: cards.Action) !Sent {
+    const text = try cards.encode(alloc, act);
     var req: std.Io.Writer.Allocating = .init(alloc);
-    var r = std.json.Stringify{ .writer = &req.writer };
-    r.beginObject() catch return;
-    r.objectField("op") catch return;
-    r.write("send") catch return;
-    r.objectField("room") catch return;
-    r.write(b.announce_room) catch return;
-    r.objectField("text") catch return;
-    r.write(text.written()) catch return;
-    r.endObject() catch return;
-    _ = lib.chat(req.written()) catch return;
+    var s = std.json.Stringify{ .writer = &req.writer };
+    try s.beginObject();
+    try s.objectField("op");
+    try s.write("send");
+    try s.objectField("room");
+    try s.write(room);
+    try s.objectField("text");
+    try s.write(text);
+    try s.endObject();
+
+    const raw = try lib.chat(req.written());
+    return std.json.parseFromSliceLeaky(Sent, alloc, raw, .{ .ignore_unknown_fields = true }) catch error.BadSend;
+}
+
+/// The board as the web UI and an agent both read it: the fixed column set,
+/// then every card. Re-derived from the log after a write rather than assumed,
+/// because a concurrent claim from a peer may have won.
+fn respond(out: *lib.Out, room: []const u8, list: []cards.Card) !void {
+    var w = lib.writer(out);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("room");
+    try s.write(room);
+    try s.objectField("board");
+    try s.beginObject();
+    try s.objectField("columns");
+    try s.beginArray();
+    for (cards.columns) |c| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(c);
+        try s.objectField("title");
+        // Column ids are lowercase words; the title is the same word capitalised
+        // rather than a second list to keep in step with the first.
+        var titled: [32]u8 = undefined;
+        const n = @min(c.len, titled.len);
+        @memcpy(titled[0..n], c[0..n]);
+        if (n > 0) titled[0] = std.ascii.toUpper(titled[0]);
+        try s.write(titled[0..n]);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.objectField("cards");
+    try s.beginArray();
+    for (list) |c| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(c.id);
+        try s.objectField("title");
+        try s.write(c.title);
+        try s.objectField("body");
+        try s.write(c.body);
+        try s.objectField("column");
+        try s.write(c.column);
+        try s.objectField("status");
+        try s.write(c.status());
+        try s.objectField("priority");
+        try s.write(c.priority);
+        try s.objectField("assignee");
+        try s.write(c.assignee);
+        try s.objectField("created_by");
+        try s.write(c.created_by);
+        try s.objectField("created");
+        try s.write(c.ts);
+        try s.objectField("deadline");
+        try s.write(c.deadline);
+        try s.objectField("subtasks");
+        try s.write(c.subtasks);
+        try s.objectField("depends_on");
+        try s.write(c.depends_on);
+        try s.objectField("blocked_by");
+        try s.write(try cards.blockedBy(list, &c, lib.alloc));
+        try s.objectField("log");
+        try s.write(c.log);
+        try s.objectField("usage");
+        try s.write(c.usage);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    try s.endObject();
+    lib.commit(out, &w);
 }
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -217,244 +223,145 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = std.json.parseFromSliceLeaky(Req, alloc, input, .{ .ignore_unknown_fields = true }) catch
         return lib.fail(out, "expected a JSON object");
 
-    const loaded = load(alloc);
-    var cards: std.ArrayList(Card) = .empty;
-    try cards.appendSlice(alloc, loaded.cards);
-    var b = Board{ .columns = loaded.columns, .cards = cards.items, .announce_room = loaded.announce_room };
+    // The descriptor pins the op for a single-purpose tool (board_move and the
+    // rest); the internal entry point the web UI calls names it in the request.
+    const cfg = std.json.parseFromSliceLeaky(Config, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Config{};
+    const op = if (cfg.op) |o| o else if (req.op.len > 0) req.op else "list";
+    const room = if (req.room) |r| (if (r.len > 0) r else default_room) else default_room;
 
-    // The host stamps time; a guest has no clock of its own. Seconds, as an
-    // integer, because every timestamp on the board is compared and sorted.
-    const now: i64 = @intFromFloat(lib.nowSeconds());
-    const actor = if (req.who) |w| w else "clanker";
+    const msgs = history(alloc, room) catch |err| return lib.fail(out, switch (err) {
+        error.SandboxDenied => "chatrooms are disabled, and the board is a chatroom",
+        error.TooLarge => "this room's log no longer fits in one read; the board cannot be folded from a partial log",
+        else => "could not read the board's room",
+    });
+    const list = try cards.derive(alloc, msgs);
 
-    if (req.op.len == 0 or std.mem.eql(u8, req.op, "list")) {
-        return respond(out, b);
-    }
+    if (std.mem.eql(u8, op, "list")) return respond(out, room, list);
 
-    if (std.mem.eql(u8, req.op, "create")) {
-        const title = std.mem.trim(u8, req.title orelse "", " \t\r\n");
-        if (title.len == 0 or title.len > 500) return lib.fail(out, "title must be 1-500 characters");
-        const col = req.column orelse "backlog";
-        if (!columnExists(b.columns, col)) return lib.fail(out, "no such column");
-        if (req.priority) |pr| {
-            if (!validPriority(pr)) return lib.fail(out, "priority must be low, normal or high");
-        }
-        var order: i64 = 0;
-        for (cards.items) |c| {
-            if (std.mem.eql(u8, c.column, col)) order += 1;
-        }
-        const id = try std.fmt.allocPrint(alloc, "c-{d}-{d}", .{ now, cards.items.len });
-        var log0: std.ArrayList(LogEntry) = .empty;
-        try log0.append(alloc, .{ .ts = now, .who = actor, .what = "created" });
-        try cards.append(alloc, .{
-            .id = id,
-            .title = title,
-            .body = req.body orelse "",
-            .column = col,
-            .order = order,
-            .assignee = req.assignee orelse "",
-            .priority = req.priority orelse "normal",
-            .deadline = req.deadline orelse 0,
-            .labels = req.labels orelse &.{},
-            .created = now,
-            .updated = now,
-            .log = log0.items,
-        });
-        b.cards = cards.items;
-        try save(alloc, b);
-        const made = cards.items[cards.items.len - 1];
-        announce(alloc, b, "created", made, try std.fmt.allocPrint(alloc, "{s} added \"{s}\" to {s}.", .{ actor, title, col }), actor);
-        return respond(out, b);
-    }
-
-    // Every remaining op names one card, but the op is checked first: a request
-    // with both a bad op and a bad id should be told the op is not real, since
-    // no id would have made it work.
-    const card_ops = [_][]const u8{
-        "update",         "move",       "delete",        "subtask_add", "subtask_toggle",
-        "subtask_remove", "depend_add", "depend_remove", "log",         "usage",
+    // Everything else writes, and everything except create names a card. The op
+    // is checked before the id so a request wrong in both ways is told the op is
+    // not real: no id would have made it work.
+    const known = [_][]const u8{
+        "create",     "add",            "update",         "move",   "claim",
+        "assign",     "close",          "delete",         "log",    "usage",
+        "subtask_add", "subtask_toggle", "subtask_remove", "depend_add", "depend_remove",
     };
-    var known = false;
-    for (card_ops) |name| {
-        if (std.mem.eql(u8, req.op, name)) known = true;
+    var ok_op = false;
+    for (known) |k| {
+        if (std.mem.eql(u8, op, k)) ok_op = true;
     }
-    if (!known) return lib.fail(out, "unknown op");
+    if (!ok_op) return lib.fail(out, "unknown op");
 
-    var at: ?usize = null;
-    for (cards.items, 0..) |c, i| {
-        if (std.mem.eql(u8, c.id, req.id)) at = i;
+    if (std.mem.eql(u8, op, "create") or std.mem.eql(u8, op, "add")) {
+        const title = std.mem.trim(u8, req.title orelse "", " \t\r\n");
+        if (title.len == 0 or title.len > cards.max_title_len)
+            return lib.fail(out, "title must be 1-512 characters");
+        const body = req.body orelse "";
+        if (body.len > cards.max_body_len) return lib.fail(out, "body is too long");
+        if (req.column) |c| {
+            if (!cards.validColumn(c)) return lib.fail(out, "no such column");
+        }
+        if (req.priority) |p| {
+            if (!cards.validPriority(p)) return lib.fail(out, "priority must be low, normal or high");
+        }
+        _ = apply(alloc, room, .{
+            .action = "add",
+            .title = title,
+            .body = if (body.len > 0) body else null,
+            .column = req.column,
+            .priority = req.priority,
+            .deadline = req.deadline,
+        }) catch return lib.fail(out, "could not post the card to the room");
+        return respond(out, room, try cards.derive(alloc, try history(alloc, room)));
     }
-    const idx = at orelse return lib.fail(out, "no such card");
-    const card = &cards.items[idx];
 
-    var announce_action: []const u8 = "";
-    var announce_detail: []const u8 = "";
-    var moved_from: ?[]const u8 = null;
-    var moved_to: ?[]const u8 = null;
+    if (req.id.len == 0) return lib.fail(out, "which card? pass its id from board_list");
+    if (cards.get(list, req.id) == null) return lib.fail(out, "no such card");
 
-    if (std.mem.eql(u8, req.op, "update")) {
+    // Aliases: the manifests and the web UI grew two names for two of these
+    // fields before the models merged, and old callers should keep working.
+    const subtask_id = req.subtask orelse req.subtask_id;
+    const dep_id = req.on orelse req.depends_on;
+    const run_id = req.run orelse req.run_id;
+
+    const act: cards.Action = if (std.mem.eql(u8, op, "update")) blk: {
         if (req.title) |t| {
             const trimmed = std.mem.trim(u8, t, " \t\r\n");
-            if (trimmed.len == 0 or trimmed.len > 500) return lib.fail(out, "title must be 1-500 characters");
-            card.title = trimmed;
+            if (trimmed.len == 0 or trimmed.len > cards.max_title_len)
+                return lib.fail(out, "title must be 1-512 characters");
         }
-        if (req.body) |v| card.body = v;
-        if (req.assignee) |v| card.assignee = v;
-        if (req.deadline) |v| card.deadline = v;
-        if (req.labels) |v| card.labels = v;
-        if (req.priority) |pr| {
-            if (!validPriority(pr)) return lib.fail(out, "priority must be low, normal or high");
-            card.priority = pr;
+        if (req.body) |b| {
+            if (b.len > cards.max_body_len) return lib.fail(out, "body is too long");
         }
-        // Assignment and deadlines change whether someone else should act;
-        // notes and titles do not, and a board that announces every keystroke
-        // is a board people mute.
-        if (req.assignee) |who| {
-            announce_action = "assigned";
-            announce_detail = if (who.len > 0)
-                try std.fmt.allocPrint(alloc, "{s} assigned \"{s}\" to {s}.", .{ actor, card.title, who })
-            else
-                try std.fmt.allocPrint(alloc, "{s} unassigned \"{s}\".", .{ actor, card.title });
-        } else if (req.deadline != null) {
-            announce_action = "deadline";
-            announce_detail = try std.fmt.allocPrint(alloc, "{s} set a deadline on \"{s}\".", .{ actor, card.title });
+        if (req.priority) |p| {
+            if (!cards.validPriority(p)) return lib.fail(out, "priority must be low, normal or high");
         }
-    } else if (std.mem.eql(u8, req.op, "move")) {
-        const col = req.column orelse card.column;
-        if (!columnExists(b.columns, col)) return lib.fail(out, "no such column");
-        const from = card.column;
-        card.column = col;
-        const want = req.position orelse -1;
-        card.order = if (want < 0) std.math.maxInt(i64) else slot(want, cards.items.len);
-        var entry: std.ArrayList(LogEntry) = .empty;
-        try entry.appendSlice(alloc, card.log);
-        try entry.append(alloc, .{ .ts = now, .who = actor, .what = try std.fmt.allocPrint(alloc, "moved to {s}", .{col}) });
-        card.log = entry.items;
-        announce_action = "moved";
-        announce_detail = try std.fmt.allocPrint(alloc, "{s} moved \"{s}\" from {s} to {s}.", .{ actor, card.title, from, col });
-        moved_from = from;
-        moved_to = col;
-    } else if (std.mem.eql(u8, req.op, "delete")) {
-        const gone = cards.orderedRemove(idx);
-        b.cards = cards.items;
-        try save(alloc, b);
-        announce(alloc, b, "deleted", gone, try std.fmt.allocPrint(alloc, "{s} deleted \"{s}\".", .{ actor, gone.title }), actor);
-        return respond(out, b);
-    } else if (std.mem.eql(u8, req.op, "subtask_add")) {
+        if (req.column) |c| {
+            if (!cards.validColumn(c)) return lib.fail(out, "no such column");
+        }
+        break :blk .{
+            .action = "update",
+            .todo = req.id,
+            .title = req.title,
+            .body = req.body,
+            .column = req.column,
+            .priority = req.priority,
+            .deadline = req.deadline,
+            .who = req.who,
+        };
+    } else if (std.mem.eql(u8, op, "move")) blk: {
+        const col = req.column orelse return lib.fail(out, "which column?");
+        if (!cards.validColumn(col)) return lib.fail(out, "no such column");
+        break :blk .{ .action = "move", .todo = req.id, .column = col };
+    } else if (std.mem.eql(u8, op, "claim"))
+        .{ .action = "claim", .todo = req.id }
+    else if (std.mem.eql(u8, op, "assign"))
+        .{ .action = "assign", .todo = req.id, .who = req.who orelse "" }
+    else if (std.mem.eql(u8, op, "close"))
+        .{ .action = "close", .todo = req.id }
+    else if (std.mem.eql(u8, op, "delete"))
+        .{ .action = "delete", .todo = req.id }
+    else if (std.mem.eql(u8, op, "subtask_add")) blk: {
         const text = std.mem.trim(u8, req.text orelse "", " \t\r\n");
-        if (text.len == 0 or text.len > 500) return lib.fail(out, "subtask text must be 1-500 characters");
-        var subs: std.ArrayList(Subtask) = .empty;
-        try subs.appendSlice(alloc, card.subtasks);
-        try subs.append(alloc, .{
-            .id = try std.fmt.allocPrint(alloc, "s-{d}-{d}", .{ now, subs.items.len }),
-            .text = text,
-        });
-        card.subtasks = subs.items;
-    } else if (std.mem.eql(u8, req.op, "subtask_toggle") or std.mem.eql(u8, req.op, "subtask_remove")) {
-        const sid = req.subtask_id orelse return lib.fail(out, "missing subtask_id");
-        var subs: std.ArrayList(Subtask) = .empty;
-        var hit = false;
-        for (card.subtasks) |s| {
-            if (!std.mem.eql(u8, s.id, sid)) {
-                try subs.append(alloc, s);
-                continue;
-            }
-            hit = true;
-            if (std.mem.eql(u8, req.op, "subtask_remove")) continue;
-            var updated = s;
-            updated.done = req.done orelse !s.done;
-            try subs.append(alloc, updated);
+        if (text.len == 0 or text.len > cards.max_title_len)
+            return lib.fail(out, "subtask text must be 1-512 characters");
+        break :blk .{ .action = "subtask_add", .todo = req.id, .text = text };
+    } else if (std.mem.eql(u8, op, "subtask_toggle")) blk: {
+        const sid = subtask_id orelse return lib.fail(out, "which subtask?");
+        break :blk .{ .action = "subtask_toggle", .todo = req.id, .subtask = sid, .done = req.done orelse true };
+    } else if (std.mem.eql(u8, op, "subtask_remove")) blk: {
+        const sid = subtask_id orelse return lib.fail(out, "which subtask?");
+        break :blk .{ .action = "subtask_remove", .todo = req.id, .subtask = sid };
+    } else if (std.mem.eql(u8, op, "depend_add") or std.mem.eql(u8, op, "depend_remove")) blk: {
+        const on = dep_id orelse return lib.fail(out, "which card does it wait on?");
+        if (std.mem.eql(u8, on, req.id)) return lib.fail(out, "a card cannot wait on itself");
+        if (cards.get(list, on) == null) return lib.fail(out, "no such card to depend on");
+        break :blk .{
+            .action = "depend",
+            .todo = req.id,
+            .on = on,
+            .off = std.mem.eql(u8, op, "depend_remove"),
+        };
+    } else if (std.mem.eql(u8, op, "log")) blk: {
+        const what = std.mem.trim(u8, req.what orelse req.text orelse "", " \t\r\n");
+        if (what.len == 0 or what.len > cards.max_body_len)
+            return lib.fail(out, "say what was done");
+        break :blk .{ .action = "log", .todo = req.id, .what = what };
+    } else blk: {
+        // usage
+        if (req.cost) |c| {
+            if (!std.math.isFinite(c) or c < 0) return lib.fail(out, "cost must be a non-negative number");
         }
-        if (!hit) return lib.fail(out, "no such subtask");
-        card.subtasks = subs.items;
-    } else if (std.mem.eql(u8, req.op, "depend_add") or std.mem.eql(u8, req.op, "depend_remove")) {
-        const dep = req.depends_on orelse return lib.fail(out, "missing depends_on");
-        if (std.mem.eql(u8, dep, card.id)) return lib.fail(out, "a card cannot depend on itself");
-        var deps: std.ArrayList([]const u8) = .empty;
-        var present = false;
-        for (card.depends_on) |d| {
-            if (std.mem.eql(u8, d, dep)) {
-                present = true;
-                if (std.mem.eql(u8, req.op, "depend_remove")) continue;
-            }
-            try deps.append(alloc, d);
-        }
-        if (std.mem.eql(u8, req.op, "depend_add") and !present) {
-            var exists = false;
-            for (cards.items) |c| {
-                if (std.mem.eql(u8, c.id, dep)) exists = true;
-            }
-            if (!exists) return lib.fail(out, "no such card to depend on");
-            try deps.append(alloc, dep);
-        }
-        card.depends_on = deps.items;
-    } else if (std.mem.eql(u8, req.op, "log")) {
-        const what = std.mem.trim(u8, req.what orelse "", " \t\r\n");
-        if (what.len == 0 or what.len > 2000) return lib.fail(out, "log text must be 1-2000 characters");
-        var entry: std.ArrayList(LogEntry) = .empty;
-        try entry.appendSlice(alloc, card.log);
-        try entry.append(alloc, .{ .ts = now, .who = actor, .what = what });
-        card.log = entry.items;
-        announce_action = "logged";
-        announce_detail = try std.fmt.allocPrint(alloc, "{s} on \"{s}\": {s}", .{ actor, card.title, what });
-    } else if (std.mem.eql(u8, req.op, "usage")) {
-        // Accrued, not replaced: a card is worked on by more than one run.
-        // Saturating, because the addends come from the caller.
-        card.usage.prompt_tokens +|= req.prompt_tokens orelse 0;
-        card.usage.completion_tokens +|= req.completion_tokens orelse 0;
-        const add_cost = req.cost orelse 0;
-        if (std.math.isFinite(add_cost)) card.usage.cost += add_cost;
-        if (req.run_id) |rid| {
-            var runs: std.ArrayList([]const u8) = .empty;
-            var seen = false;
-            for (card.usage.runs) |r| {
-                try runs.append(alloc, r);
-                if (std.mem.eql(u8, r, rid)) seen = true;
-            }
-            if (!seen) try runs.append(alloc, rid);
-            card.usage.runs = runs.items;
-        }
-    } else {
-        return lib.fail(out, "unknown op");
-    }
+        break :blk .{
+            .action = "usage",
+            .todo = req.id,
+            .prompt_tokens = req.prompt_tokens,
+            .completion_tokens = req.completion_tokens,
+            .cost = req.cost,
+            .run = run_id,
+        };
+    };
 
-    card.updated = now;
-    const changed = card.*;
-    // Sorting reorders the array `card` points into, so it happens only after
-    // every write to the card is done.
-    if (moved_to) |to| {
-        std.mem.sort(Card, cards.items, {}, cardLessThan);
-        resequence(cards.items, to);
-        if (!std.mem.eql(u8, moved_from.?, to)) resequence(cards.items, moved_from.?);
-    }
-    b.cards = cards.items;
-    try save(alloc, b);
-    if (announce_action.len > 0) announce(alloc, b, announce_action, changed, announce_detail, actor);
-    return respond(out, b);
-}
-
-fn respond(out: *lib.Out, b: Board) !void {
-    var w = lib.writer(out);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("board");
-    try s.write(b);
-    try s.endObject();
-    lib.commit(out, &w);
-}
-
-test slot {
-    try std.testing.expectEqual(@as(i64, -1), slot(0, 5));
-    try std.testing.expectEqual(@as(i64, 9), slot(5, 5));
-    try std.testing.expectEqual(@as(i64, 9), slot(1000, 5));
-    // The value that overflowed and killed the server when this was native.
-    try std.testing.expectEqual(@as(i64, 9), slot(std.math.maxInt(i64), 5));
-    try std.testing.expectEqual(@as(i64, -1), slot(std.math.minInt(i64), 5));
-}
-
-test validPriority {
-    try std.testing.expect(validPriority("high"));
-    try std.testing.expect(!validPriority("urgent"));
+    _ = apply(alloc, room, act) catch return lib.fail(out, "could not post the change to the room");
+    return respond(out, room, try cards.derive(alloc, try history(alloc, room)));
 }
