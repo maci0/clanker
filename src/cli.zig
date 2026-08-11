@@ -1222,41 +1222,14 @@ fn reportUnfinishedRun(
 /// when there are none, so a first `clanker -c "..."` starts a session rather
 /// than failing at someone who has not made one yet.
 fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    const metas = session.listSessions(io, arena, std.Io.Dir.cwd()) catch return null;
-    var best: ?session.SessionMeta = null;
-    for (metas) |m| {
-        if (best == null or m.updated > best.?.updated) best = m;
-    }
-    return if (best) |b| b.id else null;
+    return session.latestSessionId(io, arena, std.Io.Dir.cwd());
 }
 
-/// The provider named by `--provider` (or the config default), with
-/// `--model` applied as a one-off override of its `default_model`.
-///
-/// `--model <provider>/<model>` picks both at once, so `--model zai/glm-5.2`
-/// needs no separate `--provider`. The prefix is only read as a provider when
-/// config actually has one by that name and `--provider` was not given: a
-/// model id can contain a slash of its own (`moonshotai/kimi-k3` is a model,
-/// served by the provider named `kimi-k3`), and splitting those would send a
-/// request for a model that does not exist to a provider that does not either.
+/// `--provider`/`--model` resolution, shared with the REPL: the logic (and
+/// its `--model <provider>/<model>` convention) lives on Config so both
+/// entry points resolve flags identically.
 fn resolveProvider(cfg: *const config.Config, opts: Options) !config.Provider {
-    var want_provider = opts.provider;
-    var want_model = opts.model;
-    if (want_provider == null) {
-        if (want_model) |m| {
-            if (std.mem.indexOfScalar(u8, m, '/')) |slash| {
-                const head = m[0..slash];
-                const tail = m[slash + 1 ..];
-                if (head.len > 0 and tail.len > 0 and cfg.providers.getPtr(head) != null) {
-                    want_provider = head;
-                    want_model = tail;
-                }
-            }
-        }
-    }
-    var provider = (try cfg.provider(want_provider)).*;
-    if (want_model) |m| provider.default_model = m;
-    return provider;
+    return cfg.resolveProvider(opts.provider, opts.model);
 }
 
 /// One goal loaded from `state/goals.json` and ready to steer a run.
@@ -1853,28 +1826,11 @@ fn runDelta(delta: []const u8) void {
 /// configured provider here is 128K); a turn still compacts, just not down to
 /// nothing.
 const max_turn_tokens = 96 * 1024;
-const max_session_tokens = 128 * 1024;
+const max_session_tokens = session.max_session_tokens;
 
-/// Drops oldest non-system messages until the estimated token count fits under
-/// `max_tokens` so long sessions auto-compact instead of exceeding the context
-/// window. Token count is estimated as chars/4 (a rough heuristic).
-fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) void {
-    var total: usize = 0;
-    for (messages.items) |m| {
-        total += if (m.content) |c| c.len / 4 else 0;
-    }
-    if (total <= max_tokens) return;
-    var i: usize = 0;
-    while (i < messages.items.len and total > max_tokens) {
-        const m = messages.items[i];
-        if (m.role != .system) {
-            total -|= if (m.content) |c| c.len / 4 else 0;
-            _ = messages.orderedRemove(i);
-        } else {
-            i += 1;
-        }
-    }
-}
+/// Session auto-compaction, shared with the REPL — see
+/// `session.compactMessages`.
+const compactMessages = session.compactMessages;
 
 fn cmdSessions(init: std.process.Init) !void {
     const arena = init.arena.allocator();
