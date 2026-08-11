@@ -69,15 +69,11 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     if (state_dir.len > 0) base.createDirPath(io, state_dir) catch return;
     const path = subPath(arena, state_dir) catch return;
 
-    // Trim the log when it outgrows the cap (rewrites the file from 0, so the
-    // seek offset below must stay 0); otherwise append at the current size.
-    var size: u64 = 0;
+    // Trim the log when it outgrows the cap. Done before the file is opened
+    // below, because trimming rewrites the file and would otherwise contend
+    // with the lock this function is about to take.
     if (base.statFile(io, path, .{})) |st| {
-        if (st.size > max_log_bytes) {
-            trimLog(base, io, gpa, arena, path) catch {};
-        } else {
-            size = st.size;
-        }
+        if (st.size > max_log_bytes) trimLog(base, io, gpa, arena, path) catch {};
     } else |_| {}
 
     var line_buf: [1024]u8 = undefined;
@@ -86,11 +82,22 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     s.write(rec) catch return;
     const line = line_buf[0..w.end];
 
-    const file = base.createFile(io, path, .{ .truncate = false }) catch |err| {
+    // Several clanker processes write this file at once: an agent run, the
+    // staged evals a promotion gate spawns, anything else driving the CLI. The
+    // offset used to come from a stat taken before the file was even opened,
+    // so two writers could read the same size and write to the same place,
+    // and one record simply replaced the other. Nothing reported it: the file
+    // stayed valid JSONL, just short.
+    //
+    // The lock makes the read-size-then-write pair atomic between cooperating
+    // writers, and the size is taken from the locked handle rather than from
+    // before it.
+    const file = base.createFile(io, path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
         log.log(.warn, "[stats] open failed: {s}", .{@errorName(err)});
         return;
     };
     defer file.close(io);
+    const size = (file.stat(io) catch return).size;
     var wbuf: [512]u8 = undefined;
     var fw = file.writer(io, &wbuf);
     fw.seekToUnbuffered(size) catch return;
@@ -313,4 +320,71 @@ test "statsJSON serializes stats + totals" {
     try std.testing.expectEqual(@as(usize, 1), parsed.object.get("stats").?.array.items.len);
     try std.testing.expectEqual(@as(i64, 350), parsed.object.get("stats").?.array.items[0].object.get("total_tokens").?.integer);
     try std.testing.expectEqual(@as(i64, 2), parsed.object.get("totals").?.object.get("calls").?.integer);
+}
+
+test "concurrent appends all survive" {
+    // The offset used to come from a stat taken before the file was opened, so
+    // two writers racing between the stat and the write landed on the same
+    // offset and one record replaced the other. The file stayed valid JSONL,
+    // just missing a line, which is why nothing ever noticed.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+
+    const writers = 8;
+    const per_writer = 12;
+
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        id: u64,
+
+        fn run(self: *@This()) void {
+            var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+            defer arena_state.deinit();
+            var i: u64 = 0;
+            while (i < per_writer) : (i += 1) {
+                append(self.dir, self.io, self.gpa, arena_state.allocator(), "state", .{
+                    .ts = @intCast(self.id * 1000 + i),
+                    .provider = "p",
+                    .model = "m",
+                    .prompt_tokens = 1,
+                    .completion_tokens = 1,
+                    .total_tokens = 2,
+                    .cache_hit = 0,
+                    .cache_miss = 1,
+                    .cost = 0.0,
+                    .duration_ms = 1,
+                });
+            }
+        }
+    };
+
+    var workers: [writers]Worker = undefined;
+    var threads: [writers]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        w.* = .{ .dir = tmp.dir, .io = io, .gpa = std.testing.allocator, .id = i };
+        threads[i] = try std.Thread.spawn(.{}, Worker.run, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    const raw = try tmp.dir.readFileAlloc(io, "state/token_stats.jsonl", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+
+    var lines: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        // A lost record shows up as a short count; a half-overwritten one as a
+        // line that no longer parses.
+        const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, line, .{});
+        defer parsed.deinit();
+        lines += 1;
+    }
+    try std.testing.expectEqual(@as(usize, writers * per_writer), lines);
 }
