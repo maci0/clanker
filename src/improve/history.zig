@@ -615,6 +615,21 @@ pub const History = struct {
             try buf.appendSlice(arena, streak_buf[0..streak_w.end]);
         }
 
+        // Warn explicitly about the same-region gate so the model knows
+        // re-targeting a previously rejected code region will be caught.
+        var has_region_fps = false;
+        for (entries[start..]) |e| {
+            if (std.mem.eql(u8, e.status, "rejected") and e.region_fps.len > 0) {
+                has_region_fps = true;
+                break;
+            }
+        }
+        if (has_region_fps) {
+            try buf.appendSlice(arena, "\nRecent rejected attempts targeted specific code regions (file + matched text). ");
+            try buf.appendSlice(arena, "Proposing a different replacement for the same old text in the same file will be automatically rejected. ");
+            try buf.appendSlice(arena, "To fix code in those regions, use a different (larger or shifted) match span, or fix a different file entirely.\n");
+        }
+
         // Append a hot-files section when files have been rejected multiple
         // times, so the model sees which targets to avoid or approach
         // differently.
