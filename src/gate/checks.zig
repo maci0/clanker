@@ -257,6 +257,82 @@ pub fn proposalDiffGate(old_texts: []const []const u8, new_texts: []const []cons
     return .{ .ok = true, .label = "proposal-diff" };
 }
 
+/// Verifies that each `old` text actually appears in the corresponding file.
+/// A mismatch means the LLM hallucinated or used stale file content, and the
+/// change would either silently fail to apply or corrupt the file.
+pub fn matchGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, files: []const []const u8, old_texts: []const []const u8) !GateResult {
+    if (files.len != old_texts.len) return .{ .ok = false, .label = "match", .detail = "mismatched file/old-text count" };
+    for (files, old_texts) |f, old| {
+        if (old.len == 0) continue; // append-mode change, no match needed
+        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch |err| {
+            return .{ .ok = false, .label = "match", .detail = if (err == error.FileNotFound) "target file does not exist" else "could not read target file" };
+        };
+        defer gpa.free(content);
+        if (std.mem.indexOf(u8, content, old) == null) {
+            return .{ .ok = false, .label = "match", .detail = f };
+        }
+    }
+    return .{ .ok = true, .label = "match" };
+}
+
+test "matchGate rejects when old text is not in the file" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.zig", .data = "const x = 1;\n" });
+
+    // old text present: pass
+    const ok = try matchGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"});
+    try std.testing.expect(ok.ok);
+
+    // old text absent: fail
+    const bad = try matchGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const y = 2;"});
+    try std.testing.expect(!bad.ok);
+    try std.testing.expectEqualStrings("match", bad.label);
+
+    // missing file: fail
+    const missing = try matchGate(io, gpa, tmp.dir, &.{"nope.zig"}, &.{"x"});
+    try std.testing.expect(!missing.ok);
+
+    // empty old (append): pass
+    const append = try matchGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{""});
+    try std.testing.expect(append.ok);
+}
+
+/// Rejects changes where old and new differ only in whitespace. These waste
+/// a full gate cycle and are almost always an LLM formatting artefact rather
+/// than an intentional change.
+pub fn whitespaceOnlyGate(old_texts: []const []const u8, new_texts: []const []const u8) GateResult {
+    if (old_texts.len != new_texts.len) return .{ .ok = false, .label = "whitespace-only", .detail = "mismatched old/new count" };
+    for (old_texts, new_texts) |old, new| {
+        const old_trimmed = std.mem.trim(u8, old, " \t\r\n");
+        const new_trimmed = std.mem.trim(u8, new, " \t\r\n");
+        if (std.mem.eql(u8, old_trimmed, new_trimmed) and !std.mem.eql(u8, old, new)) {
+            return .{ .ok = false, .label = "whitespace-only", .detail = "a change differs only in whitespace" };
+        }
+    }
+    return .{ .ok = true, .label = "whitespace-only" };
+}
+
+test "whitespaceOnlyGate rejects whitespace-only diffs" {
+    // Pure whitespace change: fail
+    const ws = whitespaceOnlyGate(&.{"const x = 1;"}, &.{"  const x = 1;  \n"});
+    try std.testing.expect(!ws.ok);
+
+    // Real change: pass
+    const real = whitespaceOnlyGate(&.{"const x = 1;"}, &.{"const x = 2;"});
+    try std.testing.expect(real.ok);
+
+    // Identical (caught by proposalDiffGate, not this one): pass here
+    const same = whitespaceOnlyGate(&.{"x"}, &.{"x"});
+    try std.testing.expect(same.ok);
+}
+
 test "proposalDiffGate rejects no-op and empty proposals" {
     // Empty proposal.
     const empty = proposalDiffGate(&.{}, &.{});
