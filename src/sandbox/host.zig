@@ -1253,14 +1253,11 @@ fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8
     return h.writeResult(mem_bytes, json);
 }
 
+/// ck_getenv(name) — alias of ck_env, kept for modules linked against the
+/// older symbol name. Delegating keeps the validation contract (empty name
+/// -> Err.invalid) identical for both entry points.
 pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
-    const h = getHost(caller);
-    const bytes = memBytes(caller) orelse return Err.invalid;
-    const name = sliceOf(bytes, name_ptr, name_len) orelse return Err.invalid;
-    if (h.sandbox.environ_map.get(name)) |value| {
-        return h.writeResult(bytes, value);
-    }
-    return Err.not_found;
+    return ckEnv(caller, name_ptr, name_len);
 }
 
 // ------------------------------------------------------- ck_exec (shell-ish) --
@@ -1584,6 +1581,14 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     if (sb.fs_prefixes.len > 0) {
         var allowed = false;
         for (sb.fs_prefixes) |p| {
+            // "." means the sandbox root itself: every relative path under it
+            // is inside. Without this a descriptor written as ["."] matched
+            // nothing at all, since no relative path starts with a dot, and
+            // the tool was denied every file in the project it was pointed at.
+            if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) {
+                allowed = true;
+                break;
+            }
             if (std.mem.startsWith(u8, sub_path, p)) {
                 // The match must end at a path boundary: a bare prefix
                 // ("notes") authorizes the directory itself and paths
@@ -2010,4 +2015,36 @@ test "writeExecResult serializes exit code and output streams as JSON" {
     try std.testing.expect(!obj2.get("ok").?.bool);
     try std.testing.expectEqual(@as(i64, 3), obj2.get("code").?.integer);
     try std.testing.expectEqualStrings("boom", obj2.get("stderr").?.string);
+}
+
+test "a \".\" prefix authorizes the whole sandbox root" {
+    // A descriptor written as {"fs_prefixes": ["."]} used to match nothing:
+    // no relative path starts with a dot, so the tool was denied every file in
+    // the project it was pointed at ("path is outside the sandbox").
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = threaded.io(),
+        .root_dir = "/tmp/ck-root",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = &env,
+    };
+    const joined = try safeJoin(&sb, "src/agent/loop.zig");
+    defer std.testing.allocator.free(joined);
+    try std.testing.expectEqualStrings("/tmp/ck-root/src/agent/loop.zig", joined);
+
+    // Escapes are still refused: "." widens the prefix, it does not disable
+    // the traversal check.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "../etc/passwd"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "/etc/passwd"));
+
+    // A narrow prefix still narrows.
+    var narrow = sb;
+    narrow.fs_prefixes = &.{"state/"};
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&narrow, "src/main.zig"));
 }
