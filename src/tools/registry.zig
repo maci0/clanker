@@ -474,3 +474,25 @@ test "every shipped manifest carries a schema the provider accepts" {
         }
     }
 }
+
+test "descriptor statusline flag parses and defaults off" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\{ "name": "sl", "description": "d", "wasm": "sl.wasm", "input_schema": {}, "statusline": true, "internal": true }
+    ;
+    const t = try Registry.parseDescriptor(arena, raw, "tools");
+    try std.testing.expect(t.statusline);
+    try std.testing.expect(t.internal);
+
+    // A descriptor without the flag defaults to off, and the tool stays a
+    // normal LLM-visible tool.
+    const bare =
+        \\{ "name": "plain", "description": "d", "wasm": "p.wasm" }
+    ;
+    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    try std.testing.expect(!b.statusline);
+    try std.testing.expect(!b.internal);
+}
