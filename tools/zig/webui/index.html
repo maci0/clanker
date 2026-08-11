@@ -266,6 +266,23 @@
 
   /* ---- composer ---- */
   .composer { margin-top: 1.5rem; }
+  /* Images travelling with the next task. Small enough to stay out of the way,
+     large enough to tell two screenshots apart. */
+  .attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .attachment { position: relative; }
+  .attachment img {
+    display: block; width: 72px; height: 72px; object-fit: cover;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  }
+  .attachment button {
+    position: absolute; top: -6px; right: -6px;
+    min-height: 22px; width: 22px; padding: 0; line-height: 1;
+    font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+    background: var(--surface); color: var(--fg-muted);
+    border: 1px solid var(--border); border-radius: var(--radius-pill); cursor: pointer;
+  }
+  .attachment button:hover { color: var(--danger); border-color: var(--danger); }
+  .composer.dragging textarea { border-color: var(--accent); }
   label {
     display: block; font-size: var(--step-0); font-weight: 600;
     letter-spacing: 0.06em; text-transform: uppercase;
@@ -627,6 +644,7 @@
       <label for="session-select">Conversation</label>
       <select id="session-select"></select>
       <div class="session-actions">
+        <button type="button" class="secondary" id="session-fork">Fork</button>
         <button type="button" class="secondary" id="session-rename">Rename</button>
         <button type="button" class="secondary danger" id="session-delete">Delete</button>
       </div>
@@ -637,6 +655,7 @@
 
     <form id="task-form" class="composer">
       <label for="task">Task</label>
+      <div class="attachments" id="attachments" hidden></div>
       <textarea id="task" name="task" placeholder="Summarize the provider config…" required></textarea>
       <div class="toolbar">
         <span class="meta" id="hint"></span>
@@ -758,6 +777,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var el = {
     form: document.getElementById("task-form"),
     task: document.getElementById("task"),
+    attachments: document.getElementById("attachments"),
     submit: document.getElementById("submit"),
     cancel: document.getElementById("cancel"),
     refresh: document.getElementById("refresh"),
@@ -775,6 +795,7 @@ document.addEventListener("DOMContentLoaded", function () {
     runStatus: document.getElementById("run-status"),
     sessionSelect: document.getElementById("session-select"),
     sessionStatus: document.getElementById("session-status"),
+    sessionFork: document.getElementById("session-fork"),
     sessionRename: document.getElementById("session-rename"),
     sessionDelete: document.getElementById("session-delete"),
     chatRoom: document.getElementById("chat-room"),
@@ -952,10 +973,20 @@ document.addEventListener("DOMContentLoaded", function () {
 
   var knownSessions = [];
 
+  function fmtBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
   function sessionLabel(s) {
     var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
     if (title.length > 56) title = title.slice(0, 55) + "…";
-    return title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
+    var label = title + "  ·  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
+    // Transcript weight, because agent.compact_threshold_bytes is measured in
+    // exactly these bytes and compaction is otherwise invisible until it fires.
+    if (typeof s.bytes === "number" && s.bytes > 0) label += "  ·  " + fmtBytes(s.bytes);
+    return label;
   }
 
   /* The live session is always selectable even when the server has never seen
@@ -1086,6 +1117,36 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     return null;
   }
+
+  /* A fork is a branch you can abandon: the same messages under a new id, so
+     trying a different direction never costs the conversation it came from.
+     The server answers with the new id and this switches to it, because the
+     point of forking is to continue in the copy. */
+  el.sessionFork.addEventListener("click", function () {
+    if (!currentSessionMeta()) {
+      el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+      return;
+    }
+    el.sessionFork.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/fork", { method: "POST" })
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok || !data.ok || !data.id) throw new Error(data.error || ("HTTP " + r.status));
+          return data.id;
+        });
+      })
+      .then(function (newId) {
+        sessionId = newId;
+        try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+        renderSessionChip();
+        el.sessionStatus.textContent = "Forked. You are now in the copy.";
+        return loadSessions();
+      })
+      .catch(function (err) {
+        el.sessionStatus.textContent = "Could not fork: " + err.message;
+      })
+      .finally(function () { el.sessionFork.disabled = false; });
+  });
 
   el.sessionRename.addEventListener("click", function () {
     var meta = currentSessionMeta();
@@ -1473,6 +1534,85 @@ document.addEventListener("DOMContentLoaded", function () {
       .catch(function () { renderStatus(null); });
   }
 
+  // ---- image attachments -------------------------------------------------
+
+  /* The harness has been multimodal for a while — the agent loop attaches
+     ImageParts — but the composer was a text box, so the one thing you most
+     want to show an agent (a screenshot of the thing you are asking about)
+     could not be sent. Encoded here and posted with the run. */
+  var pendingImages = [];
+  var max_image_bytes = 4 * 1024 * 1024;
+
+  function renderAttachments() {
+    el.attachments.textContent = "";
+    el.attachments.hidden = pendingImages.length === 0;
+    pendingImages.forEach(function (img, i) {
+      var wrap = document.createElement("div");
+      wrap.className = "attachment";
+      var thumb = document.createElement("img");
+      thumb.src = "data:" + img.mime + ";base64," + img.b64;
+      thumb.alt = "Attached image " + (i + 1) + ", " + fmtBytes(img.bytes);
+      wrap.appendChild(thumb);
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
+      rm.addEventListener("click", function () {
+        pendingImages.splice(i, 1);
+        renderAttachments();
+        el.hint.textContent = "";
+      });
+      wrap.appendChild(rm);
+      el.attachments.appendChild(wrap);
+    });
+  }
+
+  function addImageFile(file) {
+    if (!file || file.type.indexOf("image/") !== 0) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      // Split on the comma: a data: URL is "data:<mime>;base64,<payload>" and
+      // only the payload travels.
+      var comma = String(reader.result).indexOf(",");
+      if (comma === -1) return;
+      var b64 = String(reader.result).slice(comma + 1);
+      // The server enforces the same cap on the decoded size, so measure the
+      // decoded size here rather than the base64 length, which is a third larger.
+      var bytes = Math.floor(b64.length * 3 / 4);
+      if (bytes > max_image_bytes) {
+        el.hint.textContent = "That image is " + fmtBytes(bytes) + "; the limit is " + fmtBytes(max_image_bytes) + ".";
+        return;
+      }
+      pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
+      renderAttachments();
+      el.hint.textContent = pendingImages.length + (pendingImages.length === 1 ? " image attached." : " images attached.");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  el.task.addEventListener("paste", function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file") addImageFile(items[i].getAsFile());
+    }
+  });
+
+  ["dragenter", "dragover"].forEach(function (evt) {
+    el.form.addEventListener(evt, function (e) {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      el.form.classList.add("dragging");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (evt) {
+    el.form.addEventListener(evt, function () { el.form.classList.remove("dragging"); });
+  });
+  el.form.addEventListener("drop", function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files) return;
+    e.preventDefault();
+    for (var i = 0; i < e.dataTransfer.files.length; i++) addImageFile(e.dataTransfer.files[i]);
+  });
+
   el.task.addEventListener("input", syncControls);
 
   el.task.addEventListener("keydown", function (e) {
@@ -1531,7 +1671,12 @@ document.addEventListener("DOMContentLoaded", function () {
     fetch("/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: task, stream: true, session: sessionId }),
+      body: JSON.stringify({
+        task: task,
+        stream: true,
+        session: sessionId,
+        images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; })
+      }),
       signal: controller.signal
     }).then(function (resp) {
       if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
@@ -1548,6 +1693,9 @@ document.addEventListener("DOMContentLoaded", function () {
       splitter.flush();
       finalizeAnswer(turn);
       el.task.value = "";
+      // Attachments belong to the turn that just went out, not the next one.
+      pendingImages = [];
+      renderAttachments();
       // The turn just gave this session its title and a newer timestamp, and a
       // first turn created it server-side at all — so the picker is refreshed
       // rather than left describing the conversation as it was before.
