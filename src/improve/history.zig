@@ -383,13 +383,20 @@ pub const History = struct {
         var out: std.ArrayList(RecentEdit) = .empty;
         for (entries[start..]) |e| {
             if (!std.mem.eql(u8, e.status, "rejected")) continue;
-            // The history log does not store old texts verbatim (only
-            // fingerprints), so we reconstruct from the snapshot: read the
-            // snapshotted file and the live file, diff is implicit. For now
-            // we store the file names so the gate can at least match on file.
-            // A future improvement could persist old texts in the log.
             for (e.files) |f| {
-                try out.append(arena, .{ .file = f, .old = e.detail });
+                // Load the snapshotted version of the file so the staleness
+                // gate can compare proposed old text against what the rejected
+                // attempt actually targeted, rather than comparing it against
+                // the rejection reason string.
+                const src = std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ self.history_dir, e.id, f }) catch continue;
+                const content = self.base.readFileAlloc(self.io, src, arena, .limited(1 << 20)) catch |err| {
+                    // No snapshot (new file, or snapshot failed): fall back to
+                    // file name only so the gate can still match on path.
+                    _ = err;
+                    try out.append(arena, .{ .file = f, .old = "" });
+                    continue;
+                };
+                try out.append(arena, .{ .file = f, .old = content });
             }
         }
         return out.toOwnedSlice(arena);
