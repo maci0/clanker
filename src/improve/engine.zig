@@ -204,12 +204,22 @@ pub const Engine = struct {
         log.log(.info, "baseline gate: {d:.2}/{d} passing", .{ before.score, before.total });
 
         var promoted_any = false;
+        // A static instruction against an unchanging tree gives the model the
+        // same question every time it runs dry, so once it starts saying "no
+        // changes needed" it tends to keep saying it: nothing about the input
+        // changes between iterations. Left unchecked, a large --iters spends
+        // its remainder on calls that were never going to do anything — this
+        // stops the run instead of grinding through them.
+        const no_change_stop_threshold = 8;
+        var consecutive_no_change: usize = 0;
         for (0..opts.iters) |iter| {
             log.log(.info, "--- improve iteration {d}/{d} ---", .{ iter + 1, opts.iters });
             var attempted = false;
+            var last_outcome: Outcome = .failed;
             var attempt: u32 = 0;
             while (attempt < opts.max_attempts_per_iter) : (attempt += 1) {
                 const outcome = try self.improveOnce(opts, attempt + 1, if (attempt == 0) null else feedback);
+                last_outcome = outcome;
                 switch (outcome) {
                     .accepted => {
                         promoted_any = true;
@@ -227,6 +237,12 @@ pub const Engine = struct {
                 }
             }
             if (!attempted) log.log(.warn, "iteration {d}: all attempts failed", .{iter + 1});
+
+            consecutive_no_change = if (last_outcome == .no_change) consecutive_no_change + 1 else 0;
+            if (consecutive_no_change >= no_change_stop_threshold) {
+                log.log(.info, "stopping early: {d} consecutive iterations found nothing left to change for this instruction ({d}/{d} iterations used)", .{ consecutive_no_change, iter + 1, opts.iters });
+                break;
+            }
         }
 
         const after = try self.gateScore();

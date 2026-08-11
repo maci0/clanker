@@ -2313,6 +2313,8 @@ const Connection = struct {
 /// guarded respectively.
 const max_connection_threads = 64;
 var connection_threads = std.atomic.Value(u32).init(0);
+var request_sequence = std.atomic.Value(u64).init(1);
+threadlocal var request_status: u16 = 0;
 
 fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
     // A bound, so a flood of slow clients cannot make the process spawn
@@ -2363,6 +2365,22 @@ fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const confi
 
 fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
     defer stream.close(io);
+    var request_id_buf: [24]u8 = undefined;
+    const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
+    log.setContext(request_id);
+    defer log.clearContext();
+    const started_at = std.Io.Timestamp.now(io, .awake);
+    request_status = 0;
+    var request_method: []const u8 = "unknown";
+    var request_path: []const u8 = "unknown";
+    defer {
+        const elapsed_ns = started_at.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
+        const elapsed_ms: i128 = @divTrunc(elapsed_ns, std.time.ns_per_ms);
+        if (std.mem.startsWith(u8, request_path, "/api/") or request_status >= 400 or request_status == 0) {
+            const level: log.Level = if (request_status >= 500 or request_status == 0) .error_ else if (request_status >= 400) .warn else .info;
+            log.log(level, "http request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
+        }
+    }
     var total: std.ArrayList(u8) = .empty;
     defer total.deinit(gpa);
     var tmp: [4096]u8 = undefined;
@@ -2388,6 +2406,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // "/" was fine but "/?v=3" was not, and the board could not name its
         // room until this was special-cased for one endpoint.
         const path = target[0..(std.mem.indexOfScalar(u8, target, '?') orelse target.len)];
+        request_method = method;
+        request_path = path;
         // The listen socket is 127.0.0.1-only, but any page open in the
         // user's browser can still reach it: every non-GET route here either
         // runs the agent, execs sandboxed tools, or writes state, so a
@@ -2402,7 +2422,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
+            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+            std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
@@ -2446,6 +2467,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
                 std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or
+                std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
+                std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
                 std.mem.eql(u8, path, "/webui/features/fleet.js")))
         {
             // Same tool, same comptime size guard, one file per language.
@@ -3512,10 +3535,14 @@ fn handleWebuiAsset(
 
     const is_css = std.mem.endsWith(u8, target, ".css");
     const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
+    const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
+    const is_theme = std.mem.endsWith(u8, target, "theme.js");
+    const is_markdown = std.mem.endsWith(u8, target, "markdown.js");
+    const is_graph = std.mem.endsWith(u8, target, "graph.js");
     const is_fleet = std.mem.endsWith(u8, target, "fleet.js");
     const is_utils = std.mem.endsWith(u8, target, "utils.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_vendor) &render_vendor else if (is_theme) &render_theme else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_fleet) &render_fleet else if (is_utils) &render_utils else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_vendor) &gzip_vendor else if (is_theme) &gzip_theme else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -4903,6 +4930,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // Streaming mode: send headers up front, then the agent's tokens as
         // they are produced; the final newline + Connection: close ends the
         // stream on the client side.
+        request_status = 200;
         rawhttp.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
@@ -5004,6 +5032,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
 }
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
+    request_status = status;
     var hbuf: [4096]u8 = undefined;
     // nosniff on every response, not just the HTML one: these bodies carry peer
     // names, provider error text, and model output, and none of it should ever
@@ -5095,6 +5124,10 @@ var render_page: RenderCache = .{};
 var render_css: RenderCache = .{};
 var render_js: RenderCache = .{};
 var render_van_boot: RenderCache = .{};
+var render_vendor: RenderCache = .{};
+var render_theme: RenderCache = .{};
+var render_markdown: RenderCache = .{};
+var render_graph: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_utils: RenderCache = .{};
 
@@ -5102,6 +5135,10 @@ var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
 var gzip_js: GzipCache = .{};
 var gzip_van_boot: GzipCache = .{};
+var gzip_vendor: GzipCache = .{};
+var gzip_theme: GzipCache = .{};
+var gzip_markdown: GzipCache = .{};
+var gzip_graph: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_utils: GzipCache = .{};
 var gzip_van: GzipCache = .{};
@@ -5114,6 +5151,7 @@ var gzip_hljs: GzipCache = .{};
 /// run graph), so a cache keyed on nothing would serve one caller's answer to
 /// another. Compression failure is not an error, it just sends the bytes.
 fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, accepts_gzip: bool, body: []const u8) void {
+    request_status = 200;
     // Below roughly a packet's worth, gzip costs more than it saves.
     const worth_it = accepts_gzip and body.len >= 1024;
     // .default, not .best: this body is unique to this request (a session

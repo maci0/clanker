@@ -6,6 +6,16 @@
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs its tools as sandboxed WebAssembly modules via zwasm, and improves its own source code through a gated loop: the agent proposes an exact-match patch, applies it to a staging copy, verifies it with `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint, and promotes it to the live tree only if all gates pass.
 
+## Release status
+
+clanker is unreleased development software. The `0.1.0` package version is not
+evidence of a published release; published releases are identified by an
+immutable `vMAJOR.MINOR.PATCH` Git tag and a matching entry in
+[CHANGELOG.md](CHANGELOG.md). Until `1.0.0`, minor releases may contain breaking
+changes, but patch releases remain backward compatible. See
+[RELEASES.md](RELEASES.md) for the compatibility, deprecation, and support
+policy.
+
 ## Quick start
 
 ```sh
