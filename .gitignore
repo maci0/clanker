@@ -40,3 +40,5 @@ tools/grammars/*.so
 
 # Runtime lock for the self-improvement review loop.
 .review-loop.lock
+
+**.ignore

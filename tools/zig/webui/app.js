@@ -61,6 +61,7 @@ var el = {
   goalForm: document.getElementById("goal-form"),
   goalObjective: document.getElementById("goal-objective"),
   goalCriterion: document.getElementById("goal-criterion"),
+  goalMaxIterations: document.getElementById("goal-max-iterations"),
   goalsStatus: document.getElementById("goals-status"),
   usage: document.getElementById("usage"),
   usageRefresh: document.getElementById("usage-refresh"),
@@ -1780,14 +1781,12 @@ el.form.addEventListener("submit", function (e) {
     else syncScrollButton();
   });
 
-  var goalId = pendingGoalId || "";
-  pendingGoalId = "";
   fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       task: task,
-      goal: goalId,
+      goal: "",
       stream: true,
       session: sessionId,
       images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
@@ -3073,10 +3072,19 @@ function goalCard(g) {
   var actions = [];
   if (g.id) {
     /* Active goals are meant to be worked: without this, adding a goal only
-       wrote state/goals.json and never started a run. */
+       wrote state/goals.json and never started a run. The per-run budget box
+       sets this run's max iterations; left blank it falls back to the goal's
+       stored default, then to the global agent.max_iterations. */
     if ((g.status || "active") === "active") {
-      actions.push(UI.button("Work on this", function () { workOnGoal(g); },
-        { label: "Work on goal: " + (g.objective || g.id) }));
+      actions.push(T.div({ class: "goal-run-controls" },
+        T.input({
+          type: "number", min: "1", max: "1000", step: "1",
+          "data-goal-budget": g.id,
+          placeholder: g.max_iterations ? ("≤ " + g.max_iterations + " iters (default)") : "max iters (default)",
+          title: "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations."
+        }),
+        UI.button("Work on this", function () { workOnGoal(g); },
+          { label: "Work on goal: " + (g.objective || g.id) })));
     }
     [["Mark done", "done", "Goal marked done."],
      ["Abandon", "abandoned", "Goal abandoned."],
@@ -3094,6 +3102,7 @@ function goalCard(g) {
     T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
     T.div({ class: "goal-meta" },
       T.span({ class: "goal-status" }, g.status || "unknown"),
+      g.max_iterations ? T.span("budget ≤ " + g.max_iterations + " iters") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
        several of them; expanded by default they push the rest of the page off
@@ -3104,6 +3113,7 @@ function goalCard(g) {
       T.dl(fields.map(function (pair) {
         return [T.dt(pair[0]), T.dd(pair[1])];
       }))) : null,
+    g.id ? renderGoalRunPanel(g.id) : null,
     actions.length ? T.div({ class: "goal-actions" }, actions) : null);
 }
 
@@ -4046,27 +4056,186 @@ if (window.MutationObserver) {
 
 /* ---------- goals ---------- */
 
-/* Goal id for the next /api/run. Set by workOnGoal so the server attaches that
-   goal's preamble (and can fill an empty task). Cleared when the request goes
-   out so a later chat turn does not keep reusing it. */
-var pendingGoalId = "";
+/* A goal run streams into its own panel on the goal card, independently of
+   the chat composer and of every other goal run. The server serves each
+   /api/run connection on its own thread, so concurrency is purely a
+   front-end shape: each run keeps its own AbortController, its own streamed
+   text and its own status. Starting a second goal while the first streams is
+   therefore accepted; only a second run of the *same* goal is refused. */
+var goalRuns = {};  // goal id -> { controller, status, text }
 
-/* Starts a run that executes an active goal: switches to Chat, fills a work
-   order, and submits through the same path as the composer. */
-function workOnGoal(g) {
+function goalRunStatusLabel(status) {
+  if (status === "running") return "running…";
+  if (status === "stopped") return "stopped";
+  if (status === "failed") return "failed";
+  return "finished";
+}
+
+/* Appends a streamed line to a run's stored text and, if its panel is on
+   screen, to that panel's output node directly — streaming must not rebuild
+   the whole goals list on every chunk. */
+function appendGoalText(gid, text) {
+  var run = goalRuns[gid];
+  if (!run) return;
+  run.text += text;
+  var node = el.goals.querySelector('.goal-run-output[data-goal-output="' + gid + '"]');
+  if (node) node.textContent = run.text;
+}
+
+/* A run's status changed (finished / stopped / failed): update the stored
+   status and rebuild so the panel swaps its Stop button for the verdict. The
+   stored text survives, so the rebuild shows everything streamed so far. */
+function setGoalStatus(gid, status) {
+  var run = goalRuns[gid];
+  if (!run) return;
+  run.status = status;
+  renderGoals(goalState.val);
+}
+
+function abortGoalRun(gid) {
+  var run = goalRuns[gid];
+  if (run && run.controller) run.controller.abort();
+}
+
+/* The run panel drawn inside a goal card. Rebuilt from stored state whenever
+   the goal list re-renders, so a live run survives a reload or a status
+   refresh. */
+function renderGoalRunPanel(gid) {
+  var run = goalRuns[gid];
+  if (!run) return null;
+  return T.div({ class: "goal-run", "data-status": run.status, "data-goal-run": gid },
+    T.div({ class: "goal-run-head" },
+      T.span({ class: "goal-run-status" }, goalRunStatusLabel(run.status)),
+      run.status === "running"
+        ? UI.button("Stop", function () { abortGoalRun(gid); },
+            { kind: "danger", icon: "strike", label: "Stop this goal run" })
+        : null),
+    T.pre({ class: "goal-run-output", "data-goal-output": gid }, run.text || ""));
+}
+
+/* Starts a run that executes an active goal: switches to Goals and streams
+   the run into that goal's own panel. Runs are independent — the chat
+   composer's single busy guard does not apply, so several goals can be
+   worked at once. */
+function runGoal(g, opts) {
   if (!g || !g.id) return;
-  if (busy) {
-    el.goalsStatus.textContent = "A run is already in progress; wait for it to finish.";
+  opts = opts || {};
+  var existing = goalRuns[g.id];
+  if (existing && existing.status === "running") {
+    el.goalsStatus.textContent = "A run for this goal is already in progress; wait for it to finish.";
     return;
   }
-  pendingGoalId = g.id;
-  showView("chat", true);
   var task = "Work on this goal until the completion criterion is met.\n\nObjective: " +
     (g.objective || "") + "\nDone when: " + (g.completion_criterion || "");
-  el.task.value = task;
+  var controller = new AbortController();
+  goalRuns[g.id] = { controller: controller, status: "running", text: "" };
+  showView("goals", true);
+  renderGoals(goalState.val);
   el.goalsStatus.textContent = "Starting work on goal…";
-  syncControls();
-  el.form.requestSubmit();
+  if (opts.onStart) opts.onStart();
+
+  var splitter = makeLineSplitter(function (line) {
+    if (line.charCodeAt(0) === 1) {
+      var evt;
+      try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
+      if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
+      return;
+    }
+    appendGoalText(g.id, line + "\n");
+  });
+
+  fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      task: task,
+      goal: g.id,
+      stream: true,
+      session: sessionId,
+      max_iterations: opts.maxIterations || null
+    }),
+    signal: controller.signal
+  }).then(function (resp) {
+    if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    return (function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) return;
+        splitter.push(decoder.decode(chunk.value, { stream: true }));
+        return pump();
+      });
+    })();
+  }).then(function () {
+    splitter.flush();
+    if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
+      setGoalStatus(g.id, "finished");
+      el.goalsStatus.textContent = "Goal run finished.";
+      if (opts.onDone) opts.onDone("finished");
+    }
+  }).catch(function (err) {
+    splitter.flush();
+    if (!goalRuns[g.id]) return;
+    if (err && err.name === "AbortError") {
+      setGoalStatus(g.id, "stopped");
+      el.goalsStatus.textContent = "Goal run stopped.";
+      if (opts.onDone) opts.onDone("stopped");
+    } else {
+      appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
+      setGoalStatus(g.id, "failed");
+      el.goalsStatus.textContent = "Goal run failed: " + err.message;
+      if (opts.onDone) opts.onDone("failed");
+    }
+  });
+}
+
+function workOnGoal(g) {
+  // Read the per-run budget box on this goal card (if any). A positive number
+  // is a per-run override; anything else sends null so the server falls back
+  // to the goal's stored default, then to the global agent.max_iterations.
+  var box = el.goals.querySelector('input[data-goal-budget="' + g.id + '"]');
+  var n = box ? parseInt(box.value, 10) : NaN;
+  runGoal(g, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
+}
+
+/* Turns a board card into a goal and starts a run on it, moving the card
+   through the board with the run's lifecycle: into Doing when the run starts,
+   into Review when it finishes, and back to Ready if it is stopped or fails
+   (so it never sits in Doing half-finished). The card id lives in the browser
+   and the run streams back its own end, so the movement is a front-end
+   concern here. */
+function workCardAsGoal(c) {
+  if (!c || !c.id) return;
+  var objective = (c.title || "").trim();
+  if (!objective) {
+    el.boardStatus.textContent = "That card has no title to turn into a goal.";
+    return;
+  }
+  var criterion = (c.body || "").trim() ||
+    "Complete the work described on the board card \"" + objective + "\".";
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added from the board.")
+    .then(function (d) {
+      if (!d) return;
+      // The card's objective is the newest goal carrying that text: matching
+      // by it and taking the largest `updated` picks the one just created even
+      // when an older goal already used the same wording.
+      var created = null, createdUp = -1;
+      var goals = d.goals || [];
+      for (var i = 0; i < goals.length; i++) {
+        if (goals[i].objective === objective && (goals[i].updated || 0) > createdUp) {
+          created = goals[i];
+          createdUp = goals[i].updated || 0;
+        }
+      }
+      if (!created) return;
+      postBoard({ op: "move", id: c.id, column: "doing" }, null);
+      runGoal(created, {
+        onDone: function (status) {
+          var col = status === "finished" ? "review" : "ready";
+          postBoard({ op: "move", id: c.id, column: col }, null);
+        }
+      });
+    });
 }
 
 function postGoal(payload, status) {
@@ -4092,12 +4261,17 @@ el.goalForm.addEventListener("submit", function (e) {
   var objective = el.goalObjective.value.trim();
   var criterion = el.goalCriterion.value.trim();
   if (!objective || !criterion) return;
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (d) {
+  var budgetRaw = el.goalMaxIterations.value.trim();
+  var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
+  var payload = { objective: objective, completion_criterion: criterion };
+  if (Number.isFinite(budget) && budget > 0) payload.max_iterations = budget;
+  postGoal(payload, "Goal added.").then(function (d) {
     // A refused goal keeps what was typed: the criterion is the field most
     // likely to be refused, and retyping the objective to fix it is a tax.
     if (!d) return;
     el.goalObjective.value = "";
     el.goalCriterion.value = "";
+    el.goalMaxIterations.value = "";
     // Newest first after renderGoals — start work so defining a goal is not
     // just writing state/goals.json.
     var goals = goalState.val || [];
@@ -4809,6 +4983,17 @@ function showCardDetail(id) {
     postBoard({ op: "update", id: c.id, assignee: (el.instanceChip.textContent || "").trim() }, "Assigned.");
   });
   fields.appendChild(takeIt);
+
+  var asGoal = document.createElement("button");
+  asGoal.type = "button";
+  asGoal.className = "secondary";
+  asGoal.textContent = "Work as goal";
+  asGoal.title = "Create a goal from this card and run it. The card moves to Doing, then to Review when the goal finishes.";
+  asGoal.addEventListener("click", function () {
+    delete cardDrafts[c.id];
+    workCardAsGoal(c);
+  });
+  fields.appendChild(asGoal);
 
   var del = document.createElement("button");
   del.type = "button";
