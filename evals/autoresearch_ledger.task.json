@@ -1,9 +1,7 @@
 {
   "name": "autoresearch_ledger",
   "kind": "task",
-  "prompt": "Use the autoresearch tool with no run id to list existing research runs, then report what it returned. If there are no runs yet, say so and use the read_file tool to check that state/autoresearch/ exists or is empty.",
+  "prompt": "Use the autoresearch tool with no run id to list existing research runs, then report what it returned.",
   "requires_tool": "autoresearch",
-  "criteria": [
-    { "includes": ["autoresearch"] }
-  ]
+  "criteria": [{ "includes": ["autoresearch"] }]
 }

@@ -77,6 +77,7 @@ pub const Command = enum {
     doctor,
     setup,
     prune,
+    autoresearch,
 };
 
 pub const Options = struct {
@@ -120,6 +121,12 @@ pub const Options = struct {
     /// `clanker sessions`, reading an id and pasting it back is the workaround
     /// it replaces.
     continue_last: bool = false,
+    research_targets: []const []const u8 = &.{},
+    research_harness: ?[]const u8 = null,
+    research_metric: ?[]const u8 = null,
+    research_direction: []const u8 = "min",
+    research_pattern: ?[]const u8 = null,
+    research_budget: u32 = 300,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -158,7 +165,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     var idx: usize = 1;
     var cmd_seen = false;
     var pending_sub: ?[]const u8 = null;
-    var seen_flags: [8]Flag = undefined;
+    var seen_flags: [16]Flag = undefined;
     var seen_flags_len: usize = 0;
 
     // `--flag=value` is written as often as `--flag value`; the parser only
@@ -253,6 +260,42 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                     return error.BadPort;
                 };
                 used = .port;
+            } else if (std.mem.eql(u8, a, "--target")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                const gpa = std.heap.page_allocator;
+                var list: std.ArrayList([]const u8) = .empty;
+                for (opts.research_targets) |x| try list.append(gpa, x);
+                var it = std.mem.splitScalar(u8, v, ',');
+                while (it.next()) |part| {
+                    const tt = std.mem.trim(u8, part, " \t");
+                    if (tt.len > 0) try list.append(gpa, tt);
+                }
+                opts.research_targets = try list.toOwnedSlice(gpa);
+                used = .research_target;
+            } else if (std.mem.eql(u8, a, "--harness")) {
+                opts.research_harness = try takeValue(args, &idx, inline_value, a, diag);
+                used = .research_harness;
+            } else if (std.mem.eql(u8, a, "--metric")) {
+                opts.research_metric = try takeValue(args, &idx, inline_value, a, diag);
+                used = .research_metric;
+            } else if (std.mem.eql(u8, a, "--direction")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                if (!std.mem.eql(u8, v, "min") and !std.mem.eql(u8, v, "max")) {
+                    setDiag(diag, v);
+                    return error.BadPort;
+                }
+                opts.research_direction = v;
+                used = .research_direction;
+            } else if (std.mem.eql(u8, a, "--pattern")) {
+                opts.research_pattern = try takeValue(args, &idx, inline_value, a, diag);
+                used = .research_pattern;
+            } else if (std.mem.eql(u8, a, "--budget")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.research_budget = std.fmt.parseInt(u32, v, 10) catch {
+                    setDiag(diag, v);
+                    return error.BadIters;
+                };
+                used = .research_budget;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -321,6 +364,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 // Compatibility alias from when the vaxis REPL was a
                 // separate opt-in command; now `repl` itself.
                 opts.command = .repl;
+            } else if (std.mem.eql(u8, a, "autoresearch")) {
+                opts.command = .autoresearch;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -427,6 +472,10 @@ pub fn printUsage(io: std.Io) void {
     writeStdErr(io, renderUsage(&buf)) catch {};
 }
 
+pub fn printUsageHint(io: std.Io) void {
+    writeStdErr(io, "Run `clanker --help` for the command list.\n") catch {};
+}
+
 fn renderUsage(buf: []u8) []const u8 {
     var w: std.Io.Writer = .fixed(buf);
     w.writeAll("clanker - self-improving AI agent harness\n\nusage: clanker [command] [options]\n       clanker            with no command, starts the REPL\n") catch {};
@@ -482,6 +531,12 @@ const Flag = enum {
     tasks,
     port,
     yes,
+    research_target,
+    research_harness,
+    research_metric,
+    research_direction,
+    research_pattern,
+    research_budget,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -494,6 +549,12 @@ const Flag = enum {
             .tasks => "--tasks",
             .port => "--port",
             .yes => "--yes",
+            .research_target => "--target",
+            .research_harness => "--harness",
+            .research_metric => "--metric",
+            .research_direction => "--direction",
+            .research_pattern => "--pattern",
+            .research_budget => "--budget",
         };
     }
 };
@@ -535,6 +596,7 @@ const specs = [_]Spec{
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "--continue, -c picks up the most recently touched session." },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
+    .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. Default port 17921." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
@@ -620,6 +682,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .graph => try cmdGraph(init, opts),
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
+        .autoresearch => try cmdAutoresearch(init, opts),
     }
 }
 
@@ -5880,4 +5943,64 @@ test "webui wasm-miss error still points at zig build tools" {
     const body = webuiMissingWasmError();
     try std.testing.expect(std.mem.indexOf(u8, body, "wasm") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") != null);
+}
+
+fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    var targets: std.ArrayList([]const u8) = .empty;
+    defer targets.deinit(gpa);
+    for (opts.research_targets) |tt| try targets.append(gpa, tt);
+    if (opts.dry_run) {
+        log.log(.info, "autoresearch dry-run: targets={d} metric={s} direction={s} budget={d}s iters={d}", .{ targets.items.len, opts.research_metric orelse "score", opts.research_direction, opts.research_budget, opts.iters });
+        if (opts.research_harness) |h| log.log(.info, "  harness: {s}", .{h});
+        for (targets.items) |tt| log.log(.info, "  target: {s}", .{tt});
+        return;
+    }
+    const harness_raw = opts.research_harness orelse {
+        log.log(.error_, "autoresearch needs --harness \"<cmd>\"", .{});
+        return error.MissingArg;
+    };
+    if (targets.items.len == 0) {
+        log.log(.error_, "autoresearch needs --target <file>", .{});
+        return error.MissingArg;
+    }
+    var harness_argv: std.ArrayList([]const u8) = .empty;
+    defer harness_argv.deinit(gpa);
+    {
+        var i: usize = 0;
+        while (i < harness_raw.len) {
+            while (i < harness_raw.len and harness_raw[i] == ' ') i += 1;
+            if (i >= harness_raw.len) break;
+            if (harness_raw[i] == '"') {
+                i += 1;
+                const s = i;
+                while (i < harness_raw.len and harness_raw[i] != '"') i += 1;
+                try harness_argv.append(gpa, harness_raw[s..i]);
+                if (i < harness_raw.len) i += 1;
+            } else if (harness_raw[i] == @as(u8, '\'')) {
+                i += 1;
+                const s = i;
+                while (i < harness_raw.len and harness_raw[i] != @as(u8, '\'')) i += 1;
+                try harness_argv.append(gpa, harness_raw[s..i]);
+                if (i < harness_raw.len) i += 1;
+            } else {
+                const s = i;
+                while (i < harness_raw.len and harness_raw[i] != ' ') i += 1;
+                try harness_argv.append(gpa, harness_raw[s..i]);
+            }
+        }
+    }
+    if (harness_argv.items.len == 0) {
+        log.log(.error_, "empty harness", .{});
+        return error.MissingArg;
+    }
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
+    var provider_val = try resolveProvider(&cfg, opts);
+    const provider = &provider_val;
+    const autoresearch_mod = @import("research/autoresearch.zig");
+    var eng = autoresearch_mod.Loop{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg };
+    try eng.run(.{ .targets = targets.items, .harness_argv = harness_argv.items, .metric_name = opts.research_metric orelse "score", .metric_pattern = opts.research_pattern orelse "", .direction = opts.research_direction, .iters = opts.iters, .dry_run = false, .research_dir = "state/autoresearch", .budget_seconds = opts.research_budget });
 }

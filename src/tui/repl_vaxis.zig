@@ -62,40 +62,40 @@ fn stripControls(gpa: std.mem.Allocator, bytes: []const u8) []const u8 {
 // thread meet here instead, guarded by one mutex.
 // ---------------------------------------------------------------------
 
-var g_mutex: std.Io.Mutex = .init;
-var g_io: std.Io = undefined;
-var g_gpa: std.mem.Allocator = undefined;
-var g_streaming: bool = false;
-var g_stream_buf: std.ArrayList(u8) = .empty;
-var g_tool_lines: std.ArrayList([]const u8) = .empty;
-var g_stop_flag: std.atomic.Value(bool) = .init(false);
+var bridge_mutex: std.Io.Mutex = .init;
+var bridge_io: std.Io = undefined;
+var bridge_gpa: std.mem.Allocator = undefined;
+var bridge_streaming: bool = false;
+var bridge_stream_buf: std.ArrayList(u8) = .empty;
+var bridge_tool_lines: std.ArrayList([]const u8) = .empty;
+var bridge_stop_flag: std.atomic.Value(bool) = .init(false);
 /// Published only after runThreadMain has finished all deferred Agent cleanup.
 /// The UI thread consumes this and joins the worker before making the model
 /// idle, so the model arena cannot be destroyed while cleanup still uses it.
-var g_turn_done: std.atomic.Value(bool) = .init(false);
+var bridge_turn_done: std.atomic.Value(bool) = .init(false);
 
 fn onToken(delta: []const u8) void {
-    g_mutex.lockUncancelable(g_io);
-    defer g_mutex.unlock(g_io);
-    const clean = stripControls(g_gpa, delta);
-    defer if (clean.ptr != delta.ptr) g_gpa.free(clean);
-    g_stream_buf.appendSlice(g_gpa, clean) catch {};
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    const clean = stripControls(bridge_gpa, delta);
+    defer if (clean.ptr != delta.ptr) bridge_gpa.free(clean);
+    bridge_stream_buf.appendSlice(bridge_gpa, clean) catch {};
 }
 
 fn onToolCall(calls: []const types.ToolCall) void {
-    g_mutex.lockUncancelable(g_io);
-    defer g_mutex.unlock(g_io);
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
     for (calls) |c| {
-        const line = std.fmt.allocPrint(g_gpa, "\xe2\x9a\x99 {s}", .{c.name}) catch continue;
-        g_tool_lines.append(g_gpa, line) catch {};
+        const line = std.fmt.allocPrint(bridge_gpa, "\xe2\x9a\x99 {s}", .{c.name}) catch continue;
+        bridge_tool_lines.append(bridge_gpa, line) catch {};
     }
 }
 
 fn onToolResult(elapsed_ms: u64) void {
-    g_mutex.lockUncancelable(g_io);
-    defer g_mutex.unlock(g_io);
-    const line = std.fmt.allocPrint(g_gpa, "  \xe2\x86\xb3 done in {d}ms", .{elapsed_ms}) catch return;
-    g_tool_lines.append(g_gpa, line) catch {};
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    const line = std.fmt.allocPrint(bridge_gpa, "  \xe2\x86\xb3 done in {d}ms", .{elapsed_ms}) catch return;
+    bridge_tool_lines.append(bridge_gpa, line) catch {};
 }
 
 const RunThreadArgs = struct {
@@ -104,7 +104,7 @@ const RunThreadArgs = struct {
 };
 
 fn runThreadMain(args: RunThreadArgs) void {
-    defer g_turn_done.store(true, .release);
+    defer bridge_turn_done.store(true, .release);
     const self = args.model;
     const messages = &self.messages;
     var err_detail: ?[]const u8 = null;
@@ -117,7 +117,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.on_token = onToken;
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;
-    a.stop_flag = &g_stop_flag;
+    a.stop_flag = &bridge_stop_flag;
 
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
         const text = if (err_detail) |d|
@@ -319,11 +319,11 @@ const Model = struct {
     /// (success or error alike): folds the streamed buffer and any tool
     /// lines into permanent `lines`, clears the live streaming state.
     fn finishTurn(self: *Model, final_text: []const u8) void {
-        g_mutex.lockUncancelable(g_io);
-        defer g_mutex.unlock(g_io);
-        for (g_tool_lines.items) |l| self.lines.append(self.arena, .{ .text = l, .dim = true }) catch {};
-        g_tool_lines.clearRetainingCapacity();
-        const answer = if (final_text.len > 0) final_text else g_stream_buf.items;
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        for (bridge_tool_lines.items) |l| self.lines.append(self.arena, .{ .text = l, .dim = true }) catch {};
+        bridge_tool_lines.clearRetainingCapacity();
+        const answer = if (final_text.len > 0) final_text else bridge_stream_buf.items;
         const owned = self.arena.dupe(u8, answer) catch answer;
         // Fold the answer's markdown into one transcript line per source
         // line: the fence is where highlighting attaches, so lines must
@@ -351,7 +351,7 @@ const Model = struct {
             first = false;
             self.lines.append(self.arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
         }
-        g_stream_buf.clearRetainingCapacity();
+        bridge_stream_buf.clearRetainingCapacity();
     }
 
     /// Writes the conversation to `state/sessions/<id>.json`, called after
@@ -382,13 +382,13 @@ const Model = struct {
         // ArenaAllocator (no internal locking) and self.lines is a plain
         // ArrayList, so a second in-flight turn spawned here would race the
         // first turn's background thread on both — not just contend for
-        // g_mutex-guarded state, but corrupt the arena's free-list and the
+        // bridge_mutex-guarded state, but corrupt the arena's free-list and the
         // transcript's backing storage. Leaving typed input untouched (no
         // toOwnedSlice yet) is a no-op keystroke while the picker is modal
         // for the same reason: nothing to submit into.
-        g_mutex.lockUncancelable(g_io);
-        const already_streaming = g_streaming;
-        g_mutex.unlock(g_io);
+        bridge_mutex.lockUncancelable(bridge_io);
+        const already_streaming = bridge_streaming;
+        bridge_mutex.unlock(bridge_io);
         if (already_streaming) return;
 
         const task = try self.text_field.toOwnedSlice();
@@ -442,14 +442,14 @@ const Model = struct {
         // the assignment outside the lock let a background thread that
         // fails fast in Agent.init race finishTurn's read of self.thread
         // against this store, seeing it still null and leaking the handle.
-        g_mutex.lockUncancelable(g_io);
-        defer g_mutex.unlock(g_io);
-        g_streaming = true;
-        g_stream_buf.clearRetainingCapacity();
-        g_tool_lines.clearRetainingCapacity();
-        g_stop_flag.store(false, .release);
-        g_turn_done.store(false, .release);
-        errdefer g_streaming = false;
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        bridge_streaming = true;
+        bridge_stream_buf.clearRetainingCapacity();
+        bridge_tool_lines.clearRetainingCapacity();
+        bridge_stop_flag.store(false, .release);
+        bridge_turn_done.store(false, .release);
+        errdefer bridge_streaming = false;
 
         const owned_task = try self.arena.dupe(u8, task);
         if (self.session_title.len == 0) {
@@ -576,21 +576,21 @@ const Model = struct {
                 // finishTurn only publishes transcript state. The worker may
                 // still be running Agent.deinit after that, so reclaim it on
                 // the UI thread before advertising an idle model.
-                if (g_turn_done.swap(false, .acq_rel)) {
+                if (bridge_turn_done.swap(false, .acq_rel)) {
                     if (self.thread) |t| {
                         t.join();
                         self.thread = null;
                     }
-                    g_mutex.lockUncancelable(g_io);
-                    g_streaming = false;
-                    g_mutex.unlock(g_io);
+                    bridge_mutex.lockUncancelable(bridge_io);
+                    bridge_streaming = false;
+                    bridge_mutex.unlock(bridge_io);
                     // The worker is joined, so self.messages is stable:
                     // persist the conversation as it stands after this turn.
                     self.persistSession();
                 }
-                g_mutex.lockUncancelable(g_io);
-                const still_streaming = g_streaming;
-                g_mutex.unlock(g_io);
+                bridge_mutex.lockUncancelable(bridge_io);
+                const still_streaming = bridge_streaming;
+                bridge_mutex.unlock(bridge_io);
                 if (still_streaming) {
                     self.spinner_frame +%= 1;
                     try ctx.tick(50, self.widget());
@@ -629,11 +629,11 @@ const Model = struct {
                     return ctx.consumeEvent();
                 }
                 if (key.matches('c', .{ .ctrl = true })) {
-                    g_mutex.lockUncancelable(g_io);
-                    const streaming = g_streaming;
-                    g_mutex.unlock(g_io);
+                    bridge_mutex.lockUncancelable(bridge_io);
+                    const streaming = bridge_streaming;
+                    bridge_mutex.unlock(bridge_io);
                     if (streaming) {
-                        g_stop_flag.store(true, .release);
+                        bridge_stop_flag.store(true, .release);
                     } else {
                         ctx.quit = true;
                     }
@@ -820,10 +820,10 @@ const Model = struct {
         // background thread while a turn is in flight (this same draw runs
         // on every 50ms tick during that window), so reading self.lines.items
         // without the lock is a torn read against a concurrent append/resize.
-        g_mutex.lockUncancelable(g_io);
-        defer g_mutex.unlock(g_io);
-        const streaming = g_streaming;
-        const stream_snapshot = ctx.arena.dupe(u8, g_stream_buf.items) catch "";
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        const streaming = bridge_streaming;
+        const stream_snapshot = ctx.arena.dupe(u8, bridge_stream_buf.items) catch "";
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
@@ -1154,8 +1154,8 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
-    g_gpa = gpa;
-    g_io = io;
+    bridge_gpa = gpa;
+    bridge_io = io;
     // log.log writes straight to stderr with no coordination with vaxis's
     // owned alt-screen buffer, unlike the old REPL where stray stderr text
     // just scrolled by harmlessly. Any stray write here corrupts the

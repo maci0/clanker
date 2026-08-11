@@ -1,5 +1,4 @@
 //! autoresearch: list runs or tail a run's ledger.
-//! Input:  {"run": "<id>", "last": 20}  — no id lists runs.
 const std = @import("std");
 const lib = @import("lib.zig");
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

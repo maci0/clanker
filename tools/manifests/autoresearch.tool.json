@@ -1,12 +1,12 @@
 {
   "name": "autoresearch",
-  "description": "list autoresearch runs or tail a run's ledger. Input {\"run\":\"<id>\", \"last\":20}. No id lists runs. Use to inspect harness metrics without re-running the loop.",
+  "description": "list autoresearch runs or tail a run's ledger. Input {\"run\":\"<id>\", \"last\":20}. No id lists runs.",
   "wasm": "zig-out/tools/autoresearch_tool.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
-      "run": { "type": "string", "description": "run id, e.g. ar-...; omit to list runs" },
-      "last": { "type": "integer", "description": "how many ledger entries to return (default 20)" }
+      "run": { "type": "string" },
+      "last": { "type": "integer" }
     }
   },
   "fs_prefixes": ["state/autoresearch/"],
