@@ -33,7 +33,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const obj = parsed.object;
 
     const op = str(obj, "op") orelse
-        return lib.fail(out, "missing \"op\": one of move, copy, delete, mkdir, stat, append");
+        return lib.fail(out, "missing \"op\": one of move, copy, delete, mkdir, stat, append, hash");
     const path = str(obj, "path") orelse
         return lib.fail(out, "missing required field: path");
 
@@ -60,6 +60,25 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 try s.write(kv.value_ptr.*);
             }
         }
+        try s.endObject();
+        out.len = w.end;
+        return;
+    }
+
+    if (std.mem.eql(u8, op, "hash")) {
+        const data = lib.fsRead(path) catch |err| return lib.failErr(out, err, path);
+        const digest = lib.hash(data) catch |err| return lib.failErr(out, err, path);
+        var w = out.writer();
+        var s = std.json.Stringify{ .writer = &w, .options = .{} };
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("op");
+        try s.write(op);
+        try s.objectField("path");
+        try s.write(path);
+        try s.objectField("sha256");
+        try s.write(digest);
         try s.endObject();
         out.len = w.end;
         return;
@@ -93,7 +112,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return done(out, op, path, to);
     }
 
-    return lib.fail(out, "unknown op; use move, copy, delete, mkdir, stat or append");
+    return lib.fail(out, "unknown op; use move, copy, delete, mkdir, stat, append or hash");
 }
 
 fn done(out: *lib.Out, op: []const u8, path: []const u8, to: ?[]const u8) !void {

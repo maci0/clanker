@@ -57,6 +57,30 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const result = lib.exec(engine, args.items) catch |err| {
+        // rg is an external binary and may simply not be installed, in which
+        // case the only text search this agent has would fail outright. The
+        // host can walk the tree itself, so answer from that instead of
+        // reporting that search is unavailable.
+        if (err == error.NotFound and std.mem.eql(u8, engine, "rg")) {
+            const native = lib.fsGrep(path, query) catch
+                return lib.failErr(out, err, "running the search");
+            var w = out.writer();
+            var s2 = std.json.Stringify{ .writer = &w, .options = .{} };
+            try s2.beginObject();
+            try s2.objectField("ok");
+            try s2.write(true);
+            try s2.objectField("engine");
+            try s2.write("host");
+            try s2.objectField("note");
+            try s2.write("rg is not installed; this is the host's own literal search, which takes no regular expressions or flags");
+            try s2.objectField("matches");
+            const parsed_native = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, native, .{}) catch
+                return lib.fail(out, "could not read the search result");
+            try s2.write(parsed_native);
+            try s2.endObject();
+            out.len = w.end;
+            return;
+        }
         return lib.failErr(out, err, "running the search");
     };
 

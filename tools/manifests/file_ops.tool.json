@@ -1,6 +1,6 @@
 {
   "name": "file_ops",
-  "description": "File operations that are not reading or editing text: move, copy, delete, mkdir, stat and append. Pass op plus path, and to for move and copy, or content for append. Use edit_file to change what is inside a file and read_file to look at it; use this when the file itself has to move, go away, or be measured.",
+  "description": "File operations that are not reading or editing text: move, copy, delete, mkdir, stat, append and hash (sha256 of the contents). Pass op plus path, and to for move and copy, or content for append. Use edit_file to change what is inside a file and read_file to look at it; use this when the file itself has to move, go away, or be measured.",
   "wasm": "zig-out/tools/file_ops.wasm",
   "enabled": true,
   "category": "code",
@@ -29,7 +29,8 @@
           "delete",
           "mkdir",
           "stat",
-          "append"
+          "append",
+          "hash"
         ],
         "description": "What to do with the path."
       },

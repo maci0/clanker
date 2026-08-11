@@ -25,6 +25,7 @@ extern fn ck_fs_mkdir(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_stat(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_find(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
 extern fn ck_fs_grep(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
+extern fn ck_hash(ptr: u32, len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
@@ -595,6 +596,13 @@ pub fn fsGrep(dir: []const u8, pattern: []const u8) FsError![]const u8 {
     const d = sliceToMem(dir);
     const p = sliceToMem(pattern);
     return fsPathQuery(ck_fs_grep(d.ptr, d.len, p.ptr, p.len));
+}
+
+/// SHA-256 of `data`, hex. Useful for telling whether a file changed between
+/// two reads without holding both copies.
+pub fn hash(data: []const u8) FsError![]const u8 {
+    const d = sliceToMem(data);
+    return fsPathQuery(ck_hash(d.ptr, d.len));
 }
 
 pub fn fsWrite(path: []const u8, data: []const u8) FsError!void {
