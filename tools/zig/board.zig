@@ -99,6 +99,11 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
         try s.write(room);
         try s.objectField("after");
         try s.write(after);
+        // Oldest-first is load-bearing, not cosmetic: this loop's only cursor
+        // is `ts > after`, so a newest-first page would jump it past every
+        // older message and fold a partial log with no error.
+        try s.objectField("oldest");
+        try s.write(true);
         try s.endObject();
 
         const raw = try lib.chat(req.written());
@@ -114,8 +119,8 @@ fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
             if (m.ts > after) after = m.ts;
             added += 1;
         }
-        // The host returns history newest-first or oldest-first depending on
-        // nothing this tool controls, so the fold sorts rather than assumes.
+        // Pages arrive oldest-first (requested above), but the fold still
+        // sorts at the end rather than assuming anything about order.
         if (added == 0 or parsed.messages.len == 0 or !parsed.has_more) break;
         // `has_more` is host-derived from an extra record, so a full final
         // page remains valid while a 65th page is an explicit, safe failure.

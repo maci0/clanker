@@ -725,6 +725,7 @@ const ChatOp = struct {
     to: ?[]const u8 = null,
     text: ?[]const u8 = null,
     after: ?i64 = null,
+    oldest: ?bool = null,
     on: ?bool = null,
     title: ?[]const u8 = null,
     todo: ?[]const u8 = null,
@@ -754,6 +755,8 @@ const chat_history_page_size = 20;
 /// Output (in the host arena):
 ///   send:      {"ok":true,"ts":...,"id":"..."}
 ///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...],"has_more":bool}
+///              (newest-first; {"oldest":true} pages oldest-first for log
+///              folds, extending through a shared boundary timestamp)
 ///   rooms:     {"ok":true,"rooms":[{room,messages,last_ts,last_from,last_text}],
 ///               "subscribed":["dev"]}
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
@@ -836,9 +839,21 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.eql(u8, op, "history")) {
         const room = parsed.room orelse return Err.invalid;
         const after = parsed.after orelse 0;
-        const page = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, chat_history_page_size + 1) catch return Err.invalid;
-        const has_more = page.len > chat_history_page_size;
-        const msgs = page[0..@min(page.len, chat_history_page_size)];
+        // Two page shapes for two consumers: chat display wants the newest
+        // messages; a log fold (the board) pages forward with `ts > after`
+        // and must be handed the oldest first, or its cursor jumps past
+        // everything older than the newest page and folds a partial log.
+        var msgs: []const chatrooms_mod.Message = undefined;
+        var has_more = false;
+        if (parsed.oldest orelse false) {
+            const asc = chatrooms_mod.readHistoryAsc(base, h.sandbox.io, arena, state_dir, room, after, chat_history_page_size) catch return Err.invalid;
+            msgs = asc.msgs;
+            has_more = asc.has_more;
+        } else {
+            const page = chatrooms_mod.readHistory(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, after, chat_history_page_size + 1) catch return Err.invalid;
+            has_more = page.len > chat_history_page_size;
+            msgs = page[0..@min(page.len, chat_history_page_size)];
+        }
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
         s.write(true) catch return Err.too_large;

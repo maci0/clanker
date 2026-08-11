@@ -137,6 +137,43 @@ pub fn readHistory(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: 
     return out.toOwnedSlice(arena);
 }
 
+pub const AscPage = struct { msgs: []Message = &.{}, has_more: bool = false };
+
+/// Oldest-first messages in `room` with ts > `after`, for callers that fold
+/// the whole log forward (the board). `readHistory`'s newest-first shape is
+/// wrong for them: the fold's cursor jumps to the newest timestamp on page
+/// one and everything older is silently never seen.
+///
+/// When more than `limit` messages qualify, the page extends through every
+/// message sharing the boundary timestamp: the caller's only cursor is
+/// `ts > after` (timestamps are seconds, so a burst shares one), and cutting
+/// a timestamp group mid-way would skip its remainder on the next page.
+pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, after: i64, limit: usize) !AscPage {
+    const path = subPath(arena, state_dir, log_path) catch return .{};
+    const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return .{};
+    var all: std.ArrayList(Message) = .empty;
+    try parseLog(arena, raw, &all);
+    var out: std.ArrayList(Message) = .empty;
+    for (all.items) |m| {
+        if (!std.mem.eql(u8, m.room, room)) continue;
+        if (m.ts <= after) continue;
+        try out.append(arena, m);
+    }
+    // Peer fan-in can append out of timestamp order, so the page boundary is
+    // only a real ts boundary after sorting by (ts, id).
+    std.mem.sort(Message, out.items, {}, struct {
+        fn lt(_: void, a: Message, b: Message) bool {
+            if (a.ts != b.ts) return a.ts < b.ts;
+            return std.mem.lessThan(u8, a.id, b.id);
+        }
+    }.lt);
+    if (out.items.len <= limit) return .{ .msgs = out.items, .has_more = false };
+    var cut = limit;
+    const boundary = out.items[limit - 1].ts;
+    while (cut < out.items.len and out.items[cut].ts == boundary) cut += 1;
+    return .{ .msgs = out.items[0..cut], .has_more = cut < out.items.len };
+}
+
 /// Aggregate stats per room, newest-first by last activity.
 pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]RoomInfo {
     _ = gpa;
@@ -516,6 +553,62 @@ test "append + readHistory + listRooms round-trip" {
 
     const fresh = try readNew(tmp.dir, io, std.testing.allocator, arena, "", 1000);
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
+}
+
+test "readHistoryAsc pages oldest-first and extends through a shared boundary timestamp" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"board"};
+    cfg.chatrooms.max_history = 100;
+
+    // 6 messages: ts 1, 2, 2, 2, 3, 4 — plus one in another room that must
+    // never appear. Appended newest-first-ish on purpose: the page boundary
+    // is only a real ts boundary after the sort inside readHistoryAsc.
+    const specs = [_]struct { ts: i64, id: []const u8 }{
+        .{ .ts = 3, .id = "e" },
+        .{ .ts = 1, .id = "a" },
+        .{ .ts = 2, .id = "c" },
+        .{ .ts = 2, .id = "b" },
+        .{ .ts = 4, .id = "f" },
+        .{ .ts = 2, .id = "d" },
+    };
+    for (specs) |sp| {
+        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "board", .from = "t", .text = "x", .ts = sp.ts, .id = sp.id });
+    }
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "dev", .from = "t", .text = "x", .ts = 2, .id = "zz" });
+
+    // limit 2 cuts inside the ts=2 group: the page must extend through it
+    // (4 messages: ts 1, 2, 2, 2), or the caller's next `after` cursor of 2
+    // would skip the group's remainder.
+    const p1 = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 2);
+    try std.testing.expectEqual(@as(usize, 4), p1.msgs.len);
+    try std.testing.expect(p1.has_more);
+    try std.testing.expectEqualStrings("a", p1.msgs[0].id);
+    try std.testing.expectEqualStrings("b", p1.msgs[1].id); // ties break by id
+    try std.testing.expectEqualStrings("d", p1.msgs[3].id);
+
+    // The next page picks up exactly where the cursor points.
+    const p2 = try readHistoryAsc(tmp.dir, io, arena, "", "board", 2, 2);
+    try std.testing.expectEqual(@as(usize, 2), p2.msgs.len);
+    try std.testing.expect(!p2.has_more);
+    try std.testing.expectEqualStrings("e", p2.msgs[0].id);
+    try std.testing.expectEqualStrings("f", p2.msgs[1].id);
+
+    // A page that fits under the limit reports no more and stays ascending.
+    const all = try readHistoryAsc(tmp.dir, io, arena, "", "board", 0, 50);
+    try std.testing.expectEqual(@as(usize, 6), all.msgs.len);
+    try std.testing.expect(!all.has_more);
 }
 
 test "subscribe on/off round-trip" {

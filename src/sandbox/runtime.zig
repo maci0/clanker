@@ -371,6 +371,70 @@ test "chat wasm tool executes (send + history via ck_chat)" {
     try std.testing.expectEqualStrings("test-clanker", hist[0].from);
 }
 
+test "board wasm tool folds a room log longer than one history page completely" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"board"};
+    cfg.chatrooms.max_history = 100;
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/board.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const Step = struct {
+        fn run(io_: std.Io, cfg_: *config_mod.Config, env: *std.process.Environ.Map, dir: std.Io.Dir, wasm_: []const u8, config_json: []const u8, args: []const u8) ![]u8 {
+            var sb = host.Sandbox{
+                .gpa = std.testing.allocator,
+                .io = io_,
+                .root_dir = "/tmp/ck-sandbox-test",
+                .network_allow = &.{},
+                .environ_map = env,
+                .cfg = cfg_,
+                .state_dir = "",
+                .state_base_dir = dir,
+                .config_json = config_json,
+            };
+            const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
+            defer mod.deinit();
+            return mod.executeTool(args);
+        }
+    };
+
+    // 25 cards: five more than one history page (host page size 20). All the
+    // adds land within a second or two, so they share a timestamp — exactly
+    // the shape that used to fold to its newest page only: the host answered
+    // history newest-first, the fold's `ts > after` cursor jumped to the top,
+    // and the oldest cards silently vanished from every board_list.
+    var i: usize = 1;
+    while (i <= 25) : (i += 1) {
+        const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"title\":\"card-{d:0>2}\"}}", .{i});
+        defer std.testing.allocator.free(args);
+        const out = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", args);
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    }
+
+    const listed = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"list\"}", "{}");
+    defer std.testing.allocator.free(listed);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "\"ok\":true") != null);
+    i = 1;
+    while (i <= 25) : (i += 1) {
+        const title = try std.fmt.allocPrint(std.testing.allocator, "\"title\":\"card-{d:0>2}\"", .{i});
+        defer std.testing.allocator.free(title);
+        try std.testing.expect(std.mem.indexOf(u8, listed, title) != null);
+    }
+}
+
 test "chat wasm tool routes roomless todo ops to the private list" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
