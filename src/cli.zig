@@ -820,6 +820,13 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     // Stream the model's tokens to stdout as they arrive.
     repl_out = &out_w;
     repl_io = io;
+    ask_out = &out_w;
+    ask_stdin = stdin_file;
+    ask_gpa = gpa;
+    // Only a terminal can answer; a piped session would block forever on a
+    // prompt nobody sees.
+    ask_interactive = stdin_file.isTty(io) catch false;
+    if (ask_interactive) a.ask_fn = &replAsk;
     a.on_token = &replDelta;
     a.on_tool_call = &replToolCall;
     a.on_tool_result = &replToolResult;
@@ -986,6 +993,7 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
             // messages keep referencing it across turns.
             const owned = try arena.dupe(u8, picked orelse line);
             if (picked) |choice| {
+                a.pending_decision = .{ .question = repl_last_question, .answer = owned };
                 const echo = try std.fmt.allocPrint(arena, "\x1b[2m→ {s}\x1b[0m\n", .{choice});
                 try out_w.interface.writeAll(echo);
                 try out_w.interface.flush();
@@ -1052,6 +1060,9 @@ fn replHandleLine(
                 const echo = try std.fmt.allocPrint(arena, "\x1b[2m\xe2\x86\x92 {s}\x1b[0m\n", .{task});
                 try out_w.interface.writeAll(echo);
                 try out_w.interface.flush();
+                // The run this starts exists because of that pick; the graph
+                // says so instead of showing a task with no visible cause.
+                a.pending_decision = .{ .question = repl_last_question, .answer = task };
             }
         }
     }
@@ -1153,6 +1164,52 @@ fn redraw(out_w: *std.Io.File.Writer, editor: *const lineedit.Editor) !void {
         try out_w.interface.print("\x1b[{d}D", .{back});
     }
     try out_w.interface.flush();
+}
+
+/// Set for the duration of a REPL session so the ask_user tool can reach the
+/// terminal. A tool call runs deep inside the sandbox with no writer of its
+/// own, so the pieces it needs are parked here.
+var ask_out: ?*std.Io.File.Writer = null;
+var ask_stdin: ?std.Io.File = null;
+var ask_gpa: ?std.mem.Allocator = null;
+var ask_interactive = false;
+
+/// ask_user's terminal side: print the question, wait for a number, return the
+/// chosen option. The returned slice is gpa-owned; ckAsk frees it.
+fn replAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
+    const gpa = ask_gpa orelse return error.NoUser;
+    const out_w = ask_out orelse return error.NoUser;
+    const stdin_file = ask_stdin orelse return error.NoUser;
+
+    replClearThinking();
+    try out_w.interface.print("\n\x1b[1;33m? \x1b[0m{s}\n", .{question});
+    for (options, 1..) |o, n| {
+        try out_w.interface.print("  \x1b[1;36m{d}\x1b[0m \x1b[2m·\x1b[0m {s}\n", .{ n, o });
+    }
+    try out_w.interface.writeAll("  \x1b[2mpick a number\x1b[0m ");
+    try out_w.interface.flush();
+
+    // Read the pick directly: the agent is mid-turn, so the REPL's own input
+    // loop is not running to do it for us.
+    var buf: [64]u8 = undefined;
+    var len: usize = 0;
+    while (len < buf.len) {
+        var byte: [1]u8 = undefined;
+        const n = std.posix.read(stdin_file.handle, &byte) catch break;
+        if (n == 0) break;
+        if (byte[0] == '\n' or byte[0] == '\r') break;
+        buf[len] = byte[0];
+        len += 1;
+    }
+    const typed = std.mem.trim(u8, buf[0..len], " \t\r\n.)");
+    const idx = std.fmt.parseInt(usize, typed, 10) catch 0;
+    // An unreadable or out-of-range answer takes the first option rather than
+    // failing the tool call: the model asked because it needed *an* answer.
+    const chosen = if (idx >= 1 and idx <= options.len) options[idx - 1] else options[0];
+    try out_w.interface.print("\x1b[2m\xe2\x86\x92 {s}\x1b[0m\n", .{chosen});
+    try out_w.interface.flush();
+    replShowThinking();
+    return gpa.dupe(u8, chosen);
 }
 
 /// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
@@ -1738,10 +1795,19 @@ var repl_md: MdStream = .{};
 /// Options offered by the last answer, so the next line can be a bare number.
 /// gpa-owned: replaced (and freed) on every turn that ends in a question.
 var repl_choices: std.ArrayList([]u8) = .empty;
+/// The question those options answered, for the graph's decision node.
+var repl_last_question: []const u8 = "";
 
 fn replClearChoices(gpa: std.mem.Allocator) void {
     for (repl_choices.items) |c| gpa.free(c);
     repl_choices.clearRetainingCapacity();
+}
+
+/// The last line of an answer, which is the question its options belong to.
+fn lastQuestion(text: []const u8) []const u8 {
+    const trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
+    const start = if (std.mem.lastIndexOfScalar(u8, trimmed, '\n')) |nl| nl + 1 else 0;
+    return std.mem.trim(u8, trimmed[start..], " \t");
 }
 
 /// The options a multiple-choice answer offers, or null when the answer does
@@ -1940,6 +2006,7 @@ fn replRunTurn(io: std.Io, out_w: *std.Io.File.Writer, a: *agent.Agent, messages
     // so the reply can be "2" instead of retyping the option.
     replClearChoices(gpa);
     if (try parseChoices(a.arena, content)) |choices| {
+        repl_last_question = lastQuestion(content);
         for (choices, 1..) |c, n| {
             const line = try std.fmt.allocPrint(a.arena, "  \x1b[1;36m{d}\x1b[0m \x1b[2m·\x1b[0m {s}\n", .{ n, c });
             try out_w.interface.writeAll(line);
@@ -2784,6 +2851,47 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
         return;
     };
     respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+/// Decodes `%XX` escapes and `+` in a query-string value. Invalid escapes are
+/// left as the literal characters they are rather than rejected: this feeds a
+/// room-name comparison, and a name that fails to decode simply fails to match.
+fn percentDecode(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var out = try std.ArrayList(u8).initCapacity(arena, s.len);
+    var i: usize = 0;
+    while (i < s.len) {
+        const c = s[i];
+        if (c == '%' and i + 2 < s.len) {
+            const hi = std.fmt.charToDigit(s[i + 1], 16) catch {
+                try out.append(arena, c);
+                i += 1;
+                continue;
+            };
+            const lo = std.fmt.charToDigit(s[i + 2], 16) catch {
+                try out.append(arena, c);
+                i += 1;
+                continue;
+            };
+            try out.append(arena, hi * 16 + lo);
+            i += 3;
+            continue;
+        }
+        try out.append(arena, if (c == '+') ' ' else c);
+        i += 1;
+    }
+    return out.toOwnedSlice(arena);
+}
+
+test "percentDecode handles dm room names" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectEqualStrings("dm:a|b", try percentDecode(arena, "dm%3Aa%7Cb"));
+    try std.testing.expectEqualStrings("dev", try percentDecode(arena, "dev"));
+    try std.testing.expectEqualStrings("a b", try percentDecode(arena, "a+b"));
+    // A stray percent is data, not an error.
+    try std.testing.expectEqualStrings("100%", try percentDecode(arena, "100%"));
+    try std.testing.expectEqualStrings("%zz", try percentDecode(arena, "%zz"));
 }
 
 const ChatSendBody = struct {

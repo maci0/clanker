@@ -9,6 +9,8 @@ pub const NodeKind = enum {
     llm,
     tool,
     final,
+    /// A fork the human resolved: the model asked, the user picked.
+    decision,
 };
 
 pub const Node = struct {
@@ -98,6 +100,7 @@ pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *c
             .llm => "llm",
             .tool => "tool",
             .final => "final",
+            .decision => "decision",
         });
         try s.objectField("iteration");
         try s.print("{d}", .{n.iteration});

@@ -2044,7 +2044,12 @@ document.addEventListener("DOMContentLoaded", function () {
         return r.json();
       })
       .then(function (data) {
-        var fresh = (data.messages || []).filter(function (m) { return !chatSeen[m.id]; });
+        // The log is returned newest-first (it is read backwards to honour the
+        // 50-message limit); a conversation reads downwards, so it is flipped
+        // before appending.
+        var fresh = (data.messages || [])
+          .filter(function (m) { return !chatSeen[m.id]; })
+          .sort(function (a, b) { return a.ts - b.ts; });
         fresh.forEach(function (m) {
           chatSeen[m.id] = true;
           if (m.ts > chatLastTs) chatLastTs = m.ts;

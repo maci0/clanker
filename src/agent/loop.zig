@@ -14,6 +14,12 @@ const autolearn = @import("autolearn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
 const log = @import("../util/log.zig");
 
+/// A fork resolved by the human: what was asked, and what they chose.
+pub const Decision = struct {
+    question: []const u8,
+    answer: []const u8,
+};
+
 /// Cumulative token usage across all LLM calls in a single agent run.
 pub const RunStats = struct {
     total_prompt_tokens: u64 = 0,
@@ -81,6 +87,13 @@ pub const Agent = struct {
     /// REPL renders tokens live). Tool-call flows still assemble a normal
     /// ChatResponse internally.
     on_token: ?*const fn ([]const u8) void = null,
+    /// Human prompt for the ask_user tool, wired by the REPL. Null elsewhere:
+    /// a scripted run has nobody to ask.
+    ask_fn: ?host.AskFn = null,
+    /// A decision the user already made outside a tool call (picking a
+    /// numbered option the previous answer offered), recorded at the start of
+    /// the run it caused so the graph shows why this turn happened.
+    pending_decision: ?Decision = null,
     /// Nested sub-agent runner, wired by the app when modules.subagents is
     /// enabled (powers the subagent tool via ck_subagent).
     subagent_runner: ?host.SubagentRunner = null,
@@ -231,6 +244,19 @@ pub const Agent = struct {
             g.duration_ms = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
             if (self.cfg.modules.graphs) graph_mod.write(self.ctx.io, self.ctx.gpa, self.arena, &g) catch {};
             g.deinit(self.ctx.gpa);
+        }
+        // A decision the user made before this turn started (they picked one
+        // of the options the last answer offered): first node, so the graph
+        // says why this run exists.
+        if (self.pending_decision) |d| {
+            try g.add(self.ctx.gpa, .{
+                .kind = .decision,
+                .iteration = 0,
+                .label = graph_mod.truncatedPreview(d.question),
+                .output = graph_mod.truncatedPreview(d.answer),
+                .ok = true,
+            });
+            self.pending_decision = null;
         }
         // Multi-turn callers (the REPL) reuse one message list across runs:
         // prepend the system prompt only once, otherwise every turn would
@@ -442,6 +468,19 @@ pub const Agent = struct {
                     .result_bytes = content.len,
                     .output = graph_mod.truncatedPreview(content),
                 });
+                // An answered ask_user is a fork the human resolved; a bare
+                // tool node buries that under a JSON blob.
+                if (std.mem.eql(u8, tc.name, "ask_user")) {
+                    if (decisionFrom(self.arena, tc.arguments, content)) |d| {
+                        try g.add(self.ctx.gpa, .{
+                            .kind = .decision,
+                            .iteration = iteration + 1,
+                            .label = graph_mod.truncatedPreview(d.question),
+                            .output = graph_mod.truncatedPreview(d.answer),
+                            .ok = true,
+                        });
+                    }
+                }
                 try messages.append(self.arena, .{
                     .role = .tool,
                     .tool_call_id = tc.id,
@@ -463,6 +502,23 @@ pub const Agent = struct {
         if (budget_hit) return error.SessionTokenBudgetExceeded;
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
+    }
+
+    /// The question and the chosen answer out of an ask_user call, or null
+    /// when the user was not actually asked (no human attached, bad input).
+    fn decisionFrom(arena: std.mem.Allocator, arguments: []const u8, result: []const u8) ?Decision {
+        const res = std.json.parseFromSliceLeaky(std.json.Value, arena, result, .{ .ignore_unknown_fields = true }) catch return null;
+        if (res != .object) return null;
+        const answer = switch (res.object.get("answer") orelse return null) {
+            .string => |a| a,
+            else => return null,
+        };
+        const args = std.json.parseFromSliceLeaky(std.json.Value, arena, arguments, .{ .ignore_unknown_fields = true }) catch return null;
+        const question = if (args == .object) blk: {
+            const q = args.object.get("question") orelse break :blk "";
+            break :blk if (q == .string) q.string else "";
+        } else "";
+        return .{ .question = question, .answer = answer };
     }
 
     const ImageResult = struct {
@@ -1027,6 +1083,7 @@ pub const Agent = struct {
         // Agent-only extras: nested sub-agents and the state dir are meaningless
         // for the CLI and MCP callers of the shared builder.
         sb.subagent_runner = self.subagent_runner;
+        sb.ask_fn = self.ask_fn;
         sb.state_dir = self.cfg.agent.state_dir;
         // A tool that named no provider of its own follows the agent, which may
         // itself be running under a --provider override rather than the default.

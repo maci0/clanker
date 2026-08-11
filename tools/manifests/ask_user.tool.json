@@ -1,0 +1,20 @@
+{
+  "name": "ask_user",
+  "description": "Ask the human to choose between concrete options when guessing would waste work: which of two designs to build, which file to change, whether to widen the scope. Only for genuine forks where the options lead to materially different work — do not ask for permission to continue, and do not ask what you can determine by reading the code. Input: {\"question\": \"...\", \"options\": [\"...\", \"...\"]} (two or more). Returns the chosen option verbatim. In a non-interactive run it returns an error saying to decide yourself.",
+  "wasm": "zig-out/tools/ask_user.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "question": { "type": "string", "description": "The decision, in one sentence." },
+      "options": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Two or more concrete options, each phrased as the action it leads to."
+      }
+    },
+    "required": ["question", "options"]
+  },
+  "sequential": true,
+  "fs_prefixes": [],
+  "network_allow": []
+}

@@ -105,6 +105,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B\n", .{ n.label, n.result_bytes });
             defer std.heap.wasm_allocator.free(line);
             try buf.appendSlice(std.heap.wasm_allocator, line);
+        } else if (std.mem.eql(u8, n.kind, "decision")) {
+            // What the human chose, and out of what: a run that turned on a
+            // human decision reads as unmotivated without it.
+            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  ask  {s}\n       -> {s}\n", .{ n.label, n.output });
+            defer std.heap.wasm_allocator.free(line);
+            try buf.appendSlice(std.heap.wasm_allocator, line);
         } else if (std.mem.eql(u8, n.kind, "final")) {
             const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  done {d} B, {s}\n", .{ n.result_bytes, n.detail });
             defer std.heap.wasm_allocator.free(line);

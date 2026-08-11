@@ -28,6 +28,7 @@ extern fn ck_config() u32;
 extern fn ck_result() u64;
 extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
 extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
+extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
 
 const scratch_cap = 64 * 1024;
 const host_arena_cap = 64 * 1024;
@@ -144,6 +145,31 @@ pub fn subagent(task: []const u8, provider: ?[]const u8) FsError![]const u8 {
     s.endObject() catch return error.IoError;
     const req = sliceToMem(buf[0..w.end]);
     const rc = ck_subagent(req.ptr, req.len);
+    return switch (rc) {
+        0 => readResult() orelse error.IoError,
+        2 => error.NotFound,
+        else => error.IoError,
+    };
+}
+
+/// Puts a multiple-choice question to the human and returns the option they
+/// chose. `error.NotFound` means nobody is attached to answer (a scripted run),
+/// which the caller should treat as "decide it yourself", not as a failure.
+pub fn ask(question: []const u8, options: []const []const u8) FsError![]const u8 {
+    var buf: [8192]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return error.IoError;
+    s.objectField("question") catch return error.IoError;
+    s.write(question) catch return error.IoError;
+    s.objectField("options") catch return error.IoError;
+    s.beginArray() catch return error.IoError;
+    for (options) |o| s.write(o) catch return error.IoError;
+    s.endArray() catch return error.IoError;
+    s.endObject() catch return error.IoError;
+
+    const req = sliceToMem(buf[0..w.end]);
+    const rc = ck_ask(req.ptr, req.len);
     return switch (rc) {
         0 => readResult() orelse error.IoError,
         2 => error.NotFound,
