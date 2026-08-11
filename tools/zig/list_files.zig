@@ -85,10 +85,12 @@ fn walk(
     if (depth > max_depth) return;
     const raw = try lib.fsList(dir);
 
-    // The host answers with a JSON array of names and no kinds. A name that
-    // can itself be listed is a directory; one that cannot is a file. The
-    // probe is the only way to tell them apart without changing the host call
-    // that four other tools already parse.
+    // The host answers with a JSON array of names and no kinds, so each entry
+    // is stated to find out which it is. This used to list every entry
+    // instead: reading a whole directory to answer a yes/no question, and
+    // spending host-arena space on the contents each time. The arena does not
+    // reset within a call, so a directory with many subdirectories could
+    // exhaust it partway through and truncate its own listing.
     const names = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch return;
     if (names != .array) return;
 
@@ -111,8 +113,11 @@ fn walk(
             try std.fmt.allocPrint(alloc, "{s}/{s}", .{ dir, name });
 
         const is_dir = blk: {
-            _ = lib.fsList(full) catch break :blk false;
-            break :blk true;
+            const raw_stat = lib.fsStat(full) catch break :blk false;
+            const st = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw_stat, .{}) catch break :blk false;
+            if (st != .object) break :blk false;
+            const kind = st.object.get("kind") orelse break :blk false;
+            break :blk kind == .string and std.mem.eql(u8, kind.string, "directory");
         };
 
         // The same directories the host's name search skips: a recursive
