@@ -247,6 +247,12 @@ pub const Config = struct {
         if (try loadFile(io, arena, dir, local_file_name, .optional)) |local| {
             try merge(&cfg, local, arena);
         }
+        // Checked on the merged result rather than per file. A local override
+        // that only sets, say, `default_provider` has no "providers" section by
+        // design, and warning about it points at a config that is in fact fine.
+        if (cfg.providers.count() == 0) {
+            log.log(.warn, "config {s}: no providers defined", .{file_name});
+        }
         return cfg;
     }
 
@@ -260,11 +266,11 @@ pub const Config = struct {
             },
             else => return err,
         };
-        const cfg = try parseConfig(arena, raw, file_name);
+        const cfg = try parseConfig(arena, raw);
         return cfg;
     }
 
-    fn parseConfig(arena: std.mem.Allocator, raw: []const u8, file_name: []const u8) !Config {
+    fn parseConfig(arena: std.mem.Allocator, raw: []const u8) !Config {
         const root = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
         var cfg = Config{};
         const obj = switch (root) {
@@ -319,9 +325,6 @@ pub const Config = struct {
         if (obj.get("modules")) |v| {
             cfg.modules = try parseModules(arena, v);
             cfg.modules_present = true;
-        }
-        if (cfg.providers.count() == 0) {
-            log.log(.warn, "config {s}: no providers defined", .{file_name});
         }
         return cfg;
     }
@@ -786,6 +789,36 @@ test "a single model needs no default_model" {
     const solo = cfg.providers.getPtr("solo").?;
     try std.testing.expectEqualStrings("only", solo.activeModelName());
     try std.testing.expectEqual(@as(u32, 128), solo.activeModel().max_tokens);
+}
+
+test "a local override with only default_provider keeps the base providers" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.json",
+        .data =
+        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}},"b":{"base_url":"https://b.test","models":{"m":{}}}}}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.json",
+        .data =
+        \\{"default_provider":"b"}
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    // The point of the test: switching the default provider from a local file
+    // must not look like a config that defines no providers.
+    try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
+    try std.testing.expectEqualStrings("b", cfg.default_provider);
+    try std.testing.expectEqualStrings("https://b.test", (try cfg.provider(null)).base_url);
 }
 
 test "a provider with no models is rejected at load" {
