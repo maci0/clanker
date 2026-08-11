@@ -32,5 +32,6 @@
   },
   "fs_prefixes": [],
   "network_allow": [],
-  "category": "agent"
+  "category": "agent",
+  "llm": true
 }
