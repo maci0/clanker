@@ -6,6 +6,7 @@ const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const registry = @import("../tools/registry.zig");
+const tool_usage = @import("../tools/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
 const private_todos = @import("private_todos.zig");
@@ -15,6 +16,10 @@ const autolearn = @import("autolearn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
 const log = @import("../util/log.zig");
 const toolout = @import("../util/toolout.zig");
+
+/// Appended to the system prompt so a model asked for an exact-format answer
+/// (a string, a number, JSON) does not wrap it in prose or markdown fences.
+const exact_format_suffix = "\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.";
 
 /// A fork resolved by the human: what was asked, and what they chose.
 pub const Decision = struct {
@@ -34,32 +39,6 @@ pub const RunStats = struct {
     /// Estimated USD cost for this run (from the active model's
     /// cost_per_1k_input / cost_per_1k_output).
     cost: f64 = 0,
-
-    /// Formats a human-readable summary of the stats into `buf`.
-    pub fn formatSummary(self: *const RunStats, buf: []u8) []const u8 {
-        const prompt_total = self.total_cache_hit_tokens + self.total_cache_miss_tokens;
-        const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
-        var w: std.Io.Writer = .fixed(buf);
-        w.print(
-            "Session stats:\n" ++
-                "  prompt tokens:     {d}\n" ++
-                "  completion tokens: {d}\n" ++
-                "  total tokens:      {d}\n" ++
-                "  cache hit:         {d} ({d:.0}%)\n" ++
-                "  cache miss:        {d}\n" ++
-                "  estimated cost:    ${d:.4}\n",
-            .{
-                self.total_prompt_tokens,
-                self.total_completion_tokens,
-                self.total_tokens,
-                self.total_cache_hit_tokens,
-                hit_rate,
-                self.total_cache_miss_tokens,
-                self.cost,
-            },
-        ) catch {};
-        return buf[0..w.end];
-    }
 };
 
 pub const Agent = struct {
@@ -69,6 +48,16 @@ pub const Agent = struct {
     cfg: *const config.Config,
     reg: *const registry.Registry,
     tool_defs: []const types.ToolDef,
+    /// How often each tool has been called, across every run this clanker has
+    /// ever done. Decides which schemas are loaded without being asked for.
+    usage: tool_usage.Usage = .{},
+    /// Tools whose schemas the model asked for during this run. They stay
+    /// available until the run ends: a tool wanted once is usually wanted
+    /// again, and re-sending the catalog line is cheaper than a second
+    /// round-trip to load it.
+    revealed: std.StringArrayHashMapUnmanaged(void) = .empty,
+    /// False when every schema is sent every time (config.agent.tool_catalog).
+    catalog_mode: bool = false,
     max_iterations: u32,
     /// The system prompt (arena-owned), rebuilt when skills change.
     system_prompt_text: []const u8,
@@ -127,6 +116,11 @@ pub const Agent = struct {
     /// the wall-clock time spent executing them (e.g. the REPL prints
     /// "done in Nms" under the tool status line).
     on_tool_result: ?*const fn (u64) void = null,
+    /// Optional hook fired alongside `on_tool_result`, carrying the calls and
+    /// their actual results (JSON strings; null for a call that produced no
+    /// result) rather than just timing — e.g. the REPL renders a tool-call
+    /// card showing what the tool returned, not only how long it took.
+    on_tool_results: ?*const fn ([]const types.ToolCall, []const ?[]const u8) void = null,
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
@@ -152,6 +146,23 @@ pub const Agent = struct {
     ) !Agent {
         var peer_names: std.ArrayList([]const u8) = .empty;
         for (cfg.peers) |p| peer_names.append(arena, p.name) catch {};
+
+        var usage = tool_usage.Usage.load(ctx.io, arena, std.Io.Dir.cwd());
+        var revealed: std.StringArrayHashMapUnmanaged(void) = .empty;
+        var defs = tool_defs;
+        var catalog: []const u8 = "";
+        if (cfg.agent.tool_catalog) {
+            // The hot set is measured rather than configured: whatever this
+            // clanker actually reaches for keeps its schema in front of the
+            // model, and everything else is one `load_tools` call away.
+            const hot = usage.top(arena, cfg.agent.hot_tools) catch &.{};
+            var core: std.ArrayList([]const u8) = .empty;
+            for (hot) |e| core.append(arena, e.name) catch {};
+            defs = reg.lazyToolDefs(arena, core.items, &revealed) catch tool_defs;
+            catalog = reg.catalogText(arena, &revealed) catch "";
+        }
+
+        log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
         const base_prompt = try system_prompt.build(arena, ctx.io, .{
             .system_prompt_file = cfg.agent.system_prompt_file,
             .skills_dir = cfg.agent.skills_dir,
@@ -159,15 +170,19 @@ pub const Agent = struct {
             .instance_name = cfg.instance.name,
             .instance_id = cfg.instance.id,
             .peers = peer_names.items,
-        }, tool_defs);
-        const prompt_text = try std.fmt.allocPrint(arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt});
+            .catalog = catalog,
+        }, defs);
+        const prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
         return .{
             .ctx = ctx,
             .arena = arena,
             .provider = provider,
             .cfg = cfg,
             .reg = reg,
-            .tool_defs = tool_defs,
+            .tool_defs = defs,
+            .usage = usage,
+            .revealed = revealed,
+            .catalog_mode = cfg.agent.tool_catalog,
             .max_iterations = cfg.agent.max_iterations,
             .system_prompt_text = prompt_text,
             .instance_name = cfg.instance.name,
@@ -192,11 +207,12 @@ pub const Agent = struct {
             .instance_name = self.instance_name,
             .instance_id = self.instance_id,
             .peers = self.peer_names,
+            .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
         }, self.tool_defs) catch |err| {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.", .{base_prompt}) catch |err| {
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}", .{ base_prompt, exact_format_suffix }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
@@ -219,6 +235,10 @@ pub const Agent = struct {
         // reset, a multi-turn REPL session accumulated prior runs' totals in
         // `stats`, and `session_stats` double-counted them on every call.
         self.stats = .{};
+        // The tally is what decides which schemas are loaded next time, so it
+        // is written whatever happens to this run — including the runs that
+        // fail, which are exactly the ones that reached for something unusual.
+        defer self.usage.save(self.ctx.io, self.arena, std.Io.Dir.cwd());
         // Rebuild the system prompt so new skills/learnings from prior turns
         // (or external edits) are visible to the model on this turn.
         self.refreshSystemPrompt(messages);
@@ -409,16 +429,7 @@ pub const Agent = struct {
                 }
             }
 
-            if (resp.usage) |u| {
-                self.stats.total_prompt_tokens += u.prompt_tokens;
-                self.stats.total_completion_tokens += u.completion_tokens;
-                self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
-                self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
-                self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
-                const active = self.provider.activeModel();
-                if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
-                if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
-            }
+            if (resp.usage) |u| self.recordUsage(u);
 
             try messages.append(self.arena, resp.message);
 
@@ -519,6 +530,7 @@ pub const Agent = struct {
                     }
                 }
             }
+            if (self.on_tool_results) |cb| cb(calls, results);
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
@@ -719,11 +731,15 @@ pub const Agent = struct {
         } = null,
     };
 
+    const reasoning_record_buf_bytes = 65536;
+    const reasoning_record_task_chars = 200;
+    const reasoning_record_reasoning_chars = 20000;
+
     /// Appends one reasoning trace to state/reasoning.jsonl (RLM).
     fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
         std.Io.Dir.cwd().createDirPath(io, "state") catch return;
         const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-        var buf: [65536]u8 = undefined;
+        var buf: [reasoning_record_buf_bytes]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
         var s = std.json.Stringify{ .writer = &w, .options = .{} };
         s.beginObject() catch return;
@@ -734,9 +750,9 @@ pub const Agent = struct {
         s.objectField("model") catch return;
         s.write(model) catch return;
         s.objectField("task") catch return;
-        s.write(if (task.len > 200) task[0..200] else task) catch return;
+        s.write(if (task.len > reasoning_record_task_chars) task[0..reasoning_record_task_chars] else task) catch return;
         s.objectField("reasoning") catch return;
-        s.write(if (reasoning.len > 20000) reasoning[0..20000] else reasoning) catch return;
+        s.write(if (reasoning.len > reasoning_record_reasoning_chars) reasoning[0..reasoning_record_reasoning_chars] else reasoning) catch return;
         s.endObject() catch return;
 
         const path = "state/reasoning.jsonl";
@@ -786,25 +802,6 @@ pub const Agent = struct {
     /// tool-result exchange is never split), replacing the removed middle with
     /// an LLM-generated summary (or a static placeholder when summarization
     /// fails).
-    /// Forces conversation compaction regardless of token thresholds.
-    /// Used by the REPL /compact command to let users manually reclaim
-    /// context window space. Returns true if compaction was performed.
-    pub fn forceCompact(self: *Agent, messages: *std.ArrayList(types.Message)) !bool {
-        if (messages.items.len <= 7) return false;
-        var keep_start = messages.items.len - 6;
-        while (keep_start > 1 and messages.items[keep_start].role == .tool) keep_start -= 1;
-        if (keep_start <= 1) return false;
-        const before_len = messages.items.len;
-        const summary_text = self.summarizeMessages(messages.items[1..keep_start]) catch |err| blk: {
-            log.log(.warn, "forced compaction summary failed ({s}), trying local extractive summary", .{@errorName(err)});
-            break :blk self.localSummary(messages.items[1..keep_start]);
-        };
-        const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
-        try compactMiddle(messages, self.arena, keep_start, placeholder);
-        log.log(.info, "forced compaction: {d} -> {d} messages", .{ before_len, messages.items.len });
-        return true;
-    }
-
     fn maybeCompactMessages(self: *Agent, messages: *std.ArrayList(types.Message)) !void {
         const estimated_tokens = estimateMessageTokens(messages.items);
         // Effective context budget in tokens: never exceed half the provider's
@@ -957,6 +954,19 @@ pub const Agent = struct {
         return self.arena.dupe(u8, buf.items) catch null;
     }
 
+    /// Folds one response's token usage into `self.stats`, including cost if
+    /// the active model has per-token pricing configured.
+    fn recordUsage(self: *Agent, u: types.Usage) void {
+        self.stats.total_prompt_tokens += u.prompt_tokens;
+        self.stats.total_completion_tokens += u.completion_tokens;
+        self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
+        self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
+        self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
+        const active = self.provider.activeModel();
+        if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
+        if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+    }
+
     /// Produces a concise summary of a slice of conversation messages by
     /// asking the LLM to distill them. Returns an arena-owned string prefixed
     /// with "[conversation summary]" so downstream code knows it is synthetic.
@@ -1009,16 +1019,7 @@ pub const Agent = struct {
         const content = resp.message.content orelse return error.EmptyResponse;
         if (content.len == 0) return error.EmptyResponse;
         // Track the summarization cost.
-        if (resp.usage) |u| {
-            self.stats.total_prompt_tokens += u.prompt_tokens;
-            self.stats.total_completion_tokens += u.completion_tokens;
-            self.stats.total_tokens += u.prompt_tokens + u.completion_tokens;
-            self.stats.total_cache_hit_tokens += u.prompt_cache_hit_tokens;
-            self.stats.total_cache_miss_tokens += u.prompt_cache_miss_tokens;
-            const active = self.provider.activeModel();
-            if (active.cost_per_1m_input) |ci| self.stats.cost += client.promptCost(u, ci);
-            if (active.cost_per_1m_output) |co| self.stats.cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
-        }
+        if (resp.usage) |u| self.recordUsage(u);
         log.log(.info, "compaction summary: {d} messages -> {d} byte summary", .{ msgs.len, content.len });
         return try std.fmt.allocPrint(
             self.arena,
@@ -1454,6 +1455,70 @@ pub const Agent = struct {
     }
 
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
+    /// Reveals schemas the model asked for and reports what it got. The tool
+    /// list for the next request is rebuilt from `revealed`, so the tools
+    /// become callable on the very next turn.
+    fn loadTools(self: *Agent, tc: types.ToolCall) ![]const u8 {
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, self.arena, tc.arguments, .{}) catch {
+            return "{\"ok\":false,\"error\":\"expected {\\\"names\\\":[\\\"tool_name\\\"]}\"}";
+        };
+        const names = switch (parsed) {
+            .object => |o| switch (o.get("names") orelse std.json.Value{ .null = {} }) {
+                .array => |a| a,
+                else => return "{\"ok\":false,\"error\":\"names must be an array of tool names\"}",
+            },
+            else => return "{\"ok\":false,\"error\":\"names must be an array of tool names\"}",
+        };
+
+        var out: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &out.writer };
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("loaded");
+        try s.beginArray();
+        var found: usize = 0;
+        for (names.items) |n| {
+            if (n != .string) continue;
+            const t = self.reg.get(n.string) orelse continue;
+            if (t.internal or !t.enabled) continue;
+            self.revealed.put(self.arena, t.name, {}) catch continue;
+            found += 1;
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write(t.name);
+            try s.objectField("description");
+            try s.write(t.description);
+            try s.objectField("input_schema");
+            try s.write(t.input_schema);
+            try s.endObject();
+        }
+        try s.endArray();
+        // Names that matched nothing are said plainly rather than silently
+        // dropped, so a typo does not look like an empty tool.
+        try s.objectField("unknown");
+        try s.beginArray();
+        for (names.items) |n| {
+            if (n != .string) continue;
+            const t = self.reg.get(n.string);
+            if (t == null or t.?.internal or !t.?.enabled) try s.write(n.string);
+        }
+        try s.endArray();
+        try s.endObject();
+
+        if (found > 0) self.rebuildToolDefs();
+        return out.written();
+    }
+
+    /// Recomputes what goes in the next request's tool array.
+    fn rebuildToolDefs(self: *Agent) void {
+        if (!self.catalog_mode) return;
+        const hot = self.usage.top(self.arena, self.cfg.agent.hot_tools) catch return;
+        var core: std.ArrayList([]const u8) = .empty;
+        for (hot) |e| core.append(self.arena, e.name) catch {};
+        self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
+    }
+
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse {
             log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
@@ -1524,6 +1589,39 @@ pub const Agent = struct {
         // initial value and a possible result.
         const results = try self.arena.alloc(?[]const u8, calls.len);
         @memset(results, null);
+
+        for (calls, 0..) |tc, i| {
+            // Counted here, not in executeTool: there are two execution paths
+            // and a third for duplicates, and this is the only point all of
+            // them pass through. Counted before the call, because a tool the
+            // model keeps reaching for should get its schema loaded whether or
+            // not the call succeeds.
+            self.usage.record(self.arena, tc.name);
+            // load_tools is answered by this process rather than the sandbox:
+            // it decides what the next request carries, which no wasm module
+            // can see. It has no registry entry, so filling its slot here also
+            // keeps the passes below from reporting it as an unknown tool.
+            if (self.catalog_mode and std.mem.eql(u8, tc.name, registry.Registry.load_tool_name)) {
+                results[i] = try self.loadTools(tc);
+                continue;
+            }
+            // A model that names a catalogued tool without loading it first is
+            // answered rather than refused. The tool array is what the provider
+            // was offered, but dispatch resolves against the registry, so the
+            // call can simply run — and the schema is revealed so the next
+            // request carries it and the model can get the arguments right if
+            // it guessed them wrong. Without this the catalog costs capability
+            // rather than only tokens, which is not a trade worth making.
+            if (self.catalog_mode and !self.revealed.contains(tc.name)) {
+                if (self.reg.get(tc.name)) |t| {
+                    if (!t.internal and t.enabled) {
+                        self.revealed.put(self.arena, t.name, {}) catch {};
+                        self.rebuildToolDefs();
+                        log.log(.info, "tool '{s}' called from the catalog; its schema is now loaded", .{t.name});
+                    }
+                }
+            }
+        }
 
         // Warm the shared caches on the main thread before any worker
         // spawns: every tool's wasm bytes and every registered transform

@@ -2,7 +2,25 @@
   "name": "zig_check",
   "description": "fast per-file zig ast-check / fmt check (no full gate)",
   "wasm": "zig-out/tools/zig_check.wasm",
-  "input_schema": { "type": "object", "properties": {"file":{"type":"string"},"fmt":{"type":"boolean"}}, "required": ["file"] },
-  "fs_prefixes": ["."],
-  "network_allow": []
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file": {
+        "type": "string"
+      },
+      "fmt": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
+  "fs_prefixes": [
+    "."
+  ],
+  "network_allow": [],
+  "exec_allow": [
+    "zig"
+  ]
 }

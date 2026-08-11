@@ -4,10 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>clanker</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230969da'/%3E%3Cg stroke='%23fff' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 11l5 5-5 5'/%3E%3Cpath d='M17.5 21H24'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='2' fill='%23e8e2d6'/%3E%3Cg stroke='%23b4531f' stroke-width='2.5' fill='none' stroke-linecap='square'%3E%3Cpath d='M9 5v22'/%3E%3Cpath d='M9 10h7'/%3E%3Cpath d='M9 16h11'/%3E%3Cpath d='M9 22h6'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="/webui/app.css">
 </head>
 <body>
+<!--
+THESIS: A machine editing itself lays down strata; you read the column and
+decide which layers hold. Refuses the dark agent console with a chat column.
+OWN-WORLD: Field-log paper (#e8e2d6) and drafting film (#1a1714), printed
+depth rules, lithology hatching, oxide-orange (#c9622b) for the active mark,
+lichen (#7d8b74) for a gate that held, grease-pencil red for one that did not.
+Measurements set in mono; prose set in the system text face. Drawn icons, one
+stroke weight. No glyph stands in for an icon.
+STORY: The owner sees what the agent deposited, what it cost, and whether it
+held, then decides to keep or discard it.
+FIRST VIEWPORT: Ruled depth column down the left of the sheet, numbered by
+turn; each turn a stratum banded by kind, with a key. The layer being
+deposited carries an oxide rule. Composer sits at the foot of the column,
+where the next layer lands.
+FORM: Core Log, candidate 6 of the grounded list, seed key 33b8b5ac.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+-->
+
 <a class="skip-link" href="#main">Skip to main content</a>
 <!-- The transcript sits before the composer in document order, so every
      finished turn puts two more buttons (Copy answer, Run again) between a
@@ -22,7 +40,7 @@
   <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
   <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
   <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
-  <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+  <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
   <button type="button" class="chip-btn" id="theme-toggle" title="Cycle theme: system / light / dark">theme: system</button>
 </header>
 
@@ -73,11 +91,14 @@
          one the composer below continues. Sits above the transcript because it
          names what the transcript is showing. -->
     <section>
+    <!-- A heading, not the kicker this used to be: it names the conversation
+         rather than labelling the row beneath it, and it is the same size as
+         every other view's heading so the primary surface is not the one view
+         with no hierarchy. -->
     <div class="section-head">
-      <h2>Conversation</h2>
+      <h2 id="session-title">…</h2>
     </div>
     <div class="run-picker" id="session-picker">
-      <span class="session-title" id="session-title">…</span>
       <div class="session-actions">
         <button type="button" class="secondary" id="session-fork">Fork</button>
         <button type="button" class="secondary" id="session-rename">Rename</button>
@@ -105,6 +126,12 @@
       <span class="meta" id="turn-filter-count"></span>
     </div>
 
+    <p class="legend" aria-label="What the bands beside each layer mean">
+      <span class="legend-item"><span class="legend-swatch hatch-model"></span>model only</span>
+      <span class="legend-item"><span class="legend-swatch hatch-tool"></span>tools ran</span>
+      <span class="legend-item"><span class="legend-swatch hatch-fail"></span>did not hold</span>
+    </p>
+
     <div class="transcript" id="transcript"></div>
     <div class="run-empty" id="transcript-empty" hidden>
       <p>No turns in this conversation yet.</p>
@@ -112,7 +139,6 @@
            this thing does; each one is a real task against this repo. -->
       <div class="suggestions" id="suggestions"></div>
     </div>
-    <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest ↓</button>
     </section>
 
     <form id="task-form" class="composer">
@@ -141,6 +167,7 @@
       <div class="toolbar">
         <span class="meta" id="hint"></span>
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
+        <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>

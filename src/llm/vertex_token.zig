@@ -24,6 +24,18 @@ var cached_token: ?[]const u8 = null;
 var cached_for: []const u8 = "";
 var expires_at: i64 = 0;
 
+/// Guards the three variables above.
+///
+/// Tools that call the model are supposed to be marked `llm` in their
+/// descriptor, which keeps them off the parallel worker threads. subagent, rlm
+/// and reasoning were not marked, so two of them in one turn ran side by side
+/// and both came through here: refreshing frees the previous token before
+/// storing the new one, so one thread could free a pointer the other had just
+/// been handed, or both could free the same one. Marking the descriptors fixes
+/// those three; this makes the next unmarked tool a slow call rather than a
+/// double free.
+var cache_mutex: std.Io.Mutex = .init;
+
 const TokenReply = struct {
     access_token: []const u8 = "",
     expires_in: i64 = 3600,
@@ -34,6 +46,11 @@ const TokenReply = struct {
 /// this module and stays valid until the next refresh.
 pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8) ![]const u8 {
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
+    // Held across the whole exchange, not just the store: two callers that
+    // both miss would otherwise both mint, and the loser would free a token
+    // the winner is already using.
+    cache_mutex.lock(io) catch {};
+    defer cache_mutex.unlock(io);
     if (cached_token) |tok| {
         if (cacheHit(now, expires_at, cached_for, service_account_file)) return tok;
     }
@@ -100,6 +117,7 @@ pub fn get(io: std.Io, gpa: std.mem.Allocator, service_account_file: []const u8)
 
 /// Frees the cached token; call once at shutdown.
 pub fn deinit(gpa: std.mem.Allocator) void {
+    // No lock: shutdown, after the threads that could contend are joined.
     if (cached_token) |tok| gpa.free(tok);
     if (cached_for.len > 0) gpa.free(cached_for);
     cached_token = null;

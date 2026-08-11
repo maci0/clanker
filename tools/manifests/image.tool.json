@@ -13,7 +13,9 @@
       "path"
     ]
   },
-  "fs_prefixes": [],
+  "fs_prefixes": [
+    "."
+  ],
   "network_allow": [],
   "category": "media"
 }

@@ -44,18 +44,36 @@ Providers are configured in `config.json` / `config.local.json` (see below).
 
 Tools run in a WebAssembly sandbox using the zwasm runtime. The guest exports `scratch`, `host_arena`, and `run`. Host functions (`env.ck_*`) provide:
 
+The authority is whatever `src/sandbox/runtime.zig` registers with the linker;
+a function that exists in `host.zig` and is not registered there is unreachable,
+which has been true of eleven of them at once. To list what is actually wired:
+
+```
+rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
+```
+
 | Function | Purpose |
 |----------|---------|
 | `ck_log` | Log a message |
 | `ck_now` | Get current timestamp |
 | `ck_random` | Generate random bytes |
 | `ck_http` | Make an HTTP request |
-| `ck_fs_read` | Read a file from the sandbox root |
-| `ck_fs_write` | Write a file into the sandbox root |
-| `ck_getenv` | Read an environment variable |
+| `ck_fs_read`, `ck_fs_read_range` | Read a file, or a byte range of one |
+| `ck_fs_write`, `ck_fs_write_range` | Write a file, or patch a range of one |
+| `ck_fs_append` | Append to a file, creating it when absent; locked, so parallel tools cannot overwrite each other |
+| `ck_fs_list`, `ck_fs_stat` | List a directory (directories come back with a trailing slash), stat a path |
+| `ck_fs_find`, `ck_fs_grep` | Find files by name glob, search file contents |
+| `ck_fs_copy`, `ck_fs_rename`, `ck_fs_delete`, `ck_fs_mkdir` | Copy, move, remove a file, create a directory |
+| `ck_hash` | SHA-256 of a buffer |
+| `ck_env`, `ck_getenv` | Read one environment variable, subject to `env_allow` |
 | `ck_exec` | Execute a command in the sandbox |
 | `ck_docker` | Run a Docker container (if allowed) |
 | `ck_llm` | One-shot model call; denied unless the descriptor sets `"llm": true` |
+| `ck_subagent` | Nested bounded agent run; needs a parent agent run to attach to |
+| `ck_ask` | Put a multiple-choice question to the human, when one is attached |
+| `ck_chat` | Send to or read a chatroom |
+| `ck_stats` | Token usage recorded so far |
+| `ck_std_api` | Look up a symbol in the Zig standard library source |
 | `ck_config` | Return this tool's `config` object from its descriptor |
 | `ck_result` | Write the tool result into the host arena |
 
@@ -136,9 +154,9 @@ peer keeps the message only when it subscribes to that room.
 - Inbox: each agent run injects a `[chatroom inbox]` user message with messages
   newer than the cursor, so a subscribed clanker notices what its peers said.
 
-### Patch application (`src/patch/apply.zig`)
+### Patch application (`tools/zig/patch_apply.zig`)
 
-Proposals are applied via exact-match `old` → `new` replacements. The first occurrence of each `old` is replaced.
+Proposals are applied via exact-match `old` → `new` replacements, through the sandboxed `patch_apply` WASM tool (`fs_prefixes: ["state/staging"]`). The first occurrence of each `old` is replaced. The improve engine (`src/improve/engine.zig`) decides what to apply and whether to promote the result; the tool only performs the text edits.
 
 ## WASM tool ABI
 
@@ -190,11 +208,22 @@ All of them must pass before a change is promoted, so a tool source that fails t
 
 Every entry in `tools/manifests/` is one WASM module plus its descriptor. `internal: true` hides the tool from the model's tool list: it is reachable only through a REPL slash command or an HTTP route, never chosen by the agent. `fs_prefixes` is the complete filesystem authority the sandbox grants that tool; a tool with no prefixes cannot read or write anything.
 
-Tools the model can call:
+Tools the model can call. `clanker tools list` prints the live set; this table
+names the ones worth knowing about rather than every entry, since the set
+changes as tools are added.
 
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
 | `calculator` | none | Arithmetic, either `{"a","b","op"}` or `{"expr": "2+3*4"}` (`+ - * / ^`, parentheses, standard precedence) |
+| `read_file` | `.` | Read a file by line (`start_line`, `line_count`) or by byte (`offset`, `limit`). Whole lines either way, and a short result says where to resume |
+| `list_files` | `.` | What is in a directory, optionally recursive, with a `suffix` filter |
+| `find_files` | `.` | Find files by name anywhere under a directory; a pattern with no wildcard matches any name containing it, and a path is split into directory and name |
+| `edit_file` | source dirs | Replace an exact, unique piece of a file's text, or create a new file. Refuses a match that is absent or ambiguous, and refuses to create over an existing file unless `overwrite` is set |
+| `file_ops` | source dirs | move, copy, delete, mkdir, stat, append and hash. move and copy refuse an existing destination unless `overwrite` is set |
+| `lsp` | `.` | Resolve a Zig symbol through zls: where it is defined, or everywhere it is referenced |
+| `image` | `.` | Read an image file and return it as a multimodal part, so the model can see it |
+| `ask_user` | none | Put a multiple-choice question to the human, or to another clanker instance |
+| `forget_note` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
 | `search_code` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
 | `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |
 | `std_api` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
@@ -229,7 +258,7 @@ Internal tools, never offered to the model:
 | `cmd_graph` | `state/runs/` | Render the latest execution graph |
 | `cmd_status` | `config.json`, `config.local.json` | Show this instance and its peers |
 | `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
-| `format` | none | Markdown-to-ANSI transform (bold/italic/code/bullets); not currently called by the harness — the REPL and `clanker run` use an equivalent streaming implementation (`MdStream` in `src/cli.zig`) instead, since this tool's whole-string ABI can't handle a marker split across two stream deltas |
+| `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 

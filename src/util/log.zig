@@ -1,3 +1,5 @@
+//! Leveled logging to stderr: single-write-per-line prefixed output.
+
 const std = @import("std");
 
 pub const Level = enum {

@@ -1,3 +1,5 @@
+//! Entry point: process setup, config/dotenv bootstrap, then hand off to cli.run.
+
 const std = @import("std");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
@@ -26,13 +28,13 @@ comptime {
     _ = @import("agent/graph.zig");
     _ = @import("util/dotenv.zig");
     _ = @import("util/atomic_write.zig");
+    _ = @import("util/filelock.zig");
     _ = @import("agent/autolearn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
     _ = @import("improve/history.zig");
     _ = @import("improve/engine.zig");
-    _ = @import("patch/apply.zig");
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
     _ = @import("llm/gcp_jwt.zig");
@@ -41,6 +43,15 @@ comptime {
     _ = @import("peers/todos.zig");
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
+    _ = @import("tui/term.zig");
+    _ = @import("tui/width.zig");
+    _ = @import("tui/input.zig");
+    _ = @import("tui/region.zig");
+    _ = @import("tui/statusbar.zig");
+    _ = @import("tui/transcript.zig");
+    _ = @import("tui/palette.zig");
+    _ = @import("tui/approval.zig");
+    _ = @import("tui/theme.zig");
     _ = @import("cli.zig");
 }
 

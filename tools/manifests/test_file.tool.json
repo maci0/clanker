@@ -2,7 +2,25 @@
   "name": "test_file",
   "description": "run one Zig test file, optionally --test-filter",
   "wasm": "zig-out/tools/test_file.wasm",
-  "input_schema": { "type": "object", "properties": {"file":{"type":"string"},"filter":{"type":"string"}}, "required": ["file"] },
-  "fs_prefixes": ["."],
-  "network_allow": []
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file": {
+        "type": "string"
+      },
+      "filter": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ]
+  },
+  "fs_prefixes": [
+    "."
+  ],
+  "network_allow": [],
+  "exec_allow": [
+    "zig"
+  ]
 }

@@ -35,6 +35,12 @@ pub const Model = struct {
     /// Keeps reasoning models' chain-of-thought short so `content` stays
     /// populated (e.g. DeepSeek v4: "low" | "medium").
     reasoning_effort: ?[]const u8 = null,
+    /// What to call this model in the UI, when the wire id is not what a
+    /// person calls it. `kimi-k3` on api.moonshot.ai is sent bare because that
+    /// is what the vendor's own API accepts, but it is read as
+    /// `moonshotai/kimi-k3`, the way an OpenRouter-routed model is written.
+    /// Display only: never sent.
+    display: ?[]const u8 = null,
     /// Estimated USD per 1M input tokens (for run cost accounting).
     cost_per_1m_input: ?f64 = null,
     /// Estimated USD per 1M output tokens (for run cost accounting).
@@ -104,6 +110,14 @@ pub const Agent = struct {
     /// Total history token budget; when accumulated conversation history goes
     /// beyond this, older messages are compacted away.
     max_history_tokens: u32 = 16000,
+    /// Send full schemas only for the tools this clanker actually uses,
+    /// and let the model ask for the rest by name. With forty-odd tools the
+    /// schemas are several thousand tokens in every single request, and most
+    /// of them are not wanted on most turns.
+    tool_catalog: bool = true,
+    /// How many of the most-used tools keep their schemas loaded without
+    /// being asked for. Measured, not configured: see tools/usage.zig.
+    hot_tools: u32 = 10,
     tools_dir: []const u8 = "tools",
     skills_dir: []const u8 = "skills",
     system_prompt_file: []const u8 = "skills/SYSTEM.md",
@@ -218,6 +232,8 @@ pub const Config = struct {
     chatrooms_present: bool = false,
     instance_present: bool = false,
     default_provider_present: bool = false,
+    peers_present: bool = false,
+    notify_present: bool = false,
 
     pub fn provider(self: *const Config, name: ?[]const u8) !*const Provider {
         const want = name orelse self.default_provider;
@@ -290,9 +306,11 @@ pub const Config = struct {
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
+            cfg.peers_present = true;
         }
         if (obj.get("notify")) |v| {
             cfg.notify = try parseNotify(arena, v);
+            cfg.notify_present = true;
         }
         if (obj.get("chatrooms")) |v| {
             cfg.chatrooms = try parseChatrooms(arena, v);
@@ -393,6 +411,7 @@ pub const Config = struct {
         if (obj.get("temperature")) |k| m.temperature = try jsonFloat(k, "temperature");
         if (obj.get("top_p")) |k| m.top_p = try jsonFloat(k, "top_p");
         if (obj.get("reasoning_effort")) |k| m.reasoning_effort = try jsonStr(k, "reasoning_effort");
+        if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
         return m;
@@ -542,12 +561,12 @@ pub const Config = struct {
         // them; otherwise the local defaults would clobber the global file.
         if (src.agent_present) dst.agent = src.agent;
         if (src.improve_present) dst.improve = src.improve;
-        dst.peers = src.peers;
+        if (src.peers_present) dst.peers = src.peers;
         // Only override the instance when the local file actually named one:
         // a bare config.local.json must not replace a stable name with a
         // pid-based default on every restart.
         if (src.instance_present) dst.instance = src.instance;
-        dst.notify = src.notify;
+        if (src.notify_present) dst.notify = src.notify;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.modules_present) dst.modules = src.modules;
     }
@@ -604,7 +623,7 @@ pub const Config = struct {
         _ = key;
         return switch (v) {
             .integer => |i| i,
-            .float => |f| @intFromFloat(f),
+            .float => |f| @trunc(f),
             .number_string => |s| std.fmt.parseInt(i64, s, 10) catch error.FieldNotInt,
             else => error.FieldNotInt,
         };

@@ -84,15 +84,9 @@ const FetchOutcome = struct {
     body: []u8,
 };
 
-pub fn chat(
-    ctx: *Ctx,
-    arena: std.mem.Allocator,
-    params: providers.RequestParams,
-    err_detail: *?[]const u8,
-) !types.ChatResponse {
-    const provider = params.provider;
-    const llm_t0 = std.Io.Timestamp.now(ctx.io, .awake);
-
+/// Resolves the provider's credential (env var, or a minted Vertex access
+/// token) into a ready-to-send `Bearer ...` header value, gpa-owned.
+fn resolveBearer(ctx: *Ctx, provider: *const config.Provider) !?[]const u8 {
     var api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
         ctx.environ_map.get(env_name)
     else
@@ -110,6 +104,21 @@ pub fn chat(
         });
         return error.MissingApiKey;
     }
+    if (api_key) |k| return try std.fmt.allocPrint(ctx.gpa, "Bearer {s}", .{k});
+    return null;
+}
+
+pub fn chat(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    params: providers.RequestParams,
+    err_detail: *?[]const u8,
+) !types.ChatResponse {
+    const provider = params.provider;
+    const llm_t0 = std.Io.Timestamp.now(ctx.io, .awake);
+
+    const bearer = try resolveBearer(ctx, provider);
+    defer if (bearer) |b| ctx.gpa.free(b);
 
     const body = try providers.buildRequest(ctx.gpa, params);
     defer ctx.gpa.free(body);
@@ -119,12 +128,6 @@ pub fn chat(
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
     defer client.deinit();
-
-    var bearer: ?[]const u8 = null;
-    defer if (bearer) |b| ctx.gpa.free(b);
-    if (api_key) |k| {
-        bearer = try std.fmt.allocPrint(ctx.gpa, "Bearer {s}", .{k});
-    }
 
     var attempt: u32 = 0;
     var outcome: FetchOutcome = undefined;
@@ -314,23 +317,8 @@ pub fn chatStream(
     const provider = params.provider;
     const llm_t0 = std.Io.Timestamp.now(ctx.io, .awake);
 
-    var api_key: ?[]const u8 = if (provider.api_key_env) |env_name|
-        ctx.environ_map.get(env_name)
-    else
-        null;
-    // Vertex takes a GCP access token. An env var still wins (handy for a
-    // short-lived token pasted in by hand); otherwise it is minted from the
-    // service account and cached until it nears expiry.
-    if (provider.kind == .vertex_anthropic and api_key == null and provider.service_account_file.len > 0) {
-        api_key = try vertex_token.get(ctx.io, ctx.gpa, provider.service_account_file);
-    }
-    if (api_key == null and (provider.api_key_env != null or provider.kind == .vertex_anthropic)) {
-        log.log(.error_, "no credential for provider '{s}': set {s} or service_account_file", .{
-            provider.name,
-            provider.api_key_env orelse "an API key env var",
-        });
-        return error.MissingApiKey;
-    }
+    const bearer = try resolveBearer(ctx, provider);
+    defer if (bearer) |b| ctx.gpa.free(b);
 
     var p = params;
     p.stream = true;
@@ -342,12 +330,6 @@ pub fn chatStream(
 
     var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
     defer client.deinit();
-
-    var bearer: ?[]const u8 = null;
-    defer if (bearer) |b| ctx.gpa.free(b);
-    if (api_key) |k| {
-        bearer = try std.fmt.allocPrint(ctx.gpa, "Bearer {s}", .{k});
-    }
 
     var headers: std.http.Client.Request.Headers = .{
         .content_type = .{ .override = "application/json" },

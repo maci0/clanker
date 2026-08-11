@@ -5,9 +5,7 @@
   "requires_tool": "calculator",
   "criteria": [
     {
-      "includes": [
-        "391"
-      ]
+      "equals": "391"
     }
   ]
 }

@@ -27,6 +27,7 @@ extern fn ck_fs_find(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32
 extern fn ck_fs_grep(dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32;
 extern fn ck_hash(ptr: u32, len: u32) u32;
 extern fn ck_fs_write(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
+extern fn ck_fs_write_if(path_ptr: u32, path_len: u32, expect_ptr: u32, expect_len: u32, data_ptr: u32, data_len: u32) u32;
 extern fn ck_fs_list(path_ptr: u32, path_len: u32) u32;
 extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
@@ -483,7 +484,7 @@ pub fn config() []const u8 {
     return readResult() orelse "{}";
 }
 
-pub const FsError = error{ SandboxDenied, NotFound, TooLarge, IoError };
+pub const FsError = error{ SandboxDenied, NotFound, TooLarge, IoError, Mismatch };
 
 /// Reads a file relative to the sandbox root.
 pub fn fsRead(path: []const u8) FsError![]const u8 {
@@ -613,6 +614,28 @@ pub fn fsWrite(path: []const u8, data: []const u8) FsError!void {
         0 => {},
         1 => error.SandboxDenied,
         3 => error.TooLarge,
+        else => error.IoError,
+    };
+}
+
+/// Compare-and-swap write: the host locks the file, hashes what is actually
+/// there, and writes `data` only when that hash equals `expected_hex`
+/// (lowercase SHA-256 hex, as `hash` returns; an empty string matches a file
+/// that does not exist yet). error.Mismatch means someone else changed the
+/// file between your read and this write — re-read, re-hash, and retry — as
+/// opposed to error.SandboxDenied or error.NotFound, which are policy and
+/// lookup failures.
+pub fn fsWriteIf(path: []const u8, expected_hex: []const u8, data: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    const e = sliceToMem(expected_hex);
+    const d = sliceToMem(data);
+    const rc = ck_fs_write_if(p.ptr, p.len, e.ptr, e.len, d.ptr, d.len);
+    return switch (rc) {
+        0 => {},
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
+        6 => error.Mismatch,
         else => error.IoError,
     };
 }

@@ -20,10 +20,10 @@ const runner_mod = @import("../evals/runner.zig");
 const builder = @import("../tools/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const history_mod = @import("history.zig");
-const patch_apply = @import("../patch/apply.zig");
 const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
-const peers = @import("../peers/notify.zig");
+const runtime = @import("../sandbox/runtime.zig");
+const registry = @import("../tools/registry.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const diskcap = @import("../util/diskcap.zig");
@@ -98,13 +98,6 @@ fn nextStdSourceRef(text: []const u8) ?SourceRef {
         return .{ .path = line_text[0..c1], .line = line_no, .rest = rest };
     }
     return null;
-}
-
-/// Whether a file already went into the focus block, by its header line.
-fn pathInFocus(focus: []const u8, path: []const u8) bool {
-    var buf: [512]u8 = undefined;
-    const header = std.fmt.bufPrint(&buf, "===== FILE: {s} =====", .{path}) catch return false;
-    return std.mem.indexOf(u8, focus, header) != null;
 }
 
 fn pathIn(list: []const []const u8, path: []const u8) bool {
@@ -411,7 +404,7 @@ pub const Engine = struct {
         const staged_dir = try std.Io.Dir.cwd().openDir(self.ctx.io, staging, .{});
         defer staged_dir.close(self.ctx.io);
 
-        patch_apply.apply(staged_dir, self.ctx.io, self.ctx.gpa, proposal.changes) catch |err| {
+        self.applyPatch(staging, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
             self.removeTree(staging);
             return .failed;
@@ -447,7 +440,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tree did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
@@ -463,7 +456,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tools did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
@@ -475,7 +468,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
             self.removeTree(staging);
             return .failed;
@@ -489,7 +482,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, fmt_check.detail);
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
             self.removeTree(staging);
             return .failed;
@@ -500,7 +493,7 @@ pub const Engine = struct {
         if (!lint_check.ok) {
             const tail = errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
             self.removeTree(staging);
             return .failed;
@@ -530,7 +523,7 @@ pub const Engine = struct {
                         const tail = errorTail(self.arena, retry.detail);
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
-                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
                         feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                         self.removeTree(staging);
                         return .failed;
@@ -547,7 +540,7 @@ pub const Engine = struct {
                         const tail = errorTail(self.arena, cap.detail);
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
-                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
                         feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                         self.removeTree(staging);
                         return .failed;
@@ -559,7 +552,7 @@ pub const Engine = struct {
 
         // ---- 6. promote ----
         log.log(.info, "gates green — promoting {d} file(s)", .{proposal.changes.len});
-        const files = changedPaths(self.ctx.gpa, proposal.changes);
+        const files = proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{};
         try self.hist.snapshot(id, files);
         for (proposal.changes) |c| {
             const src = try std.fmt.allocPrint(self.ctx.gpa, "{s}/{s}", .{ staging, c.file });
@@ -580,7 +573,7 @@ pub const Engine = struct {
         if (self.cfg.agent.git_commit) {
             self.gitCommit(id, proposal.summary, files);
         }
-        peers.notifyAll(self.ctx.gpa, self.ctx.io, self.cfg, "improve", self.arena.dupe(u8, proposal.summary) catch "");
+        self.notifyPeers("improve", proposal.summary);
 
         // Post-promotion gate on the live tree.
         const live = try self.gateScore();
@@ -593,7 +586,45 @@ pub const Engine = struct {
         return .accepted;
     }
 
-    fn gitCommit(self: *Engine, id: []const u8, summary: []const u8, files: [][]const u8) void {
+    /// Applies the proposal's changes under `staging` through the sandboxed
+    /// `patch_apply` WASM tool (fs_prefixes: ["state/staging"]) instead of a
+    /// native file-write path. The tool only performs the text edits; the
+    /// decision to gate and promote the result stays here, native.
+    fn applyPatch(self: *Engine, staging: []const u8, changes: []const proposal_mod.Change) !void {
+        var reg = try registry.Registry.load(self.ctx.io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
+        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, &reg, "patch_apply", null);
+        defer mod.deinit();
+
+        var enc: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+        try s.beginObject();
+        try s.objectField("changes");
+        try s.beginArray();
+        for (changes) |c| {
+            const rel = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ staging, c.file });
+            try s.beginObject();
+            try s.objectField("file");
+            try s.write(rel);
+            try s.objectField("old");
+            try s.write(c.old);
+            try s.objectField("new");
+            try s.write(c.new);
+            try s.endObject();
+        }
+        try s.endArray();
+        try s.endObject();
+
+        const raw = try mod.executeTool(enc.written());
+        defer self.ctx.gpa.free(raw);
+        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
+            return error.PatchApplyFailed;
+        if (!resp.ok) {
+            log.log(.error_, "patch_apply tool: {s}", .{resp.@"error"});
+            return error.PatchApplyFailed;
+        }
+    }
+
+    fn gitCommit(self: *Engine, id: []const u8, summary: []const u8, files: []const []const u8) void {
         var argv: std.ArrayList([]const u8) = .empty;
         defer argv.deinit(self.ctx.gpa);
         argv.append(self.ctx.gpa, "git") catch return;
@@ -622,6 +653,45 @@ pub const Engine = struct {
         } else {
             log.log(.debug, "git commit output: {s}", .{commit.stderr});
         }
+    }
+
+    /// Fans a promotion event out to every configured peer through the
+    /// sandboxed `peers` WASM tool, the same path `clanker notify` and the
+    /// model itself use, instead of a second hand-rolled HTTP client.
+    fn notifyPeers(self: *Engine, kind: []const u8, payload: []const u8) void {
+        if (!self.cfg.modules.peers) return;
+        if (!self.cfg.notify.on) return;
+        if (self.cfg.peers.len == 0) return;
+
+        var reg = registry.Registry.load(self.ctx.io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir) catch |err| {
+            log.log(.warn, "notifyPeers: registry load failed: {s}", .{@errorName(err)});
+            return;
+        };
+        const mod = runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, &reg, "peers", null) catch |err| {
+            log.log(.warn, "notifyPeers: tool load failed: {s}", .{@errorName(err)});
+            return;
+        };
+        defer mod.deinit();
+
+        var ibuf: [8192]u8 = undefined;
+        var iw: std.Io.Writer = .fixed(&ibuf);
+        var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+        is.beginObject() catch return;
+        is.objectField("action") catch return;
+        is.write("notify") catch return;
+        is.objectField("message") catch return;
+        is.write(payload) catch return;
+        is.objectField("kind") catch return;
+        is.write(kind) catch return;
+        is.objectField("topic") catch return;
+        is.write(self.cfg.notify.topic) catch return;
+        is.endObject() catch return;
+
+        const raw = mod.executeTool(ibuf[0..iw.end]) catch |err| {
+            log.log(.warn, "notifyPeers: tool call failed: {s}", .{@errorName(err)});
+            return;
+        };
+        self.ctx.gpa.free(raw);
     }
 
     fn newId(self: *Engine) ![]const u8 {
@@ -1245,13 +1315,6 @@ fn proposalChangedPathsSlice(gpa: std.mem.Allocator, changes: []const proposal_m
     return out;
 }
 
-fn changedPaths(gpa: std.mem.Allocator, changes: []const proposal_mod.Change) [][]const u8 {
-    _ = gpa;
-    const out = std.heap.page_allocator.alloc([]const u8, changes.len) catch unreachable;
-    for (changes, 0..) |c, i| out[i] = c.file;
-    return out;
-}
-
 fn errorTail(arena: std.mem.Allocator, s: []const u8) []const u8 {
     const max = 1500;
     if (s.len <= max) return s;
@@ -1420,11 +1483,6 @@ fn isDir(base: std.Io.Dir, io: std.Io, rel: []const u8) bool {
     var dir = base.openDir(io, rel, .{}) catch return false;
     dir.close(io);
     return true;
-}
-
-fn dirName2(path: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[0..i];
-    return "";
 }
 
 fn dirOf(path: []const u8) []const u8 {

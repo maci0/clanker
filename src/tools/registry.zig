@@ -33,6 +33,11 @@ pub const Tool = struct {
     /// Contributes a segment to the REPL status line. Pair with
     /// `"internal": true` so the model never calls it.
     statusline: bool = false,
+    /// Runs once after each REPL turn (empty input) and may print a line
+    /// into the transcript — a general REPL-behavior plugin, as opposed to
+    /// `statusline`'s fixed one-line segment. Pair with `"internal": true`
+    /// so the model never calls it.
+    turn_hook: bool = false,
     /// Free-form per-plugin settings from the descriptor's `config` object,
     /// handed to the guest verbatim via `ck_config`. The harness only reads the
     /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
@@ -127,7 +132,7 @@ pub const Registry = struct {
                 log.log(.warn, "cannot read tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
                 continue;
             };
-            const tool = parseDescriptor(arena, raw, tools_dir) catch |err| {
+            const tool = parseDescriptor(arena, raw) catch |err| {
                 log.log(.warn, "invalid tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
                 continue;
             };
@@ -228,7 +233,130 @@ pub const Registry = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// Returns all enabled tools that have `turn_hook: true`. Same cadence
+    /// as `statuslineTools` (invoked with empty input once after each turn),
+    /// but the caller treats a non-empty result as a line to print into the
+    /// transcript rather than a status-bar segment — for plugins that react
+    /// to what just happened instead of only decorating the status line.
+    pub fn turnHookTools(self: *const Registry, arena: std.mem.Allocator) ![]const *const Tool {
+        var out: std.ArrayList(*const Tool) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr;
+            if (t.turn_hook and t.enabled) try out.append(arena, t);
+        }
+        std.mem.sort(*const Tool, out.items, {}, struct {
+            fn lt(_: void, a: *const Tool, b: *const Tool) bool {
+                return std.mem.order(u8, a.name, b.name) == .lt;
+            }
+        }.lt);
+        return out.toOwnedSlice(arena);
+    }
+
     /// Converts registry tools into LLM ToolDefs (in the given arena).
+    /// Name of the tool that hands out schemas on demand. Defined here
+    /// because both the registry (which advertises it) and the agent (which
+    /// answers it) have to agree on the spelling.
+    pub const load_tool_name = "load_tools";
+
+    /// The schema the model needs to ask for other schemas.
+    pub fn loadToolDef(arena: std.mem.Allocator) !types.ToolDef {
+        var names_schema: json.ObjectMap = .empty;
+        try names_schema.put(arena, "type", .{ .string = "array" });
+        var item: json.ObjectMap = .empty;
+        try item.put(arena, "type", .{ .string = "string" });
+        try names_schema.put(arena, "items", .{ .object = item });
+
+        var props: json.ObjectMap = .empty;
+        try props.put(arena, "names", .{ .object = names_schema });
+
+        var required = json.Array.init(arena);
+        try required.append(.{ .string = "names" });
+
+        var schema: json.ObjectMap = .empty;
+        try schema.put(arena, "type", .{ .string = "object" });
+        try schema.put(arena, "properties", .{ .object = props });
+        try schema.put(arena, "required", .{ .array = required });
+
+        return .{
+            .name = load_tool_name,
+            .description = "Load the full input schemas for tools listed in the tool catalog, so they can be called. " ++
+                "Pass the exact names from the catalog. The tools stay available for the rest of this run.",
+            .input_schema = .{ .object = schema },
+        };
+    }
+
+    /// One line per tool: what exists, and enough of what it does to decide
+    /// whether to ask for its schema. This is what the system prompt carries
+    /// instead of every schema, which for this repo is the difference between
+    /// roughly 6,600 tokens and roughly 1,000 in every single request.
+    pub fn catalogText(self: *const Registry, arena: std.mem.Allocator, revealed: *const std.StringArrayHashMapUnmanaged(void)) ![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        // Not "names": Registry.names is a method on this same type, and a
+        // local of that name shadows it and does not compile.
+        var listed: std.ArrayList([]const u8) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr.*;
+            if (t.internal or !t.enabled) continue;
+            try listed.append(arena, t.name);
+        }
+        std.mem.sort([]const u8, listed.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        for (listed.items) |name| {
+            const t = self.get(name).?;
+            // A tool whose schema is already loaded is marked, so the model
+            // does not spend a call asking for what it can already call.
+            const mark: []const u8 = if (revealed.contains(name)) "* " else "  ";
+            try out.writer.print("{s}{s}: {s}\n", .{ mark, name, firstLine(t.description) });
+        }
+        return out.written();
+    }
+
+    fn firstLine(s: []const u8) []const u8 {
+        const line = s[0 .. std.mem.indexOfScalar(u8, s, '\n') orelse s.len];
+        // Long enough to choose by, short enough that forty of them stay cheap.
+        return if (line.len > 160) line[0..160] else line;
+    }
+
+    test firstLine {
+        try std.testing.expectEqualStrings("one", firstLine("one\ntwo"));
+        try std.testing.expectEqualStrings("short", firstLine("short"));
+        try std.testing.expectEqual(@as(usize, 160), firstLine("x" ** 400).len);
+    }
+
+    /// The tool definitions to send with a request: the always-available core,
+    /// everything revealed so far, and `load_tools` itself. The rest of the
+    /// registry is reachable through the catalog, not through this list.
+    pub fn lazyToolDefs(
+        self: *const Registry,
+        arena: std.mem.Allocator,
+        core: []const []const u8,
+        revealed: *const std.StringArrayHashMapUnmanaged(void),
+    ) ![]types.ToolDef {
+        var out: std.ArrayList(types.ToolDef) = .empty;
+        try out.append(arena, try loadToolDef(arena));
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr.*;
+            if (t.internal or !t.enabled) continue;
+            const in_core = for (core) |c| {
+                if (std.mem.eql(u8, c, t.name)) break true;
+            } else false;
+            if (!in_core and !revealed.contains(t.name)) continue;
+            try out.append(arena, .{
+                .name = t.name,
+                .description = t.description,
+                .input_schema = t.input_schema,
+                .internal = t.internal,
+            });
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     pub fn toToolDefs(self: *const Registry, arena: std.mem.Allocator) ![]types.ToolDef {
         var out: std.ArrayList(types.ToolDef) = .empty;
         var it = self.tools.iterator();
@@ -268,7 +396,7 @@ pub const Registry = struct {
         return json.Value{ .object = out };
     }
 
-    fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8, tools_dir: []const u8) !Tool {
+    fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8) !Tool {
         const v = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
         const obj = switch (v) {
             .object => |o| o,
@@ -284,7 +412,6 @@ pub const Registry = struct {
             // schema is what every tool in this registry has.
             .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
         };
-        _ = tools_dir;
         if (obj.get("check")) |c| {
             if (c == .bool) t.check = c.bool;
         }
@@ -344,6 +471,12 @@ pub const Registry = struct {
         if (obj.get("statusline")) |sv| {
             switch (sv) {
                 .bool => |b| t.statusline = b,
+                else => {},
+            }
+        }
+        if (obj.get("turn_hook")) |sv| {
+            switch (sv) {
+                .bool => |b| t.turn_hook = b,
                 else => {},
             }
         }
@@ -582,7 +715,7 @@ test "a descriptor schema always reaches the provider with a type" {
         \\{ "name": "read_file", "description": "read", "wasm": "read_file.wasm",
         \\  "parameters": { "properties": { "path": { "type": "string" } }, "required": ["path"] } }
     ;
-    const t = try Registry.parseDescriptor(arena, openai_style, "tools");
+    const t = try Registry.parseDescriptor(arena, openai_style);
     try std.testing.expectEqualStrings("object", t.input_schema.object.get("type").?.string);
     // The rest of the schema survives the normalization.
     try std.testing.expect(t.input_schema.object.get("properties") != null);
@@ -592,7 +725,7 @@ test "a descriptor schema always reaches the provider with a type" {
     const bare =
         \\{ "name": "noargs", "description": "d", "wasm": "n.wasm" }
     ;
-    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(b.input_schema == .object);
 }
 
@@ -613,13 +746,57 @@ test "every shipped manifest carries a schema the provider accepts" {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
         const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
-        const t = Registry.parseDescriptor(arena, raw, "tools") catch |err| {
+        const t = Registry.parseDescriptor(arena, raw) catch |err| {
             std.debug.print("manifest {s}: {s}\n", .{ entry.name, @errorName(err) });
             return err;
         };
         if (t.input_schema != .object or t.input_schema.object.get("type") == null) {
             std.debug.print("manifest {s} has no usable input_schema type\n", .{entry.name});
             return error.SchemaMissingType;
+        }
+    }
+}
+
+test "a tool that calls the model says so in its descriptor" {
+    // The descriptor is what keeps a model-calling tool off the parallel
+    // worker threads. subagent, rlm and translate all called the model with
+    // nothing declared, so two of them in one turn ran side by side and raced
+    // the shared access-token cache: one thread freeing a token the other had
+    // just been handed. Reading the guests is the only way to catch the next
+    // one, since nothing else connects a source file to its manifest.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer src_dir.close(io);
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{}) catch return error.SkipZigTest;
+    defer man_dir.close(io);
+
+    const calls = [_][]const u8{ "lib.llm(", "lib.llmWith(", "lib.subagent(", "lib.subagentBriefed(" };
+
+    var it = src_dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
+
+        var calls_model = false;
+        for (calls) |c| {
+            if (std.mem.indexOf(u8, body, c) != null) calls_model = true;
+        }
+        if (!calls_model) continue;
+
+        const stem = entry.name[0 .. entry.name.len - ".zig".len];
+        const manifest = try std.fmt.allocPrint(arena, "{s}.tool.json", .{stem});
+        const raw = man_dir.readFileAlloc(io, manifest, arena, .limited(1 << 20)) catch continue;
+        const t = try Registry.parseDescriptor(arena, raw);
+        if (!t.llm and !t.sequential) {
+            std.debug.print("{s} calls the model but its descriptor sets neither llm nor sequential\n", .{manifest});
+            return error.ModelCallerNotDeclared;
         }
     }
 }
@@ -632,7 +809,7 @@ test "descriptor statusline flag parses and defaults off" {
     const raw =
         \\{ "name": "sl", "description": "d", "wasm": "sl.wasm", "input_schema": {}, "statusline": true, "internal": true }
     ;
-    const t = try Registry.parseDescriptor(arena, raw, "tools");
+    const t = try Registry.parseDescriptor(arena, raw);
     try std.testing.expect(t.statusline);
     try std.testing.expect(t.internal);
 
@@ -641,7 +818,42 @@ test "descriptor statusline flag parses and defaults off" {
     const bare =
         \\{ "name": "plain", "description": "d", "wasm": "p.wasm" }
     ;
-    const b = try Registry.parseDescriptor(arena, bare, "tools");
+    const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(!b.statusline);
     try std.testing.expect(!b.internal);
+}
+
+test "descriptor turn_hook flag parses and defaults off" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\{ "name": "th", "description": "d", "wasm": "th.wasm", "input_schema": {}, "turn_hook": true, "internal": true }
+    ;
+    const t = try Registry.parseDescriptor(arena, raw);
+    try std.testing.expect(t.turn_hook);
+
+    const bare =
+        \\{ "name": "plain2", "description": "d", "wasm": "p.wasm" }
+    ;
+    const b = try Registry.parseDescriptor(arena, bare);
+    try std.testing.expect(!b.turn_hook);
+}
+
+test "turnHookTools returns only enabled turn_hook tools, sorted by name" {
+    var reg = Registry{};
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try reg.tools.put(arena, "z_hook", .{ .name = "z_hook", .description = "d", .wasm = "z.wasm", .input_schema = .{ .object = .{} }, .turn_hook = true, .internal = true });
+    try reg.tools.put(arena, "a_hook", .{ .name = "a_hook", .description = "d", .wasm = "a.wasm", .input_schema = .{ .object = .{} }, .turn_hook = true, .internal = true });
+    try reg.tools.put(arena, "disabled_hook", .{ .name = "disabled_hook", .description = "d", .wasm = "d.wasm", .input_schema = .{ .object = .{} }, .turn_hook = true, .internal = true, .enabled = false });
+    try reg.tools.put(arena, "not_a_hook", .{ .name = "not_a_hook", .description = "d", .wasm = "n.wasm", .input_schema = .{ .object = .{} } });
+
+    const hooks = try reg.turnHookTools(arena);
+    try std.testing.expectEqual(@as(usize, 2), hooks.len);
+    try std.testing.expectEqualStrings("a_hook", hooks[0].name);
+    try std.testing.expectEqualStrings("z_hook", hooks[1].name);
 }

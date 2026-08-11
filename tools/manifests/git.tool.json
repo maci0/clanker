@@ -16,5 +16,8 @@
       "args"
     ]
   },
-  "category": "code"
+  "category": "code",
+  "exec_allow": [
+    "git"
+  ]
 }

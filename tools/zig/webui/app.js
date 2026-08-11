@@ -103,6 +103,135 @@ var el = {
   sessionExportJson: document.getElementById("session-export-json")
 };
 
+/* ---------- components ----------
+
+   One vocabulary for the whole sheet, built on VanJS. Every view below is
+   written in these, so a control cannot drift into its own spelling of a
+   button, a label or an empty state — which is how the page ended up with two
+   Refresh behaviours and three status conventions before this existed.
+
+   van.tags builds real DOM nodes and sets text as text, so nothing here can
+   introduce markup from data. */
+
+var T = van.tags;
+
+/* State a view derives from. `bind` runs its render whenever the state
+   changes and never on any other occasion, which is what removes the manual
+   "clear the container and rebuild" that lost focus and half-typed edits. */
+function bind(node, state, render) {
+  van.derive(function () {
+    var value = state.val;
+    node.textContent = "";
+    var built = render(value);
+    if (built == null) return;
+    if (Array.isArray(built)) built.forEach(function (n) { if (n) van.add(node, n); });
+    else van.add(node, built);
+  });
+}
+
+/* ---------- icons ----------
+
+   Drawn, not typed. A star glyph and a multiplication sign were standing in
+   for an icon system, which means they inherited the text face's weight and
+   could not share a stroke with anything. These are one 24-grid, one 1.75
+   stroke, square cap, and they take their colour from the text around them. */
+
+var ICON_PATHS = {
+  // A survey marker: the pin that says this layer matters.
+  pin: ["M12 3.5v9", "M7.5 12.5h9l-1.5 3h-6z", "M12 15.5v5"],
+  // Struck through: remove this entry.
+  strike: ["M5.5 5.5l13 13", "M18.5 5.5l-13 13"],
+  // A rule and tick: the depth column itself.
+  log: ["M6 4v16", "M6 8h5", "M6 13h8", "M6 18h4"],
+  // Loupe over the sheet.
+  find: ["M11 4.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z", "M16 16l3.5 3.5"],
+  // A sample vial: one recorded run.
+  sample: ["M9.5 3.5h5", "M10.5 3.5v6L7 19a1.5 1.5 0 001.4 2h7.2a1.5 1.5 0 001.4-2l-3.5-9.5v-6"],
+  // Two sheets: a copy.
+  copy: ["M8.5 8.5h10v11h-10z", "M5.5 15.5v-11h10"],
+  // A gate that held.
+  held: ["M5 12.5l4.5 4.5L19 7.5"],
+  // Deposited: an arrow settling onto the rule.
+  deposit: ["M12 4v12", "M7.5 11.5L12 16l4.5-4.5", "M5 20h14"],
+  // Disclosure, pointing at what it opens.
+  chevron: ["M9 6l6 6-6 6"],
+  // A question, drawn rather than typed.
+  help: ["M9 9a3 3 0 114 2.8c-.8.4-1 1-1 1.7v.5", "M12 17.5v.01"]
+};
+
+function icon(name, size) {
+  var paths = ICON_PATHS[name];
+  if (!paths) return document.createElement("span");
+  var ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size || 16));
+  svg.setAttribute("height", String(size || 16));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.75");
+  svg.setAttribute("stroke-linecap", "square");
+  svg.setAttribute("stroke-linejoin", "miter");
+  // Decorative in every use here: each icon sits beside or inside a control
+  // that already carries its own accessible name.
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add("icon");
+  paths.forEach(function (d) {
+    var path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
+var UI = {
+  /* A button in the sheet's vocabulary. `kind` is "primary" for the one
+     action a view exists for, "danger" for one that destroys, absent for the
+     rest. */
+  button: function (label, onclick, opts) {
+    opts = opts || {};
+    var cls = "secondary";
+    if (opts.kind === "danger") cls += " danger";
+    var attrs = {
+      type: "button",
+      class: opts.kind === "primary" ? "" : cls,
+      onclick: onclick
+    };
+    if (opts.label) attrs["aria-label"] = opts.label;
+    if (opts.title) attrs.title = opts.title;
+    if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label);
+    return T.button(attrs, label);
+  },
+
+  /* A printed label above its field, the way the sheet labels every column. */
+  field: function (id, label, control) {
+    return [T.label({ for: id }, label), control];
+  },
+
+  /* Said in the product's own voice: what is absent, and what would put
+     something here. Never an apology, never a shrug. */
+  empty: function (text) {
+    return T.p({ class: "run-empty" }, text);
+  },
+
+  /* A measurement. Mono, tabular, so a column of them lines up. */
+  meta: function (text) {
+    return T.span({ class: "meta" }, text);
+  },
+
+  /* A row of controls with one rhythm. */
+  bar: function (children) {
+    return T.div({ class: "toolbar-actions" }, children);
+  },
+
+  /* The heading a section is named by, with its controls on the same rule. */
+  head: function (title, controls) {
+    return T.div({ class: "section-head" }, T.h2(title), controls || null);
+  }
+};
+
+
 /* Fetches a vendored library on first use and caches the promise, so the
    ~200 KB of d3-dag + highlight.js stays off the initial load of a page
    whose common visit needs neither. Every caller must tolerate rejection:
@@ -310,24 +439,6 @@ function recencyGroup(updated) {
   return "Older";
 }
 
-function railRow(s, title, meta, selected) {
-  var b = document.createElement("button");
-  b.type = "button";
-  b.className = "rail-item";
-  // aria-current, not aria-selected: this is the conversation you are in,
-  // not one of several selected in a listbox.
-  if (selected) b.setAttribute("aria-current", "true");
-  var t = document.createElement("span");
-  t.className = "rail-item-title";
-  t.textContent = title;
-  var m = document.createElement("span");
-  m.className = "rail-item-meta";
-  m.textContent = meta;
-  b.appendChild(t);
-  b.appendChild(m);
-  if (s) b.addEventListener("click", function () { switchSession(s.id); closeRailOnNarrow(); });
-  return b;
-}
 
 /* Pinning lives in this browser rather than on the server: which few
    conversations you keep to hand is a property of how you are working right
@@ -346,64 +457,81 @@ function togglePin(id) {
   renderSessionOptions(null);
 }
 
+/* The conversation list derives from three things: what the server knows,
+   what is pinned here, and what is typed in the filter. Nothing else can put
+   a row on screen, which is what stops the rail and the transcript
+   disagreeing about which conversation is open. */
+var railState = van.state({ sessions: [], filter: "", pins: [], current: "" });
+
 function renderSessionOptions(sessions) {
   if (sessions) knownSessions = sessions;
-  var q = el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "";
-  el.railList.textContent = "";
-  var seen = false;
-  var lastGroup = "";
-  var shown = 0;
-  var ordered = knownSessions.slice().sort(function (a, b) {
-    var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
-    if (pa !== pb) return pb - pa;
-    return 0;
+  railState.val = {
+    sessions: knownSessions,
+    filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
+    pins: pins.slice(),
+    current: sessionId
+  };
+  renderSessionTitle();
+}
+
+function railRowFor(s, current) {
+  var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+  var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
+    (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
+  var open = s.id === current;
+
+  var row = T.button({
+    type: "button",
+    class: "rail-item",
+    onclick: function () { switchSession(s.id); closeRailOnNarrow(); }
+  }, T.span({ class: "rail-item-title" }, title), T.span({ class: "rail-item-meta" }, meta));
+  if (open) row.setAttribute("aria-current", "true");
+
+  var pin = T.button({
+    type: "button",
+    class: "rail-pin",
+    "data-on": String(isPinned(s.id)),
+    "aria-label": (isPinned(s.id) ? "Unpin " : "Pin ") + title,
+    "aria-pressed": String(isPinned(s.id)),
+    onclick: function () { togglePin(s.id); }
   });
-  ordered.forEach(function (s) {
-    if (s.id === sessionId) seen = true;
-    if (q && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
-    var group = isPinned(s.id) ? "Pinned" : recencyGroup(s.updated);
+  van.add(pin, icon("pin", 15));
+
+  return T.li({ class: "rail-row" }, row, pin);
+}
+
+bind(el.railList, railState, function (s) {
+  var out = [];
+  var ordered = s.sessions.slice().sort(function (a, b) {
+    var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
+    return pa === pb ? 0 : pb - pa;
+  });
+  var lastGroup = "";
+  var seen = false;
+  var shown = 0;
+  ordered.forEach(function (item) {
+    if (item.id === s.current) seen = true;
+    if (s.filter && sessionLabel(item).toLowerCase().indexOf(s.filter) === -1) return;
+    var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
     if (group !== lastGroup) {
-      var head = document.createElement("li");
-      head.className = "rail-group";
-      head.setAttribute("role", "presentation");
-      head.textContent = group;
-      el.railList.appendChild(head);
+      out.push(T.li({ class: "rail-group", role: "presentation" }, group));
       lastGroup = group;
     }
-    var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
-    var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
-      (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
-    var row = document.createElement("li");
-    row.className = "rail-row";
-    row.appendChild(railRow(s, title, meta, s.id === sessionId));
-    var pin = document.createElement("button");
-    pin.type = "button";
-    pin.className = "rail-pin";
-    pin.textContent = isPinned(s.id) ? "★" : "☆";
-    pin.setAttribute("aria-pressed", String(isPinned(s.id)));
-    pin.setAttribute("aria-label", (isPinned(s.id) ? "Unpin " : "Pin ") + title);
-    pin.addEventListener("click", function () { togglePin(s.id); });
-    row.appendChild(pin);
-    el.railList.appendChild(row);
+    out.push(railRowFor(item, s.current));
     shown += 1;
   });
   /* A brand new chat has no file on disk until its first turn completes;
-     without this row the rail would show nothing selected while the
-     composer was plainly pointed at something. */
-  if (!seen && !q) {
-    var pendingRow = document.createElement("li");
-    pendingRow.className = "rail-row";
-    pendingRow.appendChild(railRow(null, "New conversation", "unsaved", true));
-    el.railList.insertBefore(pendingRow, el.railList.firstChild);
+     without this row the rail shows nothing selected while the composer is
+     plainly pointed at something. */
+  if (!seen && !s.filter) {
+    out.unshift(T.li({ class: "rail-row" },
+      T.button({ type: "button", class: "rail-item", "aria-current": "true" },
+        T.span({ class: "rail-item-title" }, "New conversation"),
+        T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!shown && q) {
-    var none = document.createElement("li");
-    none.className = "rail-empty";
-    none.textContent = "No conversation matches.";
-    el.railList.appendChild(none);
-  }
-  renderSessionTitle();
-}
+  if (!shown && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
+  return out;
+});
 
 function renderSessionTitle() {
   var meta = currentSessionMeta();
@@ -698,6 +826,21 @@ function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
   var turn = document.createElement("div");
   turn.className = "turn";
+
+  // The stratum's index, set in the margin against the depth rule.
+  // The layer's lithology band, drawn in the gutter beside the depth rule.
+  // Kind is set as the turn resolves: model-only until a tool runs, failed if
+  // it did not hold.
+  var band = document.createElement("span");
+  band.className = "turn-band hatch-model";
+  band.setAttribute("aria-hidden", "true");
+  turn.appendChild(band);
+
+  var depth = document.createElement("span");
+  depth.className = "turn-depth";
+  depth.textContent = String(el.transcript.querySelectorAll(".turn").length + 1);
+  depth.setAttribute("aria-hidden", "true");
+  turn.appendChild(depth);
 
   var you = document.createElement("div");
   you.className = "turn-you";
@@ -1073,6 +1216,8 @@ function buildCodeBlock(lang, code) {
 }
 
 function addToolEvent(turn, names) {
+  var band = turn.root.querySelector(".turn-band");
+  if (band) band.className = "turn-band hatch-tool";
   var row = document.createElement("div");
   row.className = "event-tool";
   var spin = document.createElement("span");
@@ -1107,6 +1252,21 @@ function settleLastToolEvent(turn, ms) {
 
 function renderStats(turn, stats, task) {
   turn.foot.textContent = "";
+
+  /* Did this layer hold? A turn that produced an answer held; one that was
+     stopped, errored or ended early did not, and the band is hatched to match
+     so the column shows it without being read. */
+  var failed = turn.answer.querySelector(".failed") !== null ||
+    turn.answer.textContent.indexOf("[stopped]") !== -1 ||
+    turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
+  var band = turn.root.querySelector(".turn-band");
+  if (failed && band) band.className = "turn-band hatch-fail";
+  var held = document.createElement("span");
+  held.className = "turn-held";
+  held.setAttribute("data-held", String(!failed));
+  held.appendChild(icon(failed ? "strike" : "held", 14));
+  held.appendChild(document.createTextNode(failed ? "did not hold" : "held"));
+  turn.foot.appendChild(held);
   var parts = [];
   if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
     parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
@@ -1258,7 +1418,7 @@ function renderAttachments() {
     wrap.appendChild(thumb);
     var rm = document.createElement("button");
     rm.type = "button";
-    rm.textContent = "×";
+    rm.appendChild(icon("strike", 14));
     rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
     rm.addEventListener("click", function () {
       pendingImages.splice(i, 1);
@@ -1357,6 +1517,7 @@ el.form.addEventListener("submit", function (e) {
   if (handOffFocus) el.cancel.focus();
   el.hint.textContent = "";
   showCaret(turn, true);
+  turn.root.setAttribute("data-live", "true");
   var startedAt = Date.now();
   startElapsed(startedAt);
   controller = new AbortController();
@@ -1441,6 +1602,7 @@ el.form.addEventListener("submit", function (e) {
     }
   }).finally(function () {
     showCaret(turn, false);
+    turn.root.removeAttribute("data-live");
     // A run that errored or was stopped never emits `done`, so the turn
     // would end with no way to copy what did arrive and no way to retry the
     // task that just failed — the two things most wanted after a failure.
@@ -1900,7 +2062,9 @@ function buildNodeBox(d, slowest, nodeW) {
 
   var kindEl = document.createElement("span");
   kindEl.className = "run-node-kind";
-  kindEl.textContent = (node.ok === false ? "✕ " : "") + kind;
+  kindEl.textContent = "";
+  if (node.ok === false) kindEl.appendChild(icon("strike", 12));
+  kindEl.appendChild(document.createTextNode(kind));
   box.appendChild(kindEl);
 
   var label = document.createElement("span");
@@ -1925,7 +2089,7 @@ function buildNodeBox(d, slowest, nodeW) {
     box.appendChild(bar);
   }
 
-  // The bar and the ✕ mark are decorative; the label already carries
+  // The bar and the strike mark are decorative; the label already carries
   // kind, name, and every number a screen reader needs.
   box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
   return box;
@@ -2011,7 +2175,9 @@ function showNodeDetail(kind, node) {
   var titleWrap = document.createElement("span");
   var title = document.createElement("span");
   title.className = "run-detail-title";
-  title.textContent = (node.ok === false ? "✕ " : "") + kind + " · " + (node.label || node.detail || kind);
+  title.textContent = "";
+  if (node.ok === false) title.appendChild(icon("strike", 12));
+  title.appendChild(document.createTextNode(kind + " · " + (node.label || node.detail || kind)));
   titleWrap.appendChild(title);
   var meta = document.createElement("span");
   meta.className = "run-detail-meta";
@@ -2170,40 +2336,42 @@ function chatRoomLabel(r) {
 /* Rooms the server knows about, plus a DM entry per configured peer even
    when that conversation has no messages yet — otherwise the only way to
    start a DM would be to have already started one. */
+/* The room picker derives from the rooms the server knows plus the peers this
+   instance could open a DM with. It returns the room that ends up selected,
+   because the caller polls it — a derivation that silently changed the
+   selection would leave the log showing one room and the composer sending to
+   another. */
 function renderChatRooms(rooms) {
   var previous = el.chatRoom.value;
-  el.chatRoom.textContent = "";
 
   var shared = rooms.filter(function (r) { return !isDm(r.room); });
   var dms = rooms.filter(function (r) { return isDm(r.room); });
   knownPeers.forEach(function (p) {
     if (p.name === instanceName) return;
     var room = dmRoom(instanceName, p.name);
+    // A peer with no history yet still needs somewhere to be spoken to.
     if (!dms.some(function (d) { return d.room === room; })) dms.push({ room: room, messages: 0 });
   });
 
-  [["Rooms", shared], ["Direct", dms]].forEach(function (pair) {
-    if (!pair[1].length) return;
-    var group = document.createElement("optgroup");
-    group.label = pair[0];
-    pair[1].forEach(function (r) {
-      var opt = document.createElement("option");
-      opt.value = r.room;
-      opt.textContent = chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : "");
-      group.appendChild(opt);
-    });
-    el.chatRoom.appendChild(group);
-  });
+  el.chatRoom.textContent = "";
+  van.add(el.chatRoom, [["Rooms", shared], ["Direct", dms]]
+    .filter(function (pair) { return pair[1].length; })
+    .map(function (pair) {
+      return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
+        return T.option({ value: r.room },
+          chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : ""));
+      }));
+    }));
 
   var options = el.chatRoom.querySelectorAll("option");
-  if (!options.length) {
-    el.chatRoom.disabled = true;
-    el.chatText.disabled = true;
-    el.chatSend.disabled = true;
+  var empty = options.length === 0;
+  el.chatRoom.disabled = empty;
+  el.chatText.disabled = empty;
+  el.chatSend.disabled = empty;
+  if (empty) {
     el.chatStatus.textContent = "No rooms and no peers configured.";
     return null;
   }
-  el.chatRoom.disabled = false;
   var wanted = Array.prototype.some.call(options, function (o) { return o.value === previous; })
     ? previous : options[0].value;
   el.chatRoom.value = wanted;
@@ -2473,79 +2641,78 @@ function fmtCost(n) {
   return "$" + (typeof n === "number" ? n : 0).toFixed(4);
 }
 
-function renderUsage(rows) {
-  el.usage.textContent = "";
-  if (!rows.length) {
-    var none = document.createElement("p");
-    none.className = "usage-empty";
-    none.textContent = "No completions recorded yet. Run a task and the totals appear here.";
-    el.usage.appendChild(none);
-    return;
-  }
-  var wrap = document.createElement("div");
-  wrap.className = "usage-wrap";
-  var table = document.createElement("table");
-  table.className = "usage";
+var allUsage = [];
 
-  var head = document.createElement("thead");
-  var hrow = document.createElement("tr");
-  [["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"], ["Completion", "num"],
-   ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]].forEach(function (h) {
-    var th = document.createElement("th");
-    th.textContent = h[0];
-    if (h[1]) th.className = h[1];
-    hrow.appendChild(th);
-  });
-  head.appendChild(hrow);
-  table.appendChild(head);
-
-  var body = document.createElement("tbody");
-  var totals = { calls: 0, prompt: 0, completion: 0, cost: 0 };
-  rows.forEach(function (r) {
-    totals.calls += r.calls || 0;
-    totals.prompt += r.prompt_tokens || 0;
-    totals.completion += r.completion_tokens || 0;
-    totals.cost += r.cost || 0;
-
-    var tr = document.createElement("tr");
-    var name = document.createElement("td");
-    // provider and model are often the same string; showing it twice is noise.
-    name.textContent = r.provider === r.model ? r.provider : r.provider + " / ";
-    if (r.provider !== r.model) {
-      var m = document.createElement("span");
-      m.className = "model";
-      m.textContent = r.model;
-      name.appendChild(m);
+/* What a model is called here, which is not always what is sent on the wire:
+   kimi-k3 goes out bare because that is what api.moonshot.ai accepts, and is
+   read as moonshotai/kimi-k3, the way an OpenRouter-routed model is written.
+   Renaming the wire id to match would have broken every call to the default
+   provider. */
+function modelLabel(provider, model) {
+  for (var i = 0; i < providerCache.length; i++) {
+    if (providerCache[i].name !== provider) continue;
+    var models = providerCache[i].models || [];
+    for (var k = 0; k < models.length; k++) {
+      if (models[k].name === model) return models[k].display || model;
     }
-    tr.appendChild(name);
-    [fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
-     (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)]
-      .forEach(function (v) {
-        var td = document.createElement("td");
-        td.className = "num";
-        td.textContent = v;
-        tr.appendChild(td);
-      });
-    body.appendChild(tr);
-  });
-  table.appendChild(body);
-
-  var foot = document.createElement("tfoot");
-  var frow = document.createElement("tr");
-  [rows.length + (rows.length === 1 ? " model" : " models"), fmtInt(totals.calls),
-   fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
-    .forEach(function (v, i) {
-      var td = document.createElement("td");
-      if (i > 0) td.className = "num";
-      td.textContent = v;
-      frow.appendChild(td);
-    });
-  foot.appendChild(frow);
-  table.appendChild(foot);
-
-  wrap.appendChild(table);
-  el.usage.appendChild(wrap);
+  }
+  return model;
 }
+
+var usageState = van.state([]);
+
+function renderUsage(rows) {
+  allUsage = rows || allUsage;
+  usageState.val = allUsage.slice();
+}
+
+var USAGE_COLUMNS = [
+  ["Provider / model", ""], ["Calls", "num"], ["Prompt", "num"],
+  ["Completion", "num"], ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"]
+];
+
+/* Provider and model are often the same string, and showing it twice is
+   noise — unless the model has a name of its own to be shown by. */
+function usageName(r) {
+  var shown = modelLabel(r.provider, r.model);
+  if (shown === r.provider) return T.td(r.provider);
+  return T.td(r.provider + " / ", T.span({ class: "model" }, shown));
+}
+
+function usageRow(r) {
+  return T.tr(usageName(r), [
+    fmtInt(r.calls), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
+    (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost)
+  ].map(function (v) { return T.td({ class: "num" }, v); }));
+}
+
+bind(el.usage, usageState, function (rows) {
+  if (!rows.length) {
+    return UI.empty("No completions recorded yet. Run a task and the totals appear here.");
+  }
+  var totals = rows.reduce(function (a, r) {
+    a.calls += r.calls || 0;
+    a.prompt += r.prompt_tokens || 0;
+    a.completion += r.completion_tokens || 0;
+    a.cost += r.cost || 0;
+    return a;
+  }, { calls: 0, prompt: 0, completion: 0, cost: 0 });
+
+  return T.div({ class: "usage-wrap" },
+    T.table({ class: "usage" },
+      T.thead(T.tr(USAGE_COLUMNS.map(function (col) {
+        var th = T.th({ class: col[1] || null }, col[0]);
+        // Set directly: van did not carry `scope` through as an attribute, and
+        // a header cell without it is not associated with its column.
+        th.setAttribute("scope", "col");
+        return th;
+      }))),
+      T.tbody(rows.map(usageRow)),
+      T.tfoot(T.tr(
+        T.td(rows.length + (rows.length === 1 ? " model" : " models")),
+        [fmtInt(totals.calls), fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
+          .map(function (v) { return T.td({ class: "num" }, v); })))));
+});
 
 function loadUsage() {
   return fetch("/api/stats")
@@ -2562,101 +2729,57 @@ function loadUsage() {
 
 // ---- goals: what runs are being steered toward -------------------------
 
+var goalState = van.state([]);
+
+/* Newest first: the goal most recently set is the one steering runs now. */
 function renderGoals(goals) {
-  el.goals.textContent = "";
-  if (!goals.length) {
-    var none = document.createElement("p");
-    none.className = "usage-empty";
-    none.textContent = "No goals set. Add one above, or run `clanker goal \"<intent>\"`.";
-    el.goals.appendChild(none);
-    return;
-  }
-  // Newest first: the goal most recently set is the one steering runs now.
-  goals.slice().sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); }).forEach(function (g) {
-    var card = document.createElement("div");
-    card.className = "goal";
-    card.dataset.status = g.status || "";
-
-    var obj = document.createElement("div");
-    obj.className = "goal-objective";
-    obj.textContent = g.objective || "(no objective recorded)";
-    card.appendChild(obj);
-
-    var meta = document.createElement("div");
-    meta.className = "goal-meta";
-    var status = document.createElement("span");
-    status.className = "goal-status";
-    status.textContent = g.status || "unknown";
-    meta.appendChild(status);
-    if (g.id) {
-      var id = document.createElement("span");
-      id.textContent = "id " + String(g.id).slice(0, 10);
-      meta.appendChild(id);
-    }
-    card.appendChild(meta);
-
-    if (g.id) {
-      var actions = document.createElement("div");
-      actions.className = "goal-actions";
-      [["Mark done", "done", "Goal marked done."],
-       ["Abandon", "abandoned", "Goal abandoned."],
-       ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
-        if ((g.status || "active") === pair[1]) return;
-        var b = document.createElement("button");
-        b.type = "button";
-        b.className = "secondary";
-        b.textContent = pair[0];
-        b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); });
-        actions.appendChild(b);
-      });
-      var del = document.createElement("button");
-      del.type = "button";
-      del.className = "secondary danger";
-      del.textContent = "Delete";
-      del.setAttribute("aria-label", "Delete goal: " + (g.objective || g.id));
-      del.addEventListener("click", function () {
-        if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
-        postGoal({ id: g.id, remove: true }, "Goal deleted.");
-      });
-      actions.appendChild(del);
-      card.appendChild(actions);
-    }
-
-    // Only the fields that were actually filled in: an empty criterion is a
-    // real state of a goal, and printing an empty label would imply
-    // otherwise.
-    var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
-      ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]].filter(function (p) { return !!p[1]; });
-
-    if (fields.length) {
-      // A well-specified goal runs to several paragraphs, and there are
-      // usually a handful of them. Expanded by default they push everything
-      // below this section off the page, so the objective and status stay
-      // visible and the specification is one click away — same disclosure
-      // the node-output tree uses.
-      var details = document.createElement("details");
-      details.className = "json-node";
-      var summary = document.createElement("summary");
-      summary.textContent = fields.length + (fields.length === 1 ? " detail" : " details");
-      details.appendChild(summary);
-      var bodyEl = document.createElement("div");
-      bodyEl.className = "json-children";
-      fields.forEach(function (pair) {
-        var row = document.createElement("div");
-        row.className = "goal-field";
-        var label = document.createElement("b");
-        label.textContent = pair[0] + ": ";
-        row.appendChild(label);
-        row.appendChild(document.createTextNode(pair[1]));
-        bodyEl.appendChild(row);
-      });
-      details.appendChild(bodyEl);
-      card.appendChild(details);
-    }
-
-    el.goals.appendChild(card);
+  goalState.val = (goals || []).slice().sort(function (a, b) {
+    return (b.updated || 0) - (a.updated || 0);
   });
 }
+
+function goalCard(g) {
+  var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
+    ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]]
+    .filter(function (pair) { return !!pair[1]; });
+
+  var actions = [];
+  if (g.id) {
+    [["Mark done", "done", "Goal marked done."],
+     ["Abandon", "abandoned", "Goal abandoned."],
+     ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
+      if ((g.status || "active") === pair[1]) return;
+      actions.push(UI.button(pair[0], function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); }));
+    });
+    actions.push(UI.button("Delete", function () {
+      if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
+      postGoal({ id: g.id, remove: true }, "Goal deleted.");
+    }, { kind: "danger", label: "Delete goal: " + (g.objective || g.id) }));
+  }
+
+  return T.div({ class: "goal", "data-status": g.status || "" },
+    T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
+    T.div({ class: "goal-meta" },
+      T.span({ class: "goal-status" }, g.status || "unknown"),
+      g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
+    /* A well-specified goal runs to several paragraphs and there are usually
+       several of them; expanded by default they push the rest of the page off
+       screen, so the objective and status stay visible and the specification
+       is one click away. */
+    fields.length ? T.details({ class: "goal-detail" },
+      T.summary("Specification"),
+      T.dl(fields.map(function (pair) {
+        return [T.dt(pair[0]), T.dd(pair[1])];
+      }))) : null,
+    actions.length ? T.div({ class: "goal-actions" }, actions) : null);
+}
+
+bind(el.goals, goalState, function (goals) {
+  if (!goals.length) {
+    return UI.empty("No goals set. Add one above, or run `clanker goal \"<intent>\"`.");
+  }
+  return goals.map(goalCard);
+});
 
 function loadGoals() {
   return fetch("/api/goals")
@@ -2675,22 +2798,32 @@ function loadGoals() {
 
 var allTools = [];
 
+/* The tool list is a derivation of what is registered and what is typed in
+   the filter, so the two can never disagree about what is on screen. */
+var toolState = van.state({ tools: [], filter: "" });
+
 function renderTools(filterText) {
-  var q = (filterText || "").trim().toLowerCase();
-  var matches = !q ? allTools : allTools.filter(function (t) {
-    return t.name.toLowerCase().indexOf(q) !== -1 ||
-      (t.description || "").toLowerCase().indexOf(q) !== -1;
-  });
-  el.tools.textContent = "";
-  if (!matches.length) {
-    var none = document.createElement("p");
-    none.className = "usage-empty";
-    none.textContent = q ? "No tools match “" + filterText.trim() + "”." : "No tools registered.";
-    el.tools.appendChild(none);
-    return;
-  }
-  matches.forEach(function (t) { el.tools.appendChild(buildToolRow(t)); });
+  toolState.val = {
+    tools: allTools,
+    filter: (filterText == null ? el.toolFilter.value : filterText).trim().toLowerCase()
+  };
 }
+
+bind(el.tools, toolState, function (s) {
+  var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
+    return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
+      (t.description || "").toLowerCase().indexOf(s.filter) !== -1;
+  });
+  el.toolsStatus.textContent = s.filter
+    ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")
+    : "";
+  if (!shown.length) {
+    return UI.empty(s.filter
+      ? "No tool matches " + s.filter + "."
+      : "No tools registered. `zig build tools` compiles them.");
+  }
+  return shown.map(buildToolRow);
+});
 
 function buildToolRow(t) {
   var row = document.createElement("div");
@@ -2993,13 +3126,7 @@ function loadTools() {
 var toolFilterTimer = null;
 el.toolFilter.addEventListener("input", function () {
   if (toolFilterTimer) window.clearTimeout(toolFilterTimer);
-  toolFilterTimer = window.setTimeout(function () {
-    renderTools(el.toolFilter.value);
-    var shown = el.tools.querySelectorAll(".tool-row").length;
-    el.toolsStatus.textContent = el.toolFilter.value.trim()
-      ? shown + (shown === 1 ? " tool matches." : " tools match.")
-      : "";
-  }, 120);
+  toolFilterTimer = window.setTimeout(function () { renderTools(el.toolFilter.value); }, 120);
 });
 
 el.goalsRefresh.addEventListener("click", function () {
@@ -3175,6 +3302,8 @@ function loadProviders() {
     .then(readJson)
     .then(function (d) {
       providerCache = d.providers || [];
+      // Usage may have rendered before this arrived; its labels come from here.
+      if (allUsage.length) renderUsage(null);
       el.modelSelect.textContent = "";
       (d.providers || []).forEach(function (prov) {
         var group = document.createElement("optgroup");
@@ -3182,7 +3311,7 @@ function loadProviders() {
         (prov.models || []).forEach(function (m) {
           var opt = document.createElement("option");
           opt.value = prov.name + " " + m.name;
-          opt.textContent = m.name + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
+          opt.textContent = (m.display || m.name) + (m.context_window ? "  .  " + fmtInt(m.context_window) + " ctx" : "");
           if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
           group.appendChild(opt);
         });
@@ -3320,9 +3449,11 @@ function prefersReducedMotion() {
 }
 
 function syncScrollButton() {
-  el.scrollBottom.hidden = nearBottom() || !el.transcript.querySelector(".turn");
+  var show = !nearBottom() && el.transcript.querySelector(".turn") !== null;
+  el.scrollBottom.hidden = !show;
 }
 
+van.add(el.scrollBottom, icon("deposit", 14));
 el.scrollBottom.addEventListener("click", function () {
   window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
   el.task.focus();
@@ -3364,6 +3495,8 @@ SUGGESTIONS.forEach(function (text) {
   });
   el.suggestions.appendChild(b);
 });
+
+
 
 
 /* ---------- status, said out loud and shown ---------- */
@@ -3423,7 +3556,11 @@ function postGoal(payload, status) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
     })
-    .catch(function (err) { el.goalsStatus.textContent = "Goal failed: " + err.message; });
+    .then(function () { return true; })
+    .catch(function (err) {
+      el.goalsStatus.textContent = "Goal failed: " + err.message;
+      return false;
+    });
 }
 
 el.goalForm.addEventListener("submit", function (e) {
@@ -3431,7 +3568,10 @@ el.goalForm.addEventListener("submit", function (e) {
   var objective = el.goalObjective.value.trim();
   var criterion = el.goalCriterion.value.trim();
   if (!objective || !criterion) return;
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function () {
+  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (ok) {
+    // A refused goal keeps what was typed: the criterion is the field most
+    // likely to be refused, and retyping the objective to fix it is a tax.
+    if (!ok) return;
     el.goalObjective.value = "";
     el.goalCriterion.value = "";
   });
@@ -3713,7 +3853,11 @@ function postBoard(payload, status) {
       if (status) el.boardStatus.textContent = status;
       return d;
     })
-    .catch(function (err) { el.boardStatus.textContent = "Board: " + err.message; });
+    .then(function () { return true; })
+    .catch(function (err) {
+      el.boardStatus.textContent = "Board: " + err.message;
+      return false;
+    });
 }
 
 function cardById(id) {
@@ -3751,94 +3895,93 @@ function fmtDeadline(ts) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/* The board derives from the card set, the column set and the "only mine"
+   filter. It used to clear #board and rebuild it, which is what forced the
+   focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
+   everything. */
+var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null });
+
 function renderBoard(next) {
-  board = next;
+  board = next || board;
+  boardState.val = {
+    columns: board.columns || [],
+    cards: board.cards || [],
+    mine: el.boardMine.checked,
+    me: (el.instanceChip.textContent || "").trim(),
+    open: openCardId
+  };
+
   // The "new card" column choice follows the board rather than a fixed list.
   var keepCol = el.cardColumn.value;
   el.cardColumn.textContent = "";
-  board.columns.forEach(function (c) {
-    var opt = document.createElement("option");
-    opt.value = c.id;
-    opt.textContent = c.title;
-    el.cardColumn.appendChild(opt);
-  });
+  van.add(el.cardColumn, (board.columns || []).map(function (c) {
+    return T.option({ value: c.id }, c.title);
+  }));
   if (keepCol) el.cardColumn.value = keepCol;
+}
 
-  var mineOnly = el.boardMine.checked;
-  var me = (el.instanceChip.textContent || "").trim();
-  el.board.textContent = "";
-  var openTotal = 0;
+function boardColumn(col, s) {
+  var shown = s.cards
+    .filter(function (c) { return c.column === col.id; })
+    .filter(function (c) { return !s.mine || c.assignee === s.me; })
+    .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
-  board.columns.forEach(function (col) {
-    var colEl = document.createElement("section");
-    colEl.className = "board-col";
-    colEl.setAttribute("data-column", col.id);
-    colEl.setAttribute("aria-labelledby", "board-col-" + col.id);
+  var over = col.wip && shown.length > col.wip;
+  var count = T.span({
+    class: "board-col-count",
+    "data-over": over ? "true" : null,
+    // Over the limit is said in words as well as colour, because colour is the
+    // one thing forced-colors and colour blindness both take away.
+    title: over ? shown.length + " of " + col.wip + ", over the limit" : null
+  }, shown.length + (col.wip ? " / " + col.wip : ""));
 
-    var head = document.createElement("div");
-    head.className = "board-col-head";
-    var title = document.createElement("h3");
-    title.className = "board-col-title";
-    title.id = "board-col-" + col.id;
-    title.textContent = col.title;
-    var count = document.createElement("span");
-    count.className = "board-col-count";
-    head.appendChild(title);
-    head.appendChild(count);
-    colEl.appendChild(head);
+  var list = T.ul({
+    class: "board-cards",
+    "aria-label": col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards")
+  }, shown.map(function (c) { return T.li(cardNode(c)); }));
 
-    var list = document.createElement("ul");
-    list.className = "board-cards";
-
-    var shown = board.cards
-      .filter(function (c) { return c.column === col.id; })
-      .filter(function (c) { return !mineOnly || c.assignee === me; })
-      .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
-
-    count.textContent = shown.length + (col.wip ? " / " + col.wip : "");
-    // Over the limit is said in words as well as colour, because colour is
-    // the one thing forced-colors and colour blindness both take away.
-    if (col.wip && shown.length > col.wip) {
-      count.setAttribute("data-over", "true");
-      count.title = shown.length + " of " + col.wip + ", over the limit";
-    }
-    list.setAttribute("aria-label", col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards"));
-    if (col.id !== doneColumn()) openTotal += shown.length;
-
-    shown.forEach(function (c) {
-      var li = document.createElement("li");
-      li.appendChild(cardNode(c));
-      list.appendChild(li);
-    });
-    colEl.appendChild(list);
-
-    // Pointer drop target. The keyboard equivalent lives on the card.
-    colEl.addEventListener("dragover", function (e) {
-      e.preventDefault();
-      colEl.setAttribute("data-drop", "true");
-    });
-    colEl.addEventListener("dragleave", function () { colEl.removeAttribute("data-drop"); });
-    colEl.addEventListener("drop", function (e) {
+  var colEl = T.section({
+    class: "board-col",
+    "data-column": col.id,
+    "aria-labelledby": "board-col-" + col.id,
+    ondragover: function (e) { e.preventDefault(); colEl.setAttribute("data-drop", "true"); },
+    ondragleave: function () { colEl.removeAttribute("data-drop"); },
+    ondrop: function (e) {
       e.preventDefault();
       colEl.removeAttribute("data-drop");
       var id = e.dataTransfer.getData("text/plain");
       if (id) postBoard({ op: "move", id: id, column: col.id }, "Moved to " + col.title + ".");
-    });
+    }
+  },
+    T.div({ class: "board-col-head" },
+      T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
+      count),
+    list);
+  return colEl;
+}
 
-    el.board.appendChild(colEl);
+bind(el.board, boardState, function (s) {
+  var open = 0;
+  var done = s.columns.length ? s.columns[s.columns.length - 1].id : "done";
+  s.cards.forEach(function (c) {
+    if (c.column !== done && (!s.mine || c.assignee === s.me)) open += 1;
   });
+  setTabCount("board", open);
+  el.boardEmpty.hidden = s.cards.length > 0;
 
-  setTabCount("board", openTotal);
+  // The detail panel is rebuilt with the board because it shows one of these
+  // cards; the edit draft and the focus snapshot carry across it.
   var focusSnap = captureFocus();
-  if (openCardId && cardById(openCardId)) {
-    showCardDetail(openCardId);
+  if (s.open && cardById(s.open)) {
+    showCardDetail(s.open);
     restoreFocus(focusSnap);
   } else {
     closeCardDetail();
   }
 
-  el.boardEmpty.hidden = board.cards.length > 0;
-}
+  return s.columns.map(function (col) { return boardColumn(col, s); });
+});
+
 
 function cardNode(c) {
   var b = document.createElement("button");
@@ -4128,7 +4271,13 @@ function showCardDetail(id) {
     box.checked = !!s.done;
     box.id = "sub-" + s.id;
     box.addEventListener("change", function () {
-      postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: box.checked }, null);
+      var wanted = box.checked;
+      postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: wanted }, null)
+        .then(function (ok) {
+          // The click already moved the box; put it back rather than leave a
+          // state the server refused on screen.
+          if (!ok) box.checked = !wanted;
+        });
     });
     var lab = document.createElement("label");
     lab.htmlFor = box.id;
@@ -4138,7 +4287,7 @@ function showCardDetail(id) {
     var drop = document.createElement("button");
     drop.type = "button";
     drop.className = "rail-pin";
-    drop.textContent = "×";
+    drop.appendChild(icon("strike", 14));
     drop.setAttribute("aria-label", "Remove subtask: " + s.text);
     drop.addEventListener("click", function () {
       postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed subtask: " + s.text);
@@ -4169,7 +4318,7 @@ function showCardDetail(id) {
     var drop = document.createElement("button");
     drop.type = "button";
     drop.className = "rail-pin";
-    drop.textContent = "×";
+    drop.appendChild(icon("strike", 14));
     drop.setAttribute("aria-label", "Stop waiting on " + (dep ? dep.title : depId));
     drop.addEventListener("click", function () {
       postBoard({ op: "depend_remove", id: c.id, depends_on: depId }, null);
@@ -4257,8 +4406,8 @@ el.cardForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var title = el.cardTitle.value.trim();
   if (!title) return;
-  postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function () {
-    el.cardTitle.value = "";
+  postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function (ok) {
+    if (ok) el.cardTitle.value = "";
   });
 });
 
@@ -4463,7 +4612,12 @@ function renderWebuiPlugins(list) {
           // misdescribe what is running.
           el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload to remove it from this page.";
         })
-        .catch(function (err) { el.webuiPluginsStatus.textContent = "Plugin: " + err.message; })
+        .catch(function (err) {
+          // Same reason as the subtask box: the click moved it, the server did
+          // not agree, so it goes back.
+          box.checked = !box.checked;
+          el.webuiPluginsStatus.textContent = "Plugin: " + err.message;
+        })
         .then(function () { box.disabled = false; });
     });
 
@@ -4695,6 +4849,7 @@ SHORTCUTS.forEach(function (pair) {
   el.shortcuts.appendChild(dd);
 });
 
+van.add(el.helpOpen, icon("help", 15));
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
@@ -4844,13 +4999,34 @@ setBusy(false);
 // Status is cheap and gives the header its identity chips, so it loads
 // regardless of which view opened. Rooms wait for it because they need the
 // instance name to tell this clanker's messages from a peer's.
-loadStatus();
-loadProviders();
-// Enabled plugins register their views before the opening view is settled, so
-// a deep link to a plugin's view survives a cold load.
-loadWebuiPlugins().then(function () {
-  var wanted = window.location.hash.replace("#", "");
-  if (wanted && VIEWS.indexOf(wanted) !== -1) showView(wanted, false);
+/* Boot order is chosen for the first draw.
+
+   The opening view and the conversation list are what the page has to show;
+   everything else can arrive afterwards without the user waiting for it. The
+   model picker in particular reads every provider's model list, which nothing
+   on screen needs until the composer is used.
+
+   Plugins are the exception, and only sometimes: a plugin registers a view, so
+   a deep link to one cannot resolve until they have loaded. When the hash names
+   a view that already exists, plugins wait with everything else. */
+var openingHash = window.location.hash.replace("#", "");
+var needsPluginsNow = !!openingHash && VIEWS.indexOf(openingHash) === -1;
+
+function afterFirstDraw(work) {
+  if (window.requestIdleCallback) window.requestIdleCallback(work, { timeout: 2000 });
+  else window.setTimeout(work, 0);
+}
+
+if (needsPluginsNow) {
+  loadWebuiPlugins().then(function () {
+    if (VIEWS.indexOf(openingHash) !== -1) showView(openingHash, false);
+  });
+}
+
+afterFirstDraw(function () {
+  loadStatus();
+  loadProviders();
+  if (!needsPluginsNow) loadWebuiPlugins();
 });
 syncSubmitLabel();
 // Only the opening view's data is fetched now; the rest load when opened.

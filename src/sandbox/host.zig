@@ -18,6 +18,7 @@ const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const todos_mod = @import("../peers/todos.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
+const filelock = @import("../util/filelock.zig");
 const token_stats = @import("../stats/tokens.zig");
 const zwasm = @import("zwasm");
 
@@ -50,11 +51,9 @@ pub const Err = struct {
     pub const too_large: u32 = 3;
     pub const network: u32 = 4;
     pub const invalid: u32 = 5;
+    pub const mismatch: u32 = 6;
 };
 
-/// Per-tool sandbox policy, owned by the harness.
-/// Runs a nested sub-agent. The harness wires this in when modules.subagents
-/// is enabled; tools call it via ck_subagent.
 /// Asks the human a multiple-choice question and returns the option they
 /// picked. Wired in only by the interactive REPL: a piped or scripted run has
 /// nobody to ask, so the tool reports that instead of blocking forever.
@@ -63,6 +62,8 @@ pub const AskFn = *const fn (
     options: []const []const u8,
 ) anyerror![]const u8;
 
+/// Runs a nested sub-agent. The harness wires this in when modules.subagents
+/// is enabled; tools call it via ck_subagent.
 pub const SubagentRunner = *const fn (
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -73,6 +74,7 @@ pub const SubagentRunner = *const fn (
     brief: subagent_mod.Brief,
 ) anyerror![]const u8;
 
+/// Per-tool sandbox policy, owned by the harness.
 pub const Sandbox = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -155,7 +157,10 @@ pub fn pluginStr(cfg_value: std.json.Value, key: []const u8) ?[]const u8 {
 fn pluginU32(cfg_value: std.json.Value, key: []const u8) ?u32 {
     if (cfg_value != .object) return null;
     const v = cfg_value.object.get(key) orelse return null;
-    return if (v == .integer and v.integer > 0) @intCast(v.integer) else null;
+    // Reject out-of-u32-range values instead of panicking in @intCast (a
+    // plugin's tool.json is not trusted input).
+    if (v == .integer and v.integer > 0 and v.integer <= std.math.maxInt(u32)) return @intCast(v.integer);
+    return null;
 }
 
 /// The single place a tool's sandbox policy is assembled from its descriptor.
@@ -517,7 +522,7 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    if (!std.mem.startsWith(u8, path, "/v1.")) {
+    if (!std.mem.startsWith(u8, path, "/v1.") or std.mem.indexOfAny(u8, path, "\r\n") != null) {
         log.log(.warn, "[docker] path denied: '{s}'", .{path});
         return Err.denied;
     }
@@ -872,6 +877,19 @@ fn parseCustomHeaders(
         count += 1;
     }
     return count;
+}
+
+/// Whether a tool may run `cmd`.
+///
+/// An empty list used to fall back to a fixed set of twelve commands - git,
+/// find, cat and the rest - so a descriptor that declared nothing inherited
+/// more authority than most that declare something. Naming what you run costs
+/// one line, and every shipped tool that execs now does.
+fn execAllowed(allow: []const []const u8, cmd: []const u8) bool {
+    for (allow) |c| {
+        if (std.mem.eql(u8, cmd, c)) return true;
+    }
+    return false;
 }
 
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
@@ -1505,7 +1523,10 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
 /// end and the second write lands on top of the first. The lock makes the pair
 /// atomic between cooperating writers.
 pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8) u32 {
-    var file = base.createFile(io, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
+    // Through the retrying create: racing creates of a not-yet-existing log
+    // spuriously fail ENOENT on macOS, and mapping that to Err.invalid here
+    // silently dropped the append (filelock.createFileRetry has the story).
+    var file = filelock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
@@ -1540,6 +1561,73 @@ fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8
     return h.writeResult(mem_bytes, json);
 }
 
+/// ck_fs_write_if(path, expected_hash, data) — compare-and-swap file write.
+/// Acquires an exclusive lock on a separate .lock file, reads the current
+/// contents, hashes them to lowercase hex SHA-256, compares with
+/// expected_hash, and writes data only if they match. A file that does not
+/// exist matches an empty expected_hash so a guest can create one.
+/// Returns Err.ok on success, Err.mismatch if the hash does not match,
+/// or other Err codes for policy / I/O failures.
+pub fn ckFsWriteIf(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, expect_ptr: u32, expect_len: u32, data_ptr: u32, data_len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
+    const expected_hex = sliceOf(bytes, expect_ptr, expect_len) orelse return Err.invalid;
+    const data = sliceOf(bytes, data_ptr, data_len) orelse return Err.invalid;
+    if (path.len == 0) return Err.invalid;
+    return fsWriteIfImpl(h.sandbox, std.Io.Dir.cwd(), path, expected_hex, data);
+}
+
+fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_hex: []const u8, data: []const u8) u32 {
+    if (data.len > sb.max_fs_bytes) return Err.too_large;
+    const full = safeJoin(sb, sub_path) catch return Err.denied;
+    defer sb.gpa.free(full);
+
+    // Lock on a separate file, not on the file being rewritten (a replace
+    // invalidates a lock held on the replaced inode).
+    const lock_path = std.fmt.allocPrint(sb.gpa, "{s}.ck_cas.lock", .{full}) catch return Err.invalid;
+    defer sb.gpa.free(lock_path);
+    const lock_file = base.createFile(sb.io, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
+        log.log(.warn, "[fs_write_if] could not acquire lock for '{s}': {s}", .{ sub_path, @errorName(err) });
+        return Err.invalid;
+    };
+    defer lock_file.close(sb.io);
+
+    // Read current contents (missing file -> empty).
+    const current = base.readFileAlloc(sb.io, full, sb.gpa, .limited(sb.max_fs_bytes)) catch |err| switch (err) {
+        error.FileNotFound => "",
+        error.StreamTooLong => return Err.too_large,
+        else => return Err.invalid,
+    };
+    const current_owned = current.len > 0;
+    defer if (current_owned) sb.gpa.free(@constCast(current));
+
+    // Hash current contents to lowercase hex SHA-256.
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(current);
+    const digest = hasher.finalResult();
+    const hex = std.fmt.bytesToHex(digest, .lower);
+
+    // Compare: empty expected matches empty file (FileNotFound above).
+    if (expected_hex.len == 0 and current.len == 0) {
+        // Creating a new file — hash matches (both empty).
+    } else if (expected_hex.len != hex.len or !std.mem.eql(u8, expected_hex, &hex)) {
+        return Err.mismatch;
+    }
+
+    // Create parent directories.
+    if (std.mem.lastIndexOfScalar(u8, full, '/')) |slash| {
+        if (slash > 0) base.createDirPath(sb.io, full[0..slash]) catch {};
+    }
+
+    // Write (replace) the file.
+    base.writeFile(sb.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
+        error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
+        else => return Err.invalid,
+    };
+    return Err.ok;
+}
+
 /// ck_getenv(name) — alias of ck_env, kept for modules linked against the
 /// older symbol name. Delegating keeps the validation contract (empty name
 /// -> Err.invalid) identical for both entry points.
@@ -1548,8 +1636,6 @@ pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
 }
 
 // ------------------------------------------------------- ck_exec (shell-ish) --
-
-const exec_cmds = [_][]const u8{ "git", "rg", "ast-grep", "semcode", "zig", "find", "cat", "wc", "head", "tail", "ls", "diff" };
 
 fn isWordChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == '-';
@@ -1777,15 +1863,10 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    var allowed_cmd = false;
-    const allowed = if (h.sandbox.exec_allow.len > 0) h.sandbox.exec_allow else &exec_cmds;
-    for (allowed) |c| {
-        if (std.mem.eql(u8, cmd, c)) {
-            allowed_cmd = true;
-            break;
-        }
+    if (!execAllowed(h.sandbox.exec_allow, cmd)) {
+        log.log(.warn, "[sandbox] tool may not run '{s}'; its manifest lists {d} command(s)", .{ cmd, h.sandbox.exec_allow.len });
+        return Err.denied;
     }
-    if (!allowed_cmd) return Err.denied;
 
     // Optional cwd: resolve relative to sandbox root via safeJoin.
     var exec_dir: std.Io.Dir = std.Io.Dir.cwd();
@@ -2021,13 +2102,11 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     // was in it. Only a tool allowed everywhere gets the root; one confined to
     // src/ has no business enumerating the tree above it.
     if (sub_path.len == 0 or std.mem.eql(u8, sub_path, ".") or std.mem.eql(u8, sub_path, "./")) {
-        if (sb.fs_prefixes.len > 0) {
-            var root_ok = false;
-            for (sb.fs_prefixes) |p| {
-                if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) root_ok = true;
-            }
-            if (!root_ok) return error.PathOutsideSandbox;
+        var root_ok = false;
+        for (sb.fs_prefixes) |p| {
+            if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) root_ok = true;
         }
+        if (!root_ok) return error.PathOutsideSandbox;
         return sb.gpa.dupe(u8, std.mem.trimEnd(u8, sb.root_dir, "/"));
     }
     var it = std.mem.splitScalar(u8, sub_path, '/');
@@ -2035,7 +2114,13 @@ fn safeJoin(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
         if (std.mem.eql(u8, comp, "..") or std.mem.eql(u8, comp, ".")) return error.PathOutsideSandbox;
         if (comp.len == 0) return error.PathOutsideSandbox;
     }
-    if (sb.fs_prefixes.len > 0) {
+    {
+        // An empty list is no authority, not unlimited authority. This used to
+        // skip the check entirely, so a descriptor written as "fs_prefixes":
+        // [] - which reads as "this tool touches no files" and is what the
+        // documentation says it means - handed the tool every file under the
+        // sandbox root instead. Least privilege has to be the default that
+        // costs nothing to ask for.
         var allowed = false;
         for (sb.fs_prefixes) |p| {
             // "." means the sandbox root itself: every relative path under it
@@ -2576,6 +2661,10 @@ test "pluginStr and pluginU32 fall back to null on missing, empty, or wrong-type
     const bad = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"provider\":\"\",\"max_tokens\":0}", .{});
     try std.testing.expect(pluginStr(bad, "provider") == null);
     try std.testing.expect(pluginU32(bad, "max_tokens") == null);
+
+    // A value beyond u32 range must be ignored, not panic @intCast.
+    const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"max_tokens\":9000000000}", .{});
+    try std.testing.expect(pluginU32(huge, "max_tokens") == null);
 }
 
 test "a tool cannot read an environment variable it was not allowed" {
@@ -2642,4 +2731,98 @@ test "parallel appends to one file all land" {
     const raw = try tmp.dir.readFileAlloc(io, "log.txt", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
     try std.testing.expectEqual(@as(usize, writers * per_writer * line.len), raw.len);
+}
+
+test "a tool with no declared prefixes reaches no file at all" {
+    // An empty fs_prefixes used to skip the check, so a descriptor saying
+    // "this tool touches no files" granted every file under the sandbox root.
+    // The image tool shipped that way and read whatever path it was handed.
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = undefined,
+    };
+
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "src/main.zig"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "."));
+
+    // A declared prefix grants exactly what it names.
+    const only_state = [_][]const u8{"state"};
+    sb.fs_prefixes = &only_state;
+    const inside = try safeJoin(&sb, "state/notes.md");
+    std.testing.allocator.free(inside);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "src/main.zig"));
+
+    // "." is how a tool asks for the whole tree, and still cannot escape it.
+    const everything = [_][]const u8{"."};
+    sb.fs_prefixes = &everything;
+    const anywhere = try safeJoin(&sb, "src/main.zig");
+    std.testing.allocator.free(anywhere);
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "../outside"));
+}
+
+test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Use "." prefix so safeJoin allows any relative path under root_dir.
+    var sb = Sandbox{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"."},
+        .environ_map = undefined,
+    };
+
+    // 1) Empty expected hash creates a missing file.
+    const rc1 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", "", "hello world");
+    try std.testing.expectEqual(Err.ok, rc1);
+    const after1 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    defer gpa.free(after1);
+    try std.testing.expectEqualStrings("hello world", after1);
+
+    // 2) Correct hash writes.
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update("hello world");
+    const digest = hasher.finalResult();
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    const rc2 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", &hex, "updated");
+    try std.testing.expectEqual(Err.ok, rc2);
+    const after2 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    defer gpa.free(after2);
+    try std.testing.expectEqualStrings("updated", after2);
+
+    // 3) Stale hash writes nothing and returns mismatch.
+    const rc3 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", &hex, "should not land");
+    try std.testing.expectEqual(Err.mismatch, rc3);
+    const after3 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    defer gpa.free(after3);
+    try std.testing.expectEqualStrings("updated", after3);
+}
+
+test "a tool may run only the commands its manifest names" {
+    const none: []const []const u8 = &.{};
+    try std.testing.expect(!execAllowed(none, "git"));
+    try std.testing.expect(!execAllowed(none, "rg"));
+
+    const only_zig = [_][]const u8{"zig"};
+    try std.testing.expect(execAllowed(&only_zig, "zig"));
+    try std.testing.expect(!execAllowed(&only_zig, "git"));
+    // Not a prefix or substring match: "zigzag" is a different program.
+    try std.testing.expect(!execAllowed(&only_zig, "zigzag"));
+
+    const several = [_][]const u8{ "rg", "ast-grep", "semcode" };
+    try std.testing.expect(execAllowed(&several, "ast-grep"));
+    try std.testing.expect(!execAllowed(&several, "sh"));
 }

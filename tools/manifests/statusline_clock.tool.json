@@ -1,0 +1,17 @@
+{
+  "name": "statusline_clock",
+  "description": "current UTC time as a status bar segment (demo statusline plugin)",
+  "wasm": "zig-out/tools/statusline_clock.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "string"
+      }
+    }
+  },
+  "internal": true,
+  "statusline": true,
+  "enabled": false,
+  "category": "harness"
+}

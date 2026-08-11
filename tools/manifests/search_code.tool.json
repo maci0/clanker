@@ -25,5 +25,13 @@
       "query"
     ]
   },
-  "category": "code"
+  "category": "code",
+  "fs_prefixes": [
+    "."
+  ],
+  "exec_allow": [
+    "rg",
+    "ast-grep",
+    "semcode"
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "peers",
-  "description": "Talk to other clanker instances. {\"action\": \"phonebook\"} scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer.",
+  "description": "Talk to other clanker instances. {\"action\": \"phonebook\"} scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer, or omit \"peer\" to broadcast to every configured peer.",
   "wasm": "zig-out/tools/peers.wasm",
   "input_schema": {
     "type": "object",
@@ -16,6 +16,12 @@
         "type": "string"
       },
       "message": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "topic": {
         "type": "string"
       }
     },

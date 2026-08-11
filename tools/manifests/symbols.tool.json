@@ -2,7 +2,23 @@
   "name": "symbols",
   "description": "find Zig declaration sites for a symbol (fn/const/struct/enum/union)",
   "wasm": "zig-out/tools/symbols.wasm",
-  "input_schema": { "type": "object", "properties": {"name":{"type":"string"},"path":{"type":"string"}}, "required": ["name"] },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
   "fs_prefixes": [],
-  "network_allow": []
+  "network_allow": [],
+  "exec_allow": [
+    "rg"
+  ]
 }

@@ -11,6 +11,14 @@ pub const Criterion = union(enum) {
     /// The response must parse as JSON and contain the given key with a
     /// matching string value.
     json_key: struct { key: []const u8, value: []const u8 },
+    /// The response, with surrounding whitespace trimmed, must be exactly
+    /// this. `includes` is a substring test, so a criterion of "1" is also
+    /// satisfied by "10" and "21": for a short answer that is usually not what
+    /// the case meant to assert.
+    equals: []const u8,
+    /// None of these may appear. Catches an answer that says the right thing
+    /// and the wrong thing at once, which a substring test scores as a pass.
+    excludes: []const []const u8,
 };
 
 pub const Kind = enum {
@@ -88,6 +96,23 @@ pub const Eval = struct {
                                 },
                                 else => {},
                             }
+                        } else if (co.get("excludes")) |exc| {
+                            switch (exc) {
+                                .array => |ia| {
+                                    var subs: std.ArrayList([]const u8) = .empty;
+                                    for (ia.items) |s| switch (s) {
+                                        .string => |ss| try subs.append(arena, ss),
+                                        else => {},
+                                    };
+                                    try list.append(arena, .{ .excludes = try subs.toOwnedSlice(arena) });
+                                },
+                                else => {},
+                            }
+                        } else if (co.get("equals")) |eq| {
+                            switch (eq) {
+                                .string => |es| try list.append(arena, .{ .equals = es }),
+                                else => {},
+                            }
                         } else if (co.get("json_key")) |jk| {
                             const jo = switch (jk) {
                                 .object => |o| o,
@@ -133,6 +158,13 @@ fn criterionSatisfied(answer: []const u8, c: Criterion) bool {
         .includes => |subs| blk: {
             for (subs) |s| {
                 if (std.mem.indexOf(u8, answer, s) == null) break :blk false;
+            }
+            break :blk true;
+        },
+        .equals => |want| std.mem.eql(u8, std.mem.trim(u8, answer, " \t\r\n"), want),
+        .excludes => |subs| blk: {
+            for (subs) |sub| {
+                if (std.mem.indexOf(u8, answer, sub) != null) break :blk false;
             }
             break :blk true;
         },
@@ -182,4 +214,39 @@ test "eval parse" {
     try std.testing.expectEqualStrings("math", e.name);
     try std.testing.expectEqual(Kind.task, e.kind);
     try std.testing.expectEqual(@as(usize, 1), e.criteria.len);
+}
+
+test "equals is exact where includes is a substring" {
+    // The case that motivated this: a criterion of "1" asserting a count of
+    // one is also satisfied by 10 and 21, so a wrong answer scored a pass.
+    try std.testing.expect(criterionSatisfied("10", .{ .includes = &.{"1"} }));
+    try std.testing.expect(!criterionSatisfied("10", .{ .equals = "1" }));
+    try std.testing.expect(criterionSatisfied("1", .{ .equals = "1" }));
+
+    // Models pad an answer with a newline; that is not a different answer.
+    try std.testing.expect(criterionSatisfied("  391\n", .{ .equals = "391" }));
+    try std.testing.expect(!criterionSatisfied("391 files", .{ .equals = "391" }));
+}
+
+test "excludes rejects an answer that says both things" {
+    // A substring test passes an answer that contains the right word
+    // somewhere, even alongside its opposite.
+    const hedged = "YES, though on reflection NO";
+    try std.testing.expect(criterionSatisfied(hedged, .{ .includes = &.{"YES"} }));
+    try std.testing.expect(!criterionSatisfied(hedged, .{ .excludes = &.{"NO"} }));
+    try std.testing.expect(criterionSatisfied("YES", .{ .excludes = &.{"NO"} }));
+}
+
+test "equals and excludes are read from a descriptor" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const text =
+        \\{"name":"c","kind":"task","prompt":"p","criteria":[{"equals":"391"},{"excludes":["error","NO"]}]}
+    ;
+    const e = try Eval.parse(arena, text);
+    try std.testing.expectEqual(@as(usize, 2), e.criteria.len);
+    try std.testing.expect(criterionSatisfied("391", e.criteria[0]));
+    try std.testing.expect(!criterionSatisfied("391 and an error", e.criteria[1]));
 }
