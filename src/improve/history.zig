@@ -549,6 +549,30 @@ pub const History = struct {
         rejections: u32,
     };
 
+    /// Ratio of unique files to total file touches across the last
+    /// `max_entries` attempts. A value near 1.0 means every attempt
+    /// targeted a different file (high diversity); near 0.0 means the
+    /// same file(s) keep being retried (low diversity). The engine can
+    /// threshold on this to force exploration of new targets when the
+    /// model is stuck hammering the same area.
+    pub fn attemptDiversity(self: *History, arena: std.mem.Allocator, max_entries: usize) !f64 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return 1.0;
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var unique: std.StringHashMapUnmanaged(void) = .empty;
+        var total: usize = 0;
+        for (entries[start..]) |e| {
+            for (e.files) |f| {
+                total += 1;
+                const gop = try unique.getOrPut(arena, f);
+                _ = gop;
+            }
+        }
+        if (total == 0) return 1.0;
+        return @as(f64, @floatFromInt(unique.count())) / @as(f64, @floatFromInt(total));
+    }
+
     /// Files from the last `max_entries` rejected attempts, deduplicated.
     /// Unlike `hotFiles` (which counts across all rejections), this returns
     /// the set of files that failed most recently — the ones the model
@@ -1178,6 +1202,47 @@ test "partialOverlapRejected detects shared changes with rejected proposals" {
 
     // Lookback window of 0 finds nothing.
     try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{fp_a}, 0));
+}
+
+test "attemptDiversity measures file exploration breadth" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // Empty history: perfect diversity.
+    try std.testing.expectEqual(@as(f64, 1.0), try hist.attemptDiversity(arena, 10));
+
+    // All attempts target the same file: diversity = 1/3.
+    try hist.append("d1", .rejected, "i", "s", &.{"src/a.zig"}, 0, 0, "d", &.{});
+    try hist.append("d2", .rejected, "i", "s", &.{"src/a.zig"}, 0, 0, "d", &.{});
+    try hist.append("d3", .rejected, "i", "s", &.{"src/a.zig"}, 0, 0, "d", &.{});
+    const low = try hist.attemptDiversity(arena, 10);
+    try std.testing.expect(low < 0.4);
+
+    // Each attempt targets a different file: diversity = 1.0.
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    var hist2 = History.init(gpa, io, tmp2.dir, "state");
+    defer hist2.deinit();
+    try hist2.append("h1", .rejected, "i", "s", &.{"src/a.zig"}, 0, 0, "d", &.{});
+    try hist2.append("h2", .rejected, "i", "s", &.{"src/b.zig"}, 0, 0, "d", &.{});
+    try hist2.append("h3", .rejected, "i", "s", &.{"src/c.zig"}, 0, 0, "d", &.{});
+    const high = try hist2.attemptDiversity(arena, 10);
+    try std.testing.expectEqual(@as(f64, 1.0), high);
 }
 
 test "recentlyRejectedFiles returns deduplicated files from recent rejections" {
