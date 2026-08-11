@@ -27,7 +27,7 @@ class RunLength {
       if (pos < CK_BUF) out[pos++] = c;
       i += run;
     }
-    return ck_write_result(out, pos);
+    return ck_ok_text_n(out, pos);
   }
 
   /// Returns a negative sentinel via *ok=false rather than throwing: this
@@ -54,7 +54,7 @@ class RunLength {
       char c = text[i++];
       for (u32 k = 0; k < count && pos < CK_BUF; k++) out[pos++] = c;
     }
-    return ck_write_result(out, pos);
+    return ck_ok_text_n(out, pos);
   }
 
  private:
@@ -109,8 +109,16 @@ CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
   if (len > 0 && input[0] == '{') {
     text = ExtractField(input, len, "text", &text_len);
     if (!text) return ck_fail("missing \"text\"");
-    const char *m = ExtractField(input, len, "mode", &mode_len);
-    if (m) mode = m;
+    // ExtractField always writes *out_len (0 on no match), so its result
+    // has to land in a scratch variable first -- writing straight into
+    // mode_len would zero the "encode" default's length whenever "mode"
+    // is omitted.
+    u32 m_len;
+    const char *m = ExtractField(input, len, "mode", &m_len);
+    if (m) {
+      mode = m;
+      mode_len = m_len;
+    }
   } else {
     text = (const char *)input;
     text_len = len;

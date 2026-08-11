@@ -115,5 +115,5 @@ CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
     }
     out[pos++] = '\n';
   }
-  return ck_write_result(out, pos);
+  return ck_ok_text_n(out, pos);
 }

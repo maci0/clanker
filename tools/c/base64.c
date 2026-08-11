@@ -68,7 +68,7 @@ static u64 b64_encode(const u8 *data, u32 len) {
     out[pos++] = b64_alphabet[(n >> 6) & 0x3F];
     out[pos++] = '=';
   }
-  return ck_write_result(out, pos);
+  return ck_ok_text_n(out, pos);
 }
 
 static u64 b64_decode(const char *text, u32 len) {
@@ -93,7 +93,7 @@ static u64 b64_decode(const char *text, u32 len) {
       out[pos++] = (u8)((buf >> bits) & 0xFF);
     }
   }
-  return ck_write_result(out, pos);
+  return ck_ok_text_n((const char *)out, pos);
 }
 
 CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
@@ -106,8 +106,12 @@ CK_EXPORT("run") u64 run(u32 ptr, u32 len) {
   if (len > 0 && input[0] == '{') {
     text = extract_field(input, len, "text", &text_len);
     if (!text) return ck_fail("missing \"text\"");
-    const char *m = extract_field(input, len, "mode", &mode_len);
-    if (m) mode = m;
+    u32 m_len;
+    const char *m = extract_field(input, len, "mode", &m_len);
+    if (m) {
+      mode = m;
+      mode_len = m_len;
+    }
   } else {
     text = (const char *)input;
     text_len = len;

@@ -134,18 +134,25 @@ static inline void ck_json_escape_into(char *out, u32 cap, u32 *pos, const char 
   }
 }
 
-/// `{"ok":true,"text":"<escaped text>"}`.
-static inline u64 ck_ok_text(const char *text) {
+/// `{"ok":true,"text":"<escaped text>"}` for a `text` of explicit length —
+/// unlike `ck_ok_text`, `text` need not be null-terminated (e.g. base64 or
+/// run-length output built into a fixed buffer without a trailing NUL).
+static inline u64 ck_ok_text_n(const char *text, u32 len) {
   static char buf[CK_BUF];
   u32 pos = 0;
   const char *head = "{\"ok\":true,\"text\":\"";
   u32 hn = ck_strlen(head);
   ck_memcpy(buf, head, hn);
   pos = hn;
-  ck_json_escape_into(buf, CK_BUF - 2, &pos, text, ck_strlen(text));
+  ck_json_escape_into(buf, CK_BUF - 2, &pos, text, len);
   buf[pos++] = '"';
   buf[pos++] = '}';
   return ck_write_result(buf, pos);
+}
+
+/// `{"ok":true,"text":"<escaped text>"}`.
+static inline u64 ck_ok_text(const char *text) {
+  return ck_ok_text_n(text, ck_strlen(text));
 }
 
 /// `{"ok":false,"error":"<escaped msg>"}`. Also logged at error level, the
