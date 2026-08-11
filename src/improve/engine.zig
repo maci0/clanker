@@ -1033,8 +1033,14 @@ pub const Engine = struct {
         while (it.next()) |tok| {
             const path = std.mem.trim(u8, tok, ".");
             if (std.mem.indexOfScalar(u8, path, '/') == null) continue;
+            // .html is here for tools/zig/webui/index.html: the whole web UI is
+            // one file, validatePath already lets a proposal write it, and
+            // without it in context clanker could edit a page it had never
+            // seen. It asked for "no changes needed" on web UI work for
+            // exactly this reason.
             if (!std.mem.endsWith(u8, path, ".zig") and !std.mem.endsWith(u8, path, ".json") and
-                !std.mem.endsWith(u8, path, ".md") and !std.mem.endsWith(u8, path, ".zon")) continue;
+                !std.mem.endsWith(u8, path, ".md") and !std.mem.endsWith(u8, path, ".zon") and
+                !std.mem.endsWith(u8, path, ".html")) continue;
             if (!proposal_mod.validatePath(path)) continue;
 
             var found = false;
@@ -1087,7 +1093,7 @@ pub const Engine = struct {
                 },
                 .file => {
                     if (std.mem.endsWith(u8, entry.name, ".wasm")) continue;
-                    if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon")) continue;
+                    if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon") and !std.mem.endsWith(u8, entry.name, ".html")) continue;
                     const sub = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ dir_rel, entry.name });
                     try self.collectFile(sub, keywords, cands);
                 },
@@ -1359,7 +1365,7 @@ fn walkInto(io: std.Io, arena: std.mem.Allocator, rel: []const u8, buf: *std.Arr
         switch (entry.kind) {
             .directory => try walkInto(io, arena, sub, buf, max_bytes),
             .file => {
-                if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon")) continue;
+                if (!std.mem.endsWith(u8, entry.name, ".zig") and !std.mem.endsWith(u8, entry.name, ".md") and !std.mem.endsWith(u8, entry.name, ".json") and !std.mem.endsWith(u8, entry.name, ".toml") and !std.mem.endsWith(u8, entry.name, ".zon") and !std.mem.endsWith(u8, entry.name, ".html")) continue;
                 if (std.mem.endsWith(u8, entry.name, ".wasm")) continue;
                 try appendFile(io, arena, sub, buf, max_bytes);
             },
