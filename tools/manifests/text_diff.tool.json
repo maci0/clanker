@@ -1,0 +1,36 @@
+{
+  "name": "text_diff",
+  "description": "Unified diff between two text blobs (AssemblyScript), the way `diff -u` shows one. WHEN TO USE: comparing two versions of text you already have in hand (two tool outputs, two file reads, a before/after) without writing either to disk first. Not for applying a patch — see patch_apply for that. Input: {\"a\": \"...\", \"b\": \"...\", \"context\": 3, \"a_name\": \"a\", \"b_name\": \"b\"}. Capped at 800 lines per side.",
+  "wasm": "tools/bin/text_diff.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "a": {
+        "type": "string",
+        "description": "The \"before\" text."
+      },
+      "b": {
+        "type": "string",
+        "description": "The \"after\" text."
+      },
+      "context": {
+        "type": "integer",
+        "description": "Lines of unchanged context per hunk. Defaults to 3."
+      },
+      "a_name": {
+        "type": "string",
+        "description": "Label for the --- header. Defaults to \"a\"."
+      },
+      "b_name": {
+        "type": "string",
+        "description": "Label for the +++ header. Defaults to \"b\"."
+      }
+    },
+    "required": [
+      "a",
+      "b"
+    ]
+  },
+  "network_allow": [],
+  "category": "code"
+}

@@ -15,9 +15,9 @@ export function bind(node, state, render) {
 
 // A fixed timer is too short to read a long message, so hovering or
 // focusing a toast (mouse or keyboard) holds it on screen; it resumes
-// counting down once you look away instead of vanishing mid-read. Also
-// mirrors app.js's status-observer toasts: same host, same cap, same
-// fail-keyword highlight, so a caller here reads identically to one there.
+// counting down once you look away instead of vanishing mid-read.
+// app.js's status-observer calls this via window.ckUi.toast, so every
+// toast in the app (mutation-observed or direct) goes through one path.
 export function toast(msg, kind) {
   if (!msg || typeof document === "undefined") return;
   var host = document.getElementById("toasts");
@@ -30,6 +30,12 @@ export function toast(msg, kind) {
   if (kind === "bad" || /fail|error|could not|refus|denied|no such/i.test(msg)) node.setAttribute("data-kind", "bad");
   node.textContent = msg;
   node.addEventListener("click", function () { node.remove(); });
+  node.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " " && event.key !== "Escape") return;
+    event.preventDefault();
+    node.remove();
+  });
+  node.setAttribute("aria-label", msg + ". Press Enter, Space, or Escape to dismiss.");
   var timer;
   function schedule() { timer = window.setTimeout(function () { node.remove(); }, 5000); }
   node.addEventListener("mouseenter", function () { window.clearTimeout(timer); });

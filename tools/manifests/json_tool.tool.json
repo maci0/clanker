@@ -1,0 +1,23 @@
+{
+  "name": "json_tool",
+  "description": "Validate, pretty-print, or minify JSON (AssemblyScript). WHEN TO USE: a tool result, config file, or pasted blob is JSON you need reformatted or checked for validity — a parse error reports the exact line and column instead of just \"invalid\". Input: {\"json\": \"...\", \"mode\": \"validate\"|\"pretty\"|\"minify\"} (mode defaults to \"pretty\"); the JSON text may also be passed bare, unwrapped.",
+  "wasm": "tools/bin/json_tool.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "json": {
+        "type": "string",
+        "description": "The JSON text to validate or reformat."
+      },
+      "mode": {
+        "type": "string",
+        "description": "validate, pretty, or minify. Defaults to pretty."
+      }
+    },
+    "required": [
+      "json"
+    ]
+  },
+  "network_allow": [],
+  "category": "code"
+}

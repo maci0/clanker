@@ -1,0 +1,24 @@
+{
+  "name": "id_gen",
+  "description": "Generate identifiers (AssemblyScript): UUID v4, ULID (sortable by creation time), or a short random hex id. WHEN TO USE: a card, run, or correlation id is needed and nothing in the task already implies one. Input: {\"kind\": \"uuid4\"|\"ulid\"|\"short\", \"count\": 1, \"length\": 8} — kind defaults to uuid4, count defaults to 1 (max 100 per call), length (short only) defaults to 8 hex characters (max 64).",
+  "wasm": "tools/bin/id_gen.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "description": "uuid4, ulid, or short. Defaults to uuid4."
+      },
+      "count": {
+        "type": "integer",
+        "description": "How many ids to generate, newline-separated. Defaults to 1, max 100."
+      },
+      "length": {
+        "type": "integer",
+        "description": "Hex characters for kind \"short\". Defaults to 8, max 64."
+      }
+    }
+  },
+  "network_allow": [],
+  "category": "code"
+}
