@@ -3588,6 +3588,8 @@ fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) 
         try s.write(m.updated);
         try s.objectField("messages");
         try s.write(m.messages);
+        try s.objectField("bytes");
+        try s.write(m.bytes);
         try s.endObject();
     }
     try s.endArray();
@@ -4420,4 +4422,19 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqual(@as(usize, 2), b64DecodedLen("aGk="));
     try std.testing.expectEqual(@as(usize, 5), b64DecodedLen("aGVsbG8="));
     try std.testing.expectEqual(@as(usize, 0), b64DecodedLen(""));
+}
+
+test "sessionListJSON carries each conversation's byte weight" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const list = [_]session.SessionMeta{
+        .{ .id = "s1", .title = "one", .created = 1, .updated = 2, .messages = 2, .bytes = 13 },
+    };
+    const out = try sessionListJSON(arena, &list);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{});
+    const first = parsed.object.get("sessions").?.array.items[0];
+    try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
+    try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
 }

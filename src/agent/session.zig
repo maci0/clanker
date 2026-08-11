@@ -180,6 +180,10 @@ pub const SessionMeta = struct {
     created: i64 = 0,
     updated: i64 = 0,
     messages: usize = 0,
+    /// Total byte length of the transcript's message content (plus tool-call
+    /// arguments). Compaction thresholds are in bytes, so a picker can show
+    /// this: it is how close a conversation is to being compacted.
+    bytes: usize = 0,
 };
 
 /// Lists every saved session, most recently updated first — the order a
@@ -200,12 +204,20 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
         const path = std.fmt.allocPrint(arena, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
         const raw = base.readFileAlloc(io, path, arena, .limited(1 << 24)) catch continue;
         const stored = json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        var bytes: usize = 0;
+        for (stored.messages) |sm| {
+            if (sm.content) |c| bytes += c.len;
+            if (sm.tool_calls) |calls| {
+                for (calls) |tc| bytes += tc.arguments.len;
+            }
+        }
         out.append(arena, .{
             .id = stored.id,
             .title = stored.title,
             .created = stored.created,
             .updated = stored.updated,
             .messages = stored.messages.len,
+            .bytes = bytes,
         }) catch continue;
     }
 
@@ -320,4 +332,45 @@ test "forkSession copies a conversation under a new id and leaves the original a
 
     // Forking a session that does not exist fails rather than inventing one.
     try std.testing.expectError(error.FileNotFound, forkSession(io, gpa, arena, tmp.dir, "nope"));
+}
+
+test "listSessions reports the byte weight of each conversation" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "s1",
+        .title = "weighted",
+        .messages = &.{
+            .{ .role = .user, .content = "hello" },
+            .{ .role = .assistant, .content = "hi there" },
+        },
+        .created = 1,
+        .updated = 2,
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqualStrings("s1", list[0].id);
+    // 5 + 8 bytes of message content.
+    try std.testing.expectEqual(@as(usize, 13), list[0].bytes);
+    try std.testing.expectEqual(@as(usize, 2), list[0].messages);
+
+    // An empty store lists nothing rather than failing.
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    const empty = try listSessions(io, arena, tmp2.dir);
+    try std.testing.expectEqual(@as(usize, 0), empty.len);
 }
