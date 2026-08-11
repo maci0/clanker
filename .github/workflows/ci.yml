@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NO_COLOR: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+          use-cache: true
+
+      - name: Check shell scripts
+        run: |
+          shellcheck \
+            clanker-improve.sh \
+            clanker-review.sh \
+            tools/grammars/build.sh \
+            tools/ts/verify.sh
+
+      - name: Run deterministic gate
+        run: |
+          zig build
+          ./zig-out/bin/clanker gate
+
+      - name: Run end-to-end tests
+        run: zig build e2e
