@@ -1,0 +1,16 @@
+{
+  "name": "youtube_transcript",
+  "description": "Fetch the transcript (captions) of a YouTube video as plain text. Input: {\"video_id\": \"dQw4w9WgXcQ\"}. Returns the captions text.",
+  "wasm": "zig-out/tools/youtube_transcript.wasm",
+  "network_allow": ["www.youtube.com", "youtube.com", "video.google.com"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "video_id": {
+        "type": "string",
+        "description": "The YouTube video ID (the part after v= in the URL)"
+      }
+    },
+    "required": ["video_id"]
+  }
+}
