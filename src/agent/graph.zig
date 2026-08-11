@@ -11,6 +11,9 @@ pub const NodeKind = enum {
     final,
     /// A fork the human resolved: the model asked, the user picked.
     decision,
+    /// A verdict the run turned on: a gate, an eval, a tool whose job is to
+    /// answer pass or fail. `ok` carries the verdict; `detail` says why.
+    check,
 };
 
 pub const Node = struct {
@@ -25,6 +28,12 @@ pub const Node = struct {
     result_bytes: usize = 0,
     duration_ms: u64 = 0,
     ok: bool = true,
+    /// How many times this step repeated back-to-back. A retry loop shows as
+    /// one node with a count rather than twenty identical lines.
+    repeats: u32 = 1,
+    /// For a step that sent the run back around: the iteration it returned
+    /// to. 0 when this node is not a loop edge.
+    loop_to: u32 = 0,
     /// Truncated preview of what this node actually produced (tool result
     /// content, or the model's message content) — capped at
     /// `output_preview_cap` bytes so a large tool result can't blow up the
@@ -51,8 +60,42 @@ pub const Graph = struct {
         self.nodes.deinit(gpa);
     }
 
+    /// Appends a node, collapsing an immediate repeat of the same step into a
+    /// count and marking a step that sends the run back over ground it has
+    /// already covered.
+    ///
+    /// An agent loop retries: the same tool with the same label runs again
+    /// after a failed check, and a timeline that lists it twenty times hides
+    /// the shape of the run instead of showing it.
     pub fn add(self: *Graph, gpa: std.mem.Allocator, node: Node) !void {
-        try self.nodes.append(gpa, node);
+        if (self.nodes.items.len > 0) {
+            const last = &self.nodes.items[self.nodes.items.len - 1];
+            if (last.kind == node.kind and std.mem.eql(u8, last.label, node.label) and
+                last.ok == node.ok and node.kind != .final)
+            {
+                last.repeats += 1;
+                last.duration_ms += node.duration_ms;
+                last.prompt_tokens += node.prompt_tokens;
+                last.completion_tokens += node.completion_tokens;
+                last.result_bytes += node.result_bytes;
+                last.iteration = node.iteration;
+                return;
+            }
+        }
+        var n = node;
+        // A step whose label already appeared in an earlier iteration is the
+        // run coming back around; record where it came back to.
+        if (n.kind == .tool or n.kind == .check) {
+            for (self.nodes.items) |prev| {
+                if (prev.iteration < n.iteration and prev.kind == n.kind and
+                    std.mem.eql(u8, prev.label, n.label))
+                {
+                    n.loop_to = prev.iteration;
+                    break;
+                }
+            }
+        }
+        try self.nodes.append(gpa, n);
     }
 
     pub fn totalPromptTokens(self: *const Graph) u64 {
@@ -101,6 +144,7 @@ pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *c
             .tool => "tool",
             .final => "final",
             .decision => "decision",
+            .check => "check",
         });
         try s.objectField("iteration");
         try s.print("{d}", .{n.iteration});
@@ -120,6 +164,14 @@ pub fn write(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, g: *c
         try s.write(n.ok);
         try s.objectField("output");
         try s.write(n.output);
+        if (n.repeats > 1) {
+            try s.objectField("repeats");
+            try s.print("{d}", .{n.repeats});
+        }
+        if (n.loop_to > 0) {
+            try s.objectField("loop_to");
+            try s.print("{d}", .{n.loop_to});
+        }
         try s.endObject();
     }
     try s.endArray();
@@ -159,4 +211,35 @@ test "truncatedPreview caps output at output_preview_cap bytes" {
     const got = truncatedPreview(big);
     try std.testing.expectEqual(output_preview_cap, got.len);
     try std.testing.expectEqual(big.ptr, got.ptr);
+}
+
+test "repeated steps collapse, and a step revisited later marks the loop" {
+    const gpa = std.testing.allocator;
+    var g = Graph{ .run_id = "run-test", .task = "t", .provider = "p", .started_at = 0 };
+    defer g.deinit(gpa);
+
+    // A retry loop: the same tool three times in a row inside one iteration.
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "gate", .result_bytes = 10, .duration_ms = 5 });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "gate", .result_bytes = 10, .duration_ms = 5 });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "gate", .result_bytes = 10, .duration_ms = 5 });
+    try std.testing.expectEqual(@as(usize, 1), g.nodes.items.len);
+    try std.testing.expectEqual(@as(u32, 3), g.nodes.items[0].repeats);
+    // The collapsed node carries the totals, not just the first call's.
+    try std.testing.expectEqual(@as(usize, 30), g.nodes.items[0].result_bytes);
+    try std.testing.expectEqual(@as(u64, 15), g.nodes.items[0].duration_ms);
+
+    // A different outcome is a different step, even for the same tool.
+    try g.add(gpa, .{ .kind = .check, .iteration = 1, .label = "gate", .ok = false });
+    try std.testing.expectEqual(@as(usize, 2), g.nodes.items.len);
+
+    // Coming back to the same tool in a later iteration is a loop edge.
+    try g.add(gpa, .{ .kind = .llm, .iteration = 2, .label = "chat" });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 2, .label = "gate", .result_bytes = 10 });
+    const revisit = g.nodes.items[g.nodes.items.len - 1];
+    try std.testing.expectEqual(@as(u32, 1), revisit.loop_to);
+    try std.testing.expectEqual(@as(u32, 1), revisit.repeats);
+
+    // A first-time step is not a loop.
+    try g.add(gpa, .{ .kind = .tool, .iteration = 2, .label = "read_file" });
+    try std.testing.expectEqual(@as(u32, 0), g.nodes.items[g.nodes.items.len - 1].loop_to);
 }

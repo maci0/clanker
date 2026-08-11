@@ -208,6 +208,16 @@ pub const Agent = struct {
                 kv.value_ptr.*.deinit();
             }
             self.modules.clearRetainingCapacity();
+            // The wasm cache holds gpa-owned keys and file bytes; the modules
+            // above were freed but these were not, so every run leaked one
+            // copy of every tool's wasm.
+            var wit = self.wasm_cache.iterator();
+            while (wit.next()) |kv| {
+                self.ctx.gpa.free(kv.key_ptr.*);
+                self.ctx.gpa.free(@constCast(kv.value_ptr.*));
+            }
+            self.wasm_cache.deinit(self.ctx.gpa);
+            self.wasm_cache = .empty;
             // wasm_cache is gpa-owned and survives across turns; do NOT clear it here.
             const run_ms: u64 = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
             const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
@@ -473,6 +483,22 @@ pub const Agent = struct {
                     .result_bytes = content.len,
                     .output = graph_mod.truncatedPreview(content),
                 });
+                // A tool that exists to answer pass/fail gets its verdict on
+                // the timeline: "the run continued because this passed" is
+                // part of the story, and a tool node hides it in JSON.
+                if (self.reg.get(tc.name)) |tool_def| {
+                    if (tool_def.check) {
+                        const verdict = checkVerdict(self.arena, content);
+                        try g.add(self.ctx.gpa, .{
+                            .kind = .check,
+                            .iteration = iteration + 1,
+                            .label = tc.name,
+                            .ok = verdict.ok,
+                            .detail = verdict.reason,
+                            .output = graph_mod.truncatedPreview(content),
+                        });
+                    }
+                }
                 // An answered ask_user is a fork the human resolved; a bare
                 // tool node buries that under a JSON blob.
                 if (std.mem.eql(u8, tc.name, "ask_user")) {
@@ -507,6 +533,28 @@ pub const Agent = struct {
         if (budget_hit) return error.SessionTokenBudgetExceeded;
         log.log(.error_, "agent hit the {d}-iteration limit without a final answer", .{self.max_iterations});
         return error.MaxIterationsExceeded;
+    }
+
+    /// Reads a check tool's verdict out of its result: `ok` decides, and
+    /// `error` or `text` explains a failure.
+    fn checkVerdict(arena: std.mem.Allocator, content: []const u8) struct { ok: bool, reason: []const u8 } {
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, content, .{ .ignore_unknown_fields = true }) catch
+            return .{ .ok = false, .reason = "result was not JSON" };
+        if (parsed != .object) return .{ .ok = false, .reason = "result was not an object" };
+        const ok = switch (parsed.object.get("ok") orelse std.json.Value{ .bool = false }) {
+            .bool => |b| b,
+            else => false,
+        };
+        var reason: []const u8 = "";
+        if (parsed.object.get("error")) |e| {
+            if (e == .string) reason = e.string;
+        }
+        if (reason.len == 0) {
+            if (parsed.object.get("text")) |t| {
+                if (t == .string) reason = t.string[0..@min(t.string.len, 120)];
+            }
+        }
+        return .{ .ok = ok, .reason = reason };
     }
 
     /// The question and the chosen answer out of an ask_user call, or null

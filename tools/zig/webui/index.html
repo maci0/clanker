@@ -173,7 +173,10 @@
   @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .turn-answer:empty::before { animation: none; opacity: 0.6; } }
   .turn-answer .failed { color: var(--danger); }
-  .turn-unanswered { color: var(--fg-muted); font-style: italic; }
+  /* Notes about a turn's own outcome — stopped, or never answered. Real text
+     rather than generated content, so they survive Copy answer and reach a
+     screen reader the same way the answer does. */
+  .turn-note { color: var(--fg-muted); font-style: italic; }
 
   /* ---- fenced code blocks inside a finished answer ----
      The language tag and Copy button sit in their own header strip rather
@@ -226,7 +229,6 @@
     padding: 0.2rem 0.6rem; font-size: var(--step-0);
     background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
   }
-  .turn.stopped .turn-answer::after { content: " [stopped]"; color: var(--fg-muted); font-style: italic; }
 
   /* The one authored motion moment beyond the tool spinner: the caret marks a live stream. */
   .caret {
@@ -817,16 +819,21 @@ document.addEventListener("DOMContentLoaded", function () {
     if (pendingTurn) markTurnUnanswered(pendingTurn);
   }
 
-  /* An empty answer triggers the streaming placeholder — a pulsing ellipsis
-     that says "still thinking". Replayed history is never still thinking, so a
-     conversation that was interrupted or abandoned would otherwise sit there
-     appearing to stream forever. Filling the answer suppresses the placeholder
-     and says what actually happened. */
-  function markTurnUnanswered(turn) {
+  /* Appends a note about the turn's outcome into the answer itself. Inside the
+     answer rather than beside it for two reasons: an empty answer otherwise
+     triggers the streaming placeholder (a pulsing ellipsis that says "still
+     thinking" about a turn that finished long ago), and Copy answer reads
+     `textContent`, so anything outside it is silently dropped from what the
+     reader pastes. */
+  function markTurn(turn, text) {
     var note = document.createElement("span");
-    note.className = "turn-unanswered";
-    note.textContent = "No answer was recorded for this turn.";
+    note.className = "turn-note";
+    note.textContent = text;
     turn.answer.appendChild(note);
+  }
+
+  function markTurnUnanswered(turn) {
+    markTurn(turn, "No answer was recorded for this turn.");
   }
 
   function switchSession(id) {
@@ -1283,7 +1290,11 @@ document.addEventListener("DOMContentLoaded", function () {
     }).catch(function (err) {
       splitter.flush();
       if (err && err.name === "AbortError") {
-        turn.root.classList.add("stopped");
+        // Was a CSS ::after on a `stopped` class, which meant Copy answer
+        // handed back a truncated answer with nothing saying it had been cut
+        // short, and left the state to generated content that screen readers
+        // expose inconsistently.
+        markTurn(turn, "\n[stopped]");
       } else {
         appendText(turn, "\n[run failed: " + err.message + "]\n", true);
       }

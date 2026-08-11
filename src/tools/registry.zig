@@ -40,6 +40,10 @@ pub const Tool = struct {
     config: json.Value = .{ .object = .{} },
     /// Set when this tool rewrites another tool's input or output.
     transform: ?Transform = null,
+    /// This tool answers pass/fail about something (a gate, an eval, a lint).
+    /// Its verdict is recorded in the run graph as a check, because a run that
+    /// turned on one reads as unmotivated without it.
+    check: bool = false,
     /// `"peers"` or `"providers"`: the harness adds those configured hosts to
     /// `network_allow` at load, because a descriptor cannot know them.
     network_from_config: []const u8 = "",
@@ -206,6 +210,9 @@ pub const Registry = struct {
             .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
         };
         _ = tools_dir;
+        if (obj.get("check")) |c| {
+            if (c == .bool) t.check = c.bool;
+        }
         if (obj.get("network_allow")) |na| {
             switch (na) {
                 .array => |arr| t.network_allow = try strArray(arena, arr),

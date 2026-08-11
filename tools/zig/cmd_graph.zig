@@ -13,6 +13,8 @@ const lib = @import("lib.zig");
 
 const GraphNode = struct {
     kind: []const u8 = "",
+    repeats: u32 = 1,
+    loop_to: u32 = 0,
     iteration: u32 = 0,
     label: []const u8 = "",
     detail: []const u8 = "",
@@ -102,7 +104,25 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try buf.appendSlice(std.heap.wasm_allocator, ih);
         }
         if (std.mem.eql(u8, n.kind, "tool")) {
-            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B\n", .{ n.label, n.result_bytes });
+            // A retried step is one line with a count, and a step the run came
+            // back around to says where it looped from.
+            const line = if (n.repeats > 1)
+                try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B  x{d}\n", .{ n.label, n.result_bytes, n.repeats })
+            else if (n.loop_to > 0)
+                try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B  (loops back to iter {d})\n", .{ n.label, n.result_bytes, n.loop_to })
+            else
+                try std.fmt.allocPrint(std.heap.wasm_allocator, "  tool {s}  {d} B\n", .{ n.label, n.result_bytes });
+            defer std.heap.wasm_allocator.free(line);
+            try buf.appendSlice(std.heap.wasm_allocator, line);
+        } else if (std.mem.eql(u8, n.kind, "check")) {
+            // The verdict a run turned on, and where it sent the run back to.
+            const mark: []const u8 = if (n.ok) "pass" else "FAIL";
+            const line = try std.fmt.allocPrint(std.heap.wasm_allocator, "  check {s} {s}{s}{s}\n", .{
+                n.label,
+                mark,
+                if (n.detail.len > 0) "  " else "",
+                n.detail,
+            });
             defer std.heap.wasm_allocator.free(line);
             try buf.appendSlice(std.heap.wasm_allocator, line);
         } else if (std.mem.eql(u8, n.kind, "decision")) {
