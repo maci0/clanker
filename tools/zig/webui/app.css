@@ -1332,6 +1332,9 @@ mark {
 .goal-form label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step--1); }
 .goal-form input { flex: 1 1 16rem; min-width: 0; }
 .goal-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+/* The per-run budget box sits on the same rule as its Work on this button. */
+.goal-run-controls { display: flex; align-items: center; gap: var(--space-3); }
+.goal-run-controls input { flex: 0 0 9rem; min-width: 0; font-variant-numeric: tabular-nums; }
 
 .prompt-list {
   margin-top: var(--space-2); max-height: 14rem;

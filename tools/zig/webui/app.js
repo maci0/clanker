@@ -46,6 +46,7 @@ var el = {
   goalForm: document.getElementById("goal-form"),
   goalObjective: document.getElementById("goal-objective"),
   goalCriterion: document.getElementById("goal-criterion"),
+  goalMaxIterations: document.getElementById("goal-max-iterations"),
   goalsStatus: document.getElementById("goals-status"),
   usage: document.getElementById("usage"),
   usageRefresh: document.getElementById("usage-refresh"),
@@ -3050,10 +3051,19 @@ function goalCard(g) {
   var actions = [];
   if (g.id) {
     /* Active goals are meant to be worked: without this, adding a goal only
-       wrote state/goals.json and never started a run. */
+       wrote state/goals.json and never started a run. The per-run budget box
+       sets this run's max iterations; left blank it falls back to the goal's
+       stored default, then to the global agent.max_iterations. */
     if ((g.status || "active") === "active") {
-      actions.push(UI.button("Work on this", function () { workOnGoal(g); },
-        { label: "Work on goal: " + (g.objective || g.id) }));
+      actions.push(T.div({ class: "goal-run-controls" },
+        T.input({
+          type: "number", min: "1", max: "1000", step: "1",
+          "data-goal-budget": g.id,
+          placeholder: g.max_iterations ? ("≤ " + g.max_iterations + " iters (default)") : "max iters (default)",
+          title: "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations."
+        }),
+        UI.button("Work on this", function () { workOnGoal(g); },
+          { label: "Work on goal: " + (g.objective || g.id) })));
     }
     [["Mark done", "done", "Goal marked done."],
      ["Abandon", "abandoned", "Goal abandoned."],
@@ -3071,6 +3081,7 @@ function goalCard(g) {
     T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
     T.div({ class: "goal-meta" },
       T.span({ class: "goal-status" }, g.status || "unknown"),
+      g.max_iterations ? T.span("budget ≤ " + g.max_iterations + " iters") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
        several of them; expanded by default they push the rest of the page off
@@ -4099,7 +4110,8 @@ function runGoal(g, opts) {
       task: task,
       goal: g.id,
       stream: true,
-      session: sessionId
+      session: sessionId,
+      max_iterations: opts.maxIterations || null
     }),
     signal: controller.signal
   }).then(function (resp) {
@@ -4137,7 +4149,12 @@ function runGoal(g, opts) {
 }
 
 function workOnGoal(g) {
-  runGoal(g);
+  // Read the per-run budget box on this goal card (if any). A positive number
+  // is a per-run override; anything else sends null so the server falls back
+  // to the goal's stored default, then to the global agent.max_iterations.
+  var box = el.goals.querySelector('input[data-goal-budget="' + g.id + '"]');
+  var n = box ? parseInt(box.value, 10) : NaN;
+  runGoal(g, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
 }
 
 /* Turns a board card into a goal and starts a run on it, moving the card
@@ -4203,12 +4220,17 @@ el.goalForm.addEventListener("submit", function (e) {
   var objective = el.goalObjective.value.trim();
   var criterion = el.goalCriterion.value.trim();
   if (!objective || !criterion) return;
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal added.").then(function (d) {
+  var budgetRaw = el.goalMaxIterations.value.trim();
+  var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
+  var payload = { objective: objective, completion_criterion: criterion };
+  if (Number.isFinite(budget) && budget > 0) payload.max_iterations = budget;
+  postGoal(payload, "Goal added.").then(function (d) {
     // A refused goal keeps what was typed: the criterion is the field most
     // likely to be refused, and retyping the objective to fix it is a tax.
     if (!d) return;
     el.goalObjective.value = "";
     el.goalCriterion.value = "";
+    el.goalMaxIterations.value = "";
     // Newest first after renderGoals — start work so defining a goal is not
     // just writing state/goals.json.
     var goals = goalState.val || [];

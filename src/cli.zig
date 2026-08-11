@@ -1264,6 +1264,11 @@ const GoalContext = struct {
     objective: []const u8,
     completion_criterion: []const u8,
     boundaries: []const u8,
+    /// Optional per-goal agent-loop iteration budget (the goal's stored
+    /// `max_iterations` in state/goals.json). Null means "use the global
+    /// cfg.agent.max_iterations fallback" for runs of this goal unless the
+    /// caller supplies a per-run override that beats it.
+    max_iterations: ?u32,
     /// Task-prompt preamble (`## Active goal` …). Arena-owned.
     section: []const u8,
 };
@@ -1299,6 +1304,20 @@ fn goalUpdated(obj: std.json.ObjectMap) i64 {
     return 0;
 }
 
+/// The goal's stored iteration budget, or null when it is absent or not a
+/// positive number. Callers clamp before use; here we only reject shapes that
+/// could never be a budget (missing, negative, zero).
+fn goalMaxIterations(obj: std.json.ObjectMap) ?u32 {
+    const v = obj.get("max_iterations") orelse return null;
+    const n: i64 = switch (v) {
+        .integer => |x| x,
+        .float => |f| @intFromFloat(f),
+        else => return null,
+    };
+    if (n <= 0) return null;
+    return @intCast(n);
+}
+
 fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalContext {
     const idv = obj.get("id") orelse return null;
     if (idv != .string or idv.string.len == 0) return null;
@@ -1311,6 +1330,7 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
         .objective = objective,
         .completion_criterion = completion,
         .boundaries = boundaries,
+        .max_iterations = goalMaxIterations(obj),
         .section = try formatGoalSection(arena, objective, completion, boundaries),
     };
 }
@@ -1410,6 +1430,43 @@ fn resolveRunTask(
         return try taskWithGoal(arena, task, g);
     }
     return task;
+}
+
+/// Clamps a raw iteration budget to the accepted 1..=1000 range (0 is treated
+/// as "unset" rather than a no-iteration run, and absurdly large values are
+/// refused rather than trusted).
+fn clampIterationBudget(n: u32) u32 {
+    if (n == 0) return 1;
+    return @min(n, 1000);
+}
+
+/// The effective agent-loop iteration budget for a run started by /api/run.
+/// Precedence: an explicit per-run `max_iterations` in the request wins; else
+/// the goal steering this run carries a stored `max_iterations` in
+/// state/goals.json used as the default for runs of that goal; else nothing
+/// overrides the global cfg.agent.max_iterations (already applied to the agent
+/// at init). `goal_id`/`auto` mirror resolveRunTask's, so the same goal that
+/// steered the task is the one whose stored budget applies. Returns null when
+/// only the global default applies.
+fn runIterationBudget(
+    arena: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    req_max: ?u32,
+    goal_id: ?[]const u8,
+    auto: bool,
+) ?u32 {
+    if (req_max) |n| return clampIterationBudget(n);
+    const g: ?GoalContext = if (goal_id) |id|
+        (loadGoalById(arena, io, dir, id) catch null)
+    else if (auto)
+        (findNewestActiveGoalIn(arena, io, dir) catch null)
+    else
+        null;
+    if (g) |goal| {
+        if (goal.max_iterations) |n| return clampIterationBudget(n);
+    }
+    return null;
 }
 
 fn cmdRun(init: std.process.Init, opts: Options) !void {
@@ -3039,6 +3096,11 @@ const RunRequestBody = struct {
     /// harness refuses write-capable tools, so nothing changes until the
     /// user applies the plan as a follow-up run.
     plan: bool = false,
+    /// Optional per-run max agent-loop iteration budget. When set it wins over
+    /// everything else; when null and a goal steers this run, that goal's
+    /// stored `max_iterations` (state/goals.json) is the default; when neither
+    /// is set, cfg.agent.max_iterations applies. Clamped to 1..=1000.
+    max_iterations: ?u32 = null,
 };
 
 /// The composer refuses images over 4 MB; the server enforces the same cap on
@@ -4028,6 +4090,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             .id = id,
             .objective = obj,
             .completion_criterion = crit,
+            .max_iterations = if (req.max_iterations) |n| clampIterationBudget(n) else null,
             .created = now,
             .updated = now,
         }) catch {
@@ -4052,6 +4115,9 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
                 }
                 updated.status = s;
             }
+            if (req.max_iterations) |n| {
+                updated.max_iterations = clampIterationBudget(n);
+            }
             updated.updated = now;
             kept.append(arena, updated) catch continue;
         }
@@ -4066,7 +4132,10 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
     }
 
     var enc: std.Io.Writer.Allocating = .init(arena);
-    std.json.Stringify.value(list.items, .{}, &enc.writer) catch {
+    // emit_null_optional_fields = false so an unset budget stays out of the
+    // file (a goal without one is not "budget 0", and a null key would just
+    // confuse readers of state/goals.json).
+    std.json.Stringify.value(list.items, .{ .emit_null_optional_fields = false }, &enc.writer) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
@@ -4077,7 +4146,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
 
     var out: std.Io.Writer.Allocating = .init(arena);
     out.writer.writeAll("{\"ok\":true,\"goals\":") catch return;
-    std.json.Stringify.value(list.items, .{}, &out.writer) catch return;
+    std.json.Stringify.value(list.items, .{ .emit_null_optional_fields = false }, &out.writer) catch return;
     out.writer.writeAll("}") catch return;
     respond(stream, 200, "OK", out.written());
 }
@@ -4601,6 +4670,9 @@ const GoalPost = struct {
     id: ?[]const u8 = null,
     status: ?[]const u8 = null,
     remove: ?bool = null,
+    /// Optional per-goal iteration budget stored in state/goals.json and used
+    /// as the default for runs of this goal. Clamped to 1..=1000 on write.
+    max_iterations: ?u32 = null,
 };
 
 const StoredGoal = struct {
@@ -4611,6 +4683,7 @@ const StoredGoal = struct {
     boundaries: []const u8 = "",
     stop_rule: []const u8 = "",
     status: []const u8 = "active",
+    max_iterations: ?u32 = null,
     created: i64 = 0,
     updated: i64 = 0,
 };
@@ -4775,6 +4848,14 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // write-capable tools and the system prompt says why, so the answer is
     // a plan the browser renders with an Apply action.
     a.plan_mode = req.plan;
+    // Per-run iteration budget: an explicit body override wins, else the
+    // steering goal's stored max_iterations (state/goals.json) is the default
+    // for runs of that goal, else the global cfg.agent.max_iterations already
+    // applied at init stays. Clamped to 1..=1000.
+    if (runIterationBudget(arena, io, std.Io.Dir.cwd(), req.max_iterations, goal_id, cfg.modules.goal and goal_id == null)) |budget| {
+        a.max_iterations = budget;
+        log.log(.info, "run iteration budget {d} ({s})", .{ budget, if (req.max_iterations != null) "per-run override" else "goal default" });
+    }
     // Multimodal attachments from the composer: hand them to the agent, which
     // attaches them to the task message exactly as the tool-result image path
     // does. Same module flag as the agent's own image handling, and the 4 MB
@@ -5454,6 +5535,64 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
     const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
     try std.testing.expectEqualStrings("plain", none);
+}
+
+test "runIterationBudget precedence: body override, then goal default, then global" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    // "budgeted" carries a stored max_iterations of 60; "plain" has none.
+    const goals_json =
+        \\[
+        \\  {"id":"budgeted","objective":"b","completion_criterion":"c","status":"active","max_iterations":60,"updated":10},
+        \\  {"id":"plain","objective":"p","completion_criterion":"c","status":"active","updated":20},
+        \\  {"id":"done","objective":"d","completion_criterion":"c","status":"done","max_iterations":99,"updated":30}
+        \\]
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+
+    // A per-run override always wins, whatever the goal stores.
+    const overridden = runIterationBudget(arena, io, tmp.dir, 7, "budgeted", false);
+    try std.testing.expectEqual(@as(u32, 7), overridden.?);
+    // An override even beats an explicit goal with no stored value.
+    const overridden_plain = runIterationBudget(arena, io, tmp.dir, 7, "plain", false);
+    try std.testing.expectEqual(@as(u32, 7), overridden_plain.?);
+
+    // Blank box + a goal with a stored budget uses that goal's value.
+    const goal_default = runIterationBudget(arena, io, tmp.dir, null, "budgeted", false);
+    try std.testing.expectEqual(@as(u32, 60), goal_default.?);
+
+    // Auto-steer resolves the newest active goal (updated=20, "plain") which
+    // has no stored budget -> null (global default applies).
+    const auto_none = runIterationBudget(arena, io, tmp.dir, null, null, true);
+    try std.testing.expect(auto_none == null);
+    // The done goal's budget is never picked by auto-steer.
+    const explicit_done = runIterationBudget(arena, io, tmp.dir, null, "done", false);
+    try std.testing.expectEqual(@as(u32, 99), explicit_done.?);
+
+    // A goal with no stored value and no override -> null (global fallback).
+    const explicit_plain = runIterationBudget(arena, io, tmp.dir, null, "plain", false);
+    try std.testing.expect(explicit_plain == null);
+
+    // No goal at all -> null.
+    const no_goal = runIterationBudget(arena, io, tmp.dir, null, null, false);
+    try std.testing.expect(no_goal == null);
+}
+
+test "clampIterationBudget pins values to 1..=1000" {
+    try std.testing.expectEqual(@as(u32, 1), clampIterationBudget(0));
+    try std.testing.expectEqual(@as(u32, 1), clampIterationBudget(1));
+    try std.testing.expectEqual(@as(u32, 500), clampIterationBudget(500));
+    try std.testing.expectEqual(@as(u32, 1000), clampIterationBudget(1000));
+    try std.testing.expectEqual(@as(u32, 1000), clampIterationBudget(9999));
 }
 
 test "an ask accepts only its own options and hands the pick to the waiter" {
