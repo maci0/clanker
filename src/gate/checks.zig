@@ -181,6 +181,38 @@ test "astCheckGate short-circuits when there are no .zig files" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// Convenience: auto-format changed files, then run the fmt check.
+/// Returns the fmt gate result; if formatting itself fails, returns that
+/// failure instead. This is the single call an improve pipeline makes
+/// instead of separate formatFiles + fmtGate.
+pub fn autoFormatAndCheck(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_files: []const []const u8) !GateResult {
+    var fmt_result = try formatFiles(gpa, io, dir, changed_files);
+    if (!fmt_result.ok) {
+        fmt_result.label = "zig fmt (auto-format)";
+        return fmt_result;
+    }
+    fmt_result.deinit(gpa);
+    return fmtGate(gpa, io, dir, changed_files);
+}
+
+test "autoFormatAndCheck short-circuits when there is nothing to format" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var empty_result = try autoFormatAndCheck(gpa, io, tmp.dir, &.{});
+    defer empty_result.deinit(gpa);
+    try std.testing.expect(empty_result.ok);
+
+    var non_zig_result = try autoFormatAndCheck(gpa, io, tmp.dir, &.{"config.json"});
+    defer non_zig_result.deinit(gpa);
+    try std.testing.expect(non_zig_result.ok);
+}
+
 test "fmtGate and formatFiles short-circuit when there is nothing to format" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
