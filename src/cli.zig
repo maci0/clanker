@@ -18,6 +18,7 @@ const subagent = @import("agent/subagent.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
+const lineedit = @import("util/lineedit.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
@@ -829,6 +830,34 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
     );
     try out_w.interface.flush();
 
+    // On a terminal, keystrokes go through the line editor: a cooked TTY hands
+    // over whole lines and leaves arrow keys as literal escape bytes in the
+    // buffer, which is why history recall did nothing. Piped input keeps the
+    // plain read loop below, so scripts and the improvement loop are
+    // unaffected by any of this.
+    var editor = lineedit.Editor{ .gpa = gpa };
+    defer editor.deinit();
+    const interactive = (stdin_file.isTty(io) catch false) and (stdout_file.isTty(io) catch false);
+    if (interactive) {
+        loadReplHistory(io, gpa, &editor);
+        while (true) {
+            const entered = readLineRaw(io, stdin_file, &out_w, &editor) catch |err| {
+                if (err == error.EndOfStream) break;
+                log.log(.error_, "repl read error: {s}", .{@errorName(err)});
+                break;
+            } orelse break;
+            const trimmed = std.mem.trim(u8, entered, " \t\r\n");
+            if (trimmed.len == 0) continue;
+            editor.remember(trimmed);
+            saveReplHistory(io, gpa, &editor);
+            const owned = try arena.dupe(u8, trimmed);
+            if (try replHandleLine(io, gpa, arena, &out_w, &a, &messages, &cfg, init.environ_map, &reg, owned, created, sid)) return;
+        }
+        try out_w.interface.writeAll("\n");
+        try out_w.interface.flush();
+        return;
+    }
+
     // Accumulate raw stdin and split on newlines: readSliceShort can return
     // several lines at once (piped input), and each task line must be copied
     // into the arena before the accumulator buffer is shifted (messages keep
@@ -968,6 +997,162 @@ fn cmdRepl(init: std.process.Init, opts: Options) !void {
             if (quit) return;
         }
     }
+}
+
+/// One line typed at the interactive prompt. Returns true when the REPL should
+/// exit. The buffered (piped) path keeps its own inline handling; this covers
+/// the same commands for the raw-mode path.
+fn replHandleLine(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    out_w: *std.Io.File.Writer,
+    a: *agent.Agent,
+    messages: *std.ArrayList(types.Message),
+    cfg: *config.Config,
+    environ_map: *std.process.Environ.Map,
+    reg: *registry.Registry,
+    line: []const u8,
+    created: i64,
+    sid: []const u8,
+) !bool {
+    if (std.mem.eql(u8, line, ":quit") or std.mem.eql(u8, line, ":q") or std.mem.eql(u8, line, ":exit")) return true;
+    if (std.mem.eql(u8, line, ":help")) {
+        try out_w.interface.writeAll("REPL commands: :quit  :help  /goal <intent>  /<cmd> [args]  (any other text is a task)\nWhen an answer offers numbered options, reply with just the number.\nUp/Down recall history; Ctrl-A/E move, Ctrl-U/K/W delete.\n");
+        try out_w.interface.flush();
+        return false;
+    }
+    if (line.len > 0 and line[0] == '/') {
+        if (std.mem.startsWith(u8, line, "/quit") or std.mem.startsWith(u8, line, "/exit")) return true;
+        if (std.mem.startsWith(u8, line, "/goal")) {
+            const intent = std.mem.trimStart(u8, line["/goal".len..], " ");
+            if (intent.len == 0) {
+                try out_w.interface.writeAll("usage: /goal <intent>\n");
+                try out_w.interface.flush();
+                return false;
+            }
+            const task = try std.fmt.allocPrint(arena, "Design and persist a structured goal for: {s}\n\nDefine all five fields (objective, completion_criterion, proof, boundaries, stop_rule) and call the goal tool to persist it.", .{intent});
+            return replRunTurn(io, out_w, a, messages, task, created, sid);
+        }
+        const toggled = std.mem.startsWith(u8, line, "/plugins ");
+        try replSlashTool(io, gpa, arena, cfg, environ_map, reg, line, out_w);
+        if (toggled) {
+            reg.* = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+            a.tool_defs = try reg.toToolDefs(arena);
+        }
+        return false;
+    }
+    // A bare number answers the last multiple-choice question.
+    var task = line;
+    if (repl_choices.items.len > 0) {
+        const digits = std.mem.trimEnd(u8, line, ".)");
+        if (std.fmt.parseInt(usize, digits, 10) catch null) |idx| {
+            if (idx >= 1 and idx <= repl_choices.items.len) {
+                task = try arena.dupe(u8, repl_choices.items[idx - 1]);
+                const echo = try std.fmt.allocPrint(arena, "\x1b[2m\xe2\x86\x92 {s}\x1b[0m\n", .{task});
+                try out_w.interface.writeAll(echo);
+                try out_w.interface.flush();
+            }
+        }
+    }
+    return replRunTurn(io, out_w, a, messages, task, created, sid);
+}
+
+/// REPL history file: recall survives restarts, which is most of the point.
+const repl_history_path = "state/repl_history";
+
+fn loadReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *lineedit.Editor) void {
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, repl_history_path, gpa, .limited(1 << 20)) catch return;
+    defer gpa.free(raw);
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |l| {
+        const t = std.mem.trim(u8, l, " \t\r");
+        if (t.len > 0) editor.remember(t);
+    }
+    editor.reset();
+}
+
+fn saveReplHistory(io: std.Io, gpa: std.mem.Allocator, editor: *const lineedit.Editor) void {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(gpa);
+    for (editor.history.items) |h| {
+        buf.appendSlice(gpa, h) catch return;
+        buf.append(gpa, '\n') catch return;
+    }
+    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
+    atomic_write.writeFile(io, std.Io.Dir.cwd(), repl_history_path, buf.items) catch {};
+}
+
+/// Reads one line in raw mode, redrawing as it is edited. Returns null on EOF
+/// or Ctrl-C, so the caller can leave.
+fn readLineRaw(
+    io: std.Io,
+    stdin_file: std.Io.File,
+    out_w: *std.Io.File.Writer,
+    editor: *lineedit.Editor,
+) !?[]const u8 {
+    const original = std.posix.tcgetattr(stdin_file.handle) catch return error.NotATerminal;
+    var raw = original;
+    // Character-at-a-time, no echo: the editor draws the line itself.
+    raw.lflag.ICANON = false;
+    raw.lflag.ECHO = false;
+    raw.lflag.ISIG = false;
+    std.posix.tcsetattr(stdin_file.handle, .FLUSH, raw) catch return error.NotATerminal;
+    defer std.posix.tcsetattr(stdin_file.handle, .FLUSH, original) catch {};
+    _ = io;
+
+    editor.reset();
+    try redraw(out_w, editor);
+
+    var pending: [64]u8 = undefined;
+    var pending_len: usize = 0;
+    while (true) {
+        var byte: [1]u8 = undefined;
+        const n = std.posix.read(stdin_file.handle, &byte) catch |err| switch (err) {
+            error.WouldBlock => continue,
+            else => return err,
+        };
+        if (n == 0) return null;
+        if (pending_len == pending.len) pending_len = 0; // never seen; stay safe
+        pending[pending_len] = byte[0];
+        pending_len += 1;
+
+        // An escape sequence arrives in pieces; decode() reports null until
+        // it has enough bytes to be sure what the key was.
+        const decoded = lineedit.decode(pending[0..pending_len]) orelse continue;
+        pending_len = 0;
+
+        switch (decoded.key) {
+            .interrupt => {
+                try out_w.interface.writeAll("^C\n");
+                try out_w.interface.flush();
+                editor.reset();
+                try redraw(out_w, editor);
+                continue;
+            },
+            .eof => if (editor.len == 0) return null,
+            else => {},
+        }
+        const done = editor.apply(decoded.key);
+        try redraw(out_w, editor);
+        if (done) {
+            try out_w.interface.writeAll("\n");
+            try out_w.interface.flush();
+            return editor.line();
+        }
+    }
+}
+
+/// Repaints the prompt and the line, then parks the cursor where the editor
+/// thinks it is.
+fn redraw(out_w: *std.Io.File.Writer, editor: *const lineedit.Editor) !void {
+    try out_w.interface.writeAll("\r\x1b[K\x1b[32mclanker> \x1b[0m");
+    try out_w.interface.writeAll(editor.line());
+    if (editor.cursor < editor.len) {
+        const back = editor.len - editor.cursor;
+        try out_w.interface.print("\x1b[{d}D", .{back});
+    }
+    try out_w.interface.flush();
 }
 
 /// Dispatches a `/cmd [args]` line to the internal WASM tool `cmd_<cmd>` and
@@ -2307,6 +2492,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/message");
         const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, target, "/api/chat/messages");
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/chat/rooms");
+        const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/send");
+        const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/chat/subscribe");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/stats");
         if (is_webui and !cfg.modules.webui) {
             respond(stream, 404, "Not Found", "{\"error\":\"webui module disabled\"}");
@@ -2314,7 +2501,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"error\":\"a2a module disabled\"}");
         } else if (is_notify and !cfg.modules.peers) {
             respond(stream, 404, "Not Found", "{\"error\":\"peers module disabled\"}");
-        } else if ((is_chat_message or is_chat_messages or is_chat_rooms) and !cfg.modules.chatrooms) {
+        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
             respond(stream, 404, "Not Found", "{\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
@@ -2344,6 +2531,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleChatMessages(io, gpa, cfg, target, stream);
         } else if (is_chat_rooms) {
             handleChatRooms(io, gpa, cfg, stream);
+        } else if (is_chat_send) {
+            handleChatSend(io, gpa, cfg, body, stream);
+        } else if (is_chat_subscribe) {
+            handleChatSubscribe(io, gpa, cfg, body, stream);
         } else if (is_stats) {
             handleStats(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, target, "/api/a2a/message")) {
@@ -2474,7 +2665,11 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
             if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
                 const k = pair[0..eq];
                 const v = pair[eq + 1 ..];
-                if (std.mem.eql(u8, k, "room")) room = v;
+                // Decoded, not taken raw: a direct-message room is named
+                // `dm:<a>|<b>`, and both of those characters have to travel
+                // percent-encoded through the query string. Comparing the
+                // encoded form against the stored name matched nothing.
+                if (std.mem.eql(u8, k, "room")) room = percentDecode(arena, v) catch v;
                 if (std.mem.eql(u8, k, "after")) after = std.fmt.parseInt(i64, v, 10) catch 0;
             }
         }
@@ -2513,6 +2708,93 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
 }
+
+/// `POST /api/chat/send` — this instance speaking, as opposed to
+/// `/api/chat/message`, which is the inbound endpoint peers post to. The
+/// difference matters: sending appends locally *and* fans the message out to
+/// every configured peer, while the inbound path deliberately refuses rooms
+/// this instance has not joined.
+fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatSendBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const text = parsed.text orelse "";
+    if (text.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
+        return;
+    }
+    if (text.len > chatrooms.max_text_len) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text too long\"}");
+        return;
+    }
+    // Speaking in a room implies belonging to it. Without this a direct
+    // message would be silently dropped by `append`, which only logs rooms
+    // this instance has joined — and a DM room has no reason to exist in the
+    // config before someone opens it.
+    if (!chatrooms.isSubscribed(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room)) {
+        chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, true) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not join room\"}");
+            return;
+        };
+    }
+    const msg = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, room, text) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
+        return;
+    };
+    var buf: [8 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("id") catch return;
+    s.write(msg.id) catch return;
+    s.objectField("ts") catch return;
+    s.write(msg.ts) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// `POST /api/chat/subscribe` — join or leave a room, so the web UI can open a
+/// direct message that no config file has ever mentioned.
+fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatSubscribeBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, parsed.on) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+const ChatSendBody = struct {
+    room: ?[]const u8 = null,
+    text: ?[]const u8 = null,
+};
+
+const ChatSubscribeBody = struct {
+    room: ?[]const u8 = null,
+    on: bool = true,
+};
 
 /// GET /api/chat/rooms — room stats + this instance's subscriptions.
 fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {

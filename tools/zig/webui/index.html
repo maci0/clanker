@@ -1931,6 +1931,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   var instanceName = "";
   var knownPeers = [];
+  var subscribedRooms = [];
   var chatPoll = null;
   var chatLastTs = 0;
   var chatSeen = {};
@@ -1989,6 +1990,7 @@ document.addEventListener("DOMContentLoaded", function () {
         return r.json();
       })
       .then(function (data) {
+        subscribedRooms = data.subscribed || [];
         var wanted = renderChatRooms(data.rooms || []);
         if (wanted) return openChatRoom(wanted);
       })
@@ -2008,7 +2010,27 @@ document.addEventListener("DOMContentLoaded", function () {
     el.chatText.disabled = false;
     el.chatSend.disabled = false;
     el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
-    return pollChat(room).then(function () { startChatPoll(room); });
+    return joinIfNeeded(room)
+      .then(function () { return pollChat(room); })
+      .then(function () { startChatPoll(room); });
+  }
+
+  /* A peer's message is only logged for rooms this instance has joined, so
+     opening a DM has to join it — otherwise the first reply would arrive at a
+     room the receiving side is refusing, and the conversation would look
+     one-sided from both ends. */
+  function joinIfNeeded(room) {
+    if (subscribedRooms.indexOf(room) !== -1) return Promise.resolve();
+    return fetch("/api/chat/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ room: room, on: true })
+    }).then(function (r) {
+      if (r.ok) subscribedRooms.push(room);
+    }).catch(function () {
+      // Reading still works unsubscribed; only inbound delivery is affected,
+      // and the next Refresh retries the join.
+    });
   }
 
   /* Fetches only what arrived after the newest message already shown. The id
@@ -2102,16 +2124,14 @@ document.addEventListener("DOMContentLoaded", function () {
     var room = el.chatRoom.value;
     if (!text || !room) return;
     el.chatSend.disabled = true;
-    fetch("/api/chat/message", {
+    // /api/chat/send, not /api/chat/message: the latter is the inbound
+    // endpoint peers post to, which only logs rooms this instance has already
+    // joined. Sending appends locally and fans out to every peer, and joins
+    // the room first when it is one this instance has not been in before.
+    fetch("/api/chat/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room: room,
-        from: instanceName || "webui",
-        text: text,
-        // Room timestamps are whole seconds, matching what peers write.
-        ts: Math.floor(Date.now() / 1000)
-      })
+      body: JSON.stringify({ room: room, text: text })
     }).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       el.chatText.value = "";
