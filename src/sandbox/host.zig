@@ -513,7 +513,7 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    if (!std.mem.startsWith(u8, path, "/v1.")) {
+    if (!std.mem.startsWith(u8, path, "/v1.") or std.mem.indexOfAny(u8, path, "\r\n") != null) {
         log.log(.warn, "[docker] path denied: '{s}'", .{path});
         return Err.denied;
     }
