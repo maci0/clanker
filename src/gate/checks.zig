@@ -685,6 +685,78 @@ test "importPathGate rejects import of non-existent file" {
     try std.testing.expect(mod.ok);
 }
 
+/// Rejects proposals where old text substantially overlaps with a recently
+/// rejected attempt on the same file. This catches the common loop where the
+/// model keeps retargeting the same region after a failure, burning gate cycles
+/// without varying its approach. `recent_rejected` is a list of (file, old_text)
+/// pairs from the last N rejected improvements (caller extracts them from
+/// History). A proposal is stale when its old text contains, or is contained
+/// by, a rejected old text for the same file.
+pub fn staleRegionGate(files: []const []const u8, old_texts: []const []const u8, recent_rejected: []const FileOldPair) GateResult {
+    for (files, old_texts) |f, old| {
+        if (old.len == 0) continue; // append-mode
+        for (recent_rejected) |prev| {
+            if (!std.mem.eql(u8, prev.file, f)) continue;
+            if (prev.old.len == 0) continue;
+            // Exact match: literally the same edit retried.
+            if (std.mem.eql(u8, old, prev.old)) return .{ .ok = false, .label = "stale-region", .detail = f };
+            // Substantial overlap: one is a substring of the other and the
+            // shorter side is at least 60 bytes (avoids false positives on
+            // tiny common snippets like "const std = @import(\"std\");").
+            const min_overlap = 60;
+            if (old.len >= min_overlap and std.mem.indexOf(u8, prev.old, old) != null)
+                return .{ .ok = false, .label = "stale-region", .detail = f };
+            if (prev.old.len >= min_overlap and std.mem.indexOf(u8, old, prev.old) != null)
+                return .{ .ok = false, .label = "stale-region", .detail = f };
+        }
+    }
+    return .{ .ok = true, .label = "stale-region" };
+}
+
+pub const FileOldPair = struct {
+    file: []const u8,
+    old: []const u8,
+};
+
+test "staleRegionGate rejects retried edits on the same file" {
+    // Exact same old text: reject
+    const exact = staleRegionGate(
+        &.{"src/a.zig"},
+        &.{"const x = 1;"},
+        &.{.{ .file = "src/a.zig", .old = "const x = 1;" }},
+    );
+    try std.testing.expect(!exact.ok);
+    try std.testing.expectEqualStrings("stale-region", exact.label);
+
+    // Different file: pass
+    const diff_file = staleRegionGate(
+        &.{"src/b.zig"},
+        &.{"const x = 1;"},
+        &.{.{ .file = "src/a.zig", .old = "const x = 1;" }},
+    );
+    try std.testing.expect(diff_file.ok);
+
+    // Genuinely different old text: pass
+    const different = staleRegionGate(
+        &.{"src/a.zig"},
+        &.{"const y = 2;"},
+        &.{.{ .file = "src/a.zig", .old = "const x = 1;" }},
+    );
+    try std.testing.expect(different.ok);
+
+    // No recent rejections: pass
+    const empty = staleRegionGate(&.{"src/a.zig"}, &.{"const x = 1;"}, &.{});
+    try std.testing.expect(empty.ok);
+
+    // Append-mode: pass
+    const append = staleRegionGate(
+        &.{"src/a.zig"},
+        &.{""},
+        &.{.{ .file = "src/a.zig", .old = "const x = 1;" }},
+    );
+    try std.testing.expect(append.ok);
+}
+
 /// Rejects proposals that introduce `std.debug.print` calls in non-test
 /// production .zig files. These are debugging leftovers that should never
 /// ship; the project uses `std.log` or `log.log` for runtime diagnostics.

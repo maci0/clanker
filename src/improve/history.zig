@@ -306,6 +306,35 @@ pub const History = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// (file, old_text) pairs from the last `max_entries` rejected attempts,
+    /// for the stale-region gate. Only rejected entries carry useful signal:
+    /// an accepted edit landing again is caught by `alreadyAccepted`, and a
+    /// failed attempt's old text is what the model should stop retargeting.
+    pub fn recentRejectedEdits(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const RecentEdit {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var out: std.ArrayList(RecentEdit) = .empty;
+        for (entries[start..]) |e| {
+            if (!std.mem.eql(u8, e.status, "rejected")) continue;
+            // The history log does not store old texts verbatim (only
+            // fingerprints), so we reconstruct from the snapshot: read the
+            // snapshotted file and the live file, diff is implicit. For now
+            // we store the file names so the gate can at least match on file.
+            // A future improvement could persist old texts in the log.
+            for (e.files) |f| {
+                try out.append(arena, .{ .file = f, .old = e.detail });
+            }
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    pub const RecentEdit = struct {
+        file: []const u8,
+        old: []const u8,
+    };
+
     /// Every file touched by the last `max_entries` attempts.
     ///
     /// These are the files most likely to change again, and a file that
