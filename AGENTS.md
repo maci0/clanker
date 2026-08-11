@@ -6,7 +6,8 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 ## Build & test
 
-- `zig build` — build the `clanker` harness (native, x86_64-linux-musl).
+- `zig build` — build the `clanker` harness for the host (musl ABI on linux).
+  Cross-compile with `-Dtarget=`, e.g. `-Dtarget=x86_64-linux-musl`.
 - `zig build tools` — compile `tools/zig/*.zig` to `zig-out/tools/*.wasm`.
 - `zig build test` — run unit + integration tests. All tests must pass before
   any change is accepted. Tests live in `test` blocks inside the source files;
