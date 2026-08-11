@@ -1286,6 +1286,67 @@ function addToolEvent(turn, names) {
   return row;
 }
 
+/* A streaming run called ask_user: the server sent an `ask` control event
+   and is now holding the run until POST /api/ask answers it or the server's
+   ask timeout fires. One button per option, grouped and labelled with the
+   question so focusing a button announces both. Focus moves to the first
+   option because the run is blocked — there is nothing else on the page the
+   user can usefully do first. */
+function addAskEvent(turn, evt) {
+  if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
+  var row = document.createElement("div");
+  row.className = "event-ask";
+  var q = document.createElement("div");
+  q.className = "ask-question";
+  q.textContent = evt.question || "";
+  row.appendChild(q);
+  var group = document.createElement("div");
+  group.className = "ask-options";
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", evt.question || "Choose an option");
+  evt.options.forEach(function (opt) {
+    if (typeof opt !== "string") return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary";
+    btn.textContent = opt;
+    btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
+    group.appendChild(btn);
+  });
+  row.appendChild(group);
+  turn.events.appendChild(row);
+  var first = group.querySelector("button");
+  if (first) first.focus();
+}
+
+function answerAsk(row, id, opt) {
+  var buttons = row.querySelectorAll("button");
+  for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+  fetch("/api/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: id, answer: opt })
+  }).then(readJson).then(function () {
+    settleAsk(row, "→ " + opt);
+  }).catch(function (err) {
+    // The run may have stopped waiting (timeout, or somebody else answered);
+    // re-enabled buttons would pretend otherwise, so the row settles with
+    // the refusal instead.
+    settleAsk(row, "[" + (err && err.message ? err.message : "the run is no longer waiting for an answer") + "]");
+  });
+}
+
+/* Answered or refused, the question is settled: the buttons go away and the
+   outcome stays in the transcript where the question was. */
+function settleAsk(row, text) {
+  var group = row.querySelector(".ask-options");
+  if (group) group.remove();
+  var done = document.createElement("div");
+  done.className = "ask-answered";
+  done.textContent = text;
+  row.appendChild(done);
+}
+
 function settleLastToolEvent(turn, ms) {
   var rows = turn.events.querySelectorAll(".event-tool");
   if (rows.length === 0) return;
@@ -1577,6 +1638,7 @@ el.form.addEventListener("submit", function (e) {
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
       if (evt.type === "tool_call") addToolEvent(turn, evt.names);
       else if (evt.type === "tool_result") settleLastToolEvent(turn, evt.ms);
+      else if (evt.type === "ask") addAskEvent(turn, evt);
       else if (evt.type === "error") appendText(turn, "\n[" + evt.message + "]\n", true);
       else if (evt.type === "done") {
         renderStats(turn, evt, task);

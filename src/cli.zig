@@ -2820,6 +2820,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(gpa, stream, body);
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
+            handleAsk(gpa, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
@@ -3368,6 +3370,152 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
 fn runStreamToolResult(ms: u64) void {
     const fd = run_stream_socket orelse return;
     writeStreamEvent(fd, "tool_result", .{ .ms = ms });
+}
+
+// ---- ask bridge: ask_user over the /api/run stream ------------------------
+//
+// The REPL answers ask_user at the terminal; a streaming web run answers it
+// through the browser. The question travels down the run's own stream as an
+// `ask` control event, the run's connection thread blocks here, and
+// `POST /api/ask` (a different connection, hence a different thread) delivers
+// the pick and wakes it. Nothing is allocated to hold a pending question:
+// a question exists only while a connection thread is blocked inside
+// serveAsk, and those threads are capped at max_connection_threads, so a
+// fixed table of that many slots can never be too small.
+
+/// One question a streaming run has put to the browser and is blocked on.
+const PendingAsk = struct {
+    /// 0 marks a free slot; live ids start at 1 and are never reused, so a
+    /// stale POST cannot answer a later question by accident.
+    id: u64 = 0,
+    /// The options offered, borrowed from the asking thread's call frame.
+    /// Valid for exactly as long as the entry is registered: serveAsk blocks
+    /// until it frees the slot, and its caller keeps the memory alive while
+    /// it blocks.
+    options: []const []const u8 = &.{},
+    /// The picked option, duped with the server gpa on the answering thread.
+    /// Ownership passes to the waiter, which returns it to ckAsk (who frees).
+    answer: ?[]u8 = null,
+    /// Distinguishes "answered" from a timeout when the waiter wakes.
+    answered: bool = false,
+};
+
+// pthread primitives via std.c rather than std.Io.Mutex/Condition: AskFn is
+// a bare function pointer, so serveAsk has no `Io` to wait through — and the
+// Io condition has no timed wait, which the bounded block below cannot do
+// without. Both types' zero-default is their static initializer.
+var ask_mutex: std.c.pthread_mutex_t = .{};
+var ask_cond: std.c.pthread_cond_t = .{};
+var ask_slots: [max_connection_threads]PendingAsk = @splat(.{});
+var ask_next_id: u64 = 1;
+
+/// Nanoseconds serveAsk waits for the browser before giving up. Set from
+/// agent.ask_timeout_seconds when a streaming run starts; a global rather
+/// than a parameter because AskFn is a bare function pointer.
+var serve_ask_timeout_ns: u64 = 120 * std.time.ns_per_s;
+
+/// Registers a question and returns its id, or null when every slot is taken
+/// (only possible when every connection thread is already blocked on an ask).
+fn askRegister(options: []const []const u8) ?u64 {
+    _ = std.c.pthread_mutex_lock(&ask_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&ask_mutex);
+    for (&ask_slots) |*slot| {
+        if (slot.id != 0) continue;
+        const id = ask_next_id;
+        ask_next_id += 1;
+        slot.* = .{ .id = id, .options = options };
+        return id;
+    }
+    return null;
+}
+
+const AskResolve = enum { ok, not_found, bad_option, out_of_memory };
+
+/// Delivers the browser's answer to the waiting run. The answer must match
+/// one of the offered options byte for byte — anything else is refused, so a
+/// hand-written request cannot inject free text into a tool that promised
+/// the model a multiple-choice pick.
+fn askResolve(gpa: std.mem.Allocator, id: u64, answer: []const u8) AskResolve {
+    _ = std.c.pthread_mutex_lock(&ask_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&ask_mutex);
+    for (&ask_slots) |*slot| {
+        if (slot.id != id) continue;
+        if (slot.answered) return .not_found;
+        for (slot.options) |opt| {
+            if (std.mem.eql(u8, opt, answer)) {
+                slot.answer = gpa.dupe(u8, opt) catch return .out_of_memory;
+                slot.answered = true;
+                _ = std.c.pthread_cond_broadcast(&ask_cond);
+                return .ok;
+            }
+        }
+        return .bad_option;
+    }
+    return .not_found;
+}
+
+/// Blocks until the ask is answered or `timeout_ns` passes; either way the
+/// slot is freed before returning, so a late POST gets not_found instead of
+/// writing into a question nobody is waiting on. Returns the gpa-owned
+/// answer, or null on timeout.
+fn askAwait(id: u64, timeout_ns: u64) ?[]u8 {
+    _ = std.c.pthread_mutex_lock(&ask_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&ask_mutex);
+    const slot = for (&ask_slots) |*s| {
+        if (s.id == id) break s;
+    } else return null;
+    // pthread_cond_timedwait takes an absolute CLOCK_REALTIME deadline, so a
+    // broadcast that wakes this waiter without answering it (or a spurious
+    // wakeup) re-waits on what is left of the budget for free.
+    var now: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.REALTIME, &now);
+    const deadline_total = @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec)) + timeout_ns;
+    const deadline: std.c.timespec = .{
+        .sec = @intCast(deadline_total / std.time.ns_per_s),
+        .nsec = @intCast(deadline_total % std.time.ns_per_s),
+    };
+    while (!slot.answered) {
+        if (std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline) == .TIMEDOUT) break;
+    }
+    const answer = if (slot.answered) slot.answer else null;
+    slot.* = .{};
+    return answer;
+}
+
+/// The serve-side AskFn: forwards ask_user's question to the browser as an
+/// `ask` control event on the run's own stream, then blocks this connection
+/// thread until POST /api/ask delivers a pick or the timeout fires. On
+/// timeout it returns error.NoUser, which ckAsk maps to the same "nobody
+/// attached" answer a headless run gets — a closed tab degrades to the model
+/// deciding for itself rather than hanging the run forever.
+fn serveAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
+    const fd = run_stream_socket orelse return error.NoUser;
+    const id = askRegister(options) orelse return error.NoUser;
+    writeStreamEvent(fd, "ask", .{ .id = id, .question = question, .options = options });
+    return askAwait(id, serve_ask_timeout_ns) orelse error.NoUser;
+}
+
+const AskAnswerBody = struct { id: u64 = 0, answer: []const u8 = "" };
+
+/// `POST /api/ask` answers a question a streaming run raised through
+/// ask_user (see serveAsk). Body: {"id": n, "answer": "<one of the options>"}.
+fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const req = std.json.parseFromSliceLeaky(AskAnswerBody, arena_state.allocator(), body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        return;
+    };
+    if (req.id == 0 or req.answer.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing id or answer\"}");
+        return;
+    }
+    switch (askResolve(gpa, req.id, req.answer)) {
+        .ok => respond(stream, 200, "OK", "{\"ok\":true}"),
+        .not_found => respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such pending question (already answered, timed out, or never existed)\"}"),
+        .bad_option => respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"answer must be one of the offered options\"}"),
+        .out_of_memory => respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}"),
+    }
 }
 
 /// Renders the web UI by calling the internal `webui` WASM tool and serves the
@@ -3983,7 +4131,6 @@ fn handleBoard(
     const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, out, " \t\r\n"), "{\"ok\":false")) 400 else 200;
     respond(stream, status, if (status == 200) "OK" else "Bad Request", out);
 }
-
 
 const goals_path = "state/goals.json";
 
@@ -4785,6 +4932,12 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         rawhttp.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
+        // With a browser on the other end of this stream, ask_user has
+        // somebody to ask: the question goes down as an `ask` control event
+        // and the answer comes back through POST /api/ask. Streaming runs
+        // only — without the stream there is no channel to carry a question.
+        serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
+        a.ask_fn = &serveAsk;
         a.on_token = &runStreamDelta;
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
@@ -5301,6 +5454,50 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqual(@as(usize, 2), b64DecodedLen("aGk="));
     try std.testing.expectEqual(@as(usize, 5), b64DecodedLen("aGVsbG8="));
     try std.testing.expectEqual(@as(usize, 0), b64DecodedLen(""));
+}
+
+test "an ask accepts only its own options and hands the pick to the waiter" {
+    const gpa = std.testing.allocator;
+    const options = [_][]const u8{ "red", "green" };
+    const id = askRegister(&options) orelse return error.TestUnexpectedResult;
+
+    try std.testing.expectEqual(AskResolve.bad_option, askResolve(gpa, id, "blue"));
+    try std.testing.expectEqual(AskResolve.not_found, askResolve(gpa, id + 999, "red"));
+    try std.testing.expectEqual(AskResolve.ok, askResolve(gpa, id, "red"));
+    // Already answered: a second POST must not overwrite the first pick.
+    try std.testing.expectEqual(AskResolve.not_found, askResolve(gpa, id, "green"));
+
+    const answer = askAwait(id, 0) orelse return error.TestUnexpectedResult;
+    defer gpa.free(answer);
+    try std.testing.expectEqualStrings("red", answer);
+    // The slot was freed on the way out; a late answer has nothing to hit.
+    try std.testing.expectEqual(AskResolve.not_found, askResolve(gpa, id, "red"));
+}
+
+test "an unanswered ask times out, frees its slot, and reports no answer" {
+    const options = [_][]const u8{ "a", "b" };
+    const id = askRegister(&options) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(askAwait(id, 1) == null);
+    try std.testing.expectEqual(AskResolve.not_found, askResolve(std.testing.allocator, id, "a"));
+}
+
+test "the browser's answer crosses threads to the waiting run" {
+    const gpa = std.testing.allocator;
+    const options = [_][]const u8{ "ship it", "hold" };
+    const id = askRegister(&options) orelse return error.TestUnexpectedResult;
+
+    const answerer = try std.Thread.spawn(.{}, struct {
+        fn answer(alloc: std.mem.Allocator, ask_id: u64) void {
+            _ = askResolve(alloc, ask_id, "hold");
+        }
+    }.answer, .{ gpa, id });
+    defer answerer.join();
+
+    // Whichever side runs first, `answered` persists until the waiter reads
+    // it, so this cannot race into a lost wakeup.
+    const answer = askAwait(id, 10 * std.time.ns_per_s) orelse return error.TestUnexpectedResult;
+    defer gpa.free(answer);
+    try std.testing.expectEqualStrings("hold", answer);
 }
 
 test "sessionListJSON carries each conversation's byte weight" {

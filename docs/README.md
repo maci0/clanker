@@ -452,6 +452,7 @@ Fields:
   - `max_total_tokens`: total token budget across the run.
   - `tools_dir`: directory containing `.tool.json` descriptors.
   - `sandbox_root`: base directory for file operations in tools.
+  - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120).
 - `peers`: list of peer agents with `name` and `url`.
 - `instance`: identity of this agent.
 - `notify`: default topic for notifications.
@@ -471,6 +472,7 @@ Fields:
 | `/api/notify` | POST | Receive a notification (JSON) |
 | `/api/a2a/message` | POST | A2A message handler |
 | `/api/run` | POST | Run an agent task and return the response |
+| `/api/ask` | POST | Answer an `ask` event a streaming run raised via `ask_user` |
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
 
@@ -486,6 +488,8 @@ With `"stream": true`, the response body is `text/plain` and framed line-by-line
 ...plain answer text streams here, unprefixed...
 \x01{"type":"done","prompt_tokens":8437,"completion_tokens":185,"cost":0.0281,"ms":10763}
 ```
+
+With `"stream": true` the run can also ask: when the agent calls `ask_user`, an `{"type":"ask","id":n,"question":"...","options":[...]}` event goes down the stream and the run blocks until `POST /api/ask` with `{"id": n, "answer": "<one of the options>"}` resolves it — any other answer is refused with 400. An unanswered question times out after `agent.ask_timeout_seconds` (default 120) and the tool gets the same "nobody attached" answer a headless run gets, so a closed tab degrades to the model deciding for itself.
 
 `error` events (`{"type":"error","message":"..."}`) can appear instead of `done` if the run fails mid-stream. A client must buffer on `\n` and only treat a *complete* line starting with `0x01` as an event — a naive per-chunk check can split an event across two reads. The web UI's line splitter (`tools/zig/webui/index.html`) is the reference implementation.
 
