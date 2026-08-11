@@ -1064,6 +1064,39 @@ test "an edit already accepted is recognised, a different one is not" {
     try std.testing.expect(!try hist.alreadyAccepted(arena, &.{refused}));
 }
 
+test "restoreFilesCount reports how many files were actually restored" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    tmp.dir.createDirPath(io, "src") catch {};
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/exists.zig", .data = "original" });
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try hist.snapshot("rc-1", &.{ "src/exists.zig", "src/missing.zig" });
+
+    // Overwrite the file so restore has something to revert.
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/exists.zig", .data = "modified" });
+
+    // Only 1 of 2 files can be restored (missing.zig was never snapshotted).
+    const count = hist.restoreFilesCount("rc-1", &.{ "src/exists.zig", "src/missing.zig" });
+    try std.testing.expectEqual(@as(usize, 1), count);
+
+    // The restorable file was actually restored.
+    const content = try tmp.dir.readFileAlloc(io, "src/exists.zig", gpa, .limited(1 << 16));
+    defer gpa.free(content);
+    try std.testing.expectEqualStrings("original", content);
+}
+
 test "snapshot silently skips a file that does not exist yet" {
     var gpa_state = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa_state.deinit();
