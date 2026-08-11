@@ -4618,6 +4618,15 @@ function paletteEntries() {
       renderBoard(board);
     } });
   });
+  (goalState.val || []).forEach(function (g) {
+    var label = (g.objective || g.id || "goal").slice(0, 96);
+    var st = g.status ? " · " + g.status : "";
+    out.push({ kind: "goal", label: label + st, run: function () { showView("goals", true); } });
+  });
+  allTools.forEach(function (t) {
+    var label = t.name + (t.description ? "  ·  " + t.description.slice(0, 80) : "");
+    out.push({ kind: "tool", label: label, run: function () { showView("tools", true); showToolDetail(t); } });
+  });
   return out;
 }
 
