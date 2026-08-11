@@ -888,14 +888,6 @@ function createTurn(task) {
   turn.className = "turn";
 
   // The stratum's index, set in the margin against the depth rule.
-  // The layer's lithology band, drawn in the gutter beside the depth rule.
-  // Kind is set as the turn resolves: model-only until a tool runs, failed if
-  // it did not hold.
-  var band = document.createElement("span");
-  band.className = "turn-band hatch-model";
-  band.setAttribute("aria-hidden", "true");
-  turn.appendChild(band);
-
   var depth = document.createElement("span");
   depth.className = "turn-depth";
   depth.textContent = String(el.transcript.querySelectorAll(".turn").length + 1);
@@ -1276,8 +1268,6 @@ function buildCodeBlock(lang, code) {
 }
 
 function addToolEvent(turn, names) {
-  var band = turn.root.querySelector(".turn-band");
-  if (band) band.className = "turn-band hatch-tool";
   var row = document.createElement("div");
   row.className = "event-tool";
   var spin = document.createElement("span");
@@ -1319,8 +1309,6 @@ function renderStats(turn, stats, task) {
   var failed = turn.answer.querySelector(".failed") !== null ||
     turn.answer.textContent.indexOf("[stopped]") !== -1 ||
     turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
-  var band = turn.root.querySelector(".turn-band");
-  if (failed && band) band.className = "turn-band hatch-fail";
   var held = document.createElement("span");
   held.className = "turn-held";
   held.setAttribute("data-held", String(!failed));

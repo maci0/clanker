@@ -147,23 +147,6 @@
   --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
 }
 
-/* Lithology hatching. A stratum's kind is drawn, not merely coloured, so the
-   distinction survives greyscale, colour blindness and forced-colors. Each is
-   a repeating line pattern at a different angle and pitch, the way a log
-   legend distinguishes sand from silt from shale. */
-.hatch-model {
-  background-image: repeating-linear-gradient(45deg,
-    var(--accent-dim) 0 2px, transparent 2px 7px);
-}
-.hatch-tool {
-  background-image: repeating-linear-gradient(-45deg,
-    color-mix(in srgb, var(--fg-muted) 22%, transparent) 0 1px, transparent 1px 6px);
-}
-.hatch-fail {
-  background-image: repeating-linear-gradient(90deg,
-    color-mix(in srgb, var(--danger) 30%, transparent) 0 2px, transparent 2px 5px);
-}
-
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -334,35 +317,13 @@ main { flex: 1; width: 100%; max-width: 84rem; margin: 0 auto; padding: var(--sp
 
 /* The stratum's own band, hatched by what the layer is made of. Drawn in the
    gutter beside the depth rule so the column reads as a logged core. */
-.turn-band {
-  position: absolute;
-  left: calc(var(--gutter) - 1.1rem);
-  top: 0;
-  bottom: 0;
-  width: 0.7rem;
-  border-left: 1px solid var(--rule);
-  border-right: 1px solid var(--rule);
-}
 
 /* The key, shown once, without which hatching is texture rather than
    lithology. */
 /* The key. Set in the text face like the prose it is, and laid out so no item
    can orphan: below 30rem it stacks rather than wrapping mid-row. */
-.legend {
-  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
-  margin: 0 0 var(--space-4) var(--gutter);
-  font-family: var(--sans); font-size: var(--step-0);
-  color: var(--fg-muted);
-}
 @media (max-width: 30rem) {
-  .legend { margin-left: var(--space-4); }
-  .legend-item { flex: 1 0 100%; }
-}
-.legend-item { display: inline-flex; align-items: center; gap: var(--space-2); }
-.legend-swatch {
-  width: 1.1rem; height: 0.9rem;
-  border: 1px solid var(--rule);
-}
+    }
 .turn-events:empty { display: none; margin: 0; }
 .event-tool {
   font-family: var(--mono); font-size: var(--step-0); color: var(--accent);

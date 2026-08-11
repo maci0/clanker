@@ -299,12 +299,11 @@ fn writeGraph(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !v
     if (g.run_id.len == 0 or std.mem.indexOfAny(u8, g.run_id, "/\\") != null)
         return lib.fail(out, "run_id must be non-empty and contain no path separators");
 
-    var buf: [1 << 20]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    var enc: std.Io.Writer.Allocating = .init(alloc);
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.write(g);
 
     const path = try std.fmt.allocPrint(alloc, "state/runs/{s}.json", .{g.run_id});
-    lib.fsWrite(path, buf[0..w.end]) catch |err| return lib.failErr(out, err, "writing the run graph");
+    lib.fsWrite(path, enc.written()) catch |err| return lib.failErr(out, err, "writing the run graph");
     try out.writeAll("{\"ok\":true}");
 }

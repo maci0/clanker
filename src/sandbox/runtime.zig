@@ -488,6 +488,56 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
     try std.testing.expect(std.mem.indexOf(u8, out2, "\"calls\":1") != null);
 }
 
+test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read host fns)" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/cmd_graph.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const run_id = "test-run-cmd-graph-roundtrip";
+    const path = "state/runs/" ++ run_id ++ ".json";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{"state/runs/"},
+        .environ_map = &env_map,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const write_in =
+        \\{"write":{"run_id":"test-run-cmd-graph-roundtrip","task":"t","provider":"p",
+        \\"started_at":1,"duration_ms":5,"total_prompt_tokens":10,"total_completion_tokens":2,
+        \\"nodes":[{"kind":"tool","iteration":1,"label":"gate","ok":true,"result_bytes":3}]}}
+    ;
+    const write_out = try mod.executeTool(write_in);
+    defer std.testing.allocator.free(write_out);
+    try std.testing.expect(std.mem.indexOf(u8, write_out, "\"ok\":true") != null);
+
+    // A run_id crossing a path boundary must be rejected, not silently escape
+    // state/runs/.
+    const bad_out = try mod.executeTool("{\"write\":{\"run_id\":\"../escape\"}}");
+    defer std.testing.allocator.free(bad_out);
+    try std.testing.expect(std.mem.indexOf(u8, bad_out, "\"ok\":false") != null);
+
+    const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod2.deinit();
+    const read_out = try mod2.executeTool("{\"args\":\"" ++ run_id ++ "\"}");
+    defer std.testing.allocator.free(read_out);
+    try std.testing.expect(std.mem.indexOf(u8, read_out, run_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_out, "tool gate  3 B") != null);
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
