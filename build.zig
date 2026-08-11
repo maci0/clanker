@@ -3,14 +3,22 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
-    // zwasm links libc; the host glibc's crt1.o emits .sframe sections that
-    // this lld cannot relocate, so the native harness targets Zig's bundled
-    // musl libc instead.
-    const exe_target = b.resolveTargetQuery(.{
-        .cpu_arch = .x86_64,
-        .os_tag = .linux,
-        .abi = .musl,
-    });
+    // The host, with one adjustment: zwasm links libc, and on a glibc host the
+    // crt1.o carries SFrame relocations this lld cannot resolve, so linux
+    // builds against Zig's bundled musl instead. Shared by the harness and the
+    // tests — they want the same thing, and drift between them is what made
+    // `zig build test` unrunnable off x86_64-linux once before.
+    const host = b.graph.host.result;
+    const native_query: std.Target.Query = if (host.os.tag == .linux)
+        .{ .cpu_arch = host.cpu.arch, .os_tag = .linux, .abi = .musl }
+    else
+        .{};
+
+    // The harness defaults to the machine building it. This was a hard
+    // x86_64-linux-musl pin, so every other host produced a binary it could
+    // not execute — `./zig-out/bin/clanker` died with an exec format error on
+    // an arm64 mac. `-Dtarget=` still cross-compiles for release builds.
+    const exe_target = b.standardTargetOptions(.{ .default_target = native_query });
 
     // zwasm: pure-Zig WebAssembly runtime used for the tool sandbox.
     const zwasm_dep = b.dependency("zwasm", .{});
@@ -38,16 +46,10 @@ pub fn build(b: *std.Build) void {
 
     // ------------------------------------------------------------------ tests
     // Tests run on the host's own architecture, so `zig build test` works on any
-    // dev machine rather than only an x86_64 linux one. On linux they keep the
-    // musl ABI: the glibc crt1.o that the host target would pull in carries
-    // SFrame relocations lld cannot resolve, which is the same problem the
-    // shipped binary's musl pin exists to avoid. Same architecture as the host
-    // either way, so the binary still runs here.
-    const host = b.graph.host.result;
-    const test_target = if (host.os.tag == .linux)
-        b.resolveTargetQuery(.{ .cpu_arch = host.cpu.arch, .os_tag = .linux, .abi = .musl })
-    else
-        b.graph.host;
+    // dev machine rather than only an x86_64 linux one. Deliberately not
+    // `exe_target`: a `-Dtarget=` cross-compile would produce a test binary the
+    // build runner cannot execute.
+    const test_target = b.resolveTargetQuery(native_query);
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = test_target,
