@@ -6,8 +6,8 @@
 //!                          room: {"room","from","text","ts","id"}
 //!   - chatrooms-sub.json   runtime subscription overrides: {"rooms":[...]}
 //!                          (merged with config.json "chatrooms"."rooms")
-//!   - chatrooms-cursor.json  last ts injected into the agent inbox, so a run
-//!                          only surfaces messages the clanker hasn't seen yet
+//!   - chatrooms-cursor.json  last message injected into the agent inbox, so a
+//!                          run only surfaces messages not seen yet
 //!
 //! Sending fans the message out to every configured peer's
 //! POST /api/chat/message; each peer appends it only when it subscribes to
@@ -43,6 +43,15 @@ pub const RoomInfo = struct {
     last_ts: i64 = 0,
     last_from: []const u8 = "",
     last_text: []const u8 = "",
+};
+
+/// Durable inbox position. Message identity is the primary cursor because
+/// timestamps are supplied by independent peers and are neither unique nor
+/// monotonic. `ts` remains as a recovery cursor for legacy state and for when
+/// bounded history trimming has removed the referenced message.
+pub const Cursor = struct {
+    id: []const u8 = "",
+    ts: i64 = 0,
 };
 
 fn subPath(arena: std.mem.Allocator, state_dir: []const u8, name: []const u8) ![]const u8 {
@@ -416,38 +425,46 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 
 // ------------------------------------------------------------- agent inbox --
 
-/// Newest-first messages across all rooms with ts > `since`, capped.
-pub fn readNew(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, since: i64) ![]Message {
+/// Oldest-first messages after `cursor`, capped. Returning the oldest pending
+/// batch is essential: advancing a cursor after a newest-first capped batch
+/// permanently skipped every older pending message.
+pub fn readNew(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cursor: Cursor) ![]Message {
     _ = gpa;
     const path = subPath(arena, state_dir, log_path) catch return &[_]Message{};
     const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return &[_]Message{};
     var all: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &all);
+    var start: usize = 0;
+    var found_id = false;
+    if (cursor.id.len > 0) {
+        for (all.items, 0..) |m, i| {
+            if (std.mem.eql(u8, m.id, cursor.id)) {
+                start = i + 1;
+                found_id = true;
+            }
+        }
+    }
+
     var out: std.ArrayList(Message) = .empty;
-    var i = all.items.len;
-    while (i > 0) {
-        i -= 1;
-        const m = all.items[i];
-        if (m.ts <= since) continue;
+    for (all.items[start..]) |m| {
+        // Timestamp fallback supports the old {"ts":...} cursor and recovers
+        // if retention trimmed away the id. Once the id is found, log order is
+        // authoritative even when peer clocks move backwards.
+        if (!found_id and m.ts <= cursor.ts) continue;
         try out.append(arena, m);
         if (out.items.len >= inbox_limit) break;
     }
     return out.toOwnedSlice(arena);
 }
 
-pub fn readCursor(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8) i64 {
-    const path = subPath(arena, state_dir, cursor_path) catch return 0;
-    const raw = base.readFileAlloc(io, path, arena, .limited(4096)) catch return 0;
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return 0;
-    if (parsed == .object) {
-        if (parsed.object.get("ts")) |t| {
-            if (t == .integer) return t.integer;
-        }
-    }
-    return 0;
+pub fn readCursor(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8) Cursor {
+    const path = subPath(arena, state_dir, cursor_path) catch return .{};
+    const raw = base.readFileAlloc(io, path, arena, .limited(4096)) catch return .{};
+    const parsed = std.json.parseFromSliceLeaky(Cursor, arena, raw, .{ .ignore_unknown_fields = true }) catch return .{};
+    return parsed;
 }
 
-pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_dir: []const u8, ts: i64) void {
+pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_dir: []const u8, msg: Message) void {
     _ = gpa;
     if (state_dir.len > 0) base.createDirPath(io, state_dir) catch return;
     var path_buf: [512]u8 = undefined;
@@ -455,8 +472,12 @@ pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_d
         cursor_path
     else
         std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ state_dir, cursor_path }) catch return;
-    var buf: [128]u8 = undefined;
-    const body = std.fmt.bufPrint(&buf, "{{\"ts\":{d}}}\n", .{ts}) catch return;
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.write(Cursor{ .id = msg.id, .ts = msg.ts }) catch return;
+    w.writeByte('\n') catch return;
+    const body = buf[0..w.end];
     base.writeFile(io, .{ .sub_path = path, .data = body }) catch return;
 }
 
@@ -514,8 +535,45 @@ test "append + readHistory + listRooms round-trip" {
     try std.testing.expectEqual(@as(usize, 2), rooms[0].messages);
     try std.testing.expectEqualStrings("other", rooms[0].last_from);
 
-    const fresh = try readNew(tmp.dir, io, std.testing.allocator, arena, "", 1000);
+    const fresh = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{ .ts = 1000 });
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
+}
+
+test "inbox cursor drains a capped same-timestamp burst without loss" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var cfg = config_mod.Config{};
+    cfg.chatrooms.max_history = 100;
+
+    var i: usize = 0;
+    while (i < inbox_limit + 2) : (i += 1) {
+        const id = try std.fmt.allocPrint(arena, "burst-{d}", .{i});
+        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+            .room = "dev",
+            .from = "peer",
+            .text = "burst",
+            .ts = 1000,
+            .id = id,
+        });
+    }
+
+    const first = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{});
+    try std.testing.expectEqual(@as(usize, inbox_limit), first.len);
+    try std.testing.expectEqualStrings("burst-0", first[0].id);
+    const second = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{
+        .id = first[first.len - 1].id,
+        .ts = first[first.len - 1].ts,
+    });
+    try std.testing.expectEqual(@as(usize, 2), second.len);
+    try std.testing.expectEqualStrings("burst-5", second[0].id);
+    try std.testing.expectEqualStrings("burst-6", second[1].id);
 }
 
 test "subscribe on/off round-trip" {

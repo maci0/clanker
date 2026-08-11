@@ -412,15 +412,13 @@ pub const Agent = struct {
         // so a subscribed clanker actually notices what its peers said.
         if (self.cfg.modules.chatrooms and self.cfg.chatrooms.on) {
             const state_dir = self.cfg.agent.state_dir;
-            const since = chatrooms.readCursor(std.Io.Dir.cwd(), self.ctx.io, self.arena, state_dir);
-            const inbox = chatrooms.readNew(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, self.arena, state_dir, since) catch &[_]chatrooms.Message{};
+            const cursor = chatrooms.readCursor(std.Io.Dir.cwd(), self.ctx.io, self.arena, state_dir);
+            const inbox = chatrooms.readNew(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, self.arena, state_dir, cursor) catch &[_]chatrooms.Message{};
             if (inbox.len > 0) {
                 var chat_buf: std.ArrayList(u8) = .empty;
                 defer chat_buf.deinit(self.ctx.gpa);
                 try chat_buf.appendSlice(self.ctx.gpa, "[chatroom inbox]\n");
-                var latest: i64 = since;
                 for (inbox) |m| {
-                    if (m.ts > latest) latest = m.ts;
                     const preview = if (m.text.len > 300) m.text[0..300] else m.text;
                     const line = try std.fmt.allocPrint(self.ctx.gpa, "- [{s}] {s}: \"{s}\"\n", .{ m.room, m.from, preview });
                     defer self.ctx.gpa.free(line);
@@ -429,7 +427,7 @@ pub const Agent = struct {
                 const text = try self.arena.dupe(u8, chat_buf.items);
                 if (text.len > 0) {
                     try messages.append(self.arena, .{ .role = .user, .content = text });
-                    chatrooms.writeCursor(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, state_dir, latest);
+                    chatrooms.writeCursor(std.Io.Dir.cwd(), self.ctx.io, self.ctx.gpa, state_dir, inbox[inbox.len - 1]);
                 }
             }
         }
