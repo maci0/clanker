@@ -3577,6 +3577,7 @@ fn pluginAssetType(file: []const u8) ?[]const u8 {
     // bytes and writes them through verbatim, so nothing else has to change;
     // the page's CSP allows img-src 'self'.
     if (std.mem.eql(u8, file, "sprites.png")) return "image/png";
+    if (std.mem.eql(u8, file, "characters.png")) return "image/png";
     return null;
 }
 
@@ -3584,6 +3585,7 @@ test pluginAssetType {
     try std.testing.expect(pluginAssetType("app.js") != null);
     try std.testing.expect(pluginAssetType("app.css") != null);
     try std.testing.expectEqualStrings("image/png", pluginAssetType("sprites.png").?);
+    try std.testing.expectEqualStrings("image/png", pluginAssetType("characters.png").?);
     try std.testing.expect(pluginAssetType("plugin.json") == null);
     try std.testing.expect(pluginAssetType("../app.js") == null);
     try std.testing.expect(pluginAssetType("secrets.env") == null);

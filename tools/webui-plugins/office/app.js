@@ -165,9 +165,19 @@ clanker.registerView({
     SHEET.onload = function () { sheetReady = true; dirty = true; };
     SHEET.src = "/webui/plugins/office/sprites.png";
 
+    /* Characters come from a second CC0 pack, because neither pack has both
+       halves: this one has animated people and no office, Kenney's has the
+       office and only static figures. Two rows of seven 24x24 frames, frame 0
+       idle and 1-6 a run cycle, so an avatar walking actually walks. */
+    var CHARS = new Image();
+    var charsReady = false;
+    var CH = 24, CH_FRAMES = 7, CH_ROWS = 2;
+    CHARS.onload = function () { charsReady = true; dirty = true; };
+    CHARS.src = "/webui/plugins/office/characters.png";
+
     var TS = 16;
     // Tile picks, by grid coordinate on the sheet.
-    var S_FLOOR = [11, 0];
+    var S_FLOOR = [9, 4];
     var S_WALL = [18, 2];
     var S_BOARD = [13, 12];
     var S_WHITEBOARD = [9, 14];
@@ -192,6 +202,27 @@ clanker.registerView({
 
     function spriteFor(name) {
       return S_AGENTS[hashString(name) % S_AGENTS.length];
+    }
+
+    /* Draws a walking character. `phase` advances only while moving, so a
+       standing avatar holds its idle frame instead of jogging on the spot. */
+    function character(name, dx, dy, moving, phase, facing) {
+      if (!charsReady) return false;
+      var row = hashString(name) % CH_ROWS;
+      var frame = moving ? 1 + (Math.floor(phase * 10) % (CH_FRAMES - 1)) : 0;
+      var w = CH * (TILE / 16) * 0.75;
+      var h = CH * (TILE / 16) * 0.75;
+      ctx2d.save();
+      if (facing < 0) {
+        // The sheet only faces one way; the other is the same frame mirrored.
+        ctx2d.translate(dx + w, dy);
+        ctx2d.scale(-1, 1);
+        ctx2d.drawImage(CHARS, frame * CH, row * CH, CH, CH, 0, 0, w, h);
+      } else {
+        ctx2d.drawImage(CHARS, frame * CH, row * CH, CH, CH, dx, dy, w, h);
+      }
+      ctx2d.restore();
+      return true;
     }
 
     /* ---------- drawing ----------
@@ -270,25 +301,37 @@ clanker.registerView({
       if (janitor.present && o.isFirst) drawJanitor(ox, oy, ink);
     }
 
-    /* Mop first, then the man: the handle leans the way he is walking. */
+    /* The man, then his mop: the handle leans the way he is walking, and it
+       has to sit in front of him or it reads as a stick growing out of his
+       back. Sized off the sprite, not the tile, so it stays in his hands. */
     function drawJanitor(ox, oy, ink) {
       var px = ox + janitor.x * TILE;
       var py = oy + janitor.y * TILE;
-      ctx2d.strokeStyle = cssVar("--fg-muted", "#666");
-      ctx2d.lineWidth = 1;
-      ctx2d.beginPath();
-      ctx2d.moveTo(px + 8 + janitor.dir * 5, py + 14);
-      ctx2d.lineTo(px + 8 + janitor.dir * 2, py + 3);
-      ctx2d.stroke();
-      ctx2d.fillStyle = cssVar("--ok", "#7aa");
-      ctx2d.fillRect(px + 4 + janitor.dir * 5, py + 13, 8, 3); // mop head
-      if (!tile(S_JANITOR, px, py)) {
+      janitor.phase = (janitor.phase || 0) + 0.016;
+      var drawn = character("janitor", px, py - 8, true, janitor.phase, janitor.dir);
+      if (!drawn && !tile(S_JANITOR, px, py)) {
         ctx2d.fillStyle = cssVar("--warn", "#e8c34a");
         ctx2d.fillRect(px + 4, py + 2, 8, 12);
         ctx2d.fillStyle = ink;
         ctx2d.fillRect(px + 6, py + 4, 2, 2);
         ctx2d.fillRect(px + 10, py + 4, 2, 2);
       }
+      var cx = drawn ? px + 18 : px + 8;      // centre of whichever figure ran
+      var foot = drawn ? py + 26 : py + 14;
+      var hand = drawn ? py + 6 : py + 3;
+      // Stepped in 2px blocks rather than stroked: a smooth antialiased
+      // diagonal is the one thing on this floor that is not pixel art.
+      ctx2d.fillStyle = cssVar("--fg-muted", "#666");
+      var x0 = cx + janitor.dir * 17, x1 = cx + janitor.dir * 6;
+      for (var s = 0; s <= 12; s++) {
+        var t = s / 12;
+        ctx2d.fillRect(
+          Math.round((x0 + (x1 - x0) * t) / 2) * 2,
+          Math.round((foot + (hand - foot) * t) / 2) * 2,
+          2, 2);
+      }
+      ctx2d.fillStyle = cssVar("--ok", "#7aa");
+      ctx2d.fillRect(cx + janitor.dir * 17 - 5, foot - 2, 10, 4); // mop head
       if (janitor.quip && offices.length > 0) bubble(px, py, janitor.quip, ox, offices[0].layout.w);
     }
 
@@ -379,7 +422,10 @@ clanker.registerView({
     function drawAgent(a, ox, oy, ink, o_width) {
       var px = ox + a.x * TILE;
       var py = oy + a.y * TILE;
-      if (!tile(spriteFor(a.name), px, py)) {
+      var walking = !!a.walk;
+      if (character(a.name, px, py - 4, walking, a.phase || 0, a.facing || 1)) {
+        // drawn
+      } else if (!tile(spriteFor(a.name), px, py)) {
         ctx2d.fillStyle = agentColor(a.name);
         ctx2d.fillRect(px + 4, py + 2, 8, 12);
         ctx2d.fillStyle = ink;
@@ -569,6 +615,8 @@ clanker.registerView({
           } else {
             a.x += (dx / dist) * speed;
             a.y += (dy / dist) * speed;
+            a.phase = (a.phase || 0) + dt;
+            if (Math.abs(dx) > 0.01) a.facing = dx > 0 ? 1 : -1;
           }
         });
       });
