@@ -19,42 +19,36 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
     const reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
 
+    // One line in, one line out, and the read must return as soon as a line
+    // arrives. readSliceShort here was a deadlock: it blocks until it fills its
+    // buffer or sees EOF, so a client that writes one request and waits for the
+    // response (which is every interactive MCP client) hung forever, and the
+    // server only worked when fed a large batch or a closed pipe.
+    const read_buf = try gpa.alloc(u8, max_line);
+    defer gpa.free(read_buf);
     var stdin_file = std.Io.File.stdin();
-    var read_buf: [65536]u8 = undefined;
-    var reader = stdin_file.reader(io, &read_buf);
-
-    var acc: std.ArrayList(u8) = .empty;
-    defer acc.deinit(gpa);
-    var tmp: [8192]u8 = undefined;
+    var reader = stdin_file.reader(io, read_buf);
 
     while (true) {
-        const n = reader.interface.readSliceShort(&tmp) catch |e| {
-            log.log(.error_, "mcp stdin read error: {s}", .{@errorName(e)});
-            break;
+        const raw = reader.interface.takeDelimiter('\n') catch |e| switch (e) {
+            // A line longer than the buffer cannot be parsed, so drop what is
+            // held and resync on the next newline rather than spinning on a
+            // stream state the reader deliberately left unmodified.
+            error.StreamTooLong => {
+                reader.interface.toss(reader.interface.buffered().len);
+                continue;
+            },
+            error.ReadFailed => {
+                log.log(.error_, "mcp stdin read error: {s}", .{@errorName(e)});
+                break;
+            },
+        } orelse break; // stdin EOF
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        log.log(.debug, "mcp handling line: {s}", .{line});
+        handleLine(io, gpa, cfg, environ_map, &reg, tool_defs, line) catch |err| {
+            log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
         };
-        log.log(.debug, "mcp read {d} bytes", .{n});
-        if (n == 0) break; // stdin EOF
-        acc.appendSlice(gpa, tmp[0..n]) catch break;
-        if (acc.items.len > max_line) {
-            acc.clearRetainingCapacity();
-            continue;
-        }
-        while (std.mem.indexOfScalar(u8, acc.items, '\n')) |nl| {
-            const line = std.mem.trim(u8, acc.items[0..nl], " \t\r");
-            if (line.len > 0) {
-                // Handle the line *before* shifting the buffer: `line` is a
-                // view into acc.items, and the copyForwards below overwrites
-                // its start, so parsing after the shift would see corrupted
-                // data (every line except the last failed to parse).
-                log.log(.debug, "mcp handling line: {s}", .{line});
-                handleLine(io, gpa, cfg, environ_map, &reg, tool_defs, line) catch |err| {
-                    log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
-                };
-            }
-            const rest = acc.items[nl + 1 ..];
-            std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
-            acc.items.len = rest.len;
-        }
     }
 }
 

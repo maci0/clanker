@@ -2749,21 +2749,21 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"error\":\"token_stats module disabled\"}");
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/webui"))) {
-            handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), stream);
+            handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van.js")) {
-            respondJs(gpa, stream, webui_vendor_van, &gzip_van, acceptsGzip(headers_raw));
+            respondJs(gpa, stream, webui_vendor_van, &gzip_van, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/van-ui.js")) {
-            respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw));
+            respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, target, "/webui/app.css") or std.mem.eql(u8, target, "/webui/app.js") or
                 std.mem.eql(u8, target, "/webui/van-boot.js")))
         {
             // Same tool, same comptime size guard, one file per language.
-            handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
+            handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/d3-dag.min.js")) {
-            respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw));
+            respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/webui/vendor/hljs.min.js")) {
-            respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw));
+            respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, target, "/api/status")) {
@@ -3481,6 +3481,7 @@ fn handleWebuiAsset(
     environ_map: *std.process.Environ.Map,
     target: []const u8,
     accepts_gzip: bool,
+    headers_raw: []const u8,
     stream: std.Io.net.Stream,
 ) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -3494,26 +3495,37 @@ fn handleWebuiAsset(
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
+    // These are compiled into the binary and change with every rebuild, so
+    // they cannot carry a far-future cache lifetime — but re-sending the same
+    // 187 KB of script on every single page load when nothing changed is the
+    // other extreme. ETag lets a returning visitor confirm "still current" in
+    // a bodyless 304 instead of paying for either side's mistake.
+    var etag_buf: [16]u8 = undefined;
+    const etag = etagFor(&etag_buf, body);
+    if (ifNoneMatchHits(headers_raw, etag)) {
+        var hbuf: [256]u8 = undefined;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{etag}) catch return;
+        rawhttp.writeAllFd(stream.socket.handle, hdr);
+        return;
+    }
     // 187 KB of script over a connection that closes afterwards is the single
     // largest cost of a first draw; compressed it is a fifth of that.
     const gzipped = if (accepts_gzip) gzipCached(gpa, gz, body) else null;
     const out = gzipped orelse body;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
-    // no-store for the same reason the page has it: these are compiled into
-    // the binary and change with every rebuild.
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ content_type, out.len, encoding, etag }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
 
-fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, accepts_gzip: bool, headers_raw: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, "/", &render_page, stream) orelse return;
-    respondHtmlGz(gpa, stream, body, accepts_gzip);
+    respondHtmlGz(gpa, stream, body, accepts_gzip, headers_raw);
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -4981,12 +4993,26 @@ const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self'; styl
 /// The page, compressed when the client will take it. This is the response
 /// that blocks the first draw, so the 21 KB it used to send uncompressed was
 /// paid before anything could be painted.
-fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, accepts_gzip: bool) void {
+///
+/// `no-store` meant refetching and recompressing that same body on every
+/// single visit, even seconds apart, since the page cannot be cached at all.
+/// ETag lets an unchanged reload confirm freshness with a 304 instead of a
+/// full response, while still picking up a rebuild immediately: the hash is
+/// taken from the actual served body, which hot-reload replaces process-wide.
+fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, accepts_gzip: bool, headers_raw: []const u8) void {
+    var etag_buf: [16]u8 = undefined;
+    const etag = etagFor(&etag_buf, body);
+    if (ifNoneMatchHits(headers_raw, etag)) {
+        var hbuf: [256]u8 = undefined;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{etag}) catch return;
+        rawhttp.writeAllFd(stream.socket.handle, hdr);
+        return;
+    }
     const gzipped = if (accepts_gzip) gzipCached(gpa, &gzip_page, body) else null;
     const out = gzipped orelse body;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{ out.len, encoding, webui_csp }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", .{ out.len, encoding, etag, webui_csp }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
@@ -5093,17 +5119,28 @@ fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8) ?[]const u8 {
     return dest[0..out.end];
 }
 
-/// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). These
-/// never change without a rebuild, so they get a long, immutable cache
-/// lifetime instead of the no-cache posture of the rest of the API, and are
+/// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). They are
 /// gzipped when the client asks — they are the two largest bodies this server
 /// sends, and the page is routinely opened from another machine on the LAN.
-fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool) void {
+///
+/// Cached for an hour and revalidated by ETag after that, rather than the
+/// `immutable, max-age=31536000` this used to send: that path is not content-
+/// hashed, so a vendored library upgrade would have left a returning browser
+/// serving the old file, unvalidated, for up to a year.
+fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool, headers_raw: []const u8) void {
+    var etag_buf: [16]u8 = undefined;
+    const etag = etagFor(&etag_buf, body);
+    if (ifNoneMatchHits(headers_raw, etag)) {
+        var hbuf: [256]u8 = undefined;
+        const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nConnection: close\r\n\r\n", .{etag}) catch return;
+        rawhttp.writeAllFd(stream.socket.handle, hdr);
+        return;
+    }
     var hbuf: [4096]u8 = undefined;
     const gzipped = if (accepts_gzip) gzipCached(gpa, cache, body) else null;
     const out = gzipped orelse body;
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: public, max-age=31536000, immutable\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: public, max-age=3600, must-revalidate\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding, etag }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
@@ -5128,6 +5165,34 @@ test "acceptsGzip only matches the header's own line" {
     try std.testing.expect(!acceptsGzip("GET /gzip.js HTTP/1.1\r\nHost: x\r\n"));
     try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, zstd\r\n"));
     try std.testing.expect(!acceptsGzip(""));
+}
+
+/// A weak content hash formatted as a quoted ETag value. Cheap enough (CRC32
+/// over at most ~200 KB) to compute fresh per request instead of caching it:
+/// it is orders of magnitude faster than the gzip pass already paid for above.
+fn etagFor(buf: []u8, body: []const u8) []const u8 {
+    return std.fmt.bufPrint(buf, "\"{x}\"", .{std.hash.Crc32.hash(body)}) catch unreachable;
+}
+
+/// True when the request's If-None-Match lists this exact ETag, meaning the
+/// client already has this body cached and a 304 can skip resending it.
+fn ifNoneMatchHits(headers_raw: []const u8, etag: []const u8) bool {
+    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
+    while (lines.next()) |line| {
+        if (!std.ascii.startsWithIgnoreCase(line, "if-none-match:")) continue;
+        var values = std.mem.tokenizeAny(u8, line["if-none-match:".len..], " ,");
+        while (values.next()) |v| {
+            if (std.mem.eql(u8, v, etag)) return true;
+        }
+    }
+    return false;
+}
+
+test "ifNoneMatchHits matches only its own header line and exact value" {
+    try std.testing.expect(ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"abc\", \"def\"\r\n", "\"def\""));
+    try std.testing.expect(!ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"abc\"\r\n", "\"def\""));
+    try std.testing.expect(!ifNoneMatchHits("GET /x HTTP/1.1\r\nHost: If-None-Match: \"def\"\r\n", "\"def\""));
+    try std.testing.expect(!ifNoneMatchHits("", "\"def\""));
 }
 
 // -------------------------------------------------------------- phonebook --
