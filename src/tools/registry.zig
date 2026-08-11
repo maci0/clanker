@@ -142,7 +142,9 @@ pub const Registry = struct {
 
         var dir = base.openDir(io, tools_dir, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => {
-                log.log(.warn, "tools dir '{s}' not found; run `zig build tools`", .{tools_dir});
+                // Wrong/missing path is a config problem (agent.tools_dir), not a
+                // missing guest rebuild — `zig build tools` only fills zig-out/tools.
+                log.log(.warn, "tools dir '{s}' not found; check agent.tools_dir (expected a directory of *.tool.json manifests)", .{tools_dir});
                 return reg;
             },
             else => return err,
@@ -801,6 +803,26 @@ test "a descriptor schema always reaches the provider with a type" {
     ;
     const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(b.input_schema == .object);
+}
+
+test "a missing tools_dir yields an empty registry without error" {
+    // Wrong path is a soft miss (warn + empty), not a hard fail — serve and
+    // doctor both load this way. The log must not sole-blame zig build tools;
+    // that phrasing is asserted by source grep in the change's verification.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const reg = try Registry.load(io, arena, tmp.dir, "no-such-tools-dir");
+    try std.testing.expectEqual(@as(usize, 0), reg.tools.count());
+    try std.testing.expect(reg.get("webui") == null);
 }
 
 test "every shipped manifest carries a schema the provider accepts" {
