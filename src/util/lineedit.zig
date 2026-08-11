@@ -32,6 +32,9 @@ pub const Key = union(enum) {
     kill_to_start,
     kill_word,
     clear_screen,
+    /// Bracketed-paste delimiters; the caller owns the paste-mode flag.
+    paste_start,
+    paste_end,
     interrupt,
     eof,
     /// A byte sequence this editor has no meaning for.
@@ -73,8 +76,24 @@ fn decodeEscape(buf: []const u8) ?Decoded {
         'D' => .{ .key = .left, .len = 3 },
         'H' => .{ .key = .home, .len = 3 },
         'F' => .{ .key = .end, .len = 3 },
+        // Bracketed paste wraps a pasted block in ESC [ 200 ~ and
+        // ESC [ 201 ~. Recognize both so the caller can toggle paste mode.
+        '2' => {
+            if (buf.len < 4) return null;
+            if (buf[3] == '~') return .{ .key = .ignored, .len = 4 };
+            if (buf[3] != '0') return .{ .key = .ignored, .len = 4 };
+            if (buf.len < 5) return null;
+            if (buf[4] != '0' and buf[4] != '1') return .{ .key = .ignored, .len = 5 };
+            if (buf.len < 6) return null;
+            if (buf[5] != '~') return .{ .key = .ignored, .len = 6 };
+            return switch (buf[4]) {
+                '0' => .{ .key = .paste_start, .len = 6 },
+                '1' => .{ .key = .paste_end, .len = 6 },
+                else => unreachable,
+            };
+        },
         // "ESC [ <n> ~": Home/End/Delete on the other common encoding.
-        '1'...'8' => {
+        '1', '3'...'8' => {
             if (buf.len < 4) return null;
             if (buf[3] != '~') return .{ .key = .ignored, .len = 4 };
             return switch (buf[2]) {
@@ -209,7 +228,7 @@ pub const Editor = struct {
                 }
             },
             .enter => return true,
-            .clear_screen, .interrupt, .eof, .ignored => return false,
+            .clear_screen, .paste_start, .paste_end, .interrupt, .eof, .ignored => return false,
         }
         return false;
     }
@@ -353,6 +372,19 @@ test "kill_word skips tabs as whitespace" {
     try std.testing.expectEqualStrings("hello\t\t", ed.line());
     _ = ed.apply(.kill_word);
     try std.testing.expectEqualStrings("", ed.line());
+}
+
+test "decode recognizes bracketed paste markers" {
+    const start = decode("\x1b[200~").?;
+    try std.testing.expectEqual(Key.paste_start, start.key);
+    try std.testing.expectEqual(@as(usize, 6), start.len);
+
+    const end = decode("\x1b[201~").?;
+    try std.testing.expectEqual(Key.paste_end, end.key);
+    try std.testing.expectEqual(@as(usize, 6), end.len);
+
+    // A partial marker consumes nothing, just like other partial escapes.
+    try std.testing.expect(decode("\x1b[20") == null);
 }
 
 test "duplicate consecutive entries are not remembered twice" {
