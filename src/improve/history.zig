@@ -563,3 +563,47 @@ test "records from overlapping runs are all kept" {
     }
     try std.testing.expectEqual(@as(usize, writers * per_writer), kept);
 }
+
+test "recentlyTouched deduplicates files from the recent window and recentSummary renders status lines" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Four attempts: only the last two fall inside the "recent" window.
+    try hist.append("e1", .accepted, "i1", "one", &.{"src/one.zig"}, 0, 1, "", &.{});
+    try hist.append("e2", .accepted, "i2", "two", &.{"src/two.zig"}, 0, 1, "", &.{});
+    try hist.append("e3", .rejected, "i3", "three", &.{ "src/three.zig", "src/one.zig" }, 0, 0, "why not", &.{});
+    try hist.append("e4", .accepted, "i4", "four", &.{ "src/one.zig", "src/four.zig" }, 0, 1, "", &.{});
+
+    {
+        const recent = try hist.recentlyTouched(arena, 2);
+        // Last two entries are e3 and e4: files src/three.zig, src/one.zig,
+        // src/four.zig (src/one.zig appears in both e3 and e4 -> kept once).
+        try std.testing.expectEqual(@as(usize, 3), recent.len);
+        try std.testing.expectEqualStrings("src/three.zig", recent[0]);
+        try std.testing.expectEqualStrings("src/one.zig", recent[1]);
+        try std.testing.expectEqualStrings("src/four.zig", recent[2]);
+    }
+
+    {
+        const summary = try hist.recentSummary(arena, 2);
+        // e3 is rejected and has detail; e4 is accepted.
+        try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected: three") != null);
+        try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
+        try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
+    }
+}
