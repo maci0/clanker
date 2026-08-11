@@ -570,6 +570,9 @@ pub fn gitDenyGuardGate(
 ) GateResult {
     if (files.len != new_texts.len) return .{ .ok = false, .label = "git-deny-guard", .detail = "mismatched files/new_text count" };
     for (files, new_texts) |f, new| {
+        if (std.mem.eql(u8, f, "tools/manifests/git.tool.json")) {
+            return .{ .ok = false, .label = "git-deny-guard", .detail = "proposals must not modify the git tool manifest" };
+        }
         if (!std.mem.eql(u8, f, "config.json") and !std.mem.eql(u8, f, "config.local.json")) continue;
         if (std.mem.indexOf(u8, new, "\"exec_pattern_allow\"") == null) continue;
         var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -662,4 +665,14 @@ fn runZigArgs(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const
     // Ownership: stdout/stderr move into the GateResult; detail aliases stderr.
     const detail: []const u8 = if (ok) "" else if (result.stderr.len > 0) result.stderr else result.stdout;
     return .{ .ok = ok, .label = label, .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
+}
+
+test "gitDenyGuardGate rejects changes to the git tool manifest" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"tools/manifests/git.tool.json"};
+    const new_texts = [_][]const u8{"{}"};
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+    try std.testing.expectEqualStrings("proposals must not modify the git tool manifest", result.detail);
 }
