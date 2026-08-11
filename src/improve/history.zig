@@ -549,6 +549,36 @@ pub const History = struct {
         rejections: u32,
     };
 
+    /// Files from the last `max_entries` rejected attempts, deduplicated.
+    /// Unlike `hotFiles` (which counts across all rejections), this returns
+    /// the set of files that failed most recently — the ones the model
+    /// should cool off from before retrying.
+    pub fn recentlyRejectedFiles(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var out: std.ArrayList([]const u8) = .empty;
+        // Walk backwards so the most recently rejected files come first.
+        var i: usize = entries.len;
+        while (i > start) {
+            i -= 1;
+            const e = entries[i];
+            if (!std.mem.eql(u8, e.status, "rejected")) continue;
+            for (e.files) |f| {
+                var seen = false;
+                for (out.items) |have| {
+                    if (std.mem.eql(u8, have, f)) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen) try out.append(arena, f);
+            }
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// Number of consecutive non-accepted entries at the tail of the
     /// window `entries[start..]`. A streak of 3+ means the model has been
     /// failing repeatedly and should try something fundamentally different.
@@ -692,6 +722,19 @@ pub const History = struct {
             try buf.appendSlice(arena, "\nRecent rejected attempts targeted specific code regions (file + matched text). ");
             try buf.appendSlice(arena, "Proposing a different replacement for the same old text in the same file will be automatically rejected. ");
             try buf.appendSlice(arena, "To fix code in those regions, use a different (larger or shifted) match span, or fix a different file entirely.\n");
+        }
+
+        // Cooldown list: files from the very last rejection should be
+        // avoided entirely for this attempt so the model explores new
+        // targets instead of hammering the same file.
+        const cool = try self.recentlyRejectedFiles(arena, 3);
+        if (cool.len > 0) {
+            try buf.appendSlice(arena, "\nFiles rejected in the last few attempts (cool off — try different files first):\n");
+            for (cool) |cf| {
+                try buf.appendSlice(arena, "- ");
+                try buf.appendSlice(arena, cf);
+                try buf.appendSlice(arena, "\n");
+            }
         }
 
         // Recently accepted changes: list them so the model knows what
@@ -952,6 +995,50 @@ test "partialOverlapRejected detects shared changes with rejected proposals" {
 
     // Lookback window of 0 finds nothing.
     try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{fp_a}, 0));
+}
+
+test "recentlyRejectedFiles returns deduplicated files from recent rejections" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try hist.append("rr1", .accepted, "i", "s", &.{"src/a.zig"}, 0, 1, "", &.{});
+    try hist.append("rr2", .rejected, "i", "s", &.{ "src/b.zig", "src/c.zig" }, 0, 0, "d", &.{});
+    try hist.append("rr3", .rejected, "i", "s", &.{"src/b.zig"}, 0, 0, "d", &.{});
+
+    const files = try hist.recentlyRejectedFiles(arena, 10);
+    // src/b.zig appears in both rejections but should be deduplicated.
+    try std.testing.expectEqual(@as(usize, 2), files.len);
+    // Most recent rejection first.
+    try std.testing.expectEqualStrings("src/b.zig", files[0]);
+    try std.testing.expectEqualStrings("src/c.zig", files[1]);
+
+    // Accepted files are not included.
+    for (files) |f| {
+        try std.testing.expect(!std.mem.eql(u8, f, "src/a.zig"));
+    }
+
+    // Empty history returns empty.
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    var hist2 = History.init(gpa, io, tmp2.dir, "state");
+    defer hist2.deinit();
+    const empty = try hist2.recentlyRejectedFiles(arena, 10);
+    try std.testing.expectEqual(@as(usize, 0), empty.len);
 }
 
 test "recentlyTouchedWithStatus tags files with their attempt status" {
