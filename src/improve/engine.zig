@@ -43,6 +43,24 @@ pub const Options = struct {
 /// for `zig build` + `zig build test` + `zig build tools` to succeed.
 const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "README.md", "build.zig", "build.zig.zon", "config.json" };
 
+/// Text that has to survive in a staged file for the patch to be considered.
+///
+/// The improvement machinery is part of the modifiable surface, which is what
+/// lets clanker improve how it improves itself. The risk that opens is a patch
+/// that quietly removes a gate: it would pass every check today, because the
+/// checks are run by the binary already on disk, and skip them forever after.
+/// These are the load-bearing call sites, asserted against the staged text.
+const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.buildGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.toolsGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.testGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.fmtGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.lintGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
+};
+
 /// Copied into staging when present, so the staged binary can actually run.
 /// Never promoted back: neither path passes validatePath.
 const staging_runtime_files = [_][]const u8{ "config.local.json", ".env" };
@@ -278,6 +296,20 @@ pub const Engine = struct {
         var fmt_auto = try gate_checks.formatFiles(self.ctx.gpa, self.ctx.io, staged_dir, fmt_files_all);
         defer fmt_auto.deinit(self.ctx.gpa);
 
+        // Before spending a compile on it: a patch that dropped a gate from
+        // the improvement machinery would pass every check that follows,
+        // because those checks are run by this binary and not by the patched
+        // one, and then never run again.
+        if (try self.brokenInvariant(staged_dir, proposal.changes)) |bad| {
+            log.log(.warn, "proposal rejected: it removes '{s}' from {s}", .{ bad.needle, bad.file });
+            feedback = try std.fmt.allocPrint(
+                self.arena,
+                "Your patch removed \"{s}\" from {s}. That call is part of the gate every improvement has to pass, including this one. Keep it and re-propose.",
+                .{ bad.needle, bad.file },
+            );
+            return .failed;
+        }
+
         // ---- 5. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
         var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
@@ -483,6 +515,26 @@ pub const Engine = struct {
         }
         if (buf.items.len == 0) return "all gates pass";
         return buf.toOwnedSlice(self.arena);
+    }
+
+    /// The first gate invariant the staged tree no longer satisfies, if any.
+    /// Only files the proposal actually touched are read: everything else is a
+    /// verbatim copy of the tree these invariants already hold in.
+    fn brokenInvariant(
+        self: *Engine,
+        staged_dir: std.Io.Dir,
+        changes: []const proposal_mod.Change,
+    ) !?struct { file: []const u8, needle: []const u8 } {
+        for (gate_invariants) |inv| {
+            var touched = false;
+            for (changes) |c| {
+                if (std.mem.eql(u8, c.file, inv.file)) touched = true;
+            }
+            if (!touched) continue;
+            const data = staged_dir.readFileAlloc(self.ctx.io, inv.file, self.arena, .limited(1 << 22)) catch continue;
+            if (std.mem.indexOf(u8, data, inv.needle) == null) return .{ .file = inv.file, .needle = inv.needle };
+        }
+        return null;
     }
 
     /// Runs the staged tree's own task evals with the staged binary. The
