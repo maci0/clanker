@@ -12,7 +12,7 @@ import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSu
 import { BOARD_COLUMNS as BOARD_COLUMNSMod, boardActionLine as boardActionLineMod, doneColumn as doneColumnMod, blockers as blockersMod, dueState as dueStateMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark } from "./core/search.js";
-import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel } from "./core/composer.js";
+import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText } from "./core/composer.js";
 import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -3477,42 +3477,8 @@ el.sessionCompact.addEventListener("click", function () {
     .then(function () { el.sessionCompact.disabled = false; });
 });
 
-/* One conversation as Markdown. Built from the transcript on screen rather
-   than refetched, so what downloads is what you are looking at. */
-function transcriptMarkdown() {
-  var meta = currentSessionMeta();
-  var lines = ["# " + ((meta && meta.title) || "clanker conversation"), "", "`" + sessionId + "`", ""];
-  var turns = el.transcript.querySelectorAll(".turn");
-  Array.prototype.forEach.call(turns, function (turn) {
-    var task = turn.querySelector(".turn-you");
-    var answer = turn.querySelector(".turn-answer");
-    if (task) {
-      var author = task.querySelector(".turn-author");
-      var said = author ? task.textContent.slice(author.textContent.length) : task.textContent;
-      lines.push("## " + said.trim(), "");
-    }
-    // turn.raw is the markdown as it arrived; textContent is what is left of
-    // it after rendering, which is the fallback for a turn that never had a
-    // buffer (a session replayed before this existed).
-    var body = turn.markdownSource || (answer ? answer.textContent : "");
-    if (body) lines.push(body.replace(/\s+$/, ""), "");
-  });
-  return lines.join("\n");
-}
-
-function downloadText(name, text, mime) {
-  var blob = new Blob([text], { type: mime });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Revoked on the next tick: revoking synchronously races the download in
-  // some browsers and produces an empty file.
-  window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
-}
+function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, currentSessionMeta, sessionId); }
+var downloadText = compDownloadText;
 
 el.sessionExport.addEventListener("click", function () {
   var md = transcriptMarkdown();

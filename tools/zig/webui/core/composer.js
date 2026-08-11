@@ -30,3 +30,32 @@ export function contextLabel(meta, providerCache, modelSelectValue, fmtBytes) {
   var pct = Math.round((meta.bytes / 4) / window_ * 100);
   return fmtBytes(meta.bytes) + " · about " + pct + "% of context";
 }
+
+export function transcriptMarkdown(transcriptEl, currentSessionMeta, sessionId) {
+  var meta = currentSessionMeta();
+  var lines = ["# " + ((meta && meta.title) || "clanker conversation"), "", "`" + sessionId + "`", ""];
+  transcriptEl.querySelectorAll(".turn").forEach(function (turn) {
+    var task = turn.querySelector(".turn-you");
+    var answer = turn.querySelector(".turn-answer");
+    if (task) {
+      var author = task.querySelector(".turn-author");
+      var said = author ? task.textContent.slice(author.textContent.length) : task.textContent;
+      lines.push("## " + said.trim(), "");
+    }
+    var body = turn.markdownSource || (answer ? answer.textContent : "");
+    if (body) lines.push(body.replace(/\s+$/, ""), "");
+  });
+  return lines.join("\n");
+}
+
+export function downloadText(name, text, mime) {
+  var blob = new Blob([text], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+}
