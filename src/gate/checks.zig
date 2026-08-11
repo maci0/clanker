@@ -319,6 +319,122 @@ pub fn whitespaceOnlyGate(old_texts: []const []const u8, new_texts: []const []co
     return .{ .ok = true, .label = "whitespace-only" };
 }
 
+/// Rejects proposals where a changed .zig file would end up with unbalanced
+/// braces, parentheses, or square brackets. Operates on the *new* content
+/// that would be written, so it catches a malformed edit before it lands.
+pub fn bracketBalanceGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, files: []const []const u8, old_texts: []const []const u8, new_texts: []const []const u8) !GateResult {
+    if (files.len != old_texts.len or files.len != new_texts.len)
+        return .{ .ok = false, .label = "bracket-balance", .detail = "mismatched change counts" };
+    for (files, old_texts, new_texts) |f, old, new| {
+        if (!std.mem.endsWith(u8, f, ".zig")) continue;
+        // Build the file content as it would look after applying the change.
+        const content = blk: {
+            if (old.len == 0) {
+                // Append-mode: read existing content and append new.
+                const existing = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch break :blk new;
+                defer gpa.free(existing);
+                const combined = gpa.alloc(u8, existing.len + new.len) catch break :blk new;
+                @memcpy(combined[0..existing.len], existing);
+                @memcpy(combined[existing.len..], new);
+                break :blk combined;
+            }
+            const existing = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch break :blk new;
+            defer gpa.free(existing);
+            if (std.mem.indexOf(u8, existing, old)) |pos| {
+                const combined = gpa.alloc(u8, existing.len - old.len + new.len) catch break :blk new;
+                @memcpy(combined[0..pos], existing[0..pos]);
+                @memcpy(combined[pos..][0..new.len], new);
+                @memcpy(combined[pos + new.len ..], existing[pos + old.len ..]);
+                break :blk combined;
+            }
+            break :blk new;
+        };
+        const must_free = content.ptr != new.ptr;
+        defer if (must_free) gpa.free(@constCast(content));
+        if (!bracketsBalanced(content)) {
+            return .{ .ok = false, .label = "bracket-balance", .detail = f };
+        }
+    }
+    return .{ .ok = true, .label = "bracket-balance" };
+}
+
+fn bracketsBalanced(src: []const u8) bool {
+    var braces: i64 = 0;
+    var parens: i64 = 0;
+    var squares: i64 = 0;
+    var in_line_comment = false;
+    var in_string = false;
+    var i: usize = 0;
+    while (i < src.len) : (i += 1) {
+        const c = src[i];
+        if (c == '\n') {
+            in_line_comment = false;
+            in_string = false;
+            continue;
+        }
+        if (in_line_comment) continue;
+        if (c == '"' and !in_string) {
+            in_string = true;
+            continue;
+        }
+        if (c == '"' and in_string) {
+            in_string = false;
+            continue;
+        }
+        if (in_string) {
+            if (c == '\\' and i + 1 < src.len) i += 1;
+            continue;
+        }
+        if (c == '/' and i + 1 < src.len and src[i + 1] == '/') {
+            in_line_comment = true;
+            continue;
+        }
+        switch (c) {
+            '{' => braces += 1,
+            '}' => braces -= 1,
+            '(' => parens += 1,
+            ')' => parens -= 1,
+            '[' => squares += 1,
+            ']' => squares -= 1,
+            else => {},
+        }
+        if (braces < 0 or parens < 0 or squares < 0) return false;
+    }
+    return braces == 0 and parens == 0 and squares == 0;
+}
+
+test "bracketBalanceGate rejects unbalanced braces in new content" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.zig", .data = "const x = 1;\n" });
+
+    // Balanced replacement: pass
+    const ok = try bracketBalanceGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"}, &.{"fn foo() void {\n    return;\n}"});
+    try std.testing.expect(ok.ok);
+
+    // Unbalanced replacement: fail
+    const bad = try bracketBalanceGate(io, gpa, tmp.dir, &.{"a.zig"}, &.{"const x = 1;"}, &.{"fn foo() void {\n    return;\n"});
+    try std.testing.expect(!bad.ok);
+    try std.testing.expectEqualStrings("bracket-balance", bad.label);
+
+    // Non-zig files are skipped
+    const json_ok = try bracketBalanceGate(io, gpa, tmp.dir, &.{"config.json"}, &.{"old"}, &.{"{unbalanced"});
+    try std.testing.expect(json_ok.ok);
+}
+
+test "bracketsBalanced handles strings and comments" {
+    try std.testing.expect(bracketsBalanced("const s = \"}{\";"));
+    try std.testing.expect(bracketsBalanced("// }\nconst x = 1;"));
+    try std.testing.expect(!bracketsBalanced("const x = {;"));
+    try std.testing.expect(bracketsBalanced("fn f() void {}\n"));
+}
+
 test "whitespaceOnlyGate rejects whitespace-only diffs" {
     // Pure whitespace change: fail
     const ws = whitespaceOnlyGate(&.{"const x = 1;"}, &.{"  const x = 1;  \n"});
