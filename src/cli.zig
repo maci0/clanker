@@ -10,6 +10,7 @@ const registry = @import("tools/registry.zig");
 const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
 const improve = @import("improve/engine.zig");
+const worktree_mod = @import("improve/worktree.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
@@ -2098,14 +2099,64 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     };
     defer lock.release();
 
+    const task = opts.task orelse return error.MissingTask;
+
+    // Isolated in its own git worktree + branch so the loop never touches a
+    // file some other process has open in the shared tree: another
+    // `clanker` command, a human editor, another agent working this same
+    // repo. Running it live against a repo with another active session
+    // caught it mid-edit repeatedly (a transient but real build break each
+    // time) and once for real: both sides proposing content for the same
+    // new file. Falls back to running directly in the current tree (old
+    // behavior) if git or disk can't give us a worktree — degraded, not
+    // blocked. Skipped for --dry-run, which never writes anything anyway.
+    const original_cwd: ?[:0]u8 = if (!opts.dry_run) std.process.currentPathAlloc(io, gpa) catch null else null;
+    defer if (original_cwd) |p| gpa.free(p);
+    var wt: ?worktree_mod.Worktree = null;
+    if (!opts.dry_run and original_cwd != null) {
+        const wt_id = try std.fmt.allocPrint(gpa, "{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+        defer gpa.free(wt_id);
+        if (worktree_mod.create(gpa, io, wt_id)) |created| {
+            wt = created;
+            std.process.setCurrentPath(io, created.path) catch |err| {
+                log.log(.warn, "improve-self: could not switch into the isolated worktree ({s}); running in place", .{@errorName(err)});
+                created.cleanup(gpa, io);
+                wt.?.deinit(gpa);
+                wt = null;
+            };
+        } else |err| {
+            log.log(.warn, "improve-self: could not create an isolated worktree ({s}); running against the shared tree", .{@errorName(err)});
+        }
+    }
+
     if (cfg.improve.max_context_bytes) |n| log.log(.debug, "improve.max_context_bytes = {d} (config override)", .{n});
-    var eng = improve.Engine{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg, .hist = undefined, .instructions = undefined };
-    try eng.run(.{
-        .instructions = opts.task orelse return error.MissingTask,
+    var eng = improve.Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = provider,
+        .cfg = &cfg,
+        .hist = undefined,
+        .instructions = undefined,
+        .worktree = if (wt) |*w| w else null,
+    };
+    const run_result = eng.run(.{
+        .instructions = task,
         .iters = opts.iters,
         .dry_run = opts.dry_run,
         .max_context_bytes = cfg.improve.max_context_bytes,
     });
+
+    // Back to the shared tree (and the worktree dropped) before verifying
+    // gates below: that check has to see the merged-back result in the tree
+    // everyone else works in, not the isolated copy.
+    if (wt) |*w| {
+        if (original_cwd) |p| std.process.setCurrentPath(io, p) catch |err|
+            log.log(.warn, "improve-self: could not switch back out of the isolated worktree: {s}", .{@errorName(err)});
+        w.cleanup(gpa, io);
+        w.deinit(gpa);
+    }
+    try run_result;
+
     // Verify that any applied improvement still passes all deterministic gates
     // (build/test/tools/fmt/lint). In dry-run no changes are written, so skip.
     if (!opts.dry_run) {

@@ -27,6 +27,7 @@ const registry = @import("../tools/registry.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const diskcap = @import("../util/diskcap.zig");
+const worktree_mod = @import("worktree.zig");
 
 pub const Options = struct {
     instructions: []const u8,
@@ -192,6 +193,11 @@ pub const Engine = struct {
     cfg: *const config.Config,
     hist: history_mod.History,
     instructions: []const u8,
+    /// Set when this run is isolated in its own git worktree (the normal
+    /// case — see cmdImproveSelf). Each promotion merges back into the base
+    /// branch through this at the ref level; null runs promote straight
+    /// into whatever tree the process is already in, unisolated.
+    worktree: ?*const worktree_mod.Worktree = null,
 
     pub fn run(self: *Engine, opts: Options) !void {
         log.log(.info, "improve-self: {s}", .{opts.instructions});
@@ -617,6 +623,10 @@ pub const Engine = struct {
         // bisectability work; the state/history snapshot remains the fallback.
         if (self.cfg.agent.git_commit) {
             self.gitCommit(id, proposal.summary, files);
+            if (self.worktree) |wt| {
+                const msg = std.fmt.allocPrint(self.arena, "clanker: {s} [{s}]", .{ proposal.summary, id }) catch proposal.summary;
+                wt.mergeBack(self.ctx.gpa, self.ctx.io, msg);
+            }
         }
         self.notifyPeers("improve", proposal.summary);
 

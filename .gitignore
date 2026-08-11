@@ -10,6 +10,9 @@ tools/ts/build/
 # Runtime state (logs, history, sessions, improvements) — never commit
 state/
 
+# Isolated git worktrees improve-self runs stage themselves in
+.clanker-worktrees/
+
 # User-local configuration (API keys live in env vars anyway)
 config.local.json
 
