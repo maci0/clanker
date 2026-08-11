@@ -229,7 +229,29 @@ pub const Engine = struct {
             }
         }
 
-        // ---- 4. staging ----
+        // ---- 4. reject work already done ----
+        // The gates decide whether a change is correct; none of them asks
+        // whether it is new. A redundant edit builds, tests, formats and lints,
+        // so without this the loop can promote the same edit repeatedly.
+        var fp_list: std.ArrayList(u64) = .empty;
+        defer fp_list.deinit(self.ctx.gpa);
+        for (proposal.changes) |c| {
+            try fp_list.append(self.ctx.gpa, history_mod.History.changeFingerprint(c.file, c.old, c.new));
+        }
+        const fingerprints = fp_list.items;
+        {
+            var dup_arena = std.heap.ArenaAllocator.init(self.ctx.gpa);
+            defer dup_arena.deinit();
+            if (self.hist.alreadyAccepted(dup_arena.allocator(), fingerprints) catch false) {
+                log.log(.warn, "proposal repeats an improvement already accepted; skipping", .{});
+                // Not a failure: nothing went wrong and nothing changed, so
+                // retrying the same attempt would only spend tokens repeating
+                // the refusal.
+                return .no_change;
+            }
+        }
+
+        // ---- 5. staging ----
         const id = try self.newId();
         defer self.ctx.gpa.free(id);
         const staging = try std.fmt.allocPrint(self.ctx.gpa, "state/staging/{s}", .{id});
@@ -259,7 +281,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             // Hand the failure to the next attempt. Without this the retry is
             // blind: it re-proposed the same wrong import three times because
             // nothing ever told it what the compiler said.
@@ -277,7 +299,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             // Hand the failure to the next attempt. Without this the retry is
             // blind: it re-proposed the same wrong import three times because
             // nothing ever told it what the compiler said.
@@ -291,7 +313,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             // Hand the failure to the next attempt. Without this the retry is
             // blind: it re-proposed the same wrong import three times because
             // nothing ever told it what the compiler said.
@@ -307,7 +329,7 @@ pub const Engine = struct {
             const tail = errorTail(self.arena, fmt_check.detail);
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             // Hand the failure to the next attempt. Without this the retry is
             // blind: it re-proposed the same wrong import three times because
             // nothing ever told it what the compiler said.
@@ -320,7 +342,7 @@ pub const Engine = struct {
         if (!lint_check.ok) {
             const tail = errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
             feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
             return .failed;
         }
@@ -344,7 +366,7 @@ pub const Engine = struct {
                 const tail = errorTail(self.arena, cap.detail);
                 log.log(.error_, "staged tree failed its own capability evals:", .{});
                 log.log(.error_, "{s}", .{tail});
-                try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail);
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, changedPaths(self.ctx.gpa, proposal.changes), 0, 0, tail, fingerprints);
                 feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                 return .failed;
             }
@@ -379,7 +401,7 @@ pub const Engine = struct {
         // Post-promotion gate on the live tree.
         const live = try self.gateScore();
         const score_after = live.score / @as(f64, @floatFromInt(@max(live.total, 1)));
-        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "");
+        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints);
 
         log.log(.info, "✓ promoted improvement {s} (gate {d:.2}/{d})", .{ id, live.score, live.total });
         return .accepted;
