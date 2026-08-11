@@ -62,8 +62,7 @@
       "api_key_env": "ANTHROPIC_API_KEY",
       "models": {
         "claude-sonnet-5": {
-          "context_window": 1000000,
-          "temperature": 0.2
+          "context_window": 1000000
         }
       }
     },
