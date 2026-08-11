@@ -736,6 +736,25 @@
   }
   .suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
+  .toasts {
+    position: fixed; left: 50%; bottom: var(--space-5); z-index: 30;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column-reverse; gap: var(--space-2);
+    align-items: center; pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto; max-width: min(40rem, 90vw);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    background: var(--surface); color: var(--fg);
+    font-family: var(--mono); font-size: var(--step-0);
+    box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--bg) 55%, transparent);
+    animation: toast-in 140ms ease-out;
+  }
+  .toast[data-kind="bad"] { border-color: var(--danger); color: var(--danger); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
   .prompt-list {
     margin-top: var(--space-2); max-height: 14rem;
     border: 1px solid var(--border); border-radius: var(--radius);
@@ -905,6 +924,10 @@
 <!-- The conversation list is a place, not a dropdown: every conversation is
      visible at once, grouped by when it was last touched, the way an editor
      shows a file tree. The picker it replaces could only show one row. -->
+<!-- Status messages are written to the sr-only live regions inside each view.
+     Those regions stay the single source of truth; this is the visible view of
+     them, so a sighted user gets the same message a screen reader is read. -->
+<div class="toasts" id="toasts"></div>
 <div class="rail-scrim" id="rail-scrim" data-open="false"></div>
 <aside class="rail" id="rail" aria-label="Conversations">
   <div class="rail-head">
@@ -4329,6 +4352,48 @@ document.addEventListener("DOMContentLoaded", function () {
     el.suggestions.appendChild(b);
   });
 
+
+  /* ---------- status, said out loud and shown ---------- */
+
+  /* Every view writes progress and failures into its own sr-only live region.
+     Fifty call sites did that and none of them were visible: clicking Compact
+     or Export or Save prompt produced no sign anything had happened unless you
+     were using a screen reader. Rather than change fifty call sites and leave
+     the two able to drift, the regions are observed and mirrored here. */
+  var toasts = document.getElementById("toasts");
+
+  function showToast(text) {
+    if (!text) return;
+    var node = document.createElement("p");
+    node.className = "toast";
+    // The word "failed" is the one distinction worth colour: everything else
+    // is progress, and progress does not need to shout.
+    if (/fail|error|could not|refus|denied|no such/i.test(text)) node.setAttribute("data-kind", "bad");
+    node.textContent = text;
+    node.addEventListener("click", function () { node.remove(); });
+    toasts.appendChild(node);
+    while (toasts.children.length > 3) toasts.removeChild(toasts.firstChild);
+    window.setTimeout(function () { node.remove(); }, 5000);
+  }
+
+  if (window.MutationObserver) {
+    var statusObserver = new MutationObserver(function (records) {
+      var seen = {};
+      records.forEach(function (r) {
+        var el0 = r.target.nodeType === 3 ? r.target.parentNode : r.target;
+        if (!el0 || !el0.textContent) return;
+        var text = el0.textContent.trim();
+        // The same message written twice in one tick is one event.
+        if (!text || seen[text]) return;
+        seen[text] = true;
+        showToast(text);
+      });
+    });
+    ["session-status", "run-status", "chat-status", "todos-status", "tools-status", "logs-status"].forEach(function (id) {
+      var node = document.getElementById(id);
+      if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
+    });
+  }
 
   /* ---------- saved prompts ---------- */
 
