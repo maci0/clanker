@@ -60,6 +60,32 @@ pub const RunStats = struct {
     }
 };
 
+/// Warns when a tool's result looks like JSON and is not.
+///
+/// Every tool here answers with a JSON object, and the harness passes that
+/// text to the model untouched. A tool that emits something almost-JSON is
+/// therefore invisible: the model receives a malformed object and does its
+/// best with it, and nothing in the log says the tool was at fault. Two tools
+/// shipped exactly that defect, both from writing a value into a Stringify
+/// with print, which emits raw text and quotes nothing.
+///
+/// Only a warning: a tool is free to answer with plain text, and a false alarm
+/// must not break a run. It fires when the output opens like JSON, which is
+/// the case where the intent is unambiguous.
+fn looksLikeBrokenJson(arena: std.mem.Allocator, out: []const u8) bool {
+    const text = std.mem.trimStart(u8, out, " \t\r\n");
+    if (text.len == 0) return false;
+    if (text[0] != '{' and text[0] != '[') return false;
+    _ = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch return true;
+    return false;
+}
+
+fn warnIfMalformedJson(arena: std.mem.Allocator, name: []const u8, out: []const u8) void {
+    if (looksLikeBrokenJson(arena, out)) {
+        log.log(.warn, "tool '{s}' returned malformed JSON; the model will see it as written", .{name});
+    }
+}
+
 pub const Agent = struct {
     ctx: *client.Ctx,
     arena: std.mem.Allocator,
@@ -1498,6 +1524,7 @@ pub const Agent = struct {
         // tool messages on the sequential path (use-after-free).
         const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
+        warnIfMalformedJson(self.arena, tc.name, owned);
 
         // Run after-transforms on the result (output filtering / post-processing).
         const transformed = self.runChain(tc.name, .after, owned) catch owned;
@@ -1682,6 +1709,10 @@ pub const Agent = struct {
         const owned = try self.arena.dupe(u8, out);
         self.ctx.gpa.free(out);
         log.log(.info, "tool '{s}' -> {d} bytes", .{ tc.name, owned.len });
+        // Every path a tool result can come back on, not just the sequential
+        // one: a check on one of three is a check that fires when it happens
+        // to feel like it.
+        warnIfMalformedJson(self.arena, tc.name, owned);
         return self.runChain(tc.name, .after, owned) catch owned;
     }
 };
@@ -1784,6 +1815,12 @@ const ToolWorker = struct {
         const t1 = std.Io.Timestamp.now(io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ self.tool.name, out.len, ms });
+        // Checked where the result is produced rather than where it is
+        // consumed: the consumers are three different paths, and instrumenting
+        // the two obvious ones missed the one that actually runs.
+        var check_arena = std.heap.ArenaAllocator.init(self.ctx.gpa);
+        defer check_arena.deinit();
+        warnIfMalformedJson(check_arena.allocator(), self.tool.name, out);
         self.out = out;
     }
 };
@@ -2195,4 +2232,22 @@ test "finalAnswer prefers the first non-empty line over trailing prose" {
     const resp = types.ChatResponse{ .message = .{ .role = .assistant, .content = "clanker online\n\nSome trailing explanation that must not replace the answer." } };
     const ans = try agent.finalAnswer(resp);
     try std.testing.expectEqualStrings("clanker online", ans.message.content.?);
+}
+
+test "a tool result that opens like JSON and does not parse is reported" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The exact shape both tools shipped: a value written with print, which
+    // emits raw text and quotes nothing.
+    try std.testing.expect(looksLikeBrokenJson(arena, "{\"ok\":true,\"note\":the file has 125 lines}"));
+    try std.testing.expect(looksLikeBrokenJson(arena, "{\"ok\":true,\"stat\",{\"kind\":\"file\"}}"));
+    try std.testing.expect(looksLikeBrokenJson(arena, "[1,2,"));
+
+    // Valid JSON, and output that never claimed to be JSON, are both fine.
+    try std.testing.expect(!looksLikeBrokenJson(arena, "{\"ok\":true,\"note\":\"past the end\"}"));
+    try std.testing.expect(!looksLikeBrokenJson(arena, "  {\"a\":[1,2,3]}  "));
+    try std.testing.expect(!looksLikeBrokenJson(arena, "plain text answer"));
+    try std.testing.expect(!looksLikeBrokenJson(arena, ""));
 }
