@@ -565,7 +565,7 @@ pub const Config = struct {
             "hot_tools",           "tools_dir",               "skills_dir",
             "system_prompt_file",  "learnings_file",          "state_dir",
             "sandbox_root",        "git_commit",              "seed",
-            "ask_timeout_seconds",
+            "ask_timeout_seconds", "confirm_writes",
         }, "agent");
         if (obj.get("max_iterations")) |k| a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
         if (obj.get("compact_threshold_bytes")) |k| a.compact_threshold_bytes = @intCast(try jsonInt(k, "compact_threshold_bytes"));
@@ -796,6 +796,7 @@ test "confirm_writes parses its three values and rejects anything else" {
         .sub_path = "config.json",
         .data =
         \\{
+        \\  "default_provider": "ollama",
         \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
         \\  "agent": { "confirm_writes": "browser" }
         \\}
@@ -813,6 +814,7 @@ test "confirm_writes parses its three values and rejects anything else" {
         .sub_path = "bad.json",
         .data =
         \\{
+        \\  "default_provider": "ollama",
         \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
         \\  "agent": { "confirm_writes": "sometimes" }
         \\}

@@ -23,6 +23,10 @@ pub fn setLevel(l: Level) void {
     current_level = l;
 }
 
+pub fn getLevel() Level {
+    return current_level;
+}
+
 pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
     if (@intFromEnum(level) < @intFromEnum(current_level)) return;
     const prefix = switch (level) {
