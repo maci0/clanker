@@ -12,6 +12,7 @@ const lib = @import("lib.zig");
 
 const tools_dir = "tools/manifests";
 const state_path = "state/plugins.json";
+const config_state_path = "state/plugin_config.json";
 
 const Transform = struct {
     phase: []const u8 = "",
@@ -26,6 +27,8 @@ const Descriptor = struct {
     enabled: bool = true,
     llm: bool = false,
     transform: ?Transform = null,
+    config: std.json.Value = .{ .null = {} },
+    config_editable: []const []const u8 = &.{},
 };
 
 const Plugin = struct {
@@ -37,6 +40,8 @@ const Plugin = struct {
     llm: bool,
     transform: ?Transform,
     enabled: bool,
+    config: std.json.Value,
+    config_editable: []const []const u8,
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -108,6 +113,15 @@ fn readPlugins(alloc: std.mem.Allocator) ![]Plugin {
         }
     } else |_| {}
 
+    // Machine-local setting overrides, layered the same way the enabled/disabled
+    // lists above are. The registry does this merge natively for execution;
+    // repeating it here is what keeps the listing honest about what a tool is
+    // actually running with, rather than what its descriptor shipped.
+    var overrides: std.json.Value = .{ .null = {} };
+    if (lib.fsRead(config_state_path)) |cfg_raw| {
+        overrides = std.json.parseFromSliceLeaky(std.json.Value, alloc, cfg_raw, .{}) catch .{ .null = {} };
+    } else |_| {}
+
     var out: std.ArrayList(Plugin) = .empty;
     for (names.array.items) |item| {
         if (item != .string) continue;
@@ -131,10 +145,29 @@ fn readPlugins(alloc: std.mem.Allocator) ![]Plugin {
             .llm = d.llm,
             .transform = d.transform,
             .enabled = enabled or core,
+            .config = effectiveConfig(alloc, d, overrides),
+            .config_editable = d.config_editable,
         });
     }
     std.mem.sort(Plugin, out.items, {}, lessByName);
     return out.items;
+}
+
+/// The descriptor's config with any opted-in key replaced by the machine-local
+/// override. Keys the descriptor did not list stay at the shipped value, so a
+/// stale or hand-edited state file cannot reach a tool's structural settings.
+fn effectiveConfig(alloc: std.mem.Allocator, d: Descriptor, overrides: std.json.Value) std.json.Value {
+    if (d.config != .object or d.config_editable.len == 0) return d.config;
+    if (overrides != .object) return d.config;
+    const mine = overrides.object.get(d.name) orelse return d.config;
+    if (mine != .object) return d.config;
+
+    var merged = d.config.object.clone(alloc) catch return d.config;
+    for (d.config_editable) |key| {
+        const v = mine.object.get(key) orelse continue;
+        merged.put(alloc, key, v) catch continue;
+    }
+    return .{ .object = merged };
 }
 
 fn collectNames(alloc: std.mem.Allocator, list: ?std.json.Value, out: *std.ArrayList([]const u8)) !void {
@@ -214,6 +247,20 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
         try s.write(p.enabled);
         try s.objectField("llm");
         try s.write(p.llm);
+        // Only sent when the descriptor opted something in. A plugin with no
+        // tunable settings should not draw an empty settings panel.
+        if (p.config_editable.len > 0 and p.config == .object) {
+            try s.objectField("config_editable");
+            try s.write(p.config_editable);
+            try s.objectField("config");
+            try s.beginObject();
+            for (p.config_editable) |key| {
+                const v = p.config.object.get(key) orelse continue;
+                try s.objectField(key);
+                try s.write(v);
+            }
+            try s.endObject();
+        }
         if (p.transform) |tr| {
             try s.objectField("transform");
             try s.beginObject();

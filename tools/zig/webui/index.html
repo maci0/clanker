@@ -462,6 +462,39 @@
   .tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
   .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
 
+  /* A plugin's own settings, shown only when its descriptor opted some in. */
+  .tool-config { flex-basis: 100%; margin: 0.35rem 0 0.15rem 0; }
+  .tool-config > summary {
+    cursor: pointer; list-style: none; font-family: var(--mono);
+    font-size: var(--step-0); color: var(--fg-muted); padding: 0.15rem 0;
+  }
+  .tool-config > summary::-webkit-details-marker { display: none; }
+  .tool-config > summary::before { content: "▸"; display: inline-block; width: 1em; }
+  .tool-config[open] > summary::before { content: "▾"; }
+  .tool-config > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tool-config-body {
+    margin-left: 1.1rem; padding-left: 0.6rem; border-left: 1px dashed var(--rule);
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; padding-top: 0.35rem;
+  }
+  .tool-field { display: flex; flex-direction: column; gap: 0.2rem; }
+  .tool-field label {
+    margin: 0; font-size: var(--step-0); letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--fg-muted);
+  }
+  .tool-field input {
+    min-height: 32px; min-width: 8rem; padding: 0.2rem 0.5rem;
+    font-family: var(--mono); font-size: var(--step-0);
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .tool-field input:focus { border-color: var(--accent); }
+  .tool-config-save {
+    min-height: 32px; padding: 0.15rem 0.8rem; font-size: var(--step-0); font-weight: 600;
+    font-family: var(--mono); border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
+  }
+  .tool-config-save:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+
   /* ---- goals: what the agent is steering toward ---- */
   .goal {
     border: 1px solid var(--rule); border-radius: var(--radius-lg);
@@ -2608,6 +2641,8 @@ document.addEventListener("DOMContentLoaded", function () {
       row.appendChild(llm);
     }
 
+    if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
+
     var desc = document.createElement("span");
     desc.className = "tool-desc";
     // Descriptions are written for the model and run long; the first sentence
@@ -2619,6 +2654,98 @@ document.addEventListener("DOMContentLoaded", function () {
     row.appendChild(desc);
 
     return row;
+  }
+
+  /* The settings a plugin's descriptor opted in to runtime editing. Only those
+     keys appear: the rest of a config object is the tool's own structure (the
+     chat_* tools select their behaviour with a `op` key), and the server
+     refuses a write to anything unlisted anyway. Collapsed by default so 45
+     rows do not become 45 open forms. */
+  function buildToolConfig(t) {
+    var details = document.createElement("details");
+    details.className = "tool-config";
+
+    var summary = document.createElement("summary");
+    summary.textContent = "settings";
+    details.appendChild(summary);
+
+    var body = document.createElement("div");
+    body.className = "tool-config-body";
+    var inputs = {};
+
+    t.config_editable.forEach(function (key) {
+      var current = (t.config || {})[key];
+      var field = document.createElement("div");
+      field.className = "tool-field";
+
+      var id = "cfg-" + t.name + "-" + key;
+      var label = document.createElement("label");
+      label.setAttribute("for", id);
+      label.textContent = key;
+      field.appendChild(label);
+
+      var input = document.createElement("input");
+      input.id = id;
+      // A number stays a number on the way back: the manifest declares the
+      // type by what it holds, and sending "3" where 3 was expected would
+      // quietly change it.
+      input.type = typeof current === "number" ? "number" : "text";
+      input.value = current === undefined || current === null ? "" : String(current);
+      input.dataset.kind = typeof current;
+      field.appendChild(input);
+      inputs[key] = input;
+
+      body.appendChild(field);
+    });
+
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = "tool-config-save";
+    save.textContent = "Save";
+    save.addEventListener("click", function () { saveToolConfig(t, inputs, save); });
+    body.appendChild(save);
+
+    details.appendChild(body);
+    return details;
+  }
+
+  function saveToolConfig(t, inputs, btn) {
+    var next = {};
+    var bad = null;
+    Object.keys(inputs).forEach(function (key) {
+      var input = inputs[key];
+      if (input.dataset.kind === "number") {
+        var n = Number(input.value);
+        if (input.value.trim() === "" || !isFinite(n)) { bad = key; return; }
+        next[key] = n;
+      } else if (input.dataset.kind === "boolean") {
+        next[key] = input.value.trim().toLowerCase() === "true";
+      } else {
+        next[key] = input.value;
+      }
+    });
+    if (bad) {
+      el.toolsStatus.textContent = t.name + ": " + bad + " must be a number.";
+      return;
+    }
+    btn.disabled = true;
+    fetch("/api/plugins/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: t.name, config: next })
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok || !data.ok) throw new Error(data.error || ("HTTP " + r.status));
+        return data;
+      });
+    }).then(function () {
+      t.config = next;
+      el.toolsStatus.textContent = "Saved settings for " + t.name + ".";
+    }).catch(function (err) {
+      el.toolsStatus.textContent = "Could not save " + t.name + ": " + err.message;
+    }).finally(function () {
+      btn.disabled = false;
+    });
   }
 
   function toggleTool(t, btn) {

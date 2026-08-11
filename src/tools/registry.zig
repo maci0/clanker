@@ -38,6 +38,10 @@ pub const Tool = struct {
     /// `provider` / `model` / `max_tokens` keys, to aim `ck_llm` at a specific
     /// backend; everything else is the plugin's own business.
     config: json.Value = .{ .object = .{} },
+    /// Which `config` keys may be changed at runtime, from the descriptor's
+    /// `config_editable` array. Empty means the plugin exposes no settings:
+    /// the rest of `config` is the tool's own structure, not a control panel.
+    config_editable: []const []const u8 = &.{},
     /// Set when this tool rewrites another tool's input or output.
     transform: ?Transform = null,
     /// This tool answers pass/fail about something (a gate, an eval, a lint).
@@ -57,6 +61,14 @@ pub const Tool = struct {
     /// like an internal tool, but switching it off is the whole point of it.
     pub fn toggleable(self: Tool) bool {
         return !self.internal or self.transform != null;
+    }
+
+    /// True when `key` is one the descriptor opted in to runtime editing.
+    pub fn configKeyEditable(self: *const Tool, key: []const u8) bool {
+        for (self.config_editable) |k| {
+            if (std.mem.eql(u8, k, key)) return true;
+        }
+        return false;
     }
 };
 
@@ -81,6 +93,12 @@ pub const Transform = struct {
 /// Machine-local plugin toggles: `{"disabled": ["web_search"]}`. Lives under
 /// state/ because it is per-checkout runtime state, not project configuration.
 pub const plugins_state_path = "state/plugins.json";
+
+/// Machine-local overrides of per-plugin settings:
+/// `{"rlm": {"max_depth": 5}}`. Layered over the descriptor's `config` at load
+/// so the committed manifest keeps holding the project default and a local
+/// change stays local, the same split `plugins.json` makes for on/off.
+pub const plugin_config_state_path = "state/plugin_config.json";
 
 pub const Registry = struct {
     tools: std.StringArrayHashMapUnmanaged(Tool) = .empty,
@@ -112,7 +130,42 @@ pub const Registry = struct {
             try reg.tools.put(arena, tool.name, tool);
         }
         reg.applyToggles(io, arena, base);
+        reg.applyConfigOverrides(io, arena, base);
         return reg;
+    }
+
+    /// Layers `state/plugin_config.json` over each descriptor's `config`.
+    ///
+    /// Only keys the descriptor lists in `config_editable` are applied. A
+    /// plugin's config is otherwise free-form and some of it is structural,
+    /// not tunable: the four chat_* descriptors share one wasm binary and
+    /// select their behaviour with `"op"`, so letting an override reach that
+    /// key would turn chat_send into chat_rooms. Editability is opt-in per
+    /// key, declared by the tool that knows which of its settings are safe.
+    fn applyConfigOverrides(self: *Registry, io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) void {
+        const raw = base.readFileAlloc(io, plugin_config_state_path, arena, .limited(256 * 1024)) catch return;
+        const parsed = json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+            log.log(.warn, "invalid {s}; leaving every plugin at its descriptor config", .{plugin_config_state_path});
+            return;
+        };
+        if (parsed != .object) return;
+
+        var it = parsed.object.iterator();
+        while (it.next()) |entry| {
+            const t = self.tools.getPtr(entry.key_ptr.*) orelse continue;
+            const overrides = switch (entry.value_ptr.*) {
+                .object => |o| o,
+                else => continue,
+            };
+            if (t.config != .object) continue;
+            var merged = t.config.object.clone(arena) catch continue;
+            var ov = overrides.iterator();
+            while (ov.next()) |o| {
+                if (!t.configKeyEditable(o.key_ptr.*)) continue;
+                merged.put(arena, o.key_ptr.*, o.value_ptr.*) catch continue;
+            }
+            t.config = .{ .object = merged };
+        }
     }
 
     /// Marks tools listed in `state/plugins.json` as disabled. Internal tools
@@ -284,6 +337,15 @@ pub const Registry = struct {
                 else => {},
             }
         }
+        if (obj.get("config_editable")) |ev| {
+            if (ev == .array) {
+                var keys: std.ArrayList([]const u8) = .empty;
+                for (ev.array.items) |k| {
+                    if (k == .string) keys.append(arena, k.string) catch continue;
+                }
+                t.config_editable = keys.items;
+            }
+        }
         if (obj.get("config")) |cv| {
             if (cv == .object) t.config = cv;
         }
@@ -443,6 +505,58 @@ test "plugin toggles disable optional tools but never core ones" {
     // A disabled plugin leaves the catalog the model sees.
     const defs = try reg.toToolDefs(arena);
     try std.testing.expectEqual(@as(usize, 0), defs.len);
+}
+
+test "config overrides apply only to keys the descriptor opted in" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    try dir.createDirPath(io, "tools");
+    // `max_depth` is offered for tuning; `secret` is not.
+    try dir.writeFile(io, .{
+        .sub_path = "tools/rlm.tool.json",
+        .data =
+        \\{ "name": "rlm", "description": "r", "wasm": "rlm.wasm", "input_schema": {},
+        \\  "config": { "max_depth": 3, "secret": "keep" }, "config_editable": ["max_depth"] }
+        ,
+    });
+    // Shares a binary with its siblings and selects behaviour with "op",
+    // which is exactly why it opts nothing in.
+    try dir.writeFile(io, .{
+        .sub_path = "tools/chat_send.tool.json",
+        .data =
+        \\{ "name": "chat_send", "description": "c", "wasm": "chat.wasm", "input_schema": {},
+        \\  "config": { "op": "send" } }
+        ,
+    });
+    try dir.createDirPath(io, "state");
+    try dir.writeFile(io, .{
+        .sub_path = plugin_config_state_path,
+        .data =
+        \\{ "rlm": { "max_depth": 6, "secret": "stolen" }, "chat_send": { "op": "rooms" } }
+        ,
+    });
+
+    const reg = try Registry.load(io, arena, tmp.dir, "tools");
+
+    const rlm = reg.get("rlm").?;
+    try std.testing.expectEqual(@as(i64, 6), rlm.config.object.get("max_depth").?.integer);
+    // Not listed, so the descriptor value stands.
+    try std.testing.expectEqualStrings("keep", rlm.config.object.get("secret").?.string);
+
+    // No config_editable at all: the dispatch key is untouchable, so
+    // chat_send cannot be turned into chat_rooms from state/.
+    const chat = reg.get("chat_send").?;
+    try std.testing.expectEqualStrings("send", chat.config.object.get("op").?.string);
 }
 
 test "a descriptor schema always reaches the provider with a type" {

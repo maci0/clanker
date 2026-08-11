@@ -1,6 +1,6 @@
 {
   "name": "rlm",
-  "description": "Recursive Language Model (RLM). Delegates a text-processing task to a sub-agent that recursively chunks large input and merges results (arxiv:2512.24601). WHEN TO USE: call this when you need to summarize, analyze, extract from, or transform a piece of text that is too long to handle in a single pass — the sub-agent splits it into manageable parts, processes each, and merges them. Also useful for any heavy text transformation (e.g. rewrite, translate, classify) on long documents. WHEN NOT TO USE: (1) do NOT use this for short texts you can process directly in your reply; (2) do NOT use this to review your own past reasoning traces — use the 'reasoning' tool for that instead. INPUT: {'instruction': required string describing what to do (e.g. 'summarize', 'extract all error codes', 'rewrite as bullet points'), 'text': required string containing the full text to process, 'depth': optional integer (internal recursion counter, defaults to 0; callers should omit this)}.",
+  "description": "Recursive Language Model (RLM). Delegates a text-processing task to a sub-agent that recursively chunks large input and merges results (arxiv:2512.24601). WHEN TO USE: call this when you need to summarize, analyze, extract from, or transform a piece of text that is too long to handle in a single pass \u2014 the sub-agent splits it into manageable parts, processes each, and merges them. Also useful for any heavy text transformation (e.g. rewrite, translate, classify) on long documents. WHEN NOT TO USE: (1) do NOT use this for short texts you can process directly in your reply; (2) do NOT use this to review your own past reasoning traces \u2014 use the 'reasoning' tool for that instead. INPUT: {'instruction': required string describing what to do (e.g. 'summarize', 'extract all error codes', 'rewrite as bullet points'), 'text': required string containing the full text to process, 'depth': optional integer (internal recursion counter, defaults to 0; callers should omit this)}.",
   "wasm": "zig-out/tools/rlm.wasm",
   "input_schema": {
     "type": "object",
@@ -25,5 +25,8 @@
   "config": {
     "max_depth": 3
   },
-  "category": "agent"
+  "category": "agent",
+  "config_editable": [
+    "max_depth"
+  ]
 }
