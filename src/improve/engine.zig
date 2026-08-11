@@ -101,10 +101,17 @@ pub const Engine = struct {
         // ---- 1. context ----
         const context = try self.collectContext(opts.max_context_bytes);
         const gate_tail = try self.gateErrorTail();
+        // The source context is ~25k tokens and identical across the attempts
+        // of a run; the instruction and the last error are a few hundred and
+        // change every attempt. Caching is a prefix match, so the bulk goes in
+        // the system half (cached) and only the volatile part in the user
+        // message. Sent the other way round — as one user message beginning
+        // with the instruction — every attempt re-billed the whole context at
+        // full price, which is why this path ran at a 0% cache hit rate.
+        const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context });
         const user_prompt = try std.fmt.allocPrint(self.arena, improve_user_fmt, .{
             opts.instructions,
             gate_tail,
-            context,
             last_error orelse "none",
         });
 
@@ -112,7 +119,7 @@ pub const Engine = struct {
 
         // ---- 2. proposal from the model ----
         const messages = [_]types.Message{
-            .{ .role = .system, .content = improve_system },
+            .{ .role = .system, .content = system_prompt },
             .{ .role = .user, .content = user_prompt },
         };
         var err_detail: ?[]const u8 = null;
@@ -754,14 +761,22 @@ const improve_system =
     \\
 ;
 
+/// Stable half of the prompt: the rules, then the source. Identical across the
+/// attempts of a run, so it is what the provider cache can actually reuse.
+const improve_system_fmt =
+    \\{s}
+    \\
+    \\# Modifiable source context
+    \\{s}
+    \\
+;
+
+/// Volatile half: what to do this time, and what went wrong last time.
 const improve_user_fmt =
     \\# Improvement instruction
     \\{s}
     \\
     \\# Current gate status
-    \\{s}
-    \\
-    \\# Modifiable source context
     \\{s}
     \\
     \\# Previous attempt feedback
