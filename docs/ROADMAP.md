@@ -33,6 +33,8 @@
 
 - **Eval definitions under the gate** — `evals/` grew cases for the self-review tools (`std_api`, `zig_check`, `symbols`), each asserting the shape of the answer rather than toolchain- or content-sensitive text. And the definitions themselves are now tested: `Eval.loadAll` skips a file it cannot parse (`catch continue`), so a malformed eval silently stopped being run — `zig build test` now parses every shipped `*.task.json`, rejects a task eval with no prompt or no criteria, and cross-checks each `requires_tool` against the shipped manifests so a tool rename can no longer strand an eval at a permanent score of 0.
 
+- **`recent_commits` tool** — the Autolearn item asking for a dedicated tool for the recurring "summarize the last 3 git commits" task: one read-only call (`git log` with a fixed argv, `{"count": N}` clamped to 1..50) returning one `hash  date  subject  (author)` line per commit, instead of a full agent loop over the general `git` tool.
+
 ## Planned
 
 - **Plugin manifest SDK** — a formal manifest format for third-party tool packaging and distribution.
