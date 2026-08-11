@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "asc calc_ts.ts -o ../bin/calc_ts.wasm --optimize --bindings raw --noExportMemory",
-    "build:all": "for f in *.ts; do [ \"$f\" = \"env.d.ts\" ] && continue; asc \"$f\" -o \"../bin/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done"
+    "build:all": "for f in *.ts; do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"../bin/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done"
   },
   "devDependencies": {
     "assemblyscript": "^0.27.0"
