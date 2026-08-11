@@ -1476,15 +1476,24 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     // Open for appending, creating the file if it doesn't exist: one
     // syscall instead of open-fail-then-writeFile (truncate=false never
     // clobbers existing content).
-    var file = std.Io.Dir.cwd().createFile(h.sandbox.io, full, .{ .truncate = false }) catch |err| switch (err) {
+    return appendLocked(h.sandbox.io, std.Io.Dir.cwd(), full, data);
+}
+
+/// Appends `data` to `rel`, creating it when absent.
+///
+/// Locked, because "ask for the size, then write there" is two steps: tools run
+/// in parallel here, so two of them appending to one file both read the same
+/// end and the second write lands on top of the first. The lock makes the pair
+/// atomic between cooperating writers.
+pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8) u32 {
+    var file = base.createFile(io, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
-    defer file.close(h.sandbox.io);
-    // Append means writing at the current end, and this File has no seek: ask
-    // for the size and write there.
-    const end = (file.stat(h.sandbox.io) catch return Err.invalid).size;
-    file.writePositionalAll(h.sandbox.io, data, end) catch |err| switch (err) {
+    defer file.close(io);
+    // This File has no seek, so the end is asked for and written to directly.
+    const end = (file.stat(io) catch return Err.invalid).size;
+    file.writePositionalAll(io, data, end) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
@@ -2575,4 +2584,43 @@ test "a tool cannot read an environment variable it was not allowed" {
     try std.testing.expect(envAllowed(&sb, "MY_TOKEN"));
     try std.testing.expect(!envAllowed(&sb, "PWD"));
     try std.testing.expect(!envAllowed(&sb, "DEEPSEEK_API_KEY"));
+}
+
+test "parallel appends to one file all land" {
+    // Tools run in parallel, and ck_fs_append is how they add to a shared log.
+    // Reading the end and writing to it is two steps: without the lock, two
+    // appends read the same end and one overwrites the other.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const writers = 8;
+    const per_writer = 16;
+    const line = "0123456789abcdef\n";
+
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        fn run(self: *@This()) void {
+            var i: usize = 0;
+            while (i < per_writer) : (i += 1) {
+                _ = appendLocked(self.io, self.dir, "log.txt", line);
+            }
+        }
+    };
+
+    var workers: [writers]Worker = undefined;
+    var threads: [writers]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        w.* = .{ .dir = tmp.dir, .io = io };
+        threads[i] = try std.Thread.spawn(.{}, Worker.run, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    const raw = try tmp.dir.readFileAlloc(io, "log.txt", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+    try std.testing.expectEqual(@as(usize, writers * per_writer * line.len), raw.len);
 }
