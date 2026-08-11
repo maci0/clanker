@@ -1,0 +1,19 @@
+{
+  "name": "recent_commits",
+  "description": "Summarize the last N git commits in one call: one line per commit, \"hash  date  subject  (author)\". Input: {\"count\": 3} (default 3, max 50). Read-only — the argv is fixed to git log.",
+  "wasm": "zig-out/tools/recent_commits.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "count": {
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
+  "category": "code",
+  "exec_allow": [
+    "git"
+  ],
+  "confirm": false
+}

@@ -650,6 +650,46 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
     try std.testing.expect(std.mem.indexOf(u8, all, "## Done") != null);
 }
 
+test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Needs a real repository to log: a source tarball or a stripped CI
+    // checkout has no .git, and a red test there would blame the tool for
+    // the environment.
+    var git_dir = std.Io.Dir.cwd().openDir(io, ".git", .{}) catch return error.SkipZigTest;
+    git_dir.close(io);
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .exec_allow = &.{"git"},
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/recent_commits.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    // count:1 pins the shape: exactly one "hash  date  subject  (author)"
+    // line, so a trailing newline or an uncapped log shows up as the extra
+    // escaped newline it would put in the JSON string.
+    const out = try mod.executeTool("{\"count\":1}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\\n") == null);
+    // The author is the one field the format wraps in parens, so its
+    // presence says the whole format string survived argv assembly.
+    try std.testing.expect(std.mem.indexOf(u8, out, "(") != null);
+}
+
 test "assemblyscript calc_ts tool executes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
