@@ -31,7 +31,9 @@ pub const Options = struct {
     iters: u32 = 3,
     max_attempts_per_iter: u32 = 2,
     dry_run: bool = false,
-    max_context_bytes: usize = 64 * 1024,
+    /// null means "size it from the model's context window". A fixed 64 KiB
+    /// was the same budget for a 128k model and a 1M one.
+    max_context_bytes: ?usize = null,
     max_changes: usize = 40,
     max_change_bytes: usize = 32 * 1024,
     response_tokens: u32 = 16384,
@@ -99,7 +101,7 @@ pub const Engine = struct {
 
     fn improveOnce(self: *Engine, opts: Options, attempt: u32, last_error: ?[]const u8) !Outcome {
         // ---- 1. context ----
-        const context = try self.collectContext(opts.max_context_bytes);
+        const context = try self.collectContext(opts.max_context_bytes orelse self.contextBudget());
         const gate_tail = try self.gateErrorTail();
         // The source context is ~25k tokens and identical across the attempts
         // of a run; the instruction and the last error are a few hundred and
@@ -387,6 +389,18 @@ pub const Engine = struct {
 
     // ------------------------------------------------------------ context --
 
+    /// How much source to send, derived from the model actually being used.
+    /// Roughly 3 bytes per token, and about a third of the window, leaving the
+    /// rest for the rules, the instruction, the gate output and the answer
+    /// (which carries whole rewritten files). Clamped so a tiny window still
+    /// gets something to work with and a 1M window does not bill a novel.
+    fn contextBudget(self: *const Engine) usize {
+        const window: usize = self.provider.activeModel().context_window;
+        // 3 bytes per token times a third of the window is the window itself,
+        // in bytes.
+        return std.math.clamp(window, 64 * 1024, 512 * 1024);
+    }
+
     fn collectContext(self: *Engine, max_bytes: usize) ![]const u8 {
         const instructions = self.instructions;
         var keywords: std.ArrayList([]const u8) = .empty;
@@ -397,14 +411,14 @@ pub const Engine = struct {
 
         // Gather candidate files with a relevance score (keyword hits).
         var cands: std.ArrayList(Candidate) = .empty;
-        try collectCandidates(self, "tools/zig", keywords.items, &cands, 96 * 1024);
+        try collectCandidates(self, "tools/zig", keywords.items, &cands);
         // Descriptors are part of the modifiable surface (validatePath allows
         // *.tool.json) but were never gathered, so any instruction about a
         // tool's name, description or schema asked for an exact-match patch
         // against a file the model had never seen.
-        try collectCandidates(self, "tools/manifests", keywords.items, &cands, 64 * 1024);
-        try collectCandidates(self, "src", keywords.items, &cands, 96 * 1024);
-        try collectCandidates(self, "tests", keywords.items, &cands, 96 * 1024);
+        try collectCandidates(self, "tools/manifests", keywords.items, &cands);
+        try collectCandidates(self, "src", keywords.items, &cands);
+        try collectCandidates(self, "tests", keywords.items, &cands);
         for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {
             try collectFile(self, f, keywords.items, &cands);
         }
@@ -433,6 +447,7 @@ pub const Engine = struct {
         }.lt);
 
         var buf: std.ArrayList(u8) = .empty;
+        var omitted: std.ArrayList([]const u8) = .empty;
         var included_any = false;
         for (cands.items) |c| {
             // Keep the context tight: only include files that matched the
@@ -441,29 +456,45 @@ pub const Engine = struct {
             const always = std.mem.eql(u8, c.path, "build.zig") or std.mem.eql(u8, c.path, "config.json") or std.mem.eql(u8, c.path, "build.zig.zon");
             if (c.score == 0 and !always) continue;
             included_any = true;
-            if (buf.items.len >= max_bytes) break;
-            const header = try std.fmt.allocPrint(self.arena, "\n===== FILE: {s} =====\n", .{c.path});
-            const remaining = max_bytes - buf.items.len;
-            const take_header = @min(header.len, remaining);
-            const take_data = @min(c.data.len, remaining - take_header);
-            try buf.appendSlice(self.arena, header[0..take_header]);
-            try buf.appendSlice(self.arena, c.data[0..take_data]);
+            try self.appendWholeFile(&buf, &omitted, c, max_bytes);
         }
         if (!included_any) {
             // No keyword matches — fall back to the top candidates by score.
-            for (cands.items) |c| {
-                if (buf.items.len >= max_bytes) break;
-                const header = try std.fmt.allocPrint(self.arena, "\n===== FILE: {s} =====\n", .{c.path});
-                const remaining = max_bytes - buf.items.len;
-                const take_header = @min(header.len, remaining);
-                const take_data = @min(c.data.len, remaining - take_header);
-                try buf.appendSlice(self.arena, header[0..take_header]);
-                try buf.appendSlice(self.arena, c.data[0..take_data]);
+            for (cands.items) |c| try self.appendWholeFile(&buf, &omitted, c, max_bytes);
+        }
+        // A file that did not fit has to be named. Silently cutting one off
+        // mid-way, or dropping it entirely, left the model writing exact-match
+        // patches against text it had never seen and could not know was
+        // missing.
+        if (omitted.items.len > 0) {
+            try buf.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; do not patch these blind) =====\n");
+            for (omitted.items) |path| {
+                try buf.appendSlice(self.arena, path);
+                try buf.appendSlice(self.arena, "\n");
             }
         }
         if (buf.items.len == 0) return "(no source files found)";
         log.log(.debug, "context: {d} files, {d} bytes", .{ cands.items.len, buf.items.len });
         return buf.toOwnedSlice(self.arena);
+    }
+
+    /// Appends a candidate whole or not at all. A half file is worse than an
+    /// absent one: it reads as complete, and every patch against its missing
+    /// tail fails the exact-match check for reasons the model cannot see.
+    fn appendWholeFile(
+        self: *Engine,
+        buf: *std.ArrayList(u8),
+        omitted: *std.ArrayList([]const u8),
+        c: Candidate,
+        max_bytes: usize,
+    ) !void {
+        const header = try std.fmt.allocPrint(self.arena, "\n===== FILE: {s} =====\n", .{c.path});
+        if (buf.items.len + header.len + c.data.len > max_bytes) {
+            try omitted.append(self.arena, c.path);
+            return;
+        }
+        try buf.appendSlice(self.arena, header);
+        try buf.appendSlice(self.arena, c.data);
     }
 
     /// Boosts (and if necessary reads) every repository path mentioned in the
@@ -493,8 +524,16 @@ pub const Engine = struct {
         }
     }
 
+    /// Big enough for this project's own largest source file. At 96 KiB
+    /// src/agent/loop.zig was silently unreadable, so the agent loop was the
+    /// one file the agent could never see or change.
+    const file_read_cap = 256 * 1024;
+
     fn collectFile(self: *Engine, rel: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate)) !void {
-        const data = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, rel, self.arena, .limited(96 * 1024)) catch return;
+        const data = std.Io.Dir.cwd().readFileAlloc(self.ctx.io, rel, self.arena, .limited(file_read_cap)) catch |err| {
+            log.log(.debug, "context: skipping {s}: {s}", .{ rel, @errorName(err) });
+            return;
+        };
         var score: usize = 0;
         for (keywords) |kw| {
             if (std.mem.indexOf(u8, data, kw) != null) score += 1;
@@ -503,7 +542,7 @@ pub const Engine = struct {
         try cands.append(self.arena, .{ .path = try self.arena.dupe(u8, rel), .score = score, .data = data });
     }
 
-    fn collectCandidates(self: *Engine, dir_rel: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate), file_cap: usize) !void {
+    fn collectCandidates(self: *Engine, dir_rel: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate)) !void {
         var dir = std.Io.Dir.cwd().openDir(self.ctx.io, dir_rel, .{ .iterate = true }) catch return;
         defer dir.close(self.ctx.io);
         var it = dir.iterate();
@@ -511,7 +550,7 @@ pub const Engine = struct {
             switch (entry.kind) {
                 .directory => {
                     const sub = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ dir_rel, entry.name });
-                    try self.collectCandidates(sub, keywords, cands, file_cap);
+                    try self.collectCandidates(sub, keywords, cands);
                 },
                 .file => {
                     if (std.mem.endsWith(u8, entry.name, ".wasm")) continue;
@@ -852,4 +891,60 @@ test "a file named in the instruction is pinned into the context" {
     for (cands.items) |c| {
         try std.testing.expect(std.mem.indexOf(u8, c.path, ".secrets") == null);
     }
+}
+
+test "the context never carries half a file, and names what it left out" {
+    // A truncated file reads as a complete one. Every exact-match patch
+    // against its missing tail then fails for a reason the model cannot see
+    // from its own context, which is how an improve run burns its attempts.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var engine = Engine{
+        .ctx = undefined,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var buf: std.ArrayList(u8) = .empty;
+    var omitted: std.ArrayList([]const u8) = .empty;
+
+    const small = Engine.Candidate{ .path = "a.zig", .score = 1, .data = "const a = 1;\n" };
+    const big = Engine.Candidate{ .path = "big.zig", .score = 1, .data = "x" ** 4096 };
+
+    try engine.appendWholeFile(&buf, &omitted, small, 1024);
+    try std.testing.expect(std.mem.endsWith(u8, buf.items, small.data));
+    try std.testing.expectEqual(@as(usize, 0), omitted.items.len);
+
+    // Over budget: nothing of it is written, and it is reported by name.
+    const before = buf.items.len;
+    try engine.appendWholeFile(&buf, &omitted, big, 1024);
+    try std.testing.expectEqual(before, buf.items.len);
+    try std.testing.expectEqual(@as(usize, 1), omitted.items.len);
+    try std.testing.expectEqualStrings("big.zig", omitted.items[0]);
+}
+
+test "the context budget follows the model's own window" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cfg = config.Config{};
+
+    // A small window keeps the floor; a large one is capped rather than
+    // billing the whole repository on every attempt.
+    var small = try config.Provider.single(arena, "s", "http://x", .openai_compat, "m", .{ .context_window = 8192 });
+    var engine = Engine{ .ctx = undefined, .arena = arena, .provider = &small, .cfg = &cfg, .hist = undefined, .instructions = "" };
+    try std.testing.expectEqual(@as(usize, 64 * 1024), engine.contextBudget());
+
+    var mid = try config.Provider.single(arena, "m", "http://x", .openai_compat, "m", .{ .context_window = 131072 });
+    engine.provider = &mid;
+    try std.testing.expectEqual(@as(usize, 131072), engine.contextBudget());
+
+    var huge = try config.Provider.single(arena, "h", "http://x", .openai_compat, "m", .{ .context_window = 1_048_576 });
+    engine.provider = &huge;
+    try std.testing.expectEqual(@as(usize, 512 * 1024), engine.contextBudget());
 }
