@@ -407,6 +407,44 @@ pub const History = struct {
         old: []const u8,
     };
 
+    /// Files from recent rejected attempts, ranked by how many distinct
+    /// rejections targeted them. A file that keeps appearing in failed
+    /// proposals is one the model should either avoid or approach with a
+    /// fundamentally different strategy. Returns (file, count) pairs sorted
+    /// by descending count.
+    pub fn hotFiles(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const HotFile {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var counts: std.StringHashMapUnmanaged(u32) = .empty;
+        for (entries[start..]) |e| {
+            if (!std.mem.eql(u8, e.status, "rejected")) continue;
+            for (e.files) |f| {
+                const gop = try counts.getOrPut(arena, f);
+                if (!gop.found_existing) gop.value_ptr.* = 0;
+                gop.value_ptr.* += 1;
+            }
+        }
+
+        var out: std.ArrayList(HotFile) = .empty;
+        var it = counts.iterator();
+        while (it.next()) |kv| {
+            try out.append(arena, .{ .file = kv.key_ptr.*, .rejections = kv.value_ptr.* });
+        }
+        std.mem.sort(HotFile, out.items, {}, struct {
+            fn desc(_: void, a: HotFile, b: HotFile) bool {
+                return a.rejections > b.rejections;
+            }
+        }.desc);
+        return out.toOwnedSlice(arena);
+    }
+
+    pub const HotFile = struct {
+        file: []const u8,
+        rejections: u32,
+    };
+
     /// Every file touched by the last `max_entries` attempts.
     ///
     /// These are the files most likely to change again, and a file that
@@ -522,6 +560,47 @@ test "history append + revert round trip" {
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(raw);
     try std.testing.expect(std.mem.indexOf(u8, raw, "test-id-1") != null);
+}
+
+test "hotFiles ranks files by rejection frequency" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    try hist.append("r1", .rejected, "i", "s", &.{"src/a.zig"}, 0, 0, "d", &.{});
+    try hist.append("r2", .rejected, "i", "s", &.{ "src/a.zig", "src/b.zig" }, 0, 0, "d", &.{});
+    try hist.append("r3", .rejected, "i", "s", &.{"src/b.zig"}, 0, 0, "d", &.{});
+    try hist.append("a1", .accepted, "i", "s", &.{"src/a.zig"}, 0, 1, "", &.{});
+
+    const hot = try hist.hotFiles(arena, 10);
+    // a.zig: 2 rejections, b.zig: 2 rejections, both from rejected entries only
+    try std.testing.expectEqual(@as(usize, 2), hot.len);
+    // Both have 2 rejections; accepted entry for a.zig is not counted.
+    try std.testing.expectEqual(@as(u32, 2), hot[0].rejections);
+    try std.testing.expectEqual(@as(u32, 2), hot[1].rejections);
+
+    // With no rejections, the list is empty.
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    var hist2 = History.init(gpa, io, tmp2.dir, "state");
+    defer hist2.deinit();
+    try hist2.append("a2", .accepted, "i", "s", &.{"src/c.zig"}, 0, 1, "", &.{});
+    const empty = try hist2.hotFiles(arena, 10);
+    try std.testing.expectEqual(@as(usize, 0), empty.len);
 }
 
 test "an edit already rejected is recognised within the lookback window" {
