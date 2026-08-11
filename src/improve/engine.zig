@@ -390,15 +390,15 @@ pub const Engine = struct {
     // ------------------------------------------------------------ context --
 
     /// How much source to send, derived from the model actually being used.
-    /// Roughly 3 bytes per token, and about a third of the window, leaving the
-    /// rest for the rules, the instruction, the gate output and the answer
-    /// (which carries whole rewritten files). Clamped so a tiny window still
-    /// gets something to work with and a 1M window does not bill a novel.
+    /// Roughly 3 bytes per token over about a third of the window, which comes
+    /// out at the window itself in bytes, leaving the rest for the rules, the
+    /// instruction, the gate output and the answer (which carries whole
+    /// rewritten files). The ceiling is a little over this project's total
+    /// source size, so a 1M-window model sees all of itself and never patches
+    /// a file it was not shown; the floor keeps a small model working.
     fn contextBudget(self: *const Engine) usize {
         const window: usize = self.provider.activeModel().context_window;
-        // 3 bytes per token times a third of the window is the window itself,
-        // in bytes.
-        return std.math.clamp(window, 64 * 1024, 512 * 1024);
+        return std.math.clamp(window, 64 * 1024, 1024 * 1024);
     }
 
     fn collectContext(self: *Engine, max_bytes: usize) ![]const u8 {
@@ -474,7 +474,8 @@ pub const Engine = struct {
             }
         }
         if (buf.items.len == 0) return "(no source files found)";
-        log.log(.debug, "context: {d} files, {d} bytes", .{ cands.items.len, buf.items.len });
+        log.log(.debug, "context: {d} files, {d} bytes (budget {d}, {d} omitted)", .{ cands.items.len, buf.items.len, max_bytes, omitted.items.len });
+        for (omitted.items) |o| log.log(.debug, "context: omitted {s}", .{o});
         return buf.toOwnedSlice(self.arena);
     }
 
@@ -946,5 +947,5 @@ test "the context budget follows the model's own window" {
 
     var huge = try config.Provider.single(arena, "h", "http://x", .openai_compat, "m", .{ .context_window = 1_048_576 });
     engine.provider = &huge;
-    try std.testing.expectEqual(@as(usize, 512 * 1024), engine.contextBudget());
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), engine.contextBudget());
 }

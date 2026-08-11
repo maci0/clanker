@@ -112,7 +112,10 @@ pub const Agent = struct {
 pub const Improve = struct {
     min_delta: f64 = 0.05,
     default_iters: u32 = 3,
-    max_context_bytes: usize = 64 * 1024,
+    /// null (or 0 in the file) means the engine sizes the context from the
+    /// model's own window. A fixed number here overrides that, and a stale one
+    /// silently keeps a 1M-window model on a 64 KiB diet.
+    max_context_bytes: ?usize = null,
     max_staged_bytes: usize = 256 * 1024,
     max_tool_source_bytes: usize = 64 * 1024,
     max_skill_bytes: usize = 32 * 1024,
@@ -491,7 +494,10 @@ pub const Config = struct {
         var im = Improve{};
         if (obj.get("min_delta")) |k| im.min_delta = try jsonFloat(k, "min_delta");
         if (obj.get("default_iters")) |k| im.default_iters = @intCast(try jsonInt(k, "default_iters"));
-        if (obj.get("max_context_bytes")) |k| im.max_context_bytes = @intCast(try jsonInt(k, "max_context_bytes"));
+        if (obj.get("max_context_bytes")) |k| {
+            const n = try jsonInt(k, "max_context_bytes");
+            im.max_context_bytes = if (n <= 0) null else @intCast(n);
+        }
         if (obj.get("max_staged_bytes")) |k| im.max_staged_bytes = @intCast(try jsonInt(k, "max_staged_bytes"));
         if (obj.get("max_tool_source_bytes")) |k| im.max_tool_source_bytes = @intCast(try jsonInt(k, "max_tool_source_bytes"));
         if (obj.get("max_skill_bytes")) |k| im.max_skill_bytes = @intCast(try jsonInt(k, "max_skill_bytes"));
