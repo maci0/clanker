@@ -1,8 +1,5 @@
 // Vanilla, no bundler. UI primitives: VanJS tags, binding, toasts, skeletons,
 // component vocabulary, and the sheet's one visual language for controls.
-// Extracted from app.js so every view shares the same spelling; the module
-// bridges onto window.ckUi because app.js is still a classic script that
-// cannot import (the bridge dies with the last classic script).
 
 export var T = (typeof window !== "undefined" && window.van && window.van.tags) ? window.van.tags : null;
 
@@ -85,12 +82,13 @@ export function setTurnPhase(turn, phase) {
 // in these, so a control cannot drift into its own spelling of a button or
 // label — which is how the page once had two Refresh behaviours and three
 // status conventions.
+import { icon as iconFn } from "./icons.js";
 export var UI = {
   button: function (label, onclick, opts) {
     opts = opts || {};
     var cls = "secondary";
     if (opts.kind === "danger") cls += " danger";
-    var icon = window.ckIcons && window.ckIcons.icon ? window.ckIcons.icon : function(){ return document.createElement("span"); };
+    var icon = iconFn || function(){ return document.createElement("span"); };
     var attrs = {
       type: "button",
       class: opts.kind === "primary" ? "" : cls,
@@ -118,4 +116,4 @@ export var UI = {
   }
 };
 
-if (typeof window !== "undefined") window.ckUi = { bind: bind, toast: toast, skeletonRows: skeletonRows, setTurnPhase: setTurnPhase, T: T, UI: UI };
+

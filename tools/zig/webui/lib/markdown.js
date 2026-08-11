@@ -261,10 +261,4 @@ export function finalizeAnswer(turn) {
   turn.answer.appendChild(frag);
 }
 
-if (typeof window !== "undefined") {
-  window.ckMarkdown = {
-    INLINE_RE: INLINE_RE, inlineInto: inlineInto, paragraphInto: paragraphInto, tableRow: tableRow, splitRow: splitRow,
-    renderMarkdown: renderMarkdown, prettyJsonIfPossible: prettyJsonIfPossible,
-    highlightInto: highlightInto, buildCodeBlock: buildCodeBlock, finalizeAnswer: finalizeAnswer,
-  };
-}
+

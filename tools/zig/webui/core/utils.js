@@ -1,9 +1,6 @@
-// Pure helpers extracted from app.js — importable as ES module. The
-// admission rule: no DOM, no `el`, no page state — anything here must be
-// callable from another module or a node test without a page around it.
-// One deliberate side effect at the bottom: the exports are bridged onto
-// window.ckUtil, van-boot-style, because app.js is still a classic script
-// that cannot import. The bridge dies with the last classic script.
+// Pure helpers — importable as ES module. No DOM, no `el`, no page state —
+// anything here must be callable from another module or a node test without a
+// page around it.
 export function fmtBytes(n) {
   var value = n;
   var unit = "byte";
@@ -147,24 +144,4 @@ export function prettyJsonIfPossible(text) {
   }
 }
 
-/* Guarded so the module also imports cleanly outside a browser (a node-run
-   test); in the page, window is always there. */
-if (typeof window !== "undefined") window.ckUtil = {
-  fmtBytes: fmtBytes,
-  clip: clip,
-  fuzzyMatch: fuzzyMatch,
-  searchFold: searchFold,
-  escapeHtml: escapeHtml,
-  fmtMs: fmtMs,
-  fmtInt: fmtInt,
-  fmtCost: fmtCost,
-  formatChatTime: formatChatTime,
-  fmtDeadline: fmtDeadline,
-  readJson: readJson,
-  newSessionId: newSessionId,
-  sessionLabel: sessionLabel,
-  recencyGroup: recencyGroup,
-  isSafeLinkUrl: isSafeLinkUrl,
-  splitRow: splitRow,
-  prettyJsonIfPossible: prettyJsonIfPossible,
-};
+

@@ -15,9 +15,4 @@ export function goalStatusLabel(g) { return g.status || "unknown"; }
 
 export function isActiveGoal(g) { return (g.status || "active") === "active"; }
 
-if (typeof window !== "undefined") window.ckGoals = {
-  goalSortKey: goalSortKey,
-  goalFields: goalFields,
-  goalStatusLabel: goalStatusLabel,
-  isActiveGoal: isActiveGoal,
-};
+

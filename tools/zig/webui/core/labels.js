@@ -31,8 +31,4 @@ export function chatRoomLabel(room, isDmFn, dmPartnerFn, clankerMarkFn) {
   return "# " + r.room;
 }
 
-if (typeof window !== "undefined") window.ckLabels = {
-  runLabel: runLabel,
-  modelLabel: modelLabel,
-  chatRoomLabel: chatRoomLabel,
-};
+

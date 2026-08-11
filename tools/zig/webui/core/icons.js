@@ -51,4 +51,4 @@ export function icon(name, size) {
   return svg;
 }
 
-if (typeof window !== "undefined") window.ckIcons = { ICON_PATHS: ICON_PATHS, icon: icon };
+

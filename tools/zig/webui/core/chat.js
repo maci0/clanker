@@ -1,7 +1,5 @@
-// Pure DM/chat helpers extracted from app.js.
-// No DOM, no `el`, no page state — safe to import as ES module.
-// dmPartner takes (room, instanceName) explicitly so it never closes over
-// a mutable global; the window bridge curries the global for classic app.js.
+// Pure DM/chat helpers — no DOM, no page state. Safe to import as ES module.
+// dmPartner takes (room, instanceName) explicitly so it never closes over a mutable global.
 export function dmSafeName(name) {
   return String(name).replace(/\|/g, "-");
 }
@@ -28,11 +26,4 @@ export function clankerMark(name) {
   for (var i = 0; i < name.length; i++) h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
   return CLANKER_MARKS[h % CLANKER_MARKS.length];
 }
-if (typeof window !== "undefined") window.ckChat = {
-  dmSafeName: dmSafeName,
-  dmRoom: dmRoom,
-  dmPartner: function (room) { return dmPartner(room, window.instanceName || ""); },
-  isDm: isDm,
-  CLANKER_MARKS: CLANKER_MARKS,
-  clankerMark: clankerMark,
-};
+

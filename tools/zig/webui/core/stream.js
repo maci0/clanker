@@ -24,4 +24,4 @@ export function makeLineSplitter(onLine) {
   };
 }
 
-if (typeof window !== "undefined") window.ckStream = { makeLineSplitter: makeLineSplitter };
+

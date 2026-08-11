@@ -1344,7 +1344,6 @@ el.form.addEventListener("submit", function (e) {
 
 
 // ---- runs: pick a recorded run, draw its execution graph ----------------
-// runLabel lives in core/labels.js (bridged above as window.ckLabels.runLabel).
 
 var allRuns = [];
 /* Set when something asks for one particular run before the Runs view has
@@ -3693,8 +3692,6 @@ function cardById(id) {
   }
   return null;
 }
-
-/* doneColumn/blockers/dueState live in lib/board.js (bridged as window.ckBoard). */
 
 /* The board derives from the card set, the column set and the "only mine"
    filter. It used to clear #board and rebuild it, which is what forced the

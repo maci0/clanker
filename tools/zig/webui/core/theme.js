@@ -36,7 +36,4 @@ export function cycleTheme(opts) {
   return next;
 }
 
-if (typeof window !== "undefined") {
-  window.THEMES = window.THEMES || THEMES;
-  window.ckTheme = { THEMES: THEMES, loadTheme: loadTheme, getTheme: getTheme, applyTheme: applyTheme, cycleTheme: cycleTheme, setTheme: setTheme };
-}
+

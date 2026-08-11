@@ -1,7 +1,5 @@
-// Vanilla, no bundler. Board card-action helpers extracted from app.js.
-// Pure: no DOM, no el, no page state. Importable as ES module; also
-// bridged onto window.ckBoard so classic app.js keeps working until it
-// becomes a module itself.
+// Vanilla, no bundler. Board card-action helpers — pure, no DOM, no page state.
+// Importable as ES module.
 
 export var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done" };
 
@@ -68,4 +66,4 @@ export function dueState(card) {
   return "ok";
 }
 
-if (typeof window !== "undefined") window.ckBoard = { BOARD_COLUMNS: BOARD_COLUMNS, boardActionLine: boardActionLine, doneColumn: doneColumn, blockers: blockers, dueState: dueState };
+

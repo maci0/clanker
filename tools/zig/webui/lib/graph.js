@@ -203,7 +203,5 @@ export function layoutGraph(canvas, built, slowest, opts) {
   });
 }
 
-if (typeof window !== "undefined") {
-  window.ckGraph = { metricsFor: metricsFor, buildStages: buildStages, graphSummaryText: graphSummaryText, toDagInput: toDagInput, buildIncompleteNode: buildIncompleteNode, buildNodeBox: buildNodeBox, layoutGraph: layoutGraph };
-}
+
 
