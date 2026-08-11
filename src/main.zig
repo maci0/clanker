@@ -1,3 +1,5 @@
+//! Entry point: process setup, config/dotenv bootstrap, then hand off to cli.run.
+
 const std = @import("std");
 const cli = @import("cli.zig");
 const log = @import("util/log.zig");
