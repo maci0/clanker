@@ -1,0 +1,19 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_list",
+  "description": "Read the shared Kanban board: every column and every card, with its subtasks, dependencies, deadline, assignee, activity log and accrued cost. The board is at state/board.json and every clanker sees the same one.",
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  },
+  "config": {
+    "op": "list"
+  }
+}

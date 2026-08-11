@@ -1,0 +1,40 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_subtask",
+  "description": "Add, tick or remove a subtask on a card. Use op subtask_add with text, or subtask_toggle / subtask_remove with subtask_id.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Card id"
+      },
+      "op": {
+        "type": "string",
+        "description": "subtask_add, subtask_toggle or subtask_remove"
+      },
+      "text": {
+        "type": "string",
+        "description": "Subtask text, for subtask_add"
+      },
+      "subtask_id": {
+        "type": "string",
+        "description": "Subtask id, for toggle and remove"
+      },
+      "done": {
+        "type": "boolean",
+        "description": "Explicit state for subtask_toggle"
+      }
+    },
+    "required": [
+      "id",
+      "op"
+    ]
+  }
+}

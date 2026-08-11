@@ -18,6 +18,10 @@ const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
 
 const event_path = "state/autolearn.jsonl";
+/// Hard cap on the log so a busy harness cannot grow state without bound.
+const max_log_bytes = 8 << 20;
+/// Lines kept when the log is trimmed for exceeding the cap.
+const keep_lines = 2000;
 
 pub const RunEvent = struct {
     provider: []const u8 = "",
@@ -57,23 +61,54 @@ pub fn record(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, type
     appendLine(io, gpa, arena, buf[0..w.end]);
 }
 
+/// Appends one line via a locked seek-to-end write: O(1) in the log size,
+/// unlike a read-modify-write which turns every tool call's event into a
+/// full read + rewrite of the whole log (quadratic over a session's calls).
+/// The lock still guards against two processes interleaving writes.
 fn appendLine(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, line: []const u8) void {
-    // Same read-modify-write as the improvement log, same shared state
-    // directory, same silent loss when two runs overlap.
     var guard = filelock.acquire(io, std.Io.Dir.cwd(), "state", "autolearn", gpa);
     defer guard.release();
 
-    const existing = std.Io.Dir.cwd().readFileAlloc(io, event_path, arena, .limited(1 << 24)) catch |err| switch (err) {
-        error.FileNotFound => "",
-        else => return,
+    // Trim before opening for append below: trimming rewrites the file and
+    // would otherwise contend with the handle appendLine is about to hold.
+    if (std.Io.Dir.cwd().statFile(io, event_path, .{})) |st| {
+        if (st.size > max_log_bytes) trimLog(io, gpa, arena) catch {};
+    } else |_| {}
+
+    const file = std.Io.Dir.cwd().createFile(io, event_path, .{ .truncate = false }) catch |err| {
+        std.log.warn("autolearn: failed to open {s}: {s}", .{ event_path, @errorName(err) });
+        return;
     };
+    defer file.close(io);
+    const size = (file.stat(io) catch return).size;
+    var wbuf: [512]u8 = undefined;
+    var fw = file.writer(io, &wbuf);
+    fw.seekToUnbuffered(size) catch return;
+    fw.interface.writeAll(line) catch return;
+    fw.interface.writeAll("\n") catch return;
+    fw.flush() catch return;
+}
+
+/// Rewrites the log keeping only the newest `keep_lines` lines.
+fn trimLog(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
+    _ = arena;
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, event_path, gpa, .limited(max_log_bytes));
+    defer gpa.free(raw);
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(gpa);
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |ln| {
+        if (ln.len == 0) continue;
+        try lines.append(gpa, ln);
+    }
+    const keep = if (lines.items.len > keep_lines) lines.items.len - keep_lines else 0;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
-    out.appendSlice(gpa, existing) catch return;
-    if (existing.len > 0 and existing[existing.len - 1] != '\n') out.append(gpa, '\n') catch return;
-    out.appendSlice(gpa, line) catch return;
-    out.append(gpa, '\n') catch return;
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items }) catch |err| std.log.warn("autolearn: failed to persist event to {s} ({d} bytes): {s}", .{ event_path, out.items.len, @errorName(err) });
+    for (lines.items[keep..]) |ln| {
+        try out.appendSlice(gpa, ln);
+        try out.append(gpa, '\n');
+    }
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = event_path, .data = out.items });
 }
 
 /// Records a completed run (from agent stats + used tool names).

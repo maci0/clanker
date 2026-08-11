@@ -1,0 +1,33 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_depend",
+  "description": "Say a card is waiting on another, or that it no longer is. A card whose dependencies are not finished is shown as blocked rather than being forbidden to move.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Card id"
+      },
+      "op": {
+        "type": "string",
+        "description": "depend_add or depend_remove"
+      },
+      "depends_on": {
+        "type": "string",
+        "description": "Id of the card this one waits on"
+      }
+    },
+    "required": [
+      "id",
+      "op",
+      "depends_on"
+    ]
+  }
+}

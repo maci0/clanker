@@ -1,0 +1,40 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_cost",
+  "description": "Accrue what a card has cost so far: prompt and completion tokens, dollars, and the run that spent them. Totals add up across runs rather than replacing each other.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Card id"
+      },
+      "prompt_tokens": {
+        "type": "integer"
+      },
+      "completion_tokens": {
+        "type": "integer"
+      },
+      "cost": {
+        "type": "number",
+        "description": "USD"
+      },
+      "run_id": {
+        "type": "string",
+        "description": "Run this usage came from, e.g. run-1786422588"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "config": {
+    "op": "usage"
+  }
+}

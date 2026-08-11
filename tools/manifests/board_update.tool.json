@@ -1,0 +1,44 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_update",
+  "description": "Change a card's title, notes, assignee, priority or deadline. Assigning or setting a deadline is announced in the board's chatroom; editing text is not.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Card id"
+      },
+      "title": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "assignee": {
+        "type": "string",
+        "description": "Instance name, or empty to unassign"
+      },
+      "priority": {
+        "type": "string",
+        "description": "low, normal or high"
+      },
+      "deadline": {
+        "type": "integer",
+        "description": "Unix seconds, or 0 for none"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "config": {
+    "op": "update"
+  }
+}

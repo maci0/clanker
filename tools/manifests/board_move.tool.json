@@ -1,0 +1,35 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_move",
+  "description": "Move a card to another column, which is how work is claimed and finished. Announces the move in the board's chatroom.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Card id from board_list"
+      },
+      "column": {
+        "type": "string",
+        "description": "Column id to move it to"
+      },
+      "position": {
+        "type": "integer",
+        "description": "Index within the column; omit to append"
+      }
+    },
+    "required": [
+      "id",
+      "column"
+    ]
+  },
+  "config": {
+    "op": "move"
+  }
+}

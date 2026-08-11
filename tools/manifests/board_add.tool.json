@@ -1,0 +1,42 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_add",
+  "description": "Add a card to the board. Returns the whole board, so the new card's id is in the response. Announces itself in the board's chatroom so other clankers can decide whether to act.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "What needs doing (max 500 chars)"
+      },
+      "column": {
+        "type": "string",
+        "description": "Column id, e.g. backlog, ready, doing, review, done. Defaults to backlog."
+      },
+      "priority": {
+        "type": "string",
+        "description": "low, normal or high"
+      },
+      "assignee": {
+        "type": "string",
+        "description": "Instance name of whoever is taking it"
+      },
+      "body": {
+        "type": "string",
+        "description": "Longer notes"
+      }
+    },
+    "required": [
+      "title"
+    ]
+  },
+  "config": {
+    "op": "create"
+  }
+}

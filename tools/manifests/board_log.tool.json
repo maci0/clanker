@@ -1,0 +1,31 @@
+{
+  "wasm": "zig-out/tools/board.wasm",
+  "fs_prefixes": [
+    "state/"
+  ],
+  "network_allow": [],
+  "sequential": true,
+  "category": "board",
+  "name": "board_log",
+  "description": "Record what you did on a card. This is how a run leaves a trail another clanker can read: the entry is stamped with your name and the time, and announced in the board's chatroom.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Card id"
+      },
+      "what": {
+        "type": "string",
+        "description": "What happened (max 2000 chars)"
+      }
+    },
+    "required": [
+      "id",
+      "what"
+    ]
+  },
+  "config": {
+    "op": "log"
+  }
+}
