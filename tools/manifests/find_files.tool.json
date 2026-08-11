@@ -12,7 +12,7 @@
     "properties": {
       "pattern": {
         "type": "string",
-        "description": "Part of a file name, e.g. \"loop\", or a glob such as \"*.tool.json\"."
+        "description": "Part of a file name, e.g. \"loop\", or a glob such as \"*.tool.json\". A path works too: \"src/agent/loop.zig\" looks for loop.zig under src/agent. Matching is case-sensitive."
       },
       "dir": {
         "type": "string",

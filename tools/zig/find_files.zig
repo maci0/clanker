@@ -26,13 +26,25 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
 
-    const pattern = str(obj, "pattern") orelse
+    const raw_pattern = str(obj, "pattern") orelse
         return lib.fail(out, "missing \"pattern\": part of a file name, e.g. \"loop\", or a glob like \"*.tool.json\"");
     // The sandbox rejects "." as a path component, so the root is the empty
     // string. A caller writing "." means the same thing and should not be
     // refused for it.
     const asked_dir = str(obj, "dir") orelse ".";
-    const dir = if (std.mem.eql(u8, asked_dir, ".") or std.mem.eql(u8, asked_dir, "./")) "" else asked_dir;
+    var dir = if (std.mem.eql(u8, asked_dir, ".") or std.mem.eql(u8, asked_dir, "./")) "" else asked_dir;
+
+    // A pattern that is really a path. Matching is against file names, so
+    // "src/agent/loop.zig" - the form every compile error and search result
+    // hands you - matched nothing at all. Split it instead of answering with
+    // an empty list: the leading part is where to look, the last component is
+    // what to look for.
+    var pattern = raw_pattern;
+    if (std.mem.lastIndexOfScalar(u8, pattern, '/')) |slash| {
+        if (dir.len == 0 and slash > 0) dir = pattern[0..slash];
+        pattern = pattern[slash + 1 ..];
+        if (pattern.len == 0) return lib.fail(out, "the pattern ends in a slash, so it names no file; give a file name or a glob");
+    }
 
     // The host matches globs, not substrings: "loop" finds a file called
     // exactly "loop" and misses loop.zig, which is never what the caller
@@ -56,6 +68,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("pattern");
     try s.write(pattern);
+    // Said plainly when it differs from what was asked for, so a caller that
+    // passed a path can see which part was used as the name.
+    if (!std.mem.eql(u8, pattern, raw_pattern)) {
+        try s.objectField("asked");
+        try s.write(raw_pattern);
+    }
     try s.objectField("dir");
     try s.write(if (dir.len == 0) "." else dir);
     try s.objectField("paths");
@@ -66,7 +84,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // a second identical call with the same spelling.
     if (found == .array and found.array.items.len == 0) {
         try s.objectField("note");
-        try s.write("nothing matched; the pattern matches file names, and * and ? are the only wildcards");
+        try s.write("nothing matched; the pattern matches file names case-sensitively, and * and ? are the only wildcards");
     }
     try s.endObject();
     out.len = w.end;
