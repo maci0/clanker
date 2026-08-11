@@ -1223,9 +1223,11 @@ function finalizeAnswer(turn) {
   var raw = turn.root.markdownSource || turn.answer.textContent;
   if (!raw) return;
   var frag = document.createDocumentFragment();
-  var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
+  var re = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)(?:```|$)/g;
   var last = 0, m;
   while ((m = re.exec(raw))) {
+    // Zero-length match at the end of the string: nothing left to promote.
+    if (m[0] === "") break;
     if (m.index > last) frag.appendChild(renderMarkdown(raw.slice(last, m.index)));
     frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
     last = re.lastIndex;
@@ -1414,7 +1416,7 @@ function renderStats(turn, stats, task) {
     parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
   }
   if (typeof stats.ms === "number") parts.push(fmtMs(stats.ms));
-  if (typeof stats.cost === "number") parts.push("$" + stats.cost.toFixed(4));
+  if (typeof stats.cost === "number" && stats.cost > 0) parts.push("$" + stats.cost.toFixed(4));
   var span = document.createElement("span");
   span.textContent = parts.join(" · ");
   turn.foot.appendChild(span);
