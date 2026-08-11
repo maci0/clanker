@@ -103,6 +103,79 @@ var el = {
   sessionExportJson: document.getElementById("session-export-json")
 };
 
+/* ---------- components ----------
+
+   One vocabulary for the whole sheet, built on VanJS. Every view below is
+   written in these, so a control cannot drift into its own spelling of a
+   button, a label or an empty state — which is how the page ended up with two
+   Refresh behaviours and three status conventions before this existed.
+
+   van.tags builds real DOM nodes and sets text as text, so nothing here can
+   introduce markup from data. */
+
+var T = van.tags;
+
+/* State a view derives from. `bind` runs its render whenever the state
+   changes and never on any other occasion, which is what removes the manual
+   "clear the container and rebuild" that lost focus and half-typed edits. */
+function bind(node, state, render) {
+  van.derive(function () {
+    var value = state.val;
+    node.textContent = "";
+    var built = render(value);
+    if (built == null) return;
+    if (Array.isArray(built)) built.forEach(function (n) { if (n) van.add(node, n); });
+    else van.add(node, built);
+  });
+}
+
+var UI = {
+  /* A button in the sheet's vocabulary. `kind` is "primary" for the one
+     action a view exists for, "danger" for one that destroys, absent for the
+     rest. */
+  button: function (label, onclick, opts) {
+    opts = opts || {};
+    var cls = "secondary";
+    if (opts.kind === "danger") cls += " danger";
+    var attrs = {
+      type: "button",
+      class: opts.kind === "primary" ? "" : cls,
+      onclick: onclick
+    };
+    if (opts.label) attrs["aria-label"] = opts.label;
+    if (opts.title) attrs.title = opts.title;
+    if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label);
+    return T.button(attrs, label);
+  },
+
+  /* A printed label above its field, the way the sheet labels every column. */
+  field: function (id, label, control) {
+    return [T.label({ for: id }, label), control];
+  },
+
+  /* Said in the product's own voice: what is absent, and what would put
+     something here. Never an apology, never a shrug. */
+  empty: function (text) {
+    return T.p({ class: "run-empty" }, text);
+  },
+
+  /* A measurement. Mono, tabular, so a column of them lines up. */
+  meta: function (text) {
+    return T.span({ class: "meta" }, text);
+  },
+
+  /* A row of controls with one rhythm. */
+  bar: function (children) {
+    return T.div({ class: "toolbar-actions" }, children);
+  },
+
+  /* The heading a section is named by, with its controls on the same rule. */
+  head: function (title, controls) {
+    return T.div({ class: "section-head" }, T.h2(title), controls || null);
+  }
+};
+
+
 /* Fetches a vendored library on first use and caches the promise, so the
    ~200 KB of d3-dag + highlight.js stays off the initial load of a page
    whose common visit needs neither. Every caller must tolerate rejection:
@@ -310,24 +383,6 @@ function recencyGroup(updated) {
   return "Older";
 }
 
-function railRow(s, title, meta, selected) {
-  var b = document.createElement("button");
-  b.type = "button";
-  b.className = "rail-item";
-  // aria-current, not aria-selected: this is the conversation you are in,
-  // not one of several selected in a listbox.
-  if (selected) b.setAttribute("aria-current", "true");
-  var t = document.createElement("span");
-  t.className = "rail-item-title";
-  t.textContent = title;
-  var m = document.createElement("span");
-  m.className = "rail-item-meta";
-  m.textContent = meta;
-  b.appendChild(t);
-  b.appendChild(m);
-  if (s) b.addEventListener("click", function () { switchSession(s.id); closeRailOnNarrow(); });
-  return b;
-}
 
 /* Pinning lives in this browser rather than on the server: which few
    conversations you keep to hand is a property of how you are working right
@@ -346,65 +401,81 @@ function togglePin(id) {
   renderSessionOptions(null);
 }
 
+/* The conversation list derives from three things: what the server knows,
+   what is pinned here, and what is typed in the filter. Nothing else can put
+   a row on screen, which is what stops the rail and the transcript
+   disagreeing about which conversation is open. */
+var railState = van.state({ sessions: [], filter: "", pins: [], current: "" });
+
 function renderSessionOptions(sessions) {
   if (sessions) knownSessions = sessions;
-  var q = el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "";
-  el.railList.textContent = "";
-  var seen = false;
-  var lastGroup = "";
-  var shown = 0;
-  var ordered = knownSessions.slice().sort(function (a, b) {
-    var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
-    if (pa !== pb) return pb - pa;
-    return 0;
+  railState.val = {
+    sessions: knownSessions,
+    filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
+    pins: pins.slice(),
+    current: sessionId
+  };
+  renderSessionTitle();
+}
+
+function railRowFor(s, current) {
+  var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
+  var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
+    (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
+  var open = s.id === current;
+
+  var row = T.button({
+    type: "button",
+    class: "rail-item",
+    onclick: function () { switchSession(s.id); closeRailOnNarrow(); }
+  }, T.span({ class: "rail-item-title" }, title), T.span({ class: "rail-item-meta" }, meta));
+  if (open) row.setAttribute("aria-current", "true");
+
+  var pin = T.button({
+    type: "button",
+    class: "rail-pin",
+    "data-on": String(isPinned(s.id)),
+    "aria-label": (isPinned(s.id) ? "Unpin " : "Pin ") + title,
+    "aria-pressed": String(isPinned(s.id)),
+    onclick: function () { togglePin(s.id); }
   });
-  ordered.forEach(function (s) {
-    if (s.id === sessionId) seen = true;
-    if (q && sessionLabel(s).toLowerCase().indexOf(q) === -1) return;
-    var group = isPinned(s.id) ? "Pinned" : recencyGroup(s.updated);
+  van.add(pin, icon("pin", 15));
+
+  return T.li({ class: "rail-row" }, row, pin);
+}
+
+bind(el.railList, railState, function (s) {
+  var out = [];
+  var ordered = s.sessions.slice().sort(function (a, b) {
+    var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
+    return pa === pb ? 0 : pb - pa;
+  });
+  var lastGroup = "";
+  var seen = false;
+  var shown = 0;
+  ordered.forEach(function (item) {
+    if (item.id === s.current) seen = true;
+    if (s.filter && sessionLabel(item).toLowerCase().indexOf(s.filter) === -1) return;
+    var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
     if (group !== lastGroup) {
-      var head = document.createElement("li");
-      head.className = "rail-group";
-      head.setAttribute("role", "presentation");
-      head.textContent = group;
-      el.railList.appendChild(head);
+      out.push(T.li({ class: "rail-group", role: "presentation" }, group));
       lastGroup = group;
     }
-    var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
-    var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
-      (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
-    var row = document.createElement("li");
-    row.className = "rail-row";
-    row.appendChild(railRow(s, title, meta, s.id === sessionId));
-    var pin = document.createElement("button");
-    pin.type = "button";
-    pin.className = "rail-pin";
-    pin.appendChild(icon("pin", 15));
-    pin.setAttribute("data-on", String(isPinned(s.id)));
-    pin.setAttribute("aria-pressed", String(isPinned(s.id)));
-    pin.setAttribute("aria-label", (isPinned(s.id) ? "Unpin " : "Pin ") + title);
-    pin.addEventListener("click", function () { togglePin(s.id); });
-    row.appendChild(pin);
-    el.railList.appendChild(row);
+    out.push(railRowFor(item, s.current));
     shown += 1;
   });
   /* A brand new chat has no file on disk until its first turn completes;
-     without this row the rail would show nothing selected while the
-     composer was plainly pointed at something. */
-  if (!seen && !q) {
-    var pendingRow = document.createElement("li");
-    pendingRow.className = "rail-row";
-    pendingRow.appendChild(railRow(null, "New conversation", "unsaved", true));
-    el.railList.insertBefore(pendingRow, el.railList.firstChild);
+     without this row the rail shows nothing selected while the composer is
+     plainly pointed at something. */
+  if (!seen && !s.filter) {
+    out.unshift(T.li({ class: "rail-row" },
+      T.button({ type: "button", class: "rail-item", "aria-current": "true" },
+        T.span({ class: "rail-item-title" }, "New conversation"),
+        T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!shown && q) {
-    var none = document.createElement("li");
-    none.className = "rail-empty";
-    none.textContent = "No conversation matches.";
-    el.railList.appendChild(none);
-  }
-  renderSessionTitle();
-}
+  if (!shown && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
+  return out;
+});
 
 function renderSessionTitle() {
   var meta = currentSessionMeta();
@@ -2572,101 +2643,57 @@ function loadUsage() {
 
 // ---- goals: what runs are being steered toward -------------------------
 
+var goalState = van.state([]);
+
+/* Newest first: the goal most recently set is the one steering runs now. */
 function renderGoals(goals) {
-  el.goals.textContent = "";
-  if (!goals.length) {
-    var none = document.createElement("p");
-    none.className = "usage-empty";
-    none.textContent = "No goals set. Add one above, or run `clanker goal \"<intent>\"`.";
-    el.goals.appendChild(none);
-    return;
-  }
-  // Newest first: the goal most recently set is the one steering runs now.
-  goals.slice().sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); }).forEach(function (g) {
-    var card = document.createElement("div");
-    card.className = "goal";
-    card.dataset.status = g.status || "";
-
-    var obj = document.createElement("div");
-    obj.className = "goal-objective";
-    obj.textContent = g.objective || "(no objective recorded)";
-    card.appendChild(obj);
-
-    var meta = document.createElement("div");
-    meta.className = "goal-meta";
-    var status = document.createElement("span");
-    status.className = "goal-status";
-    status.textContent = g.status || "unknown";
-    meta.appendChild(status);
-    if (g.id) {
-      var id = document.createElement("span");
-      id.textContent = "id " + String(g.id).slice(0, 10);
-      meta.appendChild(id);
-    }
-    card.appendChild(meta);
-
-    if (g.id) {
-      var actions = document.createElement("div");
-      actions.className = "goal-actions";
-      [["Mark done", "done", "Goal marked done."],
-       ["Abandon", "abandoned", "Goal abandoned."],
-       ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
-        if ((g.status || "active") === pair[1]) return;
-        var b = document.createElement("button");
-        b.type = "button";
-        b.className = "secondary";
-        b.textContent = pair[0];
-        b.addEventListener("click", function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); });
-        actions.appendChild(b);
-      });
-      var del = document.createElement("button");
-      del.type = "button";
-      del.className = "secondary danger";
-      del.textContent = "Delete";
-      del.setAttribute("aria-label", "Delete goal: " + (g.objective || g.id));
-      del.addEventListener("click", function () {
-        if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
-        postGoal({ id: g.id, remove: true }, "Goal deleted.");
-      });
-      actions.appendChild(del);
-      card.appendChild(actions);
-    }
-
-    // Only the fields that were actually filled in: an empty criterion is a
-    // real state of a goal, and printing an empty label would imply
-    // otherwise.
-    var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
-      ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]].filter(function (p) { return !!p[1]; });
-
-    if (fields.length) {
-      // A well-specified goal runs to several paragraphs, and there are
-      // usually a handful of them. Expanded by default they push everything
-      // below this section off the page, so the objective and status stay
-      // visible and the specification is one click away — same disclosure
-      // the node-output tree uses.
-      var details = document.createElement("details");
-      details.className = "json-node";
-      var summary = document.createElement("summary");
-      summary.textContent = fields.length + (fields.length === 1 ? " detail" : " details");
-      details.appendChild(summary);
-      var bodyEl = document.createElement("div");
-      bodyEl.className = "json-children";
-      fields.forEach(function (pair) {
-        var row = document.createElement("div");
-        row.className = "goal-field";
-        var label = document.createElement("b");
-        label.textContent = pair[0] + ": ";
-        row.appendChild(label);
-        row.appendChild(document.createTextNode(pair[1]));
-        bodyEl.appendChild(row);
-      });
-      details.appendChild(bodyEl);
-      card.appendChild(details);
-    }
-
-    el.goals.appendChild(card);
+  goalState.val = (goals || []).slice().sort(function (a, b) {
+    return (b.updated || 0) - (a.updated || 0);
   });
 }
+
+function goalCard(g) {
+  var fields = [["Done when", g.completion_criterion], ["Proof", g.proof],
+    ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule]]
+    .filter(function (pair) { return !!pair[1]; });
+
+  var actions = [];
+  if (g.id) {
+    [["Mark done", "done", "Goal marked done."],
+     ["Abandon", "abandoned", "Goal abandoned."],
+     ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
+      if ((g.status || "active") === pair[1]) return;
+      actions.push(UI.button(pair[0], function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); }));
+    });
+    actions.push(UI.button("Delete", function () {
+      if (!window.confirm("Delete this goal? Runs that carried it are kept.")) return;
+      postGoal({ id: g.id, remove: true }, "Goal deleted.");
+    }, { kind: "danger", label: "Delete goal: " + (g.objective || g.id) }));
+  }
+
+  return T.div({ class: "goal", "data-status": g.status || "" },
+    T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
+    T.div({ class: "goal-meta" },
+      T.span({ class: "goal-status" }, g.status || "unknown"),
+      g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
+    /* A well-specified goal runs to several paragraphs and there are usually
+       several of them; expanded by default they push the rest of the page off
+       screen, so the objective and status stay visible and the specification
+       is one click away. */
+    fields.length ? T.details({ class: "goal-detail" },
+      T.summary("Specification"),
+      T.dl(fields.map(function (pair) {
+        return [T.dt(pair[0]), T.dd(pair[1])];
+      }))) : null,
+    actions.length ? T.div({ class: "goal-actions" }, actions) : null);
+}
+
+bind(el.goals, goalState, function (goals) {
+  if (!goals.length) {
+    return UI.empty("No goals set. Add one above, or run `clanker goal \"<intent>\"`.");
+  }
+  return goals.map(goalCard);
+});
 
 function loadGoals() {
   return fetch("/api/goals")
@@ -2685,22 +2712,32 @@ function loadGoals() {
 
 var allTools = [];
 
+/* The tool list is a derivation of what is registered and what is typed in
+   the filter, so the two can never disagree about what is on screen. */
+var toolState = van.state({ tools: [], filter: "" });
+
 function renderTools(filterText) {
-  var q = (filterText || "").trim().toLowerCase();
-  var matches = !q ? allTools : allTools.filter(function (t) {
-    return t.name.toLowerCase().indexOf(q) !== -1 ||
-      (t.description || "").toLowerCase().indexOf(q) !== -1;
-  });
-  el.tools.textContent = "";
-  if (!matches.length) {
-    var none = document.createElement("p");
-    none.className = "usage-empty";
-    none.textContent = q ? "No tools match “" + filterText.trim() + "”." : "No tools registered.";
-    el.tools.appendChild(none);
-    return;
-  }
-  matches.forEach(function (t) { el.tools.appendChild(buildToolRow(t)); });
+  toolState.val = {
+    tools: allTools,
+    filter: (filterText == null ? el.toolFilter.value : filterText).trim().toLowerCase()
+  };
 }
+
+bind(el.tools, toolState, function (s) {
+  var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
+    return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
+      (t.description || "").toLowerCase().indexOf(s.filter) !== -1;
+  });
+  el.toolsStatus.textContent = s.filter
+    ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")
+    : "";
+  if (!shown.length) {
+    return UI.empty(s.filter
+      ? "No tool matches " + s.filter + "."
+      : "No tools registered. `zig build tools` compiles them.");
+  }
+  return shown.map(buildToolRow);
+});
 
 function buildToolRow(t) {
   var row = document.createElement("div");
@@ -3003,13 +3040,7 @@ function loadTools() {
 var toolFilterTimer = null;
 el.toolFilter.addEventListener("input", function () {
   if (toolFilterTimer) window.clearTimeout(toolFilterTimer);
-  toolFilterTimer = window.setTimeout(function () {
-    renderTools(el.toolFilter.value);
-    var shown = el.tools.querySelectorAll(".tool-row").length;
-    el.toolsStatus.textContent = el.toolFilter.value.trim()
-      ? shown + (shown === 1 ? " tool matches." : " tools match.")
-      : "";
-  }, 120);
+  toolFilterTimer = window.setTimeout(function () { renderTools(el.toolFilter.value); }, 120);
 });
 
 el.goalsRefresh.addEventListener("click", function () {
@@ -3374,6 +3405,7 @@ SUGGESTIONS.forEach(function (text) {
   });
   el.suggestions.appendChild(b);
 });
+
 
 
 
