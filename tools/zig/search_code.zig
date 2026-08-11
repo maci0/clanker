@@ -79,6 +79,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             else => "",
         } else "";
 
+        // Exit code 1 with no stderr is the grep convention for "no
+        // matches" (same as rg). Only treat it as an error when stderr
+        // carries a message or the code is >= 2.
+        if (ag_code == 1 and std.mem.trim(u8, ag_stderr, " \t\r\n").len == 0) {
+            return lib.okText(out, "no matches");
+        }
         // Non-zero exit: return a structured error with a hint when the
         // grammar or config is missing.
         if (ag_code != 0) {
