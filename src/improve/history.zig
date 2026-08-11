@@ -125,6 +125,36 @@ pub const History = struct {
         return false;
     }
 
+    /// True when a recently rejected attempt shares at least one change
+    /// fingerprint with the proposed set. Unlike `alreadyRejected` (which
+    /// requires an exact set match), this catches proposals that recycle a
+    /// subset of a failing edit alongside new changes — the recycled part
+    /// fails for the same reason, and the whole proposal is wasted.
+    /// Returns the number of overlapping fingerprints, so the caller can
+    /// decide whether a single shared change is worth blocking on.
+    pub fn partialOverlapRejected(self: *History, arena: std.mem.Allocator, fingerprints: []const u64, max_lookback: usize) !usize {
+        if (fingerprints.len == 0) return 0;
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return 0;
+        const start = if (entries.len > max_lookback) entries.len - max_lookback else 0;
+        var max_overlap: usize = 0;
+        for (entries[start..]) |e| {
+            if (!std.mem.eql(u8, e.status, "rejected")) continue;
+            if (e.changes.len == 0) continue;
+            var overlap: usize = 0;
+            for (fingerprints) |fp| {
+                for (e.changes) |seen| {
+                    if (seen == fp) {
+                        overlap += 1;
+                        break;
+                    }
+                }
+            }
+            if (overlap > max_overlap) max_overlap = overlap;
+        }
+        return max_overlap;
+    }
+
     /// True when a recently rejected attempt proposed exactly this set of
     /// edits. Without this the loop re-proposes the same failing change
     /// indefinitely — it knows not to repeat accepted work but has no memory
@@ -819,6 +849,52 @@ test "sameRegionRejected catches variations of the same failing edit" {
     const fp_acc = History.changeFingerprint("src/bar.zig", "accepted code", "new");
     try hist.appendFull("imp-a1", .accepted, "i", "good", &.{"src/bar.zig"}, 0.0, 1.0, "", &.{fp_acc}, &.{rfp_acc});
     try std.testing.expect(!try hist.sameRegionRejected(arena, &.{rfp_acc}, 10));
+}
+
+test "partialOverlapRejected detects shared changes with rejected proposals" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    const fp_a = History.changeFingerprint("src/a.zig", "old_a", "new_a");
+    const fp_b = History.changeFingerprint("src/b.zig", "old_b", "new_b");
+    const fp_c = History.changeFingerprint("src/c.zig", "old_c", "new_c");
+
+    // No history: no overlap.
+    try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{ fp_a, fp_c }, 10));
+
+    // Reject a proposal with changes [A, B].
+    try hist.append("rej-1", .rejected, "i", "s", &.{ "src/a.zig", "src/b.zig" }, 0, 0, "d", &.{ fp_a, fp_b });
+
+    // A new proposal [A, C] shares one change (A) with the rejected one.
+    try std.testing.expectEqual(@as(usize, 1), try hist.partialOverlapRejected(arena, &.{ fp_a, fp_c }, 10));
+
+    // The exact-match check does NOT catch this partial overlap.
+    try std.testing.expect(!try hist.alreadyRejected(arena, &.{ fp_a, fp_c }, 10));
+
+    // A proposal with no overlap returns 0.
+    try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{fp_c}, 10));
+
+    // An accepted entry's fingerprints are not counted.
+    try hist.append("acc-1", .accepted, "i", "s", &.{"src/c.zig"}, 0, 1, "", &.{fp_c});
+    try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{fp_c}, 10));
+
+    // Lookback window of 0 finds nothing.
+    try std.testing.expectEqual(@as(usize, 0), try hist.partialOverlapRejected(arena, &.{fp_a}, 0));
 }
 
 test "an edit already rejected is recognised within the lookback window" {
