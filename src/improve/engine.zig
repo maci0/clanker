@@ -862,14 +862,7 @@ pub const Engine = struct {
     /// model knows not to patch it blind.
     fn contextBudget(self: *const Engine) usize {
         const window: usize = self.provider.activeModel().context_window;
-        // The upper clamp used to be 256 KiB, which made the web UI
-        // unreachable: `collectContext` gives focus a quarter of the budget,
-        // so a 256 KiB ceiling left 64 KiB of focus for a single 133 KiB file
-        // that is the entire web UI. The page was gathered and then omitted
-        // every time, and the model answered "no changes needed" about a file
-        // it had never seen. A million-token model can hold it; the clamp is
-        // what decides whether it is offered.
-        return std.math.clamp(window, 64 * 1024, 1024 * 1024);
+        return std.math.clamp(window, 64 * 1024, 256 * 1024);
     }
 
     /// The source context, split at the cache breakpoint.
@@ -953,10 +946,15 @@ pub const Engine = struct {
         // the tail has taken its share.
         const churn = self.hist.recentlyTouched(self.arena, 6) catch &.{};
         const focus_budget = max_bytes / 4;
+        // A file the instruction names is the file being patched, so it goes in
+        // whatever its size: dropping it is how a run ends in "no changes
+        // needed" about a file it was never shown. tools/zig/webui/index.html
+        // is 133 KB on its own, and the fix for that was once to quadruple the
+        // whole context, which quadrupled the bill for every unrelated run too.
         for (cands.items) |c| {
             if (c.score < 1_000_000) continue;
             included_any = true;
-            try self.appendWholeFile(&focus, &omitted, c, focus_budget);
+            try self.appendWholeFile(&focus, &omitted, c, std.math.maxInt(usize));
         }
         for (cands.items) |c| {
             if (c.score >= 1_000_000 or !pathIn(churn, c.path)) continue;
@@ -979,7 +977,8 @@ pub const Engine = struct {
         }.lt);
         // A fixed share, not "whatever the focus left over": a cache block has
         // to be identical byte for byte, and a budget that moves with the focus
-        // size changes which file lands last on every run.
+        // size changes which file lands last on every run. A large pinned file
+        // therefore grows the total rather than shrinking the cached half.
         const bulk_budget = max_bytes - focus_budget;
         for (bulk_order) |c| {
             if (pathIn(churn, c.path)) continue;
@@ -1664,14 +1663,19 @@ test "the context budget follows the model's own window" {
 
     var huge = try config.Provider.single(arena, "h", "http://x", .openai_compat, "m", .{ .context_window = 1_048_576 });
     engine.provider = &huge;
-    try std.testing.expectEqual(@as(usize, 1024 * 1024), engine.contextBudget());
+    try std.testing.expectEqual(@as(usize, 256 * 1024), engine.contextBudget());
 
-    // The ceiling exists to make the largest single file in the modifiable
-    // surface reachable. collectContext gives focus a quarter of the budget,
-    // and tools/zig/webui/index.html — the entire web UI, one file — is over
-    // 130 KiB, so a ceiling under ~536 KiB silently omits it and the model is
-    // asked to edit a page it cannot see.
-    try std.testing.expect(engine.contextBudget() / 4 > 133 * 1024);
+    // The ceiling is a cost decision, not a capacity one. A million-token model
+    // can hold the whole project, and sending it cost 345k prompt tokens and
+    // 1.79 dollars per attempt, on every run, whether or not the instruction
+    // had anything to do with the files being sent.
+    //
+    // Raising it to fit one large file is the wrong lever: a file the
+    // instruction names bypasses the focus share entirely (see
+    // collectContext), so tools/zig/webui/index.html at 133 KiB arrives whole
+    // under this ceiling. Widening the ceiling instead makes every unrelated
+    // run pay for it.
+    try std.testing.expect(engine.contextBudget() <= 256 * 1024);
 }
 
 test "pruneStaging keeps the newest N and removes the rest" {
