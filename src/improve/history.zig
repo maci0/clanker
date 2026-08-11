@@ -348,6 +348,15 @@ pub const History = struct {
             try buf.appendSlice(arena, e.status);
             try buf.appendSlice(arena, ": ");
             try buf.appendSlice(arena, firstLine(e.summary, 160));
+            // Which files were touched: helps the model see what area was
+            // already attempted so it can vary its approach or target.
+            if (e.files.len > 0) {
+                try buf.appendSlice(arena, "\n    files: ");
+                for (e.files, 0..) |file, fi| {
+                    if (fi > 0) try buf.appendSlice(arena, ", ");
+                    try buf.appendSlice(arena, file);
+                }
+            }
             // Why it failed is the part worth carrying: the summary alone says
             // what was attempted, not what went wrong with it.
             if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
