@@ -2035,18 +2035,27 @@ const Model = struct {
                 writeWrapped(surface, &row, bottom, text_width, "/model to switch models  /help for commands  Ctrl-C to quit", dim);
             }
         }
-        // Transcript layout: while a turn streams, content flows top-down as
-        // it arrives (the live tail is what the eye tracks). At rest and while
-        // scrolled back, the visible block is bottom-aligned so a short
-        // transcript sits against the input instead of floating at the top.
+        // Transcript layout: the visible block is bottom-aligned, chat-style,
+        // so it hugs the input instead of floating at the top. While a turn
+        // streams at the tail, the growing live buffer is reserved space at the
+        // bottom and the completed lines fill above it, so the newest text
+        // always sits against the input rather than the whole view jumping to
+        // the top. Scrolled back (view_end set), the anchored window is frozen.
         var start: usize = undefined;
-        if (streaming) {
+        const stream_at_tail = streaming and self.view_end == null;
+        const reserved: u16 = if (stream_at_tail)
+            @intCast(@min(streamRows(stream_snapshot, text_width), avail_rows))
+        else
+            0;
+        const for_completed: u16 = avail_rows -| reserved;
+        if (streaming and self.view_end != null) {
+            // Frozen scrollback during a stream: keep the anchored window put.
             start = tailStart(self.lines.items[0..view_end], avail_rows);
             row = top;
         } else {
-            const win = tailWindow(self.lines.items[0..view_end], view_end, avail_rows, text_width);
+            const win = tailWindow(self.lines.items[0..view_end], view_end, for_completed, text_width);
             start = win.start;
-            row = top + (avail_rows - win.used_rows);
+            row = top + (avail_rows -| (win.used_rows + reserved));
         }
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
@@ -2092,7 +2101,7 @@ const Model = struct {
         // frozen history, and painting fresh tokens under it would both lie
         // about where they belong and shove the anchored lines around.
         if (streaming and self.view_end == null and row < bottom and stream_snapshot.len > 0) {
-            self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
+            self.writeStream(ctx, surface, &row, bottom, text_width, stream_snapshot, fence_on, &syn_style);
         }
 
         if (show_bar) drawScrollbar(surface, max.width - 1, top, bottom, start, view_end, line_count, rule_style, accent_style);
@@ -2147,12 +2156,41 @@ const Model = struct {
     /// no per-line language to highlight against — `writeWrapped` is the
     /// right call. The `fence_on`/`syn_style` params are carried for a
     /// future highlight pass but not used yet.
-    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style) void {
+    /// Renders the live streaming buffer with the same fence-aware syntax
+    /// highlighting the completed transcript gets, so a code block looks the
+    /// same while it streams as it does once folded in (it used to render as
+    /// flat unstyled text with the ``` markers showing). `fence_on` is whether
+    /// the theme has colour at all; with it off everything falls back to plain.
+    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style) void {
         _ = self;
-        _ = ctx;
-        _ = fence_on;
-        _ = syn_style;
-        writeWrapped(surface, row, bottom, surface.size.width, text, .{});
+        var in_fence = false;
+        var fence_lang: []const u8 = "";
+        var it = std.mem.splitScalar(u8, text, '\n');
+        while (it.next()) |line| {
+            if (row.* >= bottom) return;
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (std.mem.startsWith(u8, trimmed, "```")) {
+                if (in_fence) {
+                    in_fence = false;
+                } else {
+                    in_fence = true;
+                    fence_lang = std.mem.trim(u8, trimmed[3..], " ");
+                }
+                continue; // markers themselves are not shown, same as finishTurn
+            }
+            if (in_fence and fence_on) {
+                var state = syntax.State.init(fence_lang);
+                var segs: std.ArrayList(vaxis.Segment) = .empty;
+                if (syntax.spansVaxis(&state, syn_style, ctx.arena, line, &segs)) {
+                    writeWrappedSegments(ctx, surface, row, bottom, width, segs.items);
+                } else |_| {
+                    writeWrapped(surface, row, bottom, width, line, .{});
+                }
+            } else {
+                writeWrapped(surface, row, bottom, width, line, .{});
+            }
+            row.* += 1;
+        }
     }
 };
 
@@ -2189,6 +2227,21 @@ fn lineRows(text: []const u8, width: u16) usize {
             col = 0;
         }
         col += w;
+    }
+    return rows;
+}
+
+/// Rows the live stream buffer will occupy, mirroring writeStream's line
+/// handling (fence-marker lines are skipped, everything else wraps), so the
+/// bottom-anchor math can reserve exactly the space the stream renders into.
+fn streamRows(text: []const u8, width: u16) usize {
+    if (text.len == 0) return 0;
+    var rows: usize = 0;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, trimmed, "```")) continue;
+        rows += lineRows(line, width);
     }
     return rows;
 }
