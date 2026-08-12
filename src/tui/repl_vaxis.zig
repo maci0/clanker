@@ -174,6 +174,9 @@ const Line = struct {
     text: []const u8,
     dim: bool = false,
     fence_lang: ?[]const u8 = null,
+    /// The user's own echoed prompt ("clanker> ..."), rendered in the accent
+    /// prompt colour so each turn's starting point is scannable on scrollback.
+    user: bool = false,
 };
 
 /// One entry in the `/model` picker: a provider/model pair flattened out of
@@ -998,7 +1001,7 @@ const Model = struct {
         // task and the streamed reply land there, and hiding them behind a
         // frozen window would make Enter look like it did nothing.
         self.view_end = null;
-        self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
+        self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}), .user = true }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
         self.hist_draft = "";
@@ -1536,6 +1539,9 @@ const Model = struct {
         const rule_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.rule } } else .{};
         const tool_style: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.tool } } else dim;
         const err_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.err } } else .{};
+        const prompt_style: vaxis.Style = if (active.rgb) |c| .{ .bold = true, .fg = .{ .rgb = c.prompt } } else .{ .bold = true };
+        const accent_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.accent } } else .{};
+        const brand_style: vaxis.Style = if (active.rgb) |c| .{ .bold = true, .fg = .{ .rgb = c.accent } } else .{ .bold = true };
         @memset(surface.buffer, .{ .style = .{}, .default = true });
 
         // Held through the self.lines read loop below, not just the
@@ -1589,16 +1595,24 @@ const Model = struct {
             std.fmt.bufPrint(&phase_buf, " running {s}", .{tool_snap[0..tool_snap_len]}) catch " tool"
         else
             " thinking";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s}", .{
-            self.provider.name,
-            self.provider.activeModelName(),
-            activity,
-            phase,
-            scroll_hint,
-            if (self.session_id != null) " \xc2\xb7 " else "",
-            self.session_id orelse "",
-        }) catch "clanker (vaxis)";
-        writeRow(surface, 0, status, dim);
+        // The status line is written in coloured segments rather than one
+        // flat string: the brand and the active provider/model are the two
+        // things the eye looks for, and the phase word carries the run state
+        // in colour (green idle, accent while a turn is in flight).
+        const dot = " \xc2\xb7 ";
+        const model = std.fmt.bufPrint(&self.status_buf, "{s}/{s}", .{ self.provider.name, self.provider.activeModelName() }) catch "";
+        var scol: u16 = 0;
+        writeRowAt(surface, 0, &scol, "clanker", brand_style);
+        writeRowAt(surface, 0, &scol, dot, dim);
+        writeRowAt(surface, 0, &scol, model, accent_style);
+        writeRowAt(surface, 0, &scol, dot, dim);
+        if (activity.len > 0) writeRowAt(surface, 0, &scol, activity, accent_style);
+        writeRowAt(surface, 0, &scol, phase, if (streaming) accent_style else prompt_style);
+        if (scroll_hint.len > 0) writeRowAt(surface, 0, &scol, scroll_hint, dim);
+        if (self.session_id) |sid| {
+            writeRowAt(surface, 0, &scol, dot, dim);
+            writeRowAt(surface, 0, &scol, sid, dim);
+        }
 
         drawBox(surface, 0, box_y, max.width, box_h, rule_style);
         const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
@@ -1643,7 +1657,9 @@ const Model = struct {
                     writeWrappedCard(surface, &row, bottom, max.width, l.text, tool_style);
                     continue;
                 }
-                const style = if (std.mem.startsWith(u8, l.text, "[error:"))
+                const style = if (l.user)
+                    prompt_style
+                else if (std.mem.startsWith(u8, l.text, "[error:"))
                     err_style
                 else if (l.dim)
                     dim

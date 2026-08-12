@@ -30,6 +30,12 @@ pub const Rgb = struct {
     tool: Rgb24,
     err: Rgb24,
     rule: Rgb24,
+    /// The user's echoed prompt line and the "ready" status, so a turn's
+    /// starting point is scannable and an idle prompt reads as go.
+    prompt: Rgb24,
+    /// The brand mark and the active provider/model in the status line, plus
+    /// the "thinking/running" phase while a turn is in flight.
+    accent: Rgb24,
 };
 
 /// Catppuccin Mocha, verified against catppuccin/palette's palette.json
@@ -265,6 +271,8 @@ fn catppuccinTheme(comptime p: type) Theme {
             .tool = p.blue,
             .err = p.red,
             .rule = p.overlay0,
+            .prompt = p.green,
+            .accent = p.mauve,
         },
     };
 }
@@ -309,6 +317,8 @@ fn tokyoNightTheme(comptime p: type) Theme {
             .tool = p.blue,
             .err = p.red,
             .rule = p.dark3,
+            .prompt = p.green,
+            .accent = p.purple,
         },
     };
 }
