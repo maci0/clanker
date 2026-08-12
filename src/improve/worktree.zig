@@ -197,7 +197,14 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     const root = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(root);
 
-    for ([_][]const u8{ ".env", "config.local.toml", "zig-out", ".zig-cache" }) |name| {
+    // .zig-cache deliberately NOT linked: several sandbox tests place their
+    // tmp roots at the literal path ".zig-cache/tmp/...", and the sandbox's
+    // no-follow safeJoinSecure walk (correctly) refuses to traverse a
+    // symlinked component -- a linked cache broke 3 tests in every worktree,
+    // failing the baseline gate of every subsequent run (verified in a
+    // scratch worktree; same collision as the staging-side attempt, which is
+    // why staging shares the cache via --cache-dir args instead).
+    for ([_][]const u8{ ".env", "config.local.toml", "zig-out" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
