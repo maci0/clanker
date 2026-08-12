@@ -2325,6 +2325,11 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     child_sb.tool_registry = null;
     child_sb.tool_call_depth = 0;
     child_sb.tool_self_name = target.name;
+    // A child tool must not inherit the parent's ability to spawn agents
+    // or to answer on its behalf: those are wired by the agent loop for
+    // the tools that declared the capability, not inherited via chain.
+    child_sb.subagent_runner = null;
+    child_sb.own_ask = null;
     child_sb.fs_prefixes = target.fs_prefixes;
     child_sb.exec_allow = target.exec_allow;
     child_sb.network_allow = target.network_allow;
@@ -2395,7 +2400,8 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     }.f) catch return Err.invalid;
     var mod = engine.compile(wasm_bytes) catch return Err.invalid;
     defer mod.deinit();
-    var inst = linker.instantiate(&mod, .{ .fuel = .{ .limited = 10_000_000_000 }, .max_memory_pages = .{ .limited = 256 } }) catch return Err.invalid;
+    const child_fuel: u64 = if (target.fuel == 0) 10_000_000_000 else @min(target.fuel, 10_000_000_000);
+    var inst = linker.instantiate(&mod, .{ .fuel = .{ .limited = child_fuel }, .max_memory_pages = .{ .limited = 256 } }) catch return Err.invalid;
     defer inst.deinit();
     if (inst.exportFuncSig("host_arena")) |_| {
         var af = inst.typedFunc(fn () u32, "host_arena");

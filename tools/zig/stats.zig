@@ -42,23 +42,36 @@ fn renderText(raw: []const u8) ![]const u8 {
     if (parsed.stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
 
     var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(lib.alloc, "provider        model                          calls   prompt  complet   total  cache%  tok/s       cost$\n");
+    try text.appendSlice(lib.alloc, "provider        model                          calls  prompt  output   total  cache%  tok/s       cost$\n");
     for (parsed.stats) |stat| try appendRow(&text, stat.provider, stat.model, stat);
     try appendRow(&text, "totals", "", parsed.totals);
     return text.toOwnedSlice(lib.alloc);
 }
 
 fn appendRow(text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: Stat) !void {
-    const line = try std.fmt.allocPrint(lib.alloc, "{s:<15} {s:<30}{d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
+    const prompt = try compactCount(stat.prompt_tokens);
+    const completion = try compactCount(stat.completion_tokens);
+    const total = try compactCount(stat.total_tokens);
+    const line = try std.fmt.allocPrint(lib.alloc, "{s:<15} {s:<30}{d:>5} {s:>7} {s:>7} {s:>7} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
         provider,
         model,
         stat.calls,
-        stat.prompt_tokens,
-        stat.completion_tokens,
-        stat.total_tokens,
+        prompt,
+        completion,
+        total,
         stat.cache_hit_rate,
         stat.tokens_per_sec,
         stat.cost,
     });
     try text.appendSlice(lib.alloc, line);
+}
+
+/// Human tables optimize for comparison; the JSON path above preserves exact
+/// counts for scripts. One decimal keeps nearby values distinct without making
+/// eight-digit totals visually merge into the next column.
+fn compactCount(value: u64) ![]const u8 {
+    if (value < 1_000) return std.fmt.allocPrint(lib.alloc, "{d}", .{value});
+    if (value < 1_000_000) return std.fmt.allocPrint(lib.alloc, "{d:.1}K", .{@as(f64, @floatFromInt(value)) / 1_000.0});
+    if (value < 1_000_000_000) return std.fmt.allocPrint(lib.alloc, "{d:.1}M", .{@as(f64, @floatFromInt(value)) / 1_000_000.0});
+    return std.fmt.allocPrint(lib.alloc, "{d:.1}B", .{@as(f64, @floatFromInt(value)) / 1_000_000_000.0});
 }

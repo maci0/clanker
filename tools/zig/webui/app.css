@@ -1021,6 +1021,15 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   overflow-wrap: anywhere; white-space: pre-line;
 }
 .run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-left: auto; margin-right: auto; text-align: center; }
+.knowledge-empty {
+  max-width: 34rem;
+  margin: var(--space-6) auto 0;
+  padding: var(--space-6);
+  text-align: center;
+  border-top: 1px solid var(--rule);
+}
+.knowledge-empty h3 { margin: 0 0 var(--space-2); font-size: var(--step-2); }
+.knowledge-empty p { margin: 0 auto var(--space-4); max-width: 52ch; color: var(--fg-muted); line-height: 1.6; }
 
 /* ---- run canvas: llm -> tool(s) -> llm -> ... -> final, drawn as nodes and edges ---- */
 .run-canvas { position: relative; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); max-height: min(60vh, 520px); }

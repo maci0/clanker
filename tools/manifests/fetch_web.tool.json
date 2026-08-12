@@ -15,9 +15,7 @@
   },
   "network_allow": [
     "api.github.com",
-    "raw.githubusercontent.com",
-    "wttr.in",
-    "example.com"
+    "raw.githubusercontent.com"
   ],
   "category": "web"
 }

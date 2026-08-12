@@ -41,8 +41,15 @@ export function loadKnowledge(){
     if(list){
       list.textContent="";
       if(!cols.length){
-        var empty=document.createElement("p"); empty.className="run-empty"; empty.textContent="No collections yet. Create one to start adding documents.";
-        list.appendChild(empty);
+        var empty=document.createElement("div"); empty.className="knowledge-empty";
+        var heading=document.createElement("h3"); heading.textContent="Give clanker context it can reuse"; empty.appendChild(heading);
+        var copy=document.createElement("p"); copy.textContent="Collections keep project notes, decisions, and reference material ready to include in a chat."; empty.appendChild(copy);
+        var start=document.createElement("button"); start.type="button"; start.className="secondary"; start.textContent="Create your first collection";
+        start.addEventListener("click",function(){
+          var title=document.getElementById("knowledge-title");
+          if(title){ title.focus(); title.scrollIntoView({behavior:"smooth",block:"center"}); }
+        });
+        empty.appendChild(start); list.appendChild(empty);
       } else cols.forEach(function(c){
         var card=document.createElement("div"); card.className="knowledge-card";
         var title=document.createElement("div"); title.className="knowledge-title";

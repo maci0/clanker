@@ -1612,7 +1612,9 @@ const Model = struct {
         const matches = self.filteredCandidates();
         const max_rows: u16 = 8;
         const rows_shown: u16 = @intCast(@min(matches.len, max_rows));
-        const h: u16 = rows_shown + 3; // top border + query line + rows + bottom border
+        // The picker commits on Enter, so teach its controls at the decision
+        // point instead of expecting the user to remember the /help prose.
+        const h: u16 = rows_shown + 4; // border + query + rows + key guide + border
         if (surface.size.width < 8) return;
         const y = self.transcript_bottom -| h;
         drawBox(surface, 0, y, surface.size.width, h, rule_style);
@@ -1636,6 +1638,7 @@ const Model = struct {
             writeRowAt(surface, row, &col, cand.label, style);
             row += 1;
         }
+        writeRow(surface, y + h - 2, "  Up/Down move  ·  Enter select  ·  Esc cancel", .{ .dim = true });
     }
 
     /// Renders the live streaming buffer as plain wrapped text. The buffer
