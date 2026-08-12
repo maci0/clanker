@@ -8264,6 +8264,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // line: it is a control event, so a client that does not know it just
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
+        // Tells the client which goal (explicit or auto-steered) is behind
+        // this turn, if any — the client has no other way to know an
+        // auto-steered run was steered at all, since that resolution
+        // happens entirely server-side.
+        if (resolved.goal_id) |gid| writeStreamEvent(stream.socket.handle, "goal", .{ .id = gid });
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));

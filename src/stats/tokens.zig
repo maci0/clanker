@@ -141,7 +141,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// Rewrites the log keeping only the newest lines (used when it hits the cap).
 fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, path: []const u8) !void {
     _ = arena;
-    const raw = try base.readFileAlloc(io, path, gpa, .limited(max_log_bytes));
+    const raw = try base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + (1 << 16)));
     defer gpa.free(raw);
     // Keep the last 1000 lines.
     var lines: std.ArrayList([]const u8) = .empty;

@@ -1699,6 +1699,19 @@ button:active:not(:disabled) {
   color: var(--violet-text); white-space: nowrap;
   text-transform: uppercase; letter-spacing: 0.08em;
 }
+/* The current/last turn's receipt: goal, tool-call count, sub-agent count,
+   todo progress. Sits under the session title, above the transcript. */
+.session-status-bar {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+}
+.status-chip {
+  font-family: var(--mono); font-size: var(--step--1);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-pill);
+  color: var(--fg-muted); white-space: nowrap;
+}
+#status-goal { border-color: var(--violet); color: var(--violet-text); }
 input[type="checkbox"] {
   flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
   accent-color: var(--accent);

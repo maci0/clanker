@@ -24,6 +24,7 @@ import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loa
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
+import { goalStatusLabel } from "./core/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
@@ -74,6 +75,11 @@ var el = {
   railContext: document.getElementById("rail-context"),
   railToggle: document.getElementById("rail-toggle"),
   sessionTitle: document.getElementById("session-title"),
+  sessionStatusBar: document.getElementById("session-status-bar"),
+  statusGoal: document.getElementById("status-goal"),
+  statusTools: document.getElementById("status-tools"),
+  statusSubagent: document.getElementById("status-subagent"),
+  statusTodos: document.getElementById("status-todos"),
   railScrim: document.getElementById("rail-scrim"),
   promptList: document.getElementById("prompt-list"),
   promptSave: document.getElementById("prompt-save"),
@@ -668,6 +674,8 @@ function switchSession(id) {
   renderSessionOptions(null);
   el.transcript.textContent = "";
   el.sessionStatus.textContent = "Loading conversation…";
+  // Belongs to the turn just left behind, not the conversation being opened.
+  if (el.sessionStatusBar) el.sessionStatusBar.hidden = true;
   fetch("/api/sessions/" + encodeURIComponent(id))
     .then(readJson)
     .then(function (data) {
@@ -1476,6 +1484,55 @@ function handleSlashDocFile(task){
   return "[File: " + path + "]\n\n" + task;
 }
 
+// ---- session status bar: goal / tool-call / sub-agent / todos receipt ----
+// Reflects the turn currently streaming, or the last one that did — not the
+// whole session's history. Resets on every new submit; nothing here is
+// persisted, so a reload clears it the same way the live caret does.
+var statusToolCalls = 0;
+var statusSubagentCalls = 0;
+
+function resetSessionStatusBar() {
+  statusToolCalls = 0;
+  statusSubagentCalls = 0;
+  if (!el.sessionStatusBar) return;
+  el.sessionStatusBar.hidden = false;
+  [el.statusGoal, el.statusTools, el.statusSubagent, el.statusTodos].forEach(function (chip) {
+    if (chip) chip.hidden = true;
+  });
+}
+
+function setStatusGoal(goalId) {
+  if (!el.statusGoal) return;
+  var g = (goalState.val || []).filter(function (x) { return x.id === goalId; })[0];
+  el.statusGoal.hidden = false;
+  el.statusGoal.textContent = "Goal " + (g ? goalStatusLabel(g, true) : "active");
+  el.statusGoal.title = g ? g.objective : goalId;
+}
+
+function bumpStatusTools(calls) {
+  if (!el.statusTools) return;
+  var n = (calls || []).length;
+  if (n === 0) return;
+  statusToolCalls += n;
+  el.statusTools.hidden = false;
+  el.statusTools.textContent = "Tools (" + statusToolCalls + ")";
+  var subN = (calls || []).filter(function (c) { return c.name === "subagent" || c.name === "swarm"; }).length;
+  if (subN > 0 && el.statusSubagent) {
+    statusSubagentCalls += subN;
+    el.statusSubagent.hidden = false;
+    el.statusSubagent.textContent = "Sub Agent (" + statusSubagentCalls + ")";
+  }
+}
+
+function setStatusTodos(todos) {
+  if (!el.statusTodos) return;
+  var list = todos || [];
+  if (!list.length) { el.statusTodos.hidden = true; return; }
+  var done = list.filter(function (t) { return t.status === "closed"; }).length;
+  el.statusTodos.hidden = false;
+  el.statusTodos.textContent = "Todos (" + done + "/" + list.length + ")";
+}
+
 el.form.addEventListener("submit", function (e) {
   e.preventDefault();
   var task = el.task.value.trim();
@@ -1490,6 +1547,7 @@ el.form.addEventListener("submit", function (e) {
   // budget the harness will actually honor rather than a number it clamps
   // down anyway.
   var noLimit = el.unlimitedIterations && el.unlimitedIterations.checked;
+  resetSessionStatusBar();
   var turn = createTurn(task);
   if (isPlan) {
     /* The badge marks the proposal turn so renderStats can offer Apply, and
@@ -1541,14 +1599,15 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); }
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); bumpStatusTools(evt.calls); }
       else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
       // todo_* call moved it, never fetched — the list is in-memory server-side
       // and dies with the run, so the turn card is the only place it can live.
-      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} }
+      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} setStatusTodos(evt.todos); }
+      else if (evt.type === "goal") { setStatusGoal(evt.id); }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }

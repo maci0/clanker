@@ -23,6 +23,7 @@ const build_options = @import("build_options");
 /// Guards the read-modify-write in `append`. Separate from the log so that
 /// trimming, which replaces the log, cannot invalidate a held lock.
 const lock_file_name = "chatrooms.lock";
+const meta_lock_file_name = "chatrooms-meta.lock";
 
 pub const log_path = "chatrooms.jsonl";
 pub const sub_path = "chatrooms-sub.json";
@@ -390,6 +391,9 @@ pub fn toggleReaction(
     from: []const u8,
 ) !bool {
     _ = cfg;
+    const lock_path = try subPath(arena, state_dir, lock_file_name);
+    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
     var messages: std.ArrayList(Message) = .empty;
@@ -437,6 +441,9 @@ pub fn editMessage(
     from: []const u8,
 ) !?Message {
     _ = cfg;
+    const lock_path = try subPath(arena, state_dir, lock_file_name);
+    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
     var messages: std.ArrayList(Message) = .empty;
@@ -470,6 +477,9 @@ pub fn deleteMessage(
     from: []const u8,
 ) !bool {
     _ = cfg;
+    const lock_path = try subPath(arena, state_dir, lock_file_name);
+    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    defer if (lock) |f| f.close(io);
     const path = try subPath(arena, state_dir, log_path);
     const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
     var messages: std.ArrayList(Message) = .empty;
@@ -525,6 +535,9 @@ fn saveMeta(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
 }
 
 pub fn setTopic(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, topic: []const u8) !void {
+    const lock_path = try subPath(arena, state_dir, meta_lock_file_name);
+    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    defer if (lock) |f| f.close(io);
     var meta = try loadMeta(base, io, arena, state_dir);
     const gop = try meta.map.getOrPut(arena, room);
     if (!gop.found_existing) gop.value_ptr.* = .{};
@@ -539,6 +552,9 @@ pub fn getTopic(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_di
 }
 
 pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, msg_id: []const u8) !bool {
+    const lock_path = try subPath(arena, state_dir, meta_lock_file_name);
+    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch null;
+    defer if (lock) |f| f.close(io);
     var meta = try loadMeta(base, io, arena, state_dir);
     const gop = try meta.map.getOrPut(arena, room);
     if (!gop.found_existing) gop.value_ptr.* = .{};
