@@ -743,7 +743,9 @@ clanker serve --host 0.0.0.0 --serve-as clanker.lan
 
 ### `POST /api/run`
 
-Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after. `goal` is optional: when set, that entry from `state/goals.json` is prepended as an `## Active goal` preamble, and an empty `task` becomes a default work order for the goal (what the web UI **Work on this** button sends). When `goal` is omitted and `modules.goal` is on, the newest active goal steers the run automatically.
+Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>", "images": [...]}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after. `goal` is optional: when set, that entry from `state/goals.json` is prepended as an `## Active goal` preamble, and an empty `task` becomes a default work order for the goal (what the web UI **Work on this** button sends). When `goal` is omitted and `modules.goal` is on, the newest active goal steers the run automatically.
+
+`images` is an optional array of `{"mime", "b64"}` image attachments (the webui composer's paste/drop path, and the `image` tool's result). Each decoded image is capped at 4 MB and at most 4 per message. Attaching images requires `modules.multimodal` to be on: a run with images while it is off returns a 400 naming the flag, rather than silently dropping the attachment. The provider request carries the images in each provider family's native format — OpenAI-compatible sends `image_url` data URIs; Anthropic/Vertex send base64 `image` content blocks. A provider 400 on an image-bearing run is surfaced with the provider name and a hint that the model may not support vision.
 
 With `"stream": true`, the response body is `text/plain` and framed line-by-line: plain lines are answer content, verbatim; a line prefixed with byte `0x01` is an out-of-band JSON event instead of content:
 
