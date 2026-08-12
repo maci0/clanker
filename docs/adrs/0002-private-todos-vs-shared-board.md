@@ -24,7 +24,7 @@ whether a private list is attached to the run — not by a `room` parameter
 callers pass (an earlier shape did that; room-scoped shared todo lists were
 removed once the board covered that need, see `docs/prds/0001-chatrooms.md` §
 Known issues). Private todos live in memory only
-(`src/agent/private_todos.zig`), capped, and discarded when the run ends.
+(`src/private_todos.zig`), capped, and discarded when the run ends.
 
 ## Consequences
 

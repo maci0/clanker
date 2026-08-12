@@ -75,7 +75,7 @@ can still explicitly name a DM room when reading history or subscribing.
 kanban_claim or kanban_list."). The shared/room-scoped todo list this section
 originally described has been fully replaced by the board (see
 `docs/prds/0002-kanban-board.md`). What remains: a room-less `todo_*` call
-routes to the run's private in-memory list (`src/agent/private_todos.zig`,
+routes to the run's private in-memory list (`src/private_todos.zig`,
 capped at 100 items), attached by `Agent.run` for every top-level run and by
 `subagent.runNested` for a nested one, not sub-agent runs only. Nothing is
 logged or fanned out; the list is discarded when the run returns. Only a

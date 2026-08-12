@@ -5,8 +5,8 @@
   "sequential": true,
   "category": "kanban",
   "name": "kanban_update",
-  "description": "Change a card's title, notes, assignee, priority or deadline. Assigning or setting a deadline is announced in the board's chatroom; editing text is not.",
-  "llm_description": "Update a card's title, body, who/assignee (empty to unassign), priority (low/normal/high), or deadline (unix seconds, 0 = none). Assigning or setting deadline is announced in the board room; text edits are not.",
+  "description": "Change a card's title, notes, assignee, priority, deadline, column, goal link, or labels. Assigning, moving, or setting a deadline is announced in the board's chatroom; editing text is not.",
+  "llm_description": "Update a card's title, body, who/assignee (empty to unassign), priority (low/normal/high), deadline (unix seconds, 0 = none), column, goal link, or labels. Assigning, moving, or deadline changes are announced in the board room; text edits are not.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -32,9 +32,17 @@
         "type": "string",
         "description": "low, normal or high"
       },
+      "column": {
+        "type": "string",
+        "description": "Move the card to this column as part of the update (backlog, ready, doing, review, done, archive)"
+      },
       "deadline": {
         "type": "integer",
         "description": "Unix seconds, or 0 for none"
+      },
+      "goal": {
+        "type": "string",
+        "description": "Goal id (state/goals.json) to link this card to, or empty to unlink"
       },
       "labels": {
         "type": "array",

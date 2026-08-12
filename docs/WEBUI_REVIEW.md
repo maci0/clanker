@@ -368,7 +368,7 @@ had been answered:
   (`docs/prds/0001-chatrooms.md` § Known issues, ADR 0002). The board's
   filtered view already shipped and is what the earlier `[x]` on 3.3 meant.
 - **A run's own working plan** is the private per-run list
-  (`src/agent/private_todos.zig`): `todo_add`/`todo_claim`/`todo_close`/
+  (`src/private_todos.zig`): `todo_add`/`todo_claim`/`todo_close`/
   `todo_list` with no `room`, in memory, capped at 100, discarded when the run
   returns. Nothing in the browser could see it. That is this slice.
 

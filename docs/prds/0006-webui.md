@@ -203,7 +203,7 @@ browser never asks a peer anything itself).
 **Todos in the browser (3.3).** Two layers, because "todos" was two questions.
 Shared durable work is the Kanban board and always was, so that half is the
 board's own filtered view — no second store. A run's *own* working plan is the
-private per-run list (`src/agent/private_todos.zig`): in memory, capped,
+private per-run list (`src/private_todos.zig`): in memory, capped,
 discarded when the run returns, and until now invisible to the page. It rides
 the one long-lived channel that already exists. `List.rev` counts real changes
 (a `todo_list` read is not one, and neither is re-claiming an item the run
@@ -300,7 +300,7 @@ Phase 3 — see what the agents are doing:
 
 - [x] 3.1 Subagent runs recorded as their own graphs
 - [x] 3.2 Cross-agent view (Fleet: roster, DMs, nested-run grouping)
-- [x] 3.3 Todos in the browser, both layers. Shared durable work: the board's filtered view — text/assignee/blocked/priority filters on the existing board (the board *is* the shared todo surface, per `docs/prds/0002-kanban-board.md`); no second data store. A run's own working plan: the private per-run checklist (`src/agent/private_todos.zig`) rendered live in the turn card from `todos` events on the run's own `/api/run` stream (`features/todos.js`); still in memory, still discarded when the run returns, no endpoint and no polling added
+- [x] 3.3 Todos in the browser, both layers. Shared durable work: the board's filtered view — text/assignee/blocked/priority filters on the existing board (the board *is* the shared todo surface, per `docs/prds/0002-kanban-board.md`); no second data store. A run's own working plan: the private per-run checklist (`src/private_todos.zig`) rendered live in the turn card from `todos` events on the run's own `/api/run` stream (`features/todos.js`); still in memory, still discarded when the run returns, no endpoint and no polling added
 
 Phase 4 — `webui_pixelagents`:
 

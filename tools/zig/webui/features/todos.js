@@ -2,7 +2,7 @@
 // card (webui PRD 0006 phase 3.3).
 //
 // Scope, deliberately: this is the *private* per-run list
-// (src/agent/private_todos.zig) — the run's own working plan, in memory,
+// (src/private_todos.zig) — the run's own working plan, in memory,
 // discarded when the run returns. Shared durable work is the Kanban board and
 // already has a view of its own (features/board.js); room-scoped todo lists no
 // longer exist at all (docs/adrs/0002-private-todos-vs-shared-board.md). So

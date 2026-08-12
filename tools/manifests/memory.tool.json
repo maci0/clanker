@@ -1,7 +1,7 @@
 {
   "name": "memory",
-  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids,mode}. Vector: builtin hash+cosine default, muninndb/sqlite-vec swappable; embeddings: builtin / openai_compat via providers base_url / local_onnx stub.",
-  "llm_description": "RAG memory: action chunk {text,size,overlap}, embed {texts[],dim}, or search {query,top_k,threshold,dim,collection_ids,mode: vector (default) or keyword}. Offline hash embedder by default; vector store and embeddings backend are swappable (muninndb/sqlite-vec, openai_compat, local_onnx).",
+  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap}, embed {texts[] or text,dim}, search {query,top_k,threshold,dim,collection_ids,mode}. Vector: builtin hash+cosine default, muninndb/sqlite-vec swappable; embeddings: builtin / openai_compat via providers base_url / local_onnx stub.",
+  "llm_description": "RAG memory: action chunk {text,size,overlap}, embed {texts[] or text,dim}, or search {query,top_k,threshold,dim,collection_ids,mode: vector (default) or keyword}. Offline hash embedder by default; vector store and embeddings backend are swappable (muninndb/sqlite-vec, openai_compat, local_onnx).",
   "input_schema": {
     "type": "object",
     "properties": {

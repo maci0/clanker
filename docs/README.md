@@ -14,7 +14,7 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
 
 ### Interactive UX (REPL, `clanker run`)
 
@@ -256,7 +256,7 @@ peer keeps the message only when it subscribes to that room.
   `todo_*` with a `room` set now fails with a pointer to the `board_*`
   replacement.
 - Private sub-agent todos: `todo_*` tools called without a `room`
-  operate on a per-nested-run in-memory list (`src/agent/private_todos.zig`),
+  operate on a per-nested-run in-memory list (`src/private_todos.zig`),
   wired only by `subagent.runNested`. Nothing is logged or fanned out; the
   list is discarded when the run returns, and its final state is appended to
   the sub-agent's answer so the parent sees progress even when the run hits

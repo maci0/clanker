@@ -19,7 +19,7 @@
 //!
 //! The todo_* ops may omit "room": inside a sub-agent run that targets the
 //! run's private in-memory list instead of a shared room list (the host
-//! routes on the missing field; see src/agent/private_todos.zig).
+//! routes on the missing field; see src/private_todos.zig).
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -42,15 +42,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "chat tool missing op in config");
     };
 
-    // Resolve compound ops: "topic" → set_topic/get_topic, "pin" → pin/get_pins.
-    const effective_op = if (std.mem.eql(u8, op, "topic")) blk: {
-        // If input contains a "topic" key, it's set_topic; otherwise get_topic.
-        const has_topic = std.mem.indexOf(u8, input, "\"topic\"") != null;
-        break :blk if (has_topic) "set_topic" else "get_topic";
-    } else if (std.mem.eql(u8, op, "pin")) blk: {
-        // If input contains a "msg_id" key, it's pin; otherwise get_pins.
-        const has_msg_id = std.mem.indexOf(u8, input, "\"msg_id\"") != null;
-        break :blk if (has_msg_id) "pin" else "get_pins";
+    // Resolve compound ops: "topic" -> set_topic/get_topic, "pin" -> pin/get_pins.
+    // Parse just enough to check for key presence; raw substring search matched
+    // values too (a room named "topic" would misroute to set_topic).
+    const effective_op = if (std.mem.eql(u8, op, "topic") or std.mem.eql(u8, op, "pin")) blk: {
+        const obj = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{}) catch break :blk op;
+        if (obj != .object) break :blk op;
+        if (std.mem.eql(u8, op, "topic"))
+            break :blk if (obj.object.get("topic") != null) @as([]const u8, "set_topic") else "get_topic"
+        else
+            break :blk if (obj.object.get("msg_id") != null) @as([]const u8, "pin") else "get_pins";
     } else op;
 
     // Re-emit the input object verbatim so we can inject the op: the host
