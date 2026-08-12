@@ -1178,31 +1178,45 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
-    log.log(.info, "build: {s}", .{if (build.ok) "PASS" else "FAIL"});
-    if (!build.ok) return error.GateFailed;
+    if (!reportGate("build", build)) return error.GateFailed;
 
     var test_gate = try gate_checks.testGate(gpa, io, std.Io.Dir.cwd());
     defer test_gate.deinit(gpa);
-    log.log(.info, "tests: {s}", .{if (test_gate.ok) "PASS" else "FAIL"});
-    if (!test_gate.ok) return error.GateFailed;
+    if (!reportGate("tests", test_gate)) return error.GateFailed;
 
     var tools = try gate_checks.toolsGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer tools.deinit(gpa);
-    log.log(.info, "tools: {s}", .{if (tools.ok) "PASS" else "FAIL"});
-    if (!tools.ok) return error.GateFailed;
+    if (!reportGate("tools", tools)) return error.GateFailed;
 
     const files = try collectZigFiles(io, arena);
     var fmt = try gate_checks.fmtGate(gpa, io, std.Io.Dir.cwd(), files);
     defer fmt.deinit(gpa);
-    log.log(.info, "fmt: {s}", .{if (fmt.ok) "PASS" else "FAIL"});
-    if (!fmt.ok) return error.GateFailed;
+    if (!reportGate("fmt", fmt)) return error.GateFailed;
 
     var lint = try gate_checks.lintGate(gpa, io, std.Io.Dir.cwd(), files);
     defer lint.deinit(gpa);
-    log.log(.info, "lint: {s}", .{if (lint.ok) "PASS" else "FAIL"});
-    if (!lint.ok) return error.GateFailed;
+    if (!reportGate("lint", lint)) return error.GateFailed;
 
     log.log(.info, "all gates passed", .{});
+}
+
+/// PASS/FAIL for one gate, plus the tool's own output when it failed.
+/// `GateResult.detail` already carries the failing command's stderr, and
+/// dropping it meant a red CI run said `tests: FAIL` and nothing else: the
+/// one place the reason is visible is the machine that cannot be logged into.
+/// Returns whether the gate passed.
+fn reportGate(label: []const u8, result: gate_checks.GateResult) bool {
+    log.log(.info, "{s}: {s}", .{ label, if (result.ok) "PASS" else "FAIL" });
+    if (result.ok or result.detail.len == 0) return result.ok;
+    // Tail, not head: a build or test failure's useful lines are the last
+    // ones, and the captured output can be the whole compile log.
+    const max_reported = 8 * 1024;
+    const detail = if (result.detail.len > max_reported)
+        result.detail[result.detail.len - max_reported ..]
+    else
+        result.detail;
+    log.log(.error_, "{s} failed:\n{s}", .{ label, detail });
+    return false;
 }
 
 /// Recursively collects all .zig file paths under the current directory.
