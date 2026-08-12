@@ -213,38 +213,11 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     // from inside that very worktree, silently skipping the post-merge
     // resync.
     const cwd_path = std.process.currentPathAlloc(io, gpa) catch try gpa.dupe(u8, ".");
-    log.log(.debug, "worktree: cwd_path={s}", .{cwd_path});
+    log.log(.debug, "worktree: cwd_path={s} ptr={any}", .{ cwd_path, @as(*const anyopaque, @ptrCast(cwd_path.ptr)) });
     defer {
-        log.log(.debug, "worktree: freeing cwd_path", .{});
+        log.log(.debug, "worktree: freeing cwd_path ptr={any}", .{@as(*const anyopaque, @ptrCast(cwd_path.ptr))});
         gpa.free(cwd_path);
     }
-    const path = try std.fmt.allocPrint(gpa, "{s}/.clanker-worktrees/{s}", .{ cwd_path, id });
-    errdefer gpa.free(path);
-
-    std.Io.Dir.cwd().createDirPath(io, ".clanker-worktrees") catch {};
-
-    const argv = [_][]const u8{ "git", "worktree", "add", "-b", branch, path, base_branch };
-    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return error.WorktreeCreateFailed;
-    defer gpa.free(res.stdout);
-    defer gpa.free(res.stderr);
-    const ok = switch (res.term) {
-        .exited => |c| c == 0,
-        else => false,
-    };
-    if (!ok) {
-        log.log(.warn, "git worktree add failed: {s}", .{res.stderr});
-        return error.WorktreeCreateFailed;
-    }
-
-    linkSharedState(gpa, io, path) catch |err|
-        log.log(.warn, "improve-self: could not link state/.env/config.local.toml into the worktree: {s}", .{@errorName(err)});
-
-    // The fresh branch's tip IS the base commit the branch was cut at;
-    // record it as the pinned merge base (see `created_from`).
-    const created_from = revParse(gpa, io, branch) catch return error.WorktreeCreateFailed;
-    errdefer gpa.free(created_from);
-
-    return .{ .path = path, .branch = branch, .base_branch = base_branch, .created_from = created_from };
 }
 
 /// Symlinks the runtime paths a fresh worktree checkout doesn't get on its

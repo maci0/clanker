@@ -11,8 +11,9 @@ test "repro worktree.create invalid free" {
 
     // Replicate the create() allocation/free pattern directly first.
     const cwd_path = std.process.currentPathAlloc(io, gpa) catch try gpa.dupe(u8, ".");
-    gpa.free(cwd_path);
-    std.debug.print("currentPathAlloc+free ok\n", .{});
+    _ = cwd_path;
+    // gpa.free(cwd_path); 
+    std.debug.print("currentPathAlloc skipped free\n", .{});
 
     var created = worktree.create(gpa, io, "repro-invalid-free") catch |err| {
         std.debug.print("create failed: {s}\n", .{@errorName(err)});
