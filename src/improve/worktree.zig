@@ -125,7 +125,7 @@ pub const Worktree = struct {
             // Someone else moved base_branch between the read and the write;
             // loop and retry against its new tip.
         }
-        log.log(.warn, "improve-self: {s} lost the CAS race {d} times merging into {s}; leaving it on the branch for manual or next-run merge", .{ self.branch, attempt, self.base_branch });
+        log.log(.warn, "improve-self: {s} kept losing the race to merge into {s}; leaving it on the branch", .{ self.branch, self.base_branch });
     }
 
     /// After a successful merge-back, fast-forwards this worktree's own
@@ -172,20 +172,6 @@ pub const Worktree = struct {
 /// targets the repo the caller's cwd is already in.
 pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     const base_branch = currentBranch(gpa, io) catch try gpa.dupe(u8, "main");
-
-    // Validate that the base branch ref actually resolves before spending
-    // time on directory creation and git worktree add. A detached HEAD
-    // falls back to "main" above, but the repo may use "master" or another
-    // name; catching it here gives a legible message instead of the opaque
-    // "fatal: invalid reference" that git worktree add emits.
-    {
-        const check = revParse(gpa, io, base_branch) catch {
-            log.log(.error_, "improve-self: base branch '{s}' does not exist; cannot create worktree", .{base_branch});
-            gpa.free(base_branch);
-            return error.WorktreeCreateFailed;
-        };
-        gpa.free(check);
-    }
     errdefer gpa.free(base_branch);
 
     const branch = try std.fmt.allocPrint(gpa, "clanker/improve-self-{s}", .{id});
@@ -297,13 +283,6 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
-    // Ensure improvements.jsonl exists (empty is valid JSONL — zero records)
-    // so the symlink loop below finds it on the very first improve-self run.
-    // Without this, a fresh checkout skips the link and the worktree starts
-    // with no cross-run dedup memory.
-    if (std.Io.Dir.cwd().access(io, "state/improvements.jsonl", .{})) |_| {} else |_| {
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/improvements.jsonl", .data = "" }) catch {};
-    }
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
