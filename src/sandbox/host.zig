@@ -1949,9 +1949,22 @@ fn execPolicyFor(
     join_buf: []u8,
 ) ExecPolicy {
     if (sb.exec_pattern_allow.len == 0) return .{ .governed = false, .allowed = false };
+    // ckExec resolves a bare command through PATH before building argv, so
+    // argv[0] is an absolute path like /usr/bin/gh while exec_pattern_allow
+    // names the command by its bare name (`gh pr create*`). Match on the
+    // basename for both the command-name test and the glob: it keeps the
+    // pattern working whether the command was invoked bare or resolved.
+    var cmd: []const u8 = "";
+    if (argv.len > 0) {
+        const a0 = argv[0];
+        cmd = if (std.mem.lastIndexOfScalar(u8, a0, '/')) |slash| a0[slash + 1 ..] else a0;
+    }
     var j: usize = 0;
-    for (argv, 0..) |a, i| {
-        if (i > 0 and j < join_buf.len) {
+    const n0 = @min(cmd.len, join_buf.len);
+    @memcpy(join_buf[0..n0], cmd[0..n0]);
+    j += n0;
+    for (argv[1..]) |a| {
+        if (j < join_buf.len) {
             join_buf[j] = ' ';
             j += 1;
         }
@@ -1960,7 +1973,6 @@ fn execPolicyFor(
         j += n;
     }
     const joined = join_buf[0..j];
-    const cmd = if (argv.len > 0) argv[0] else "";
     var governed = false;
     var allowed = false;
     for (sb.exec_pattern_allow) |pat| {
@@ -2835,6 +2847,31 @@ test "execPolicyFor: a pattern makes a command strict, matching argv is granted"
     p = execPolicyFor(&sb, &git_status, &join);
     try std.testing.expect(!p.governed);
     try std.testing.expect(!p.allowed);
+}
+
+test "execPolicyFor: resolved absolute argv[0] still governs and allows" {
+    var sb = Sandbox{
+        .gpa = undefined,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = undefined,
+        .exec_pattern_allow = &.{ "gh pr create*", "gh pr merge*" },
+    };
+    var join: [4096]u8 = undefined;
+    // ckExec resolves bare commands through PATH, so argv[0] is an absolute
+    // path (/usr/bin/gh) while the pattern names the command by its basename.
+    // `gh pr merge` must be governed AND allowed, or the deny-list would
+    // refuse the `merge` token that the pattern explicitly grants.
+    const gh_merge = [_][]const u8{ "/usr/bin/gh", "pr", "merge", "12" };
+    const p = execPolicyFor(&sb, &gh_merge, &join);
+    try std.testing.expect(p.governed);
+    try std.testing.expect(p.allowed);
+    const gh_create = [_][]const u8{ "/usr/local/bin/gh", "pr", "create", "--base", "main" };
+    const pc = execPolicyFor(&sb, &gh_create, &join);
+    try std.testing.expect(pc.governed);
+    try std.testing.expect(pc.allowed);
 }
 
 test "execPolicyFor: no patterns leaves everything ungoverned" {
