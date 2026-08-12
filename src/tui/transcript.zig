@@ -12,7 +12,6 @@
 //! can't visually break no matter what the tool printed.
 
 const std = @import("std");
-const types = @import("../llm/types.zig");
 const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
 const syntax = @import("syntax.zig");

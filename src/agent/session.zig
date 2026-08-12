@@ -4,7 +4,6 @@
 const std = @import("std");
 const json = std.json;
 const types = @import("../llm/types.zig");
-const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 
 pub const Session = struct {

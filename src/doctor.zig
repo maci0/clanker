@@ -16,7 +16,6 @@ const std = @import("std");
 const config = @import("config.zig");
 const registry = @import("tools/registry.zig");
 const log = @import("util/log.zig");
-const atomic_write = @import("util/atomic_write.zig");
 
 const Status = enum {
     ok,
