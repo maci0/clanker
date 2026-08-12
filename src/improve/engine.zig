@@ -271,6 +271,13 @@ pub const Engine = struct {
     /// container-level `var`, or concurrent Engine instances would share and
     /// corrupt each other's feedback.
     feedback: ?[]const u8 = null,
+    /// The last advisory Arena verdict, when `improve.arena_advisory` is on.
+    ///
+    /// Deliberately not part of any decision: it is appended to the feedback a
+    /// *real* gate failure already produced, so it can inform a retry, and it is
+    /// logged. Nothing reads it to decide whether a proposal passes, and
+    /// `arenaAdvisory` has no path that returns a rejection.
+    arena_note: ?[]const u8 = null,
     /// Files the model asked to be shown, granted for the rest of the run and
     /// pinned into every prompt after the request. Per-instance for the same
     /// reason `feedback` is.
@@ -345,7 +352,7 @@ pub const Engine = struct {
             var last_outcome: Outcome = .failed;
             var attempt: u32 = 0;
             while (attempt < opts.max_attempts_per_iter) {
-                const outcome = try self.improveOnce(opts, attempt + 1, if (attempt == 0) null else self.feedback);
+                const outcome = try self.improveOnce(opts, attempt + 1, if (attempt == 0) null else self.feedbackWithAdvisory());
                 // A file request is not an attempt: it produced no patch to
                 // judge, and charging it against the retry budget would leave
                 // a run that asked one question with nothing left to answer it
@@ -818,6 +825,10 @@ pub const Engine = struct {
             self.removeTree(staging);
             return .failed;
         }
+
+        // A cheap early read, before the capability evals spend an agent run per
+        // case. Advisory: it cannot reject, and nothing below consults it.
+        self.arenaAdvisory(proposal, staged_dir);
 
         if (self.cfg.improve.capability_gate) {
             var cap = try self.capabilityGate(staging, staged_dir);
@@ -1620,6 +1631,93 @@ pub const Engine = struct {
     /// nothing there notices a change that keeps everything green while
     /// breaking a tool an agent depends on, which is how a promotion once cut
     /// the worker stack down to a segfault. This is the check that fails.
+    /// The advisory Arena verdict joined onto whatever feedback a real failure
+    /// produced. Never a substitute for feedback: with no failure there is
+    /// nothing to join it to, and the note is dropped.
+    fn feedbackWithAdvisory(self: *Engine) ?[]const u8 {
+        const fb = self.feedback orelse return null;
+        const note = self.arena_note orelse return fb;
+        return std.fmt.allocPrint(self.arena, "{s}\n\nAdvisory, not a gate: {s}", .{ fb, note }) catch fb;
+    }
+
+    /// A cheap early read on a proposal: "promote this" vs "reject this",
+    /// argued by two providers and judged, before the capability evals spend an
+    /// agent run per case.
+    ///
+    /// Returns nothing, and has no failure path that reaches the caller. That is
+    /// the point: this function cannot reject a proposal, cannot satisfy a gate,
+    /// and cannot make an attempt fail. It logs, and it leaves a note that rides
+    /// along with a real gate failure's feedback. Turning it into a condition
+    /// would hand a self-authored proposal a judge it could learn to persuade
+    /// instead of a check it has to pass, which is exactly what
+    /// docs/prompts/self-improve-safety-review.md exists to catch.
+    fn arenaAdvisory(self: *Engine, proposal: proposal_mod.Proposal, staged_dir: std.Io.Dir) void {
+        _ = staged_dir;
+        self.arena_note = null;
+        if (!self.cfg.improve.arena_advisory) return;
+
+        var arena_state = std.heap.ArenaAllocator.init(self.ctx.gpa);
+        defer arena_state.deinit();
+        const a = arena_state.allocator();
+
+        var paths: std.ArrayList(u8) = .empty;
+        for (proposal.changes, 0..) |ch, i| {
+            if (i > 0) paths.appendSlice(a, ", ") catch break;
+            paths.appendSlice(a, ch.file) catch break;
+        }
+
+        var req: std.Io.Writer.Allocating = .init(a);
+        var s2 = std.json.Stringify{ .writer = &req.writer, .options = .{} };
+        s2.beginObject() catch return;
+        s2.objectField("question") catch return;
+        s2.write("Should this self-improvement proposal be promoted?") catch return;
+        s2.objectField("for") catch return;
+        s2.write("promote this proposal") catch return;
+        s2.objectField("against") catch return;
+        s2.write("reject this proposal") catch return;
+        s2.objectField("max_rounds") catch return;
+        s2.write(@as(u32, 2)) catch return;
+        s2.objectField("persona_for") catch return;
+        s2.write(std.fmt.allocPrint(a, "The proposal: {s}\nFiles it changes: {s}", .{ proposal.summary, paths.items }) catch proposal.summary) catch return;
+        s2.objectField("persona_against") catch return;
+        s2.write(std.fmt.allocPrint(a, "The proposal you must argue against: {s}\nFiles it changes: {s}\nLook for: does it actually do anything, does it weaken a gate, does it repeat a reverted change?", .{ proposal.summary, paths.items }) catch proposal.summary) catch return;
+        s2.endObject() catch return;
+
+        var reg = registry.Registry.load(self.ctx.io, a, std.Io.Dir.cwd(), self.cfg.agent.tools_dir) catch {
+            log.log(.warn, "arena advisory skipped: tools registry unavailable", .{});
+            return;
+        };
+        const mod = runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, a, self.ctx.environ_map, self.cfg, &reg, "arena", self.ctx) catch {
+            log.log(.warn, "arena advisory skipped: arena tool unavailable", .{});
+            return;
+        };
+        defer mod.deinit();
+        const raw = mod.executeTool(req.written()) catch {
+            log.log(.warn, "arena advisory skipped: the match did not complete", .{});
+            return;
+        };
+        defer self.ctx.gpa.free(raw);
+
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
+        if (parsed != .object) return;
+        const match = parsed.object.get("match") orelse return;
+        if (match != .object) return;
+        const verdict = match.object.get("verdict") orelse return;
+        if (verdict != .object) return;
+        const headline = if (verdict.object.get("headline")) |h| (if (h == .string) h.string else "") else "";
+        const winner = if (verdict.object.get("winner")) |w| (if (w == .integer) w.integer else -1) else -1;
+
+        // Index 1 is the "reject this proposal" side, since "for"/"against" seed
+        // the combatants in that order.
+        const rejected = winner == 1;
+        log.log(.info, "arena advisory ({s}): {s}", .{ if (rejected) "argues against" else "argues for", headline });
+        self.arena_note = std.fmt.allocPrint(
+            self.arena,
+            "an Arena match on this proposal {s}. {s} This is a signal, not a verdict on your patch; the gates decide.",
+            .{ if (rejected) "went to the reject side" else "went to the promote side", headline },
+        ) catch null;
+    }
+
     fn capabilityGate(self: *Engine, staging: []const u8, staged_dir: std.Io.Dir) !gate_checks.GateResult {
         // Relative to the child's own cwd, which is the staging tree: the
         // binary under test has to be the staged one, not the one running now.
@@ -2811,6 +2909,62 @@ test "pruneStaging keeps the newest N and removes the rest" {
     try tmp.dir.access(io, "state/staging/imp-300", .{});
     // The non-imp directory is untouched.
     try tmp.dir.access(io, "state/staging/other-thing", .{});
+}
+
+test "an Arena verdict cannot satisfy a gate or reject a proposal on its own" {
+    // PRD 0008 phase 6's safety criterion, asserted against this file's own
+    // source rather than by reasoning about it: the advisory read must stay
+    // advisory, and the ways it could stop being advisory are all textual.
+    // Only the production region: this file's own test blocks quote the very
+    // strings being searched for, so scanning the whole file would match the
+    // test against itself. The first `test "` is the boundary.
+    const whole = @embedFile("engine.zig");
+    const src = whole[0..(std.mem.find(u8, whole, "\ntest \"") orelse whole.len)];
+
+    // 1. No gate invariant names the advisory. If one did, removing the
+    //    advisory would fail the gate check, which would make it load-bearing.
+    for (gate_invariants) |inv| {
+        try std.testing.expect(std.mem.find(u8, inv.needle, "arena") == null);
+        try std.testing.expect(std.mem.find(u8, inv.needle, "Arena") == null);
+    }
+
+    // 2. arenaAdvisory returns nothing. A function that cannot report anything
+    //    to its caller cannot be a condition, whatever its body does.
+    try std.testing.expect(std.mem.find(u8, src, "fn arenaAdvisory(self: *Engine, proposal: proposal_mod.Proposal, staged_dir: std.Io.Dir) void") != null);
+
+    // 3. Its one call site ignores it and is a plain statement, not a branch.
+    try std.testing.expect(std.mem.find(u8, src, "self.arenaAdvisory(proposal, staged_dir);") != null);
+    try std.testing.expect(std.mem.find(u8, src, "if (self.arenaAdvisory") == null);
+    try std.testing.expect(std.mem.find(u8, src, "try self.arenaAdvisory") == null);
+
+    // 4. arena_note is never read by anything that decides an outcome. It is
+    //    written in arenaAdvisory and read in feedbackWithAdvisory, and that is
+    //    the whole of it; a third reader is how this would start to matter.
+    var readers: usize = 0;
+    var it = std.mem.splitScalar(u8, src, '\n');
+    while (it.next()) |line| {
+        if (std.mem.find(u8, line, "arena_note") == null) continue;
+        if (std.mem.find(u8, line, "///") != null) continue;
+        // Declaration and the two legitimate accesses.
+        if (std.mem.find(u8, line, "arena_note: ?[]const u8") != null) continue;
+        if (std.mem.find(u8, line, "self.arena_note = ") != null) continue;
+        if (std.mem.find(u8, line, "const note = self.arena_note orelse return fb;") != null) continue;
+        readers += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), readers);
+
+    // 5. The advisory never produces an Outcome. Any of these appearing inside
+    //    arenaAdvisory would mean it can fail an attempt.
+    const start = std.mem.find(u8, src, "fn arenaAdvisory(").?;
+    const end = std.mem.find(u8, src[start..], "\n    fn ").? + start;
+    const body = src[start..end];
+    for ([_][]const u8{ "return .failed", "return .promoted", "self.feedback =", "valueRejection", "GateResult" }) |forbidden| {
+        try std.testing.expect(std.mem.find(u8, body, forbidden) == null);
+    }
+
+    // 6. Off by default: an advisory that costs model calls has to be asked for.
+    const cfg = config.Config{};
+    try std.testing.expect(!cfg.improve.arena_advisory);
 }
 
 test "a patch that drops a gate call from the engine is rejected before it compiles" {
