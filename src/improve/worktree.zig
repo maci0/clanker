@@ -297,6 +297,13 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
+    // Ensure improvements.jsonl exists (empty is valid JSONL — zero records)
+    // so the symlink loop below finds it on the very first improve-self run.
+    // Without this, a fresh checkout skips the link and the worktree starts
+    // with no cross-run dedup memory.
+    if (std.Io.Dir.cwd().access(io, "state/improvements.jsonl", .{})) |_| {} else |_| {
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/improvements.jsonl", .data = "" }) catch {};
+    }
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
