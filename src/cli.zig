@@ -6007,43 +6007,115 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             final_task = kb_buf.items;
         }
         // memory_inject: augment with chunk hits (hybrid/vector/keyword)
+        // vector path uses builtin hash_embed (offline, zero-dep) unless openai_compat configured; hybrid merges both.
         if (do_memory_inject and req.knowledge.len > 0) {
-            const mem_chunk = @import("memory/chunk.zig");
-            _ = mem_chunk.Strategy.markdown;
             var mem_buf: std.ArrayList(u8) = .empty;
-            // Keyword chunk search over derived chunks.json (vector path would rank via embed+cosine, stubbed to keyword here)
-            for (req.knowledge) |cid| {
-                const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
-                const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
-                const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
-                if (arr != .array) continue;
-                var hits: usize = 0;
-                for (arr.array.items) |item| {
-                    if (hits >= cfg.memory.vector_top_k) break;
-                    if (item != .object) continue;
-                    const text_v = item.object.get("text") orelse continue;
-                    if (text_v != .string) continue;
-                    const txt: []const u8 = text_v.string;
-                    // naive keyword score: count query tokens present
-                    var score: usize = 0;
-                    var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
-                    while (tq_it.next()) |tok| {
-                        if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.indexOf(u8, txt, tok) != null) score += 1;
+            const want_vector = !std.mem.eql(u8, cfg.memory.backend, "keyword");
+            const use_hash = want_vector and (cfg.memory.embedding_provider.len == 0 or std.mem.eql(u8, cfg.memory.embedding_provider, "builtin")) and std.mem.eql(u8, cfg.memory.vector_backend, "builtin");
+            if (use_hash) {
+                const he = @import("memory/hash_embed.zig");
+                const vec_mod = @import("memory/vector.zig");
+                const k_hash: usize = @as(usize, cfg.memory.vector_top_k);
+                const qvec = he.embed(arena, task_text, he.default_dim) catch null;
+                if (qvec) |query_vec| {
+                    var all_texts: std.ArrayList([]const u8) = .empty;
+                    var all_ids: std.ArrayList([]const u8) = .empty;
+                    for (req.knowledge) |cid| {
+                        const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
+                        const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
+                        const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
+                        if (arr != .array) continue;
+                        for (arr.array.items) |item| {
+                            if (item != .object) continue;
+                            const text_v = item.object.get("text") orelse continue;
+                            if (text_v != .string) continue;
+                            const cid_str = if (item.object.get("chunk_id")) |v| (if (v == .string) v.string else text_v.string) else text_v.string;
+                            all_texts.append(arena, text_v.string) catch continue;
+                            all_ids.append(arena, cid_str) catch continue;
+                        }
                     }
-                    if (score == 0) continue;
-                    if (mem_buf.items.len > 80_000) break;
-                    if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
-                    const mem_header = std.fmt.allocPrint(arena, "[Memory chunk score={d}: {s}]\n", .{ score, txt[0..@min(txt.len, 120)] }) catch continue;
-                    _ = mem_header;
-                    // Clip chunk to cap
-                    const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
-                    if (mlimit == 0) continue;
-                    mem_buf.appendSlice(arena, txt[0..mlimit]) catch continue;
-                    hits += 1;
+                    if (all_texts.items.len > 0) {
+                        var vecs: std.ArrayList([]const f32) = .empty;
+                        for (all_texts.items) |t| {
+                            const v = he.embed(arena, t, he.default_dim) catch continue;
+                            vecs.append(arena, v) catch continue;
+                        }
+                        const thresh: f32 = cfg.memory.vector_threshold;
+                        if (vecs.items.len > 0) {
+                            const hits = vec_mod.topK(arena, query_vec, all_ids.items, vecs.items, k_hash, thresh) catch &[_]vec_mod.Hit{};
+                            for (hits) |h| {
+                                var txt: []const u8 = h.chunk_id;
+                                for (all_ids.items, all_texts.items) |id, t| if (std.mem.eql(u8, id, h.chunk_id)) {
+                                    txt = t;
+                                    break;
+                                };
+                                if (mem_buf.items.len > 80_000) break;
+                                if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch break;
+                                const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
+                                if (mlimit == 0) continue;
+                                mem_buf.appendSlice(arena, txt[0..mlimit]) catch break;
+                            }
+                        }
+                    }
+                    const need_kw = std.mem.eql(u8, cfg.memory.backend, "hybrid") and mem_buf.items.len == 0;
+                    if (need_kw) {
+                        for (req.knowledge) |cid| {
+                            const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
+                            const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
+                            const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
+                            if (arr != .array) continue;
+                            var hits: usize = 0;
+                            for (arr.array.items) |item| {
+                                if (hits >= k_hash) break;
+                                if (item != .object) continue;
+                                const text_v = item.object.get("text") orelse continue;
+                                if (text_v != .string) continue;
+                                const txt: []const u8 = text_v.string;
+                                var score: usize = 0;
+                                var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
+                                while (tq_it.next()) |tok| {
+                                    if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.indexOf(u8, txt, tok) != null) score += 1;
+                                }
+                                if (score == 0) continue;
+                                if (mem_buf.items.len > 80_000) break;
+                                if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
+                                const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
+                                if (mlimit == 0) continue;
+                                mem_buf.appendSlice(arena, txt[0..mlimit]) catch continue;
+                                hits += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (req.knowledge) |cid| {
+                    const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
+                    const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
+                    const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
+                    if (arr != .array) continue;
+                    var hits: usize = 0;
+                    for (arr.array.items) |item| {
+                        if (hits >= cfg.memory.vector_top_k) break;
+                        if (item != .object) continue;
+                        const text_v = item.object.get("text") orelse continue;
+                        if (text_v != .string) continue;
+                        const txt: []const u8 = text_v.string;
+                        var score: usize = 0;
+                        var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
+                        while (tq_it.next()) |tok| {
+                            if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.indexOf(u8, txt, tok) != null) score += 1;
+                        }
+                        if (score == 0) continue;
+                        if (mem_buf.items.len > 80_000) break;
+                        if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
+                        const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
+                        if (mlimit == 0) continue;
+                        mem_buf.appendSlice(arena, txt[0..mlimit]) catch continue;
+                        hits += 1;
+                    }
                 }
             }
             if (mem_buf.items.len > 0) {
-                // Prepend memory chunks before the knowledge docs (more specific)
                 var combined: std.ArrayList(u8) = .empty;
                 combined.appendSlice(arena, mem_buf.items) catch {};
                 combined.appendSlice(arena, "\n\n---\n\n") catch {};

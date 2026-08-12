@@ -1,16 +1,20 @@
 {
   "name": "memory",
-  "description": "Configurable memory layer for RAG: chunk/search (embed planned). Actions: chunk {text,size,overlap,strategy}, search {query,top_k}. Vector backends: builtin (default) + muninndb/sqlite-vec swappable; embeddings: openai_compat (default) + local_onnx stub.",
+  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap,strategy}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids}. Vector: builtin hash+cosine default, muninndb/sqlite-vec swappable; embeddings: builtin / openai_compat via providers base_url / local_onnx stub.",
   "input_schema": {
     "type": "object",
     "properties": {
       "action": { "type": "string", "enum": ["chunk", "search", "embed"] },
       "text": { "type": "string" },
+      "texts": { "type": "array", "items": { "type": "string" } },
       "size": { "type": "number" },
       "overlap": { "type": "number" },
       "strategy": { "type": "string" },
       "query": { "type": "string" },
-      "top_k": { "type": "number" }
+      "top_k": { "type": "number" },
+      "threshold": { "type": "number" },
+      "dim": { "type": "number" },
+      "collection_ids": { "type": "array", "items": { "type": "string" } }
     }
   },
   "fs_prefixes": ["state/knowledge"],

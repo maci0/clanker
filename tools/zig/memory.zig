@@ -1,11 +1,69 @@
-//! memory — WASM guest tool for the memory layer. Thin over chunk/embed/vector traits.
-//! Actions: chunk {text, size, overlap, strategy}, search {query, top_k, threshold, collection_ids}, embed {texts[]}
+//! memory — WASM guest tool for the memory layer.
+//! Actions: chunk {text,size,overlap,strategy}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids}
 
 const std = @import("std");
 const lib = @import("lib.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
+}
+
+const default_dim: usize = 384;
+
+fn hashEmbedInto(text: []const u8, vec: []f32) void {
+    @memset(vec, 0);
+    var token_buf: [128]u8 = undefined;
+    var tlen: usize = 0;
+    var prev_buf: [128]u8 = undefined;
+    var prev_len: usize = 0;
+    var i: usize = 0;
+    while (i <= text.len) : (i += 1) {
+        const c: u8 = if (i < text.len) text[i] else 0;
+        const is_alnum = i < text.len and std.ascii.isAlphanumeric(c);
+        if (is_alnum) {
+            if (tlen < token_buf.len) {
+                token_buf[tlen] = std.ascii.toLower(c);
+                tlen += 1;
+            }
+        } else {
+            if (tlen > 0) {
+                const tok = token_buf[0..tlen];
+                const h = std.hash.Wyhash.hash(0, tok);
+                vec[@as(usize, @as(u32, @truncate(h))) % vec.len] += 1.0;
+                if (prev_len > 0) {
+                    var bigram: [256]u8 = undefined;
+                    const a = prev_buf[0..prev_len];
+                    @memcpy(bigram[0..a.len], a);
+                    bigram[a.len] = ' ';
+                    @memcpy(bigram[a.len + 1 .. a.len + 1 + tok.len], tok);
+                    const hb = std.hash.Wyhash.hash(0, bigram[0 .. a.len + 1 + tok.len]);
+                    vec[@as(usize, @as(u32, @truncate(hb))) % vec.len] += 0.5;
+                }
+                @memcpy(prev_buf[0..tlen], tok);
+                prev_len = tlen;
+                tlen = 0;
+            }
+        }
+    }
+    var sum: f64 = 0;
+    for (vec) |v| sum += @as(f64, v) * @as(f64, v);
+    if (sum == 0) return;
+    const inv = 1.0 / @sqrt(sum);
+    for (vec) |*v| v.* = @floatCast(@as(f64, v.*) * inv);
+}
+
+fn cosine(a: []const f32, b: []const f32) f32 {
+    if (a.len != b.len or a.len == 0) return 0;
+    var dot: f64 = 0;
+    var na: f64 = 0;
+    var nb: f64 = 0;
+    for (a, b) |x, y| {
+        dot += @as(f64, x) * @as(f64, y);
+        na += @as(f64, x) * @as(f64, x);
+        nb += @as(f64, y) * @as(f64, y);
+    }
+    if (na == 0 or nb == 0) return 0;
+    return @as(f32, @floatCast(dot / (@sqrt(na) * @sqrt(nb))));
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
@@ -19,11 +77,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         const size = @as(usize, @intFromFloat(lib.optNum(obj, "size") orelse 800));
         const overlap = @as(usize, @intFromFloat(lib.optNum(obj, "overlap") orelse 120));
-        const strategy_s = lib.optStr(obj, "strategy") orelse "markdown";
-        const strat: u8 = if (std.mem.eql(u8, strategy_s, "fixed")) 1 else 0;
-        _ = strat;
-        // We can't import src/memory/chunk.zig directly in WASM (no std.fs), so we replicate fixed chunking here
-        // Keep output tiny so we stay under out_cap: cap chunks to 20
         const cap = @min(size, 800);
         const ov = @min(overlap, 120);
         var chunks: std.ArrayList([]const u8) = .empty;
@@ -50,6 +103,55 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         lib.commit(out, &w);
         return;
     }
+    if (std.mem.eql(u8, action, "embed")) {
+        const dim: usize = @as(usize, @intFromFloat(lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim))));
+        const d = @min(@max(dim, 16), 1024);
+        var w = lib.writer(out);
+        var s = lib.json(&w);
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("dim");
+        try s.write(d);
+        try s.objectField("embeddings");
+        try s.beginArray();
+        var wrote = false;
+        if (obj.object.get("texts")) |v| {
+            if (v == .array) {
+                for (v.array.items) |item| {
+                    if (item != .string) continue;
+                    const vec = try lib.alloc.alloc(f32, d);
+                    defer lib.alloc.free(vec);
+                    hashEmbedInto(item.string, vec);
+                    try s.beginArray();
+                    for (vec) |f| try s.write(f);
+                    try s.endArray();
+                    wrote = true;
+                }
+            }
+        }
+        if (!wrote) {
+            if (obj.object.get("text")) |v| {
+                if (v == .string) {
+                    const vec = try lib.alloc.alloc(f32, d);
+                    defer lib.alloc.free(vec);
+                    hashEmbedInto(v.string, vec);
+                    try s.beginArray();
+                    for (vec) |f| try s.write(f);
+                    try s.endArray();
+                    wrote = true;
+                }
+            }
+        }
+        if (!wrote) {
+            try lib.fail(out, "embed needs {\"texts\": [\"...\"]} or {\"text\": \"...\"}");
+            return;
+        }
+        try s.endArray();
+        try s.endObject();
+        lib.commit(out, &w);
+        return;
+    }
     if (std.mem.eql(u8, action, "search")) {
         const query = lib.optStr(obj, "query") orelse "";
         if (query.len == 0) {
@@ -57,8 +159,75 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             return;
         }
         const top_k: usize = @as(usize, @intFromFloat(lib.optNum(obj, "top_k") orelse 5));
-        // Host-side search would need embeddings; for now fall back to keyword search over knowledge chunks
-        // We do a simple fs_list scan hint: caller should use /api/knowledge/search via HTTP for full, but we expose a local scan
+        const threshold: f32 = @as(f32, @floatCast(lib.optNum(obj, "threshold") orelse 0));
+        const dim: usize = @as(usize, @intFromFloat(lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim))));
+        const d = @min(@max(dim, 16), 1024);
+        const qvec = try lib.alloc.alloc(f32, d);
+        defer lib.alloc.free(qvec);
+        hashEmbedInto(query, qvec);
+        var filter_ids: std.ArrayList([]const u8) = .empty;
+        if (obj.object.get("collection_ids")) |v| {
+            if (v == .array) for (v.array.items) |it| {
+                if (it == .string) try filter_ids.append(lib.alloc, it.string);
+            };
+        }
+        const listing = lib.fsList("state/knowledge") catch |err| {
+            var w = lib.writer(out);
+            var s2 = lib.json(&w);
+            try s2.beginObject();
+            try s2.objectField("ok");
+            try s2.write(true);
+            try s2.objectField("query");
+            try s2.write(query);
+            try s2.objectField("hits");
+            try s2.beginArray();
+            try s2.endArray();
+            try s2.objectField("note");
+            try s2.write(@errorName(err));
+            try s2.endObject();
+            lib.commit(out, &w);
+            return;
+        };
+        const parsed_list = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, listing, .{}) catch null;
+        var hits_all: std.ArrayList(struct { id: []const u8, text: []const u8, score: f32 }) = .empty;
+        if (parsed_list) |pl| if (pl == .array) for (pl.array.items) |entry| {
+            if (entry != .string) continue;
+            const name: []const u8 = entry.string;
+            if (!std.mem.endsWith(u8, name, ".chunks.json")) continue;
+            if (filter_ids.items.len > 0) {
+                const col_id = name[0 .. name.len - ".chunks.json".len];
+                var keep = false;
+                for (filter_ids.items) |fid| if (std.mem.eql(u8, fid, col_id)) {
+                    keep = true;
+                    break;
+                };
+                if (!keep) continue;
+            }
+            const path = std.fmt.allocPrint(lib.alloc, "state/knowledge/{s}", .{name}) catch continue;
+            const raw = lib.fsRead(path) catch continue;
+            const arr = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch continue;
+            if (arr != .array) continue;
+            for (arr.array.items) |item| {
+                if (item != .object) continue;
+                const text_v = item.object.get("text") orelse continue;
+                if (text_v != .string) continue;
+                const chunk_id = if (item.object.get("chunk_id")) |v| (if (v == .string) v.string else text_v.string) else text_v.string;
+                const vec = lib.alloc.alloc(f32, d) catch continue;
+                defer lib.alloc.free(vec);
+                hashEmbedInto(text_v.string, vec);
+                const sc = cosine(qvec, vec);
+                if (sc < threshold) continue;
+                const dup_id = lib.alloc.dupe(u8, chunk_id) catch continue;
+                const dup_text = lib.alloc.dupe(u8, text_v.string) catch continue;
+                hits_all.append(lib.alloc, .{ .id = dup_id, .text = dup_text, .score = sc }) catch continue;
+            }
+        };
+        std.mem.sort(@TypeOf(hits_all.items[0]), hits_all.items, {}, struct {
+            fn gt(_: void, a: @TypeOf(hits_all.items[0]), b: @TypeOf(hits_all.items[0])) bool {
+                return a.score > b.score;
+            }
+        }.gt);
+        if (hits_all.items.len > top_k) hits_all.shrinkRetainingCapacity(top_k);
         var w = lib.writer(out);
         var s = lib.json(&w);
         try s.beginObject();
@@ -66,16 +235,21 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.write(true);
         try s.objectField("query");
         try s.write(query);
-        try s.objectField("top_k");
-        try s.write(top_k);
-        try s.objectField("hint");
-        try s.write("use host /api/knowledge/search?q=<query> or memory_inject on /api/run for hybrid RAG; vector search requires embedding provider");
+        try s.objectField("hits");
+        try s.beginArray();
+        for (hits_all.items) |h| {
+            try s.beginObject();
+            try s.objectField("chunk_id");
+            try s.write(h.id);
+            try s.objectField("score");
+            try s.write(h.score);
+            try s.objectField("text");
+            try s.write(h.text[0..@min(h.text.len, 2000)]);
+            try s.endObject();
+        }
+        try s.endArray();
         try s.endObject();
         lib.commit(out, &w);
-        return;
-    }
-    if (std.mem.eql(u8, action, "embed")) {
-        try lib.fail(out, "embed via WASM is not yet wired; configure [memory.embedding] and use openai_compat host embeddings");
         return;
     }
     try lib.fail(out, "unknown action: use chunk | search | embed");

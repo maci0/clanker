@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-pub const Provider = enum { openai_compat, local_onnx };
+pub const Provider = enum { openai_compat, local_onnx, builtin };
 
 /// Embeds `texts` via openai_compat. Caller must provide base_url + optional bearer token.
 /// Hits POST {base_url}/embeddings (or {base_url} if it already ends with /embeddings).
@@ -55,6 +55,21 @@ pub fn embedOpenAICompat(
         try out_vecs.append(arena, try vec.toOwnedSlice(arena));
     }
     return out_vecs.toOwnedSlice(arena);
+}
+
+pub fn embedBuiltin(arena: std.mem.Allocator, texts: []const []const u8, dim: usize) ![][]f32 {
+    const he = @import("hash_embed.zig");
+    return he.embedBatch(arena, texts, dim);
+}
+
+test "embedBuiltin deterministic" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const texts = [_][]const u8{"hello world"};
+    const v1 = try embedBuiltin(arena, &texts, 32);
+    const v2 = try embedBuiltin(arena, &texts, 32);
+    try std.testing.expectEqualSlices(f32, v1[0], v2[0]);
 }
 
 test "embedOpenAICompat parses mock response" {

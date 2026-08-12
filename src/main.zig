@@ -48,6 +48,7 @@ comptime {
     _ = @import("memory/chunk.zig");
     _ = @import("memory/vector.zig");
     _ = @import("memory/embedder.zig");
+    _ = @import("memory/hash_embed.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
