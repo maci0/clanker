@@ -195,7 +195,9 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     try runChecks(io, arena, init.environ_map, &rep);
 
     rep.w.print("\n{d} failing, {d} warning\n", .{ rep.failures, rep.warnings }) catch {};
-    if (rep.failures == 0) {
+    if (rep.failures > 0) {
+        rep.w.writeAll("Fix the failures above, then run `clanker providers check` for connectivity.\n") catch {};
+    } else {
         rep.w.writeAll("Connectivity is not checked here: run `clanker providers check`.\n") catch {};
     }
     out.interface.flush() catch {};

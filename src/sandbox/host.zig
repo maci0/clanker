@@ -881,6 +881,20 @@ fn envAllowed(sb: *const Sandbox, name: []const u8) bool {
     return false;
 }
 
+/// Build the environment visible to a process launched on a guest's behalf.
+/// ck_exec is still part of the guest boundary: inheriting the harness process
+/// environment here would let an allowed executable print API keys that the
+/// same guest is correctly denied through ck_env.
+fn execEnvironment(gpa: std.mem.Allocator, sb: *const Sandbox) !std.process.Environ.Map {
+    var filtered = std.process.Environ.Map.init(gpa);
+    errdefer filtered.deinit();
+    var it = sb.environ_map.iterator();
+    while (it.next()) |entry| {
+        if (envAllowed(sb, entry.key_ptr.*)) try filtered.put(entry.key_ptr.*, entry.value_ptr.*);
+    }
+    return filtered;
+}
+
 pub fn ckResult(caller: *zwasm.Caller) u64 {
     const h = getHost(caller);
     return protocol.packPtrLen(h.result_ptr, h.result_len);
@@ -907,6 +921,13 @@ pub fn ckHttp(
 // Host-side implementation for the docker tool; registered in runtime.zig linkHostFns.
 pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
+    // Docker's Unix socket is a privileged host-side channel that is not
+    // represented by fs_prefixes or network_allow. Registration alone must
+    // not make it callable by every guest linked into the shared runtime.
+    if (!dockerAccessAllowed(h.sandbox)) {
+        log.log(.warn, "[sandbox] ck_docker denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    }
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
 
@@ -979,6 +1000,10 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return Err.invalid;
 }
 
+fn dockerAccessAllowed(sb: *const Sandbox) bool {
+    return std.mem.eql(u8, sb.tool_self_name, "docker");
+}
+
 const ChatOp = struct {
     op: ?[]const u8 = null,
     room: ?[]const u8 = null,
@@ -1043,6 +1068,10 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         return Err.invalid;
     };
     const op = parsed.op orelse return Err.invalid;
+    if (!chatAccessAllowed(h.sandbox.tool_self_name, op)) {
+        log.log(.warn, "[sandbox] ck_chat denied op '{s}' for tool '{s}'", .{ op, h.sandbox.tool_self_name });
+        return Err.denied;
+    }
 
     // A todo_* op that names no room targets the run's private list (wired
     // only inside sub-agent runs). Routed before the chatrooms gate on
@@ -1195,12 +1224,35 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     return Err.invalid;
 }
 
-/// ck_stats() — aggregate token usage per provider/model from the global
-/// token-usage log (state/token_stats.jsonl). Returns
-/// {"ok":true,"stats":[{provider,model,calls,...}],"totals":{...}} in the
-/// host arena. Backs the model_stats tool.
+fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
+    const allowed_op: ?[]const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
+        "send"
+    else if (std.mem.eql(u8, tool_name, "chat_history"))
+        "history"
+    else if (std.mem.eql(u8, tool_name, "chat_rooms"))
+        "rooms"
+    else if (std.mem.eql(u8, tool_name, "chat_subscribe"))
+        "subscribe"
+    else if (std.mem.eql(u8, tool_name, "todo_add"))
+        "todo_add"
+    else if (std.mem.eql(u8, tool_name, "todo_claim"))
+        "todo_claim"
+    else if (std.mem.eql(u8, tool_name, "todo_close"))
+        "todo_close"
+    else if (std.mem.eql(u8, tool_name, "todo_list"))
+        "todo_list"
+    else
+        null;
+    return if (allowed_op) |allowed| std.mem.eql(u8, allowed, op) else false;
+}
+
+/// ck_stats() exposes the authorized global token-usage records to the
+/// model_stats guest. Parsing and aggregation are application logic and live
+/// in tools/zig/stats.zig; the native boundary only resolves the configured
+/// state directory, enforces the module switch, and reads the protected log.
 pub fn ckStats(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "model_stats")) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
 
     const cfg = h.sandbox.cfg orelse return Err.denied;
@@ -1215,12 +1267,15 @@ pub fn ckStats(caller: *zwasm.Caller) u32 {
     const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
     const state_dir = h.sandbox.state_dir;
 
-    const stats = token_stats.aggregate(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
-        log.log(.warn, "[stats] aggregate failed: {s}", .{@errorName(err)});
+    const records = token_stats.loadAll(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch |err| {
+        log.log(.warn, "[stats] read failed: {s}", .{@errorName(err)});
         return Err.invalid;
     };
-    const json_out = token_stats.statsJSON(arena, stats, token_stats.totals(stats)) catch return Err.too_large;
-    return h.writeResult(bytes, json_out);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    s.write(records) catch return Err.too_large;
+    return h.writeResult(bytes, out.written());
 }
 
 /// Maximum number of custom headers a tool may send per request.
@@ -2228,6 +2283,7 @@ fn runsAShell(cmd: []const u8) bool {
 /// symbols or project-internal code; use search_code / read_file instead.
 pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "std_api")) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const sym = sliceOf(bytes, sym_ptr, sym_len) orelse return Err.invalid;
     if (sym.len == 0 or zig_lib_dir.len == 0) return Err.not_found;
@@ -2433,6 +2489,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 
 pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "ask_user")) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const json_input = sliceOf(bytes, json_ptr, json_len) orelse return Err.invalid;
 
@@ -2785,13 +2842,15 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
 
     log.log(.info, "[exec] → {s}", .{cmd});
     const exec_t0 = std.Io.Timestamp.now(h.sandbox.io, .awake);
+    var child_env = execEnvironment(h.sandbox.gpa, h.sandbox) catch return Err.invalid;
+    defer child_env.deinit();
     // A tool that needs to *talk* to a process, not just launch one — an LSP
     // client is the reason this exists — hands over the bytes to write to its
     // stdin. std.process.run cannot do that (it hardcodes .ignore), so that
     // case spawns the child directly.
     if (obj.get("stdin")) |sv| {
         if (sv == .string and sv.string.len > 0) {
-            return execWithStdin(h, bytes, argv.items, exec_dir, sv.string, cmd);
+            return execWithStdin(h, bytes, argv.items, exec_dir, &child_env, sv.string, cmd);
         }
     }
 
@@ -2803,7 +2862,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         // rather than a live read, and `zig test`/`zig ast-check` failed with
         // "unable to resolve zig cache directory: AppDataDirUnavailable"
         // even though HOME was set and correct in the real process env.
-        .environ_map = h.sandbox.environ_map,
+        .environ_map = &child_env,
         // Generous, because the result is truncated with a marker below
         // rather than refused: a search that matches a lot should return what
         // it found and say it was cut, not fail with StreamTooLong and leave
@@ -2898,6 +2957,7 @@ fn execWithStdin(
     mem_bytes: []u8,
     argv: []const []const u8,
     exec_dir: std.Io.Dir,
+    environ_map: *std.process.Environ.Map,
     input: []const u8,
     cmd: []const u8,
 ) u32 {
@@ -2907,7 +2967,7 @@ fn execWithStdin(
     var child = std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .dir = exec_dir },
-        .environ_map = h.sandbox.environ_map,
+        .environ_map = environ_map,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -3707,6 +3767,57 @@ test "a tool cannot read an environment variable it was not allowed" {
     try std.testing.expect(envAllowed(&sb, "MY_TOKEN"));
     try std.testing.expect(!envAllowed(&sb, "PWD"));
     try std.testing.expect(!envAllowed(&sb, "DEEPSEEK_API_KEY"));
+}
+
+test "exec subprocess environment cannot bypass env_allow" {
+    var source = std.process.Environ.Map.init(std.testing.allocator);
+    defer source.deinit();
+    try source.put("PATH", "/bin");
+    try source.put("HOME", "/tmp/example");
+    try source.put("ANTHROPIC_API_KEY", "must-not-cross-boundary");
+
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = &source,
+    };
+    var filtered = try execEnvironment(std.testing.allocator, &sb);
+    defer filtered.deinit();
+    try std.testing.expectEqualStrings("/bin", filtered.get("PATH").?);
+    try std.testing.expectEqualStrings("/tmp/example", filtered.get("HOME").?);
+    try std.testing.expect(filtered.get("ANTHROPIC_API_KEY") == null);
+
+    sb.env_allow = &.{"ANTHROPIC_API_KEY"};
+    var explicit = try execEnvironment(std.testing.allocator, &sb);
+    defer explicit.deinit();
+    try std.testing.expectEqualStrings("must-not-cross-boundary", explicit.get("ANTHROPIC_API_KEY").?);
+    try std.testing.expect(explicit.get("PATH") == null);
+}
+
+test "docker host channel is scoped to the docker tool" {
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = undefined,
+        .tool_self_name = "unrelated",
+    };
+    try std.testing.expect(!dockerAccessAllowed(&sb));
+    sb.tool_self_name = "docker-helper";
+    try std.testing.expect(!dockerAccessAllowed(&sb));
+    sb.tool_self_name = "docker";
+    try std.testing.expect(dockerAccessAllowed(&sb));
+}
+
+test "chat host channel pins each descriptor to its operation" {
+    try std.testing.expect(chatAccessAllowed("chat_send", "send"));
+    try std.testing.expect(chatAccessAllowed("todo_close", "todo_close"));
+    try std.testing.expect(!chatAccessAllowed("chat_send", "history"));
+    try std.testing.expect(!chatAccessAllowed("chat_send-helper", "send"));
+    try std.testing.expect(!chatAccessAllowed("unrelated", "send"));
 }
 
 test "harness config access is scoped to each tool's consumed fields" {

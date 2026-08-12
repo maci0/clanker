@@ -89,6 +89,11 @@ var bridge_stop_flag: std.atomic.Value(bool) = .init(false);
 /// The UI thread consumes this and joins the worker before making the model
 /// idle, so the model arena cannot be destroyed while cleanup still uses it.
 var bridge_turn_done: std.atomic.Value(bool) = .init(false);
+/// The name of the tool currently executing (set on onToolCall, cleared on
+/// onToolResult), so the status line can show what work is in flight instead
+/// of a bare "thinking".
+var bridge_active_tool: [64]u8 = undefined;
+var bridge_active_tool_len: usize = 0;
 
 fn onToken(delta: []const u8) void {
     bridge_mutex.lockUncancelable(bridge_io);
@@ -113,11 +118,18 @@ fn onToolCall(calls: []const types.ToolCall) void {
         const body = transcript_mod.toolCardArgs(bridge_gpa, c.arguments) catch null;
         if (body) |b| bridge_tool_lines.append(bridge_gpa, b) catch bridge_gpa.free(b);
     }
+    if (calls.len > 0) {
+        const name = calls[calls.len - 1].name;
+        const n = @min(name.len, bridge_active_tool.len);
+        @memcpy(bridge_active_tool[0..n], name[0..n]);
+        bridge_active_tool_len = n;
+    }
 }
 
 fn onToolResult(elapsed_ms: u64) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
+    bridge_active_tool_len = 0;
     const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms) catch return;
     bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
 }
@@ -1057,6 +1069,7 @@ const Model = struct {
             \\  Ctrl-C            stop the current turn, or quit when idle
             \\  Ctrl-Shift-C      copy the selection (or the input line)
             \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
+            \\  mouse drag        select text in the transcript (copies on release)
         ;
         var kit = std.mem.splitScalar(u8, keys, '\n');
         while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
@@ -1500,6 +1513,9 @@ const Model = struct {
         defer bridge_mutex.unlock(bridge_io);
         const streaming = bridge_streaming;
         const stream_snapshot = ctx.arena.dupe(u8, bridge_stream_buf.items) catch "";
+        var tool_snap: [64]u8 = undefined;
+        const tool_snap_len = bridge_active_tool_len;
+        if (tool_snap_len > 0) @memcpy(tool_snap[0..tool_snap_len], bridge_active_tool[0..tool_snap_len]);
 
         // Layout numbers before the status line: its scroll indicator needs
         // the transcript height, which is only known once the input box has
@@ -1532,11 +1548,18 @@ const Model = struct {
             std.fmt.bufPrint(&scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
         else
             "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
+        var phase_buf: [80]u8 = undefined;
+        const phase: []const u8 = if (!streaming)
+            "ready"
+        else if (tool_snap_len > 0)
+            std.fmt.bufPrint(&phase_buf, " running {s}", .{tool_snap[0..tool_snap_len]}) catch " tool"
+        else
+            " thinking";
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s}", .{
             self.provider.name,
             self.provider.activeModelName(),
             activity,
-            if (streaming) " thinking" else "ready",
+            phase,
             scroll_hint,
             if (self.session_id != null) " \xc2\xb7 " else "",
             self.session_id orelse "",
@@ -1550,9 +1573,15 @@ const Model = struct {
 
         var row: u16 = top;
         if (line_count == 0 and !streaming and row < bottom) {
-            writeWrapped(surface, &row, bottom, max.width, "Start with a task. clanker keeps the conversation and streams tool work here.", vaxis.Style{});
+            writeWrapped(surface, &row, bottom, max.width, "Type a task to begin. clanker streams tool work and keeps the conversation.", vaxis.Style{});
             if (row < bottom) row += 1;
-            writeWrapped(surface, &row, bottom, max.width, "Try /model to switch models, /help for commands, or type anything to begin.", dim);
+            if (row < bottom) {
+                writeWrapped(surface, &row, bottom, max.width, "  \"fix the failing test\"    \"explain src/main.zig\"    \"refactor the parser\"", dim);
+            }
+            if (row < bottom) row += 1;
+            if (row < bottom) {
+                writeWrapped(surface, &row, bottom, max.width, "/model to switch models  /help for commands  Ctrl-C to quit", dim);
+            }
         }
         const start = tailStart(self.lines.items[0..view_end], avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the

@@ -1633,7 +1633,6 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     const arena = arena_state.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.autolearn) {
-        log.log(.error_, "autolearn module is disabled (modules.autolearn=false in config)", .{});
         return error.ModuleDisabled;
     }
     const section = try toolText(io, gpa, arena, &cfg, init.environ_map, "cmd_autolearn", "");
@@ -2311,7 +2310,6 @@ fn cmdSessions(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.sessions) {
-        log.log(.error_, "sessions module is disabled...", .{});
         return error.ModuleDisabled;
     }
     try printInternalTool(init, &cfg, "cmd_sessions", "");
@@ -2455,7 +2453,6 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.graphs) {
-        log.log(.error_, "graphs module is disabled...", .{});
         return error.ModuleDisabled;
     }
     // No run id lists the recorded runs; a run id renders that one. Both are
@@ -2618,7 +2615,6 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.goal) {
-        log.log(.error_, "goal module is disabled...", .{});
         return error.ModuleDisabled;
     }
     const intent = opts.task orelse return error.MissingTask;
@@ -2639,7 +2635,6 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.peers) {
-        log.log(.error_, "peers module is disabled...", .{});
         return error.ModuleDisabled;
     }
     const peer_name = opts.peer orelse return error.MissingPeer;
@@ -2685,7 +2680,6 @@ fn cmdMcp(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.mcp) {
-        log.log(.error_, "mcp module is disabled...", .{});
         return error.ModuleDisabled;
     }
     try mcp.serve(io, gpa, arena, &cfg, init.environ_map);
@@ -2697,7 +2691,6 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.chatrooms or !cfg.chatrooms.on) {
-        log.log(.error_, "chatrooms module is disabled...", .{});
         return error.ModuleDisabled;
     }
     const base = std.Io.Dir.cwd();
@@ -2751,7 +2744,6 @@ fn cmdStats(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.token_stats) {
-        log.log(.error_, "token_stats module is disabled...", .{});
         return error.ModuleDisabled;
     }
     try printInternalTool(init, &cfg, "model_stats", "");
