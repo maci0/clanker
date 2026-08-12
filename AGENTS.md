@@ -99,6 +99,23 @@ Every promoted change must pass: `zig build`, `zig build test`,
 Promoted changes are committed as `clanker: <summary> [imp-<id>]`. Run the
 whole gate manually with `clanker gate`.
 
+Those gates all answer the same question — is this change *safe*? A change that
+does nothing is maximally safe, so `src/improve/inert.zig` asks the other one.
+It classifies each proposal from the staged source (never from the summary the
+model wrote about it) as `behavior`, `test_only`, `docs_only` or `inert`, and
+the engine refuses two shapes:
+
+- **inert** — the patch is purely additive and every function it adds is
+  unreachable: nothing outside a test block calls it. A helper plus a unit test
+  for that helper is not an improvement. Disable with
+  `improve.inert_gate = false`.
+- **test_only**, once `improve.max_consecutive_test_only` accepted improvements
+  in a row were also test-only. Coverage is worth having; a loop that produces
+  nothing else has stopped improving the program.
+
+The class is recorded in `state/improvements.jsonl` and rendered in the history
+block of the next prompt, so the loop can see what it has been producing.
+
 ## Local operator rules (optional)
 
 Checkout-private additions (gitignored). Missing file is a soft skip for tools

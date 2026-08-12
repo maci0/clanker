@@ -244,6 +244,16 @@ pub const Improve = struct {
     /// of the tree, so this is the loop's only way to look anything up; each
     /// one costs a call that produces no patch. 0 disables it.
     max_context_requests: u32 = 3,
+    /// Reject a proposal whose only effect is to add code nothing can reach.
+    /// Every other gate asks whether a change is safe; a change that does
+    /// nothing is maximally safe, so without this the loop is rewarded for
+    /// producing it. `src/util/json.zig` still carries three such promotions.
+    inert_gate: bool = true,
+    /// How many accepted improvements in a row may be test-only before the
+    /// next test-only proposal is refused. Tests are worth promoting; a run
+    /// that promotes nothing else has stopped improving the program and is
+    /// only improving its own acceptance rate. 0 disables the check.
+    max_consecutive_test_only: u32 = 3,
     /// Provider the capability gate runs the staged eval suite on. The evals
     /// are mechanical capability checks (call a tool, read a field of its
     /// result), not reasoning work, so a fast cheap model grades them the
@@ -998,7 +1008,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests", "eval_provider" }, "improve");
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
@@ -1011,6 +1021,14 @@ pub const Config = struct {
         if (obj.get("max_context_requests")) |k| {
             const n = try jsonInt(k, "max_context_requests");
             im.max_context_requests = if (n <= 0) 0 else @intCast(n);
+        }
+        if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
+            .bool => |b| b,
+            else => im.inert_gate,
+        };
+        if (obj.get("max_consecutive_test_only")) |k| {
+            const n = try jsonInt(k, "max_consecutive_test_only");
+            im.max_consecutive_test_only = if (n <= 0) 0 else @intCast(n);
         }
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
         return im;
