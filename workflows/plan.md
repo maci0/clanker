@@ -1,6 +1,8 @@
 ---
 description: Draft a numbered implementation plan for a feature or fix. Use for scoping before coding.
+llm-description: Draft a numbered implementation plan (scope, file changes, edge cases, verification) before coding.
 argument-hint: "[feature description]"
+tags: planning
 ---
 
 You are planning the implementation of: {{args}}

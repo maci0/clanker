@@ -17,6 +17,10 @@ const json = std.json;
 const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 
+/// The wire format a provider speaks. One tag per entry in the
+/// `src/llm/providers.zig` registry; the tag *is* the `kind = "..."` spelling,
+/// so adding a provider means adding a tag here and a row there, and nothing
+/// else in this file.
 pub const ProviderKind = enum {
     openai_compat,
     anthropic,
@@ -25,10 +29,25 @@ pub const ProviderKind = enum {
     vertex_anthropic,
 
     pub fn fromStr(s: []const u8) ?ProviderKind {
-        if (std.mem.eql(u8, s, "openai_compat")) return .openai_compat;
-        if (std.mem.eql(u8, s, "anthropic")) return .anthropic;
-        if (std.mem.eql(u8, s, "vertex_anthropic")) return .vertex_anthropic;
-        return null;
+        return std.meta.stringToEnum(ProviderKind, s);
+    }
+};
+
+/// How a provider's credential is acquired — a separate axis from the wire
+/// kind, because one wire format can accept several (docs/adrs/0005). Left
+/// unset, each kind auto-detects from the credential's shape where the two
+/// are distinguishable, which is what keeps Anthropic zero-config.
+pub const AuthStrategy = enum {
+    /// Read `api_key_env` and present it the way the wire kind wants.
+    api_key,
+    /// A pasted OAuth access token (env var), presented as a bearer token.
+    oauth_static,
+    /// A token minted and renewed in-process. Vertex's GCP service-account
+    /// token is the one provider that does this today.
+    oauth_refresh,
+
+    pub fn fromStr(s: []const u8) ?AuthStrategy {
+        return std.meta.stringToEnum(AuthStrategy, s);
     }
 };
 
@@ -62,6 +81,11 @@ pub const Model = struct {
     /// derives these; see cmdProvidersFill in cli.zig). Informational: lets a
     /// model entry self-document what it supports without a second lookup.
     capabilities: []const []const u8 = &.{},
+    /// Free-form grouping ("flagship", "fast", "reasoning", "cheap", ...),
+    /// used to sort/group the model list in the webui picker, the TUI's
+    /// /model picker, and the CLI. Purely presentational: never sent to a
+    /// provider. Empty sorts last within its provider.
+    category: []const u8 = "",
 };
 
 pub const Provider = struct {
@@ -69,6 +93,11 @@ pub const Provider = struct {
     kind: ProviderKind = .openai_compat,
     base_url: []const u8,
     api_key_env: ?[]const u8 = null,
+    /// Explicit credential-acquisition strategy, overriding the wire kind's
+    /// auto-detection. Needed where a provider's API keys and OAuth tokens
+    /// are not distinguishable by shape, since guessing wrong sends the
+    /// secret on the wrong header.
+    auth: ?AuthStrategy = null,
     /// vertex_anthropic only: the GCP project and region that serve the model,
     /// and the service account JSON used to mint access tokens.
     project: []const u8 = "",
@@ -384,6 +413,29 @@ pub const Modules = struct {
     token_stats: bool = true,
 };
 
+/// Which keys inside `"modules"` were set when this Config was parsed. Used so
+/// a partial `config.local.toml` `"modules"` object does not replace the whole
+/// modules struct (and reset all flags to struct defaults).
+pub const ModulesFields = struct {
+    mcp: bool = false,
+    peers: bool = false,
+    a2a: bool = false,
+    webui: bool = false,
+    graphs: bool = false,
+    sessions: bool = false,
+    goal: bool = false,
+    token_budget: bool = false,
+    streaming: bool = false,
+    dotenv: bool = false,
+    hot_reload: bool = false,
+    autolearn: bool = false,
+    subagents: bool = false,
+    rlm: bool = false,
+    multimodal: bool = false,
+    chatrooms: bool = false,
+    token_stats: bool = false,
+};
+
 /// Online-research web access. The sandbox denies network to a tool by
 /// default: a tool reaches a host only when its descriptor names it
 /// (`network_allow`) or the harness adds it from config (`network_from_config`).
@@ -416,6 +468,7 @@ pub const Config = struct {
     chatrooms: Chatrooms = .{},
     memory: Memory = .{},
     modules: Modules = .{},
+    modules_fields: ModulesFields = .{},
     modules_present: bool = false,
     chatrooms_present: bool = false,
     memory_present: bool = false,
@@ -589,7 +642,9 @@ pub const Config = struct {
             cfg.memory_present = true;
         }
         if (obj.get("modules")) |v| {
-            cfg.modules = try parseModules(arena, v);
+            const parsed = try parseModules(arena, v);
+            cfg.modules = parsed.modules;
+            cfg.modules_fields = parsed.fields;
             cfg.modules_present = true;
         }
         return cfg;
@@ -605,12 +660,23 @@ pub const Config = struct {
             .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
         };
         warnUnknownKeys(obj, &.{
-            "base_url",         "kind",          "project",
-            "location",         "api_key_env",   "service_account_file",
-            "path",             "default_model", "check_timeout_seconds",
+            "base_url",
+            "kind",
+            "project",
+            "location",
+            "api_key_env",
+            "auth",
+            "service_account_file",
+            "path",
+            "default_model",
+            "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
-            "model",            "models",        "max_tokens",
-            "context_window",   "temperature",   "top_p",
+            "model",
+            "models",
+            "max_tokens",
+            "context_window",
+            "temperature",
+            "top_p",
             "reasoning_effort",
         }, name);
         // Settings that belong to a model are rejected on the provider: they
@@ -644,6 +710,13 @@ pub const Config = struct {
         }
         if (obj.get("api_key_env")) |k| {
             p.api_key_env = try jsonStr(k, "api_key_env");
+        }
+        if (obj.get("auth")) |k| {
+            const s = try jsonStr(k, "auth");
+            p.auth = AuthStrategy.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': unknown auth \"{s}\" (expected \"api_key\", \"oauth_static\" or \"oauth_refresh\")", .{ name, s });
+                return error.UnknownAuthStrategy;
+            };
         }
         if (obj.get("path")) |k| {
             p.path = try jsonStr(k, "path");
@@ -761,6 +834,7 @@ pub const Config = struct {
             "cost_per_1m_input",
             "cost_per_1m_output",
             "capabilities",
+            "category",
         }, name);
         if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
         if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
@@ -779,6 +853,7 @@ pub const Config = struct {
             for (arr.items) |item| try caps.append(arena, try jsonStr(item, "capabilities[]"));
             m.capabilities = try caps.toOwnedSlice(arena);
         }
+        if (obj.get("category")) |k| m.category = try jsonStr(k, "category");
         return m;
     }
 
@@ -1106,6 +1181,26 @@ pub const Config = struct {
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
     }
 
+    fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
+        if (fields.mcp) dst.mcp = src.mcp;
+        if (fields.peers) dst.peers = src.peers;
+        if (fields.a2a) dst.a2a = src.a2a;
+        if (fields.webui) dst.webui = src.webui;
+        if (fields.graphs) dst.graphs = src.graphs;
+        if (fields.sessions) dst.sessions = src.sessions;
+        if (fields.goal) dst.goal = src.goal;
+        if (fields.token_budget) dst.token_budget = src.token_budget;
+        if (fields.streaming) dst.streaming = src.streaming;
+        if (fields.dotenv) dst.dotenv = src.dotenv;
+        if (fields.hot_reload) dst.hot_reload = src.hot_reload;
+        if (fields.autolearn) dst.autolearn = src.autolearn;
+        if (fields.subagents) dst.subagents = src.subagents;
+        if (fields.rlm) dst.rlm = src.rlm;
+        if (fields.multimodal) dst.multimodal = src.multimodal;
+        if (fields.chatrooms) dst.chatrooms = src.chatrooms;
+        if (fields.token_stats) dst.token_stats = src.token_stats;
+    }
+
     fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {
         _ = arena;
         const obj = switch (v) {
@@ -1172,34 +1267,35 @@ pub const Config = struct {
         if (src.notify_present) dst.notify = src.notify;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
         if (src.memory_present) dst.memory = src.memory;
-        if (src.modules_present) dst.modules = src.modules;
+        if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);
     }
 
-    fn parseModules(arena: std.mem.Allocator, v: json.Value) !Modules {
+    fn parseModules(arena: std.mem.Allocator, v: json.Value) !struct { modules: Modules, fields: ModulesFields } {
         _ = arena;
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ModulesNotObject,
         };
         var m = Modules{};
-        const fields = [_]struct { key: []const u8, ptr: *bool }{
-            .{ .key = "mcp", .ptr = &m.mcp },
-            .{ .key = "peers", .ptr = &m.peers },
-            .{ .key = "a2a", .ptr = &m.a2a },
-            .{ .key = "webui", .ptr = &m.webui },
-            .{ .key = "graphs", .ptr = &m.graphs },
-            .{ .key = "sessions", .ptr = &m.sessions },
-            .{ .key = "goal", .ptr = &m.goal },
-            .{ .key = "token_budget", .ptr = &m.token_budget },
-            .{ .key = "streaming", .ptr = &m.streaming },
-            .{ .key = "dotenv", .ptr = &m.dotenv },
-            .{ .key = "hot_reload", .ptr = &m.hot_reload },
-            .{ .key = "autolearn", .ptr = &m.autolearn },
-            .{ .key = "subagents", .ptr = &m.subagents },
-            .{ .key = "rlm", .ptr = &m.rlm },
-            .{ .key = "multimodal", .ptr = &m.multimodal },
-            .{ .key = "chatrooms", .ptr = &m.chatrooms },
-            .{ .key = "token_stats", .ptr = &m.token_stats },
+        var mf = ModulesFields{};
+        const fields = [_]struct { key: []const u8, ptr: *bool, present: *bool }{
+            .{ .key = "mcp", .ptr = &m.mcp, .present = &mf.mcp },
+            .{ .key = "peers", .ptr = &m.peers, .present = &mf.peers },
+            .{ .key = "a2a", .ptr = &m.a2a, .present = &mf.a2a },
+            .{ .key = "webui", .ptr = &m.webui, .present = &mf.webui },
+            .{ .key = "graphs", .ptr = &m.graphs, .present = &mf.graphs },
+            .{ .key = "sessions", .ptr = &m.sessions, .present = &mf.sessions },
+            .{ .key = "goal", .ptr = &m.goal, .present = &mf.goal },
+            .{ .key = "token_budget", .ptr = &m.token_budget, .present = &mf.token_budget },
+            .{ .key = "streaming", .ptr = &m.streaming, .present = &mf.streaming },
+            .{ .key = "dotenv", .ptr = &m.dotenv, .present = &mf.dotenv },
+            .{ .key = "hot_reload", .ptr = &m.hot_reload, .present = &mf.hot_reload },
+            .{ .key = "autolearn", .ptr = &m.autolearn, .present = &mf.autolearn },
+            .{ .key = "subagents", .ptr = &m.subagents, .present = &mf.subagents },
+            .{ .key = "rlm", .ptr = &m.rlm, .present = &mf.rlm },
+            .{ .key = "multimodal", .ptr = &m.multimodal, .present = &mf.multimodal },
+            .{ .key = "chatrooms", .ptr = &m.chatrooms, .present = &mf.chatrooms },
+            .{ .key = "token_stats", .ptr = &m.token_stats, .present = &mf.token_stats },
         };
         warnUnknownKeys(obj, &.{
             "mcp",        "peers",       "a2a",          "webui",     "graphs",
@@ -1209,10 +1305,13 @@ pub const Config = struct {
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
-                if (val == .bool) f.ptr.* = val.bool;
+                if (val == .bool) {
+                    f.ptr.* = val.bool;
+                    f.present.* = true;
+                }
             }
         }
-        return m;
+        return .{ .modules = m, .fields = mf };
     }
 
     fn parseMemory(arena: std.mem.Allocator, v: json.Value) !Memory {
@@ -1967,6 +2066,45 @@ test "exec_pattern_allow rejects git patterns to protect the deny list" {
     try std.testing.expectError(
         error.ExecPatternAllowGitForbidden,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml"),
+    );
+}
+
+test "the auth strategy is optional, parsed by name, and rejected when misspelt" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "xai"
+        \\providers = { xai = { base_url = "https://api.x.ai/v1", api_key_env = "XAI_TOKEN", auth = "oauth_static" }, plain = { base_url = "https://y.test" } }
+        \\models = { "xai/m" = { provider = "xai" }, "plain/m" = { provider = "plain" } }
+        ,
+    });
+    var cfg = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqual(AuthStrategy.oauth_static, cfg.providers.get("xai").?.auth.?);
+    // Unset is the norm: the wire kind auto-detects, which is what keeps
+    // every existing config working untouched.
+    try std.testing.expect(cfg.providers.get("plain").?.auth == null);
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "bad.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://y.test", auth = "oauth" } }
+        \\models = { "p/m" = { provider = "p" } }
+        ,
+    });
+    // A typo must fail loudly: silently falling back would send the secret on
+    // whichever header the default happened to pick.
+    try std.testing.expectError(
+        error.UnknownAuthStrategy,
+        Config.load(io, arena_state.allocator(), tmp.dir, "bad.toml", "missing.toml"),
     );
 }
 

@@ -1,0 +1,27 @@
+{
+  "name": "chat_delete",
+  "description": "Delete your own chat message. Only the original sender can delete. The message text is replaced with \"[deleted]\" and marked as deleted. Returns ok on success.",
+  "llm_description": "Delete your own chat message (sender-only); text replaced with \"[deleted]\" and flagged deleted. Input: {room, msg_id}.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room the message is in"
+      },
+      "msg_id": {
+        "type": "string",
+        "description": "Message id to delete"
+      }
+    },
+    "required": ["room", "msg_id"]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "delete"
+  },
+  "category": "chat"
+}

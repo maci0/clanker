@@ -24,6 +24,7 @@ import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loa
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
+import { goalStatusLabel } from "./core/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
@@ -74,6 +75,11 @@ var el = {
   railContext: document.getElementById("rail-context"),
   railToggle: document.getElementById("rail-toggle"),
   sessionTitle: document.getElementById("session-title"),
+  sessionStatusBar: document.getElementById("session-status-bar"),
+  statusGoal: document.getElementById("status-goal"),
+  statusTools: document.getElementById("status-tools"),
+  statusSubagent: document.getElementById("status-subagent"),
+  statusTodos: document.getElementById("status-todos"),
   railScrim: document.getElementById("rail-scrim"),
   promptList: document.getElementById("prompt-list"),
   promptSave: document.getElementById("prompt-save"),
@@ -113,7 +119,7 @@ var el = {
   sessionExport: document.getElementById("session-export"),
   sessionCopy: document.getElementById("session-copy"),
   runCopy: document.getElementById("run-copy"),
-  board: document.getElementById("board"),
+  board: document.getElementById("board-grid"),
   boardEmpty: document.getElementById("board-empty"),
   cardForm: document.getElementById("card-form"),
   cardTitle: document.getElementById("card-title"),
@@ -506,6 +512,42 @@ el.railToggle.addEventListener("click", function () {
 });
 el.railScrim.addEventListener("click", function () { setRailOpen(false); });
 
+/* Drag-to-scroll on the conversation list. The rail is pinned and only the
+   list scrolls, so a pointer drags the history the way a touchscreen does.
+   A gesture that barely moves is still a click (it opens that conversation);
+   one that travels scrolls instead, and the click that follows it is
+   swallowed so a scroll does not also switch the conversation. */
+(function initRailListDrag() {
+  var list = el.railList;
+  if (!list) return;
+  var dragging = false, startY = 0, startTop = 0, dragged = false;
+  list.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    dragging = true; dragged = false;
+    startY = e.clientY; startTop = list.scrollTop;
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!dragging) return;
+    var dy = e.clientY - startY;
+    if (Math.abs(dy) > 4) dragged = true;
+    if (dragged) {
+      list.scrollTop = startTop - dy;
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("mouseup", function () {
+    dragging = false;
+    if (dragged) {
+      // The click fires after mouseup on the same element; catch it in the
+      // capture phase so it cannot reach the row's onclick and switch the
+      // conversation after a scroll.
+      var swallow = function (ev) { ev.preventDefault(); ev.stopPropagation(); window.removeEventListener("click", swallow, true); };
+      window.addEventListener("click", swallow, true);
+      dragged = false;
+    }
+  });
+})();
+
 function railItems() {
   return Array.prototype.slice.call(el.railList.querySelectorAll(".rail-item"));
 }
@@ -632,6 +674,8 @@ function switchSession(id) {
   renderSessionOptions(null);
   el.transcript.textContent = "";
   el.sessionStatus.textContent = "Loading conversation…";
+  // Belongs to the turn just left behind, not the conversation being opened.
+  if (el.sessionStatusBar) el.sessionStatusBar.hidden = true;
   fetch("/api/sessions/" + encodeURIComponent(id))
     .then(readJson)
     .then(function (data) {
@@ -1440,6 +1484,55 @@ function handleSlashDocFile(task){
   return "[File: " + path + "]\n\n" + task;
 }
 
+// ---- session status bar: goal / tool-call / sub-agent / todos receipt ----
+// Reflects the turn currently streaming, or the last one that did — not the
+// whole session's history. Resets on every new submit; nothing here is
+// persisted, so a reload clears it the same way the live caret does.
+var statusToolCalls = 0;
+var statusSubagentCalls = 0;
+
+function resetSessionStatusBar() {
+  statusToolCalls = 0;
+  statusSubagentCalls = 0;
+  if (!el.sessionStatusBar) return;
+  el.sessionStatusBar.hidden = false;
+  [el.statusGoal, el.statusTools, el.statusSubagent, el.statusTodos].forEach(function (chip) {
+    if (chip) chip.hidden = true;
+  });
+}
+
+function setStatusGoal(goalId) {
+  if (!el.statusGoal) return;
+  var g = (goalState.val || []).filter(function (x) { return x.id === goalId; })[0];
+  el.statusGoal.hidden = false;
+  el.statusGoal.textContent = "Goal " + (g ? goalStatusLabel(g, true) : "active");
+  el.statusGoal.title = g ? g.objective : goalId;
+}
+
+function bumpStatusTools(calls) {
+  if (!el.statusTools) return;
+  var n = (calls || []).length;
+  if (n === 0) return;
+  statusToolCalls += n;
+  el.statusTools.hidden = false;
+  el.statusTools.textContent = "Tools (" + statusToolCalls + ")";
+  var subN = (calls || []).filter(function (c) { return c.name === "subagent" || c.name === "swarm"; }).length;
+  if (subN > 0 && el.statusSubagent) {
+    statusSubagentCalls += subN;
+    el.statusSubagent.hidden = false;
+    el.statusSubagent.textContent = "Sub Agent (" + statusSubagentCalls + ")";
+  }
+}
+
+function setStatusTodos(todos) {
+  if (!el.statusTodos) return;
+  var list = todos || [];
+  if (!list.length) { el.statusTodos.hidden = true; return; }
+  var done = list.filter(function (t) { return t.status === "closed"; }).length;
+  el.statusTodos.hidden = false;
+  el.statusTodos.textContent = "Todos (" + done + "/" + list.length + ")";
+}
+
 el.form.addEventListener("submit", function (e) {
   e.preventDefault();
   var task = el.task.value.trim();
@@ -1454,6 +1547,7 @@ el.form.addEventListener("submit", function (e) {
   // budget the harness will actually honor rather than a number it clamps
   // down anyway.
   var noLimit = el.unlimitedIterations && el.unlimitedIterations.checked;
+  resetSessionStatusBar();
   var turn = createTurn(task);
   if (isPlan) {
     /* The badge marks the proposal turn so renderStats can offer Apply, and
@@ -1505,14 +1599,15 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); }
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); bumpStatusTools(evt.calls); }
       else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
       // todo_* call moved it, never fetched — the list is in-memory server-side
       // and dies with the run, so the turn card is the only place it can live.
-      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} }
+      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} setStatusTodos(evt.todos); }
+      else if (evt.type === "goal") { setStatusGoal(evt.id); }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
@@ -2736,11 +2831,14 @@ function renderChatRooms(rooms) {
   return wanted;
 }
 
+var roomTopics = {};
 function loadChatRooms() {
   return fetch("/api/chat/rooms")
     .then(readJson)
     .then(function (data) {
       subscribedRooms = data.subscribed || [];
+      // Store topics
+      (data.rooms || []).forEach(function(r){ if(r.topic) roomTopics[r.room]=r.topic; });
       var wanted = renderChatRooms(data.rooms || []);
       if (wanted) return openChatRoom(wanted);
     })
@@ -2764,6 +2862,26 @@ function openChatRoom(room) {
   el.chatText.disabled = false;
   el.chatSend.disabled = false;
   el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
+  // Topic bar
+  var existingTopic = document.querySelector(".chat-topic");
+  if(existingTopic) existingTopic.remove();
+  if(roomTopics[room]){
+    var topicEl = document.createElement("div"); topicEl.className="chat-topic";
+    topicEl.textContent = "📌 " + roomTopics[room];
+    topicEl.title = "Channel topic — click to change";
+    topicEl.style.cursor = "pointer";
+    topicEl.addEventListener("click", function(){
+      var newTopic = prompt("Set channel topic:", roomTopics[room]||"");
+      if(newTopic !== null){
+        fetch("/api/chat/topic", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({room:room,topic:newTopic})
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if(d.ok){ roomTopics[room]=newTopic; topicEl.textContent="📌 "+newTopic; }
+        }).catch(function(){});
+      }
+    });
+    el.chatLog.parentNode.insertBefore(topicEl, el.chatLog);
+  }
   // Opening a room fills the log with its history, and a live region would
   // read every one of those out as if it had just arrived. Announcements
   // start once the backlog is in place.
@@ -2908,6 +3026,16 @@ function buildChatMessage(m) {
 
   var text = document.createElement("div");
   text.className = "chat-text";
+  // Deleted messages
+  if (m.deleted) {
+    text.classList.add("chat-deleted");
+    text.textContent = "[This message was deleted]";
+    wrap.appendChild(text);
+    wrap.setAttribute("data-deleted", "true");
+    _lastChatFrom = m.from;
+    _lastChatTs = m.ts;
+    return wrap;
+  }
   var said = boardActionLine(m.text);
   if (said) {
     text.classList.add("chat-action");
@@ -2932,13 +3060,22 @@ function buildChatMessage(m) {
       wrap._unfurl = unfurl;
     }
   }
+  // Edited indicator
+  if (m.edited) {
+    var edited = document.createElement("span");
+    edited.className = "chat-edited";
+    edited.textContent = " (edited)";
+    edited.title = "Edited";
+    text.appendChild(edited);
+  }
   wrap.appendChild(text);
   if (wrap._unfurl) wrap.appendChild(wrap._unfurl);
-  // ---- reactions (local, aggregated) ----
-  var reactStore = (function(){ try{ return JSON.parse(localStorage.getItem("clanker.reactions")||"{}"); }catch(_){ return {}; }})();
-  function saveReacts(){ try{ localStorage.setItem("clanker.reactions", JSON.stringify(reactStore)); }catch(_){} }
-  var msgKey = m.id || (m.from+":"+m.ts+":"+m.text.slice(0,40));
-  var reacts = reactStore[msgKey] || {};
+  // ---- server-side reactions (aggregated from m.reactions array) ----
+  // m.reactions is [{emoji,from}, ...] — group into {emoji: [from1, ...]}
+  var reacts = {};
+  if (m.reactions && m.reactions.length) {
+    m.reactions.forEach(function(r){ reacts[r.emoji] = reacts[r.emoji] || []; reacts[r.emoji].push(r.from); });
+  }
   var reactionsBar = document.createElement("div"); reactionsBar.className = "chat-reactions";
   var EMOJIS = ["👍","❤️","🎉","🔥","👀","✅"];
   function renderReacts(){
@@ -2954,12 +3091,19 @@ function buildChatMessage(m) {
     });
   }
   function toggleReact(emoji){
-    reacts[emoji] = reacts[emoji] || [];
-    var at = reacts[emoji].indexOf(instanceName);
-    if(at!==-1) reacts[emoji].splice(at,1); else reacts[emoji].push(instanceName);
-    if(!reacts[emoji].length) delete reacts[emoji];
-    reactStore[msgKey]=reacts; if(!Object.keys(reacts).length) delete reactStore[msgKey];
-    saveReacts(); renderReacts();
+    // Call the server-side react endpoint
+    fetch("/api/chat/react", { method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, emoji: emoji })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok){
+        // Optimistic update
+        reacts[emoji] = reacts[emoji] || [];
+        var at = reacts[emoji].indexOf(instanceName);
+        if(d.added) { if(at===-1) reacts[emoji].push(instanceName); }
+        else { if(at!==-1) reacts[emoji].splice(at,1); if(!reacts[emoji].length) delete reacts[emoji]; }
+        renderReacts();
+      }
+    }).catch(function(){});
   }
   renderReacts();
   wrap.appendChild(reactionsBar);
@@ -3014,6 +3158,58 @@ function buildChatMessage(m) {
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
     actions.appendChild(b);
   });
+  // Pin button
+  var pinBtn = document.createElement("button");
+  pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.textContent = "📌"; pinBtn.title = "Pin/Unpin";
+  pinBtn.setAttribute("aria-label", "Pin message");
+  pinBtn.addEventListener("click", function(e){ e.stopPropagation();
+    fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok) pollChat(el.chatRoom.value);
+    }).catch(function(){});
+  });
+  actions.appendChild(pinBtn);
+  // Edit + Delete only for own messages
+  if (m.from === instanceName) {
+    var editBtn = document.createElement("button");
+    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; editBtn.title = "Edit message";
+    editBtn.setAttribute("aria-label", "Edit message");
+    editBtn.addEventListener("click", function(e){ e.stopPropagation();
+      var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
+      var inp = document.createElement("input"); inp.type="text"; inp.className="chat-edit-input"; inp.value=cur;
+      text.textContent = ""; text.appendChild(inp); inp.focus();
+      function finishEdit(){
+        var v = inp.value.trim();
+        if(v && v !== m.text){
+          fetch("/api/chat/edit", { method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, text: v })
+          }).then(function(r){ return r.json(); }).then(function(d){
+            if(d.ok){ m.text = v; m.edited = true; text.textContent = v;
+              var ed = document.createElement("span"); ed.className="chat-edited"; ed.textContent=" (edited)"; text.appendChild(ed);
+            } else { text.textContent = m.text; }
+          }).catch(function(){ text.textContent = m.text; });
+        } else { text.textContent = m.text; if(m.edited){
+          var ed2 = document.createElement("span"); ed2.className="chat-edited"; ed2.textContent=" (edited)"; text.appendChild(ed2); }}
+      }
+      inp.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); finishEdit(); } if(ev.key==="Escape"){ text.textContent=m.text; if(m.edited){
+        var ed3=document.createElement("span"); ed3.className="chat-edited"; ed3.textContent=" (edited)"; text.appendChild(ed3); }} });
+      inp.addEventListener("blur", finishEdit);
+    });
+    actions.appendChild(editBtn);
+    var delBtn = document.createElement("button");
+    delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; delBtn.title = "Delete message";
+    delBtn.setAttribute("aria-label", "Delete message");
+    delBtn.addEventListener("click", function(e){ e.stopPropagation();
+      if(!confirm("Delete this message?")) return;
+      fetch("/api/chat/delete", { method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
+      }).catch(function(){});
+    });
+    actions.appendChild(delBtn);
+  }
   wrap.appendChild(actions);
   // update grouping state for next message
   _lastChatFrom = m.from;
@@ -3159,7 +3355,7 @@ function loadUsage() {
 /* Extracted to features/goals.js; wired here with the app-level pieces it
    needs: view switching and the conversation the chat composer is on (a
    goal run joins that session). */
-bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; } });
+bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; }, switchSession: switchSession });
 
 // ---- tools: every WASM plugin, and a switch for the optional ones ------
 
@@ -3187,7 +3383,7 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
@@ -3225,7 +3421,6 @@ var viewLoaders = {
     return loadCompareModule().then(function (compare) { compare.bindCompare(); return compare.loadCompareView(); });
   },
   rooms: function () { return loadStatus().then(loadChatRooms); },
-  goals: loadGoals,
   // Goals ride along with the board: the board->goal sync (moving a card
   // marks its goal) needs the goal list, and the goal->board mirror needs to
   // run even when the Goals view was never opened.
@@ -3245,7 +3440,6 @@ var VIEW_CONTAINERS = {
   arena: "arena-list",
   compare: "compare-list",
   rooms: "chat-log",
-  goals: "goals",
   board: "board",
   tools: "tools",
   system: "usage"
@@ -3291,6 +3485,9 @@ function parseRunsHash(hash){
   return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
 }
 function showView(name, focusPanel) {
+  // Goals and board are one workflow now. Keep old bookmarks working while
+  // making Board the only visible navigation destination.
+  if (name === "goals") name = "board";
   var parsed = parseRunsHash("#" + name);
   var deepRun = null, deepNode = null, deepSearch=null, deepKind=null;
   if (parsed) { deepRun = parsed.id; deepNode = parsed.node || null; deepSearch = parsed.search; deepKind = parsed.kind; name = "runs"; }
@@ -3938,7 +4135,13 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
       if (archBtn) archBtn.textContent = meta && meta.archived ? "Unarchive" : "Archive";
     } catch(_){}
   }
-  setInterval(syncArchiveLabel, 900);
+  // Session metadata changes only when the conversation list is rendered.
+  // Observe that state boundary instead of waking the page every 900ms.
+  var railList = document.getElementById("rail-list");
+  if (railList && typeof MutationObserver !== "undefined") {
+    new MutationObserver(syncArchiveLabel).observe(railList, { childList: true, subtree: true });
+  }
+  syncArchiveLabel();
   if (tog) tog.addEventListener("change", function(){ renderSessionOptions(null); });
   if (importBtn) importBtn.addEventListener("click", function(){
     var inp = document.createElement("input"); inp.type="file"; inp.accept=".json,application/json";
@@ -4146,7 +4349,16 @@ try {
         if (m && meta && meta.title) m.textContent = meta.title + " · " + m.textContent;
       } catch(_){}
     }
-    setInterval(syncSessionMirror, 1200);
+    // The hidden chip is updated by every session switch/new-session path;
+    // mirror those writes directly instead of keeping a permanent timer.
+    var sourceChip = document.getElementById("session-chip");
+    if (sourceChip && typeof MutationObserver !== "undefined") {
+      new MutationObserver(syncSessionMirror).observe(sourceChip, { childList: true, characterData: true, subtree: true });
+    }
+    var sourceSessions = document.getElementById("rail-list");
+    if (sourceSessions && typeof MutationObserver !== "undefined") {
+      new MutationObserver(syncSessionMirror).observe(sourceSessions, { childList: true, subtree: true });
+    }
     syncSessionMirror();
     var sCompact = document.getElementById("settings-compact");
     var sDelete = document.getElementById("settings-delete");

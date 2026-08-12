@@ -1,6 +1,7 @@
 {
   "name": "ask_user",
   "description": "Ask a human, another clanker instance, or (in a sub-agent run) the parent agent that spawned you, to choose between concrete options when guessing would waste work: which of two designs to build, which file to change, whether to widen the scope. Only for genuine forks where the options lead to materially different work — do not ask for permission to continue, and do not ask what you can determine by reading the code. Input: {\"question\": \"...\", \"options\": [\"...\", \"...\"]} (two or more), plus optional {\"peer\": \"<instance name>\"} to ask that peer, or {\"parent\": true} to ask your parent agent — the one holding the context your brief left out (sub-agent runs only; pick at most one target). Returns the chosen option verbatim and who answered. With no reachable answerer it returns an error saying to decide yourself.",
+  "llm_description": "Ask a human, peer clanker, or (sub-agent runs) your parent agent to pick between concrete options, for genuine forks where guessing wastes work - not for permission-to-continue or answers findable by reading code. Input: {question, options:[2+]}, optional {peer:'<name>'} or {parent:true} (sub-agent runs only; pick at most one). Returns the chosen option verbatim and who answered; errors if no answerer is reachable.",
   "wasm": "zig-out/tools/ask_user.wasm",
   "input_schema": {
     "type": "object",

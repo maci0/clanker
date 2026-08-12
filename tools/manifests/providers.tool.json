@@ -1,6 +1,7 @@
 {
   "name": "providers",
   "description": "Check which configured LLM providers answer. The action defaults to check, which pings every provider with a one-token request and reports ok/failed/skipped with latency; {\"action\": \"check\", \"provider\": \"kimi-k3\"} checks one; {\"action\": \"list\"} lists them without spending tokens.",
+  "llm_description": "Check configured LLM providers. action: check (default, pings all, reports ok/failed/skipped+latency; provider? checks one) | list (no tokens spent).",
   "wasm": "zig-out/tools/providers.wasm",
   "input_schema": {
     "type": "object",

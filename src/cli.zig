@@ -8,6 +8,7 @@ const providers = @import("llm/providers.zig");
 const types = @import("llm/types.zig");
 const agent = @import("agent/loop.zig");
 const registry = @import("tools/registry.zig");
+const manifest_mod = @import("tools/manifest.zig");
 const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
 const improve = @import("improve/engine.zig");
@@ -43,6 +44,9 @@ const diskcap = @import("util/diskcap.zig");
 const runlock = @import("util/runlock.zig");
 const filelock = @import("util/filelock.zig");
 const gate_checks = @import("gate/checks.zig");
+const schedule_cmd = @import("schedule/command.zig");
+const schedule_runner = @import("schedule/runner.zig");
+const schedule_store = @import("schedule/store.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool — its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -92,6 +96,10 @@ pub const Command = enum {
     arena,
     compare,
     workflow,
+    /// `plugins list|validate|new`: the third-party side of the tool
+    /// registry. `src/tools/manifest.zig` is the schema it enforces.
+    plugins,
+    schedule,
 };
 
 pub const Options = struct {
@@ -161,6 +169,10 @@ pub const Options = struct {
     workflow_sub: ?[]const u8 = null,
     workflow_name: ?[]const u8 = null,
     workflow_args: ?[]const u8 = null,
+    /// `plugins`: "list" (default), "validate" or "new". `plugin_target` is
+    /// the manifest/directory for validate, and the new tool's name for new.
+    plugins_sub: ?[]const u8 = null,
+    plugin_target: ?[]const u8 = null,
     /// `arena`: the two stances, and who argues them. A side with no provider
     /// of its own falls back to `--provider`, then to the configured default —
     /// so the same model arguing both sides needs no flags at all.
@@ -198,6 +210,15 @@ pub const Options = struct {
     compare_synthesize: bool = false,
     /// `compare --reveal`: print the label-to-model key even with no verdict.
     compare_reveal: bool = false,
+    /// `schedule <sub> [arg1] [arg2]`: "add" takes the cron spec then the
+    /// task, everything else takes an entry id. Absent sub means "list".
+    schedule_sub: ?[]const u8 = null,
+    schedule_arg1: ?[]const u8 = null,
+    schedule_arg2: ?[]const u8 = null,
+    /// `schedule add --tz-offset`: minutes east of UTC the cron fields are
+    /// read at, written `+02:00`, `-05:00`, `UTC` or a plain minute count.
+    /// Fixed, never a DST-aware zone — see src/schedule/cron.zig.
+    schedule_tz: ?[]const u8 = null,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -455,6 +476,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--reveal")) {
                 opts.compare_reveal = true;
                 used = .compare_reveal;
+            } else if (std.mem.eql(u8, a, "--tz-offset")) {
+                opts.schedule_tz = try takeValue(args, &idx, inline_value, a, diag);
+                used = .schedule_tz;
             } else if (std.mem.eql(u8, a, "--judge-provider")) {
                 opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
                 used = .arena_judge_provider;
@@ -564,8 +588,12 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .compare;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
+            } else if (std.mem.eql(u8, a, "plugins") or std.mem.eql(u8, a, "plugin")) {
+                opts.command = .plugins;
             } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
                 opts.command = .workflow;
+            } else if (std.mem.eql(u8, a, "schedule")) {
+                opts.command = .schedule;
             } else if (std.mem.eql(u8, a, "version")) {
                 opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -648,6 +676,28 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.room = a;
         } else if (opts.command == .chat and opts.message == null) {
             opts.message = a;
+        } else if (opts.command == .plugins) {
+            if (opts.plugins_sub == null) {
+                opts.plugins_sub = a;
+            } else if (opts.plugin_target == null) {
+                opts.plugin_target = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .schedule) {
+            // Positional-only: <sub> then up to two arguments whose meaning
+            // depends on it (add takes a spec and a task, the rest an id).
+            if (opts.schedule_sub == null) {
+                opts.schedule_sub = a;
+            } else if (opts.schedule_arg1 == null) {
+                opts.schedule_arg1 = a;
+            } else if (opts.schedule_arg2 == null) {
+                opts.schedule_arg2 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
         } else if (opts.command == .workflow) {
             if (opts.workflow_sub == null) {
                 if (std.mem.eql(u8, a, "list") or std.mem.eql(u8, a, "show") or std.mem.eql(u8, a, "run")) {
@@ -809,6 +859,25 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             }
         }
     }
+    // A mistyped `schedule` subcommand is a usage error, caught here rather
+    // than after the store has been read: `clanker schedule dsiable sch-1`
+    // must not read as "list, with two stray arguments".
+    if (opts.command == .schedule) {
+        const sub = opts.schedule_sub orelse "list";
+        if (scheduleSubArity(sub)) |arity| {
+            if (arity >= 1 and opts.schedule_arg1 == null) {
+                setDiag(diag, if (std.mem.eql(u8, sub, "add")) "<cron>" else "<id>");
+                return error.MissingArg;
+            }
+            if (arity >= 2 and opts.schedule_arg2 == null) {
+                setDiag(diag, "<task>");
+                return error.MissingArg;
+            }
+        } else {
+            setDiag(diag, sub);
+            return error.BadSubcommand;
+        }
+    }
     if (opts.command == .chat) {
         const needs_room = !std.mem.eql(u8, opts.chat_sub, "rooms");
         if (needs_room and opts.room == null) {
@@ -821,6 +890,18 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         }
     }
     return opts;
+}
+
+/// How many positional arguments a `schedule` subcommand takes, or null when
+/// it is not one. The single place the subcommand list is written down, so a
+/// new one cannot be accepted by the parser and rejected by the command (or
+/// the reverse).
+fn scheduleSubArity(sub: []const u8) ?u8 {
+    if (std.mem.eql(u8, sub, "list") or std.mem.eql(u8, sub, "log") or std.mem.eql(u8, sub, "run-due")) return 0;
+    if (std.mem.eql(u8, sub, "remove") or std.mem.eql(u8, sub, "enable") or
+        std.mem.eql(u8, sub, "disable") or std.mem.eql(u8, sub, "run")) return 1;
+    if (std.mem.eql(u8, sub, "add")) return 2;
+    return null;
 }
 
 fn commandForHelp(name: []const u8) ?Command {
@@ -915,20 +996,17 @@ fn renderUsage(buf: []u8) []const u8 {
 /// which is the least helpful thing a --help can do.
 fn printCommandHelp(io: std.Io, cmd: Command) void {
     const s = specFor(cmd) orelse return printUsage(io);
-    var buf: [4096]u8 = undefined;
+    var buf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
     if (s.detail.len > 0) w.print("\n{s}\n", .{s.detail}) catch {};
     if (s.flags.len > 0) {
-        w.writeAll("\nAccepts: ") catch {};
-        for (s.flags, 0..) |f, i| {
-            if (i > 0) w.writeAll(", ") catch {};
-            w.writeAll(f.name()) catch {};
+        w.writeAll("\nAccepts:\n") catch {};
+        for (s.flags) |f| {
+            w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
-        w.writeAll(", --verbose, --help, --version.\n") catch {};
-    } else {
-        w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
     }
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --help, -h; --version.\n") catch {};
     writeStdOut(io, buf[0..w.end]) catch {};
 }
 
@@ -971,6 +1049,7 @@ const Flag = enum {
     compare_pick,
     compare_synthesize,
     compare_reveal,
+    schedule_tz,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -1008,6 +1087,51 @@ const Flag = enum {
             .compare_pick => "--pick",
             .compare_synthesize => "--synthesize",
             .compare_reveal => "--reveal",
+            .schedule_tz => "--tz-offset",
+        };
+    }
+
+    /// What the flag does and what it accepts, for `clanker <command> --help`.
+    /// One short phrase: the option shape (<name>, <id>, <n>, ...) and the
+    /// purpose, so a reader does not have to cross-reference the command's
+    /// detail block.
+    fn describe(self: Flag) []const u8 {
+        return switch (self) {
+            .provider => "use this provider instead of the configured default",
+            .model => "the model to use, or <provider>/<model> (alias -m)",
+            .session => "resume/continue that saved conversation by id",
+            .goal => "run against a persisted goal by id",
+            .iters => "cap the number of attempts (default 3)",
+            .dry_run => "propose changes without applying them",
+            .tasks => "run only the agent-driven evals, skipping the build gates",
+            .port => "listen port (default 17921)",
+            .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
+            .serve_as => "a hostname this server may present itself as; repeatable",
+            .yes => "confirm destructive actions without prompting",
+            .research_target => "file the agent may edit; repeatable, comma-separated",
+            .research_harness => "shell command whose output contains the metric",
+            .research_metric => "metric key to read (default: score)",
+            .research_direction => "min or max — whether lower or higher is better",
+            .research_pattern => "substring before the number to extract",
+            .research_budget => "per-experiment wall seconds (default 300)",
+            .arena_for => "the position the first combatant defends",
+            .arena_against => "the opposing position; must differ from --for",
+            .arena_for_provider => "which provider argues 'for'",
+            .arena_against_provider => "which provider argues 'against'",
+            .arena_rounds => "round cap (tool default 4, clamped to 12)",
+            .arena_judge => "self or third — who scores the moves",
+            .arena_judge_provider => "who judges; must not be a combatant",
+            .arena_match => "print a stored match instead of running one",
+            .arena_position => "a stance for a battle royale; repeat 3-8 times",
+            .arena_defend => "the implementation or wording to defend (text or file)",
+            .arena_alternative => "the alternative to attack from; replaces --for/--against",
+            .compare_with => "add a model; <provider> or <provider@model>, repeat 2-8 times",
+            .compare_judge => "who scores the answers; auto, none, or a provider",
+            .compare_show => "print a stored comparison instead of running one",
+            .compare_pick => "with --show, record that answer as your pick",
+            .compare_synthesize => "also merge the answers into one extra call",
+            .compare_reveal => "print the label-to-model key even with no verdict",
+            .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
         };
     }
 };
@@ -1060,6 +1184,7 @@ const specs = [_]Spec{
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
+    .{ .command = .plugins, .usage = "plugins [list|validate [path]|new <name>]", .blurb = "list plugins, check a manifest, or scaffold a new tool", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -1075,6 +1200,7 @@ const specs = [_]Spec{
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
     .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it" },
+    .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own — the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields — minute hour day-of-month month day-of-week — each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
 };
 
@@ -1144,7 +1270,56 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .arena => try cmdArena(init, opts),
         .compare => try cmdCompare(init, opts),
         .workflow => try cmdWorkflow(init, opts),
+        .plugins => try cmdPlugins(init, opts),
+        .schedule => try cmdSchedule(init, opts),
     }
+}
+
+/// The one piece of `schedule` that cannot live in `src/schedule/`: turning a
+/// stored entry into an actual agent run means calling `cmdRun`, which is
+/// here. Everything else — the store, the cron arithmetic, the due/claim/
+/// ledger logic, the printing — is behind `schedule_cmd.cmd`, which takes this
+/// as a callback so its tests can drive the whole path without a provider.
+const ScheduleFire = struct {
+    init: std.process.Init,
+    opts: Options,
+
+    fn callback(self: *ScheduleFire) schedule_runner.Fire {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, entry: *const schedule_store.Entry) anyerror!void {
+        const self: *ScheduleFire = @ptrCast(@alignCast(ctx));
+        var run_opts = self.opts;
+        run_opts.command = .run;
+        run_opts.task = entry.task;
+        // The entry's own overrides win over anything on the `run-due`
+        // invocation, so one sweep can fire entries pinned to different
+        // providers.
+        run_opts.provider = entry.provider orelse self.opts.provider;
+        run_opts.model = entry.model orelse self.opts.model;
+        // A scheduled run is a fresh conversation every time: resuming a
+        // session would grow one transcript forever on a timer.
+        run_opts.session = null;
+        run_opts.continue_last = false;
+        run_opts.schedule_sub = null;
+        run_opts.schedule_arg1 = null;
+        run_opts.schedule_arg2 = null;
+        run_opts.schedule_tz = null;
+        try cmdRun(self.init, run_opts);
+    }
+};
+
+fn cmdSchedule(init: std.process.Init, opts: Options) !void {
+    var fire = ScheduleFire{ .init = init, .opts = opts };
+    try schedule_cmd.cmd(init, .{
+        .sub = opts.schedule_sub orelse "list",
+        .arg1 = opts.schedule_arg1,
+        .arg2 = opts.schedule_arg2,
+        .provider = opts.provider,
+        .model = opts.model,
+        .tz_offset = opts.schedule_tz,
+    }, fire.callback());
 }
 
 fn writeStdErr(io: std.Io, bytes: []const u8) !void {
@@ -1188,7 +1363,23 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
         try writeStdErr(io, "--- ");
         try writeStdErr(io, result.label);
         try writeStdErr(io, " output ---\n");
-        try writeStdErr(io, result.detail);
+        // Head and tail, not one or the other: `zig build test --summary all`
+        // prints the failing test's diagnostics first and then a step tree of
+        // every target, which on this repo is tens of kilobytes on its own. A
+        // tail alone is all tree and no reason; a head alone misses a failure
+        // reported late. Raw stderr has no 4096-byte ceiling to work around,
+        // so this cap is only about keeping a CI log readable.
+        const head_len = 32 * 1024;
+        const tail_len = 64 * 1024;
+        const d = result.detail;
+        if (d.len <= head_len + tail_len) {
+            try writeStdErr(io, d);
+        } else {
+            var elided: [64]u8 = undefined;
+            try writeStdErr(io, d[0..head_len]);
+            try writeStdErr(io, std.fmt.bufPrint(&elided, "\n... [{d} bytes elided] ...\n", .{d.len - head_len - tail_len}) catch "\n... [elided] ...\n");
+            try writeStdErr(io, d[d.len - tail_len ..]);
+        }
         if (!std.mem.endsWith(u8, result.detail, "\n")) try writeStdErr(io, "\n");
     }
     return error.GateFailed;
@@ -2753,12 +2944,11 @@ fn cmdSessions(init: std.process.Init) !void {
 /// `clanker session export <id> [path]` — one saved conversation written out
 /// as a self-contained HTML transcript.
 ///
-/// Native rather than a `cmd_*` WASM tool, unlike its `sessions` neighbour: a
-/// tool's output is a `text` field the CLI prints, and this produces a file
-/// on disk, at a path the caller may name, whose whole point is that it is
-/// larger than the guest's shared output buffer. The rendering itself lives
-/// in `agent/session_export.zig` and is unit-tested there; this only resolves
-/// the id and the destination.
+/// Currently native, but a candidate for a `cmd_*` WASM tool: `ck_fs_write`
+/// lets a guest write files directly (the way write_note and edit_file do),
+/// so the output-buffer-size concern that originally kept this native no
+/// longer applies. The rendering lives in `agent/session_export.zig` and is
+/// unit-tested there; this only resolves the id and the destination.
 fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -2999,6 +3189,197 @@ fn cmdToolsList(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     try printInternalTool(init, &cfg, "cmd_tools", "");
+}
+
+/// `clanker plugins [list|validate [path]|new <name>]`.
+///
+/// The third-party half of the plugin surface: `list` is the same view
+/// `/plugins` gives in the REPL (the cmd_plugins guest owns it, so there is one
+/// implementation), while `validate` and `new` are what someone packaging a
+/// tool outside this repo needs and had no way to do.
+fn cmdPlugins(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const sub = opts.plugins_sub orelse "list";
+
+    if (std.mem.eql(u8, sub, "list")) {
+        if (opts.plugin_target != null) usageExit(io, "plugins list takes no arguments", .{});
+        return printInternalTool(init, &cfg, "cmd_plugins", "");
+    }
+    if (std.mem.eql(u8, sub, "validate")) {
+        return pluginsValidate(init, opts.plugin_target orelse cfg.agent.tools_dir);
+    }
+    if (std.mem.eql(u8, sub, "new")) {
+        const name = opts.plugin_target orelse
+            usageExit(io, "plugins new needs a tool name: clanker plugins new word_count", .{});
+        return pluginsNew(init, cfg.agent.tools_dir, name);
+    }
+    usageExit(io, "unknown plugins subcommand '{s}' (list, validate, new)", .{sub});
+}
+
+/// A usage mistake caught after parsing: same message shape and same exit code
+/// (2) `cli.parse`'s own diagnostics use, so a script can still tell "typed it
+/// wrong" from "the machine could not do it".
+fn usageExit(io: std.Io, comptime fmt: []const u8, args: anytype) noreturn {
+    printUsageError(io, fmt, args);
+    printUsageHint(io);
+    std.process.exit(2);
+}
+
+/// Validate one manifest or a whole directory of them, and exit non-zero if
+/// any of them is wrong, so this can guard a release script the way `doctor`
+/// does. Warnings are printed but do not fail: a key that loads and does
+/// nothing is worth saying out loud without blocking a build over it.
+fn pluginsValidate(init: std.process.Init, path: []const u8) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    var files: std.ArrayList([]const u8) = .empty;
+    var base: []const u8 = "";
+    if (std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true })) |opened| {
+        var dir = opened;
+        defer dir.close(io);
+        base = std.mem.trimEnd(u8, path, "/");
+        var it = dir.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+            try files.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ base, entry.name }));
+        }
+        std.mem.sort([]const u8, files.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        if (files.items.len == 0) usageExit(io, "no *.tool.json manifests in '{s}'", .{path});
+    } else |_| {
+        // Not a directory: a single manifest, which is what an author editing
+        // one file wants to check.
+        try files.append(arena, path);
+        base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| path[0..slash] else "";
+    }
+
+    var errors: usize = 0;
+    var warnings: usize = 0;
+    for (files.items) |file| {
+        const raw = std.Io.Dir.cwd().readFileAlloc(io, file, arena, .limited(1 << 20)) catch |err| {
+            var buf: [512]u8 = undefined;
+            const line = std.fmt.bufPrint(&buf, "{s}: error: cannot read: {s}\n", .{ file, @errorName(err) }) catch "error: cannot read manifest\n";
+            try writeStdOut(io, line);
+            errors += 1;
+            continue;
+        };
+        var rep = try manifest_mod.validate(arena, file, raw);
+        rep.findings = try withCrossChecks(io, arena, base, file, raw, rep.findings);
+        errors += rep.errorCount();
+        warnings += rep.warningCount();
+        if (rep.findings.len > 0) try writeStdOut(io, try rep.render(arena));
+    }
+
+    var buf: [256]u8 = undefined;
+    const summary = std.fmt.bufPrint(&buf, "{d} manifest(s) checked, {d} error(s), {d} warning(s)\n", .{ files.items.len, errors, warnings }) catch "checked\n";
+    try writeStdOut(io, summary);
+    if (errors > 0) std.process.exit(1);
+}
+
+/// The two checks that need more than the manifest's own bytes: does the
+/// module it names exist, and does a guest that calls the model say so.
+///
+/// The second is the same rule `registry.zig`'s conformance test enforces for
+/// this repo, applied where a third party can actually see it — an undeclared
+/// model caller runs on the parallel worker pool and races the shared
+/// access-token cache, which is a crash in someone else's tool, not theirs.
+fn withCrossChecks(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    base: []const u8,
+    file: []const u8,
+    raw: []const u8,
+    findings: []const manifest_mod.Finding,
+) ![]const manifest_mod.Finding {
+    var out: std.ArrayList(manifest_mod.Finding) = .empty;
+    try out.appendSlice(arena, findings);
+
+    const tool = registry.Registry.parseDescriptor(arena, raw) catch return out.items;
+
+    // `resolveWasmPath`'s rule, applied where the manifest actually sits: a
+    // bare name lives beside its manifest, a path is read from the repo root.
+    const wasm_path = if (tool.wasm.len == 0 or std.mem.findScalar(u8, tool.wasm, '/') != null or base.len == 0)
+        tool.wasm
+    else
+        try std.fmt.allocPrint(arena, "{s}/{s}", .{ base, tool.wasm });
+    if (tool.wasm.len > 0) {
+        if (std.Io.Dir.cwd().statFile(io, wasm_path, .{})) |_| {} else |_| {
+            try out.append(arena, .{
+                .severity = .warn,
+                .key = "wasm",
+                .message = try std.fmt.allocPrint(arena, "'{s}' is not on disk (run `zig build tools`, or ship the module beside the manifest)", .{wasm_path}),
+            });
+        }
+    }
+
+    // The guest source, if it travels with the manifest: `tools/manifests/x`
+    // beside `tools/zig/x.zig` in this repo, or both in one directory for a
+    // package someone unpacked.
+    const name_start = if (std.mem.lastIndexOfScalar(u8, file, '/')) |slash| slash + 1 else 0;
+    if (file.len < name_start + ".tool.json".len) return out.items;
+    const stem = file[name_start .. file.len - ".tool.json".len];
+    const candidates = [_][]const u8{
+        try std.fmt.allocPrint(arena, "{s}/{s}.zig", .{ base, stem }),
+        try std.fmt.allocPrint(arena, "{s}/../zig/{s}.zig", .{ base, stem }),
+    };
+    for (candidates) |src_path| {
+        const body = std.Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(1 << 20)) catch continue;
+        if (manifest_mod.sourceCallsModel(body) and !tool.llm and !tool.sequential) {
+            try out.append(arena, .{
+                .severity = .err,
+                .key = "llm",
+                .message = try std.fmt.allocPrint(
+                    arena,
+                    "{s} calls the model, so the descriptor must set \"llm\": true (or at least \"sequential\": true) to stay off the parallel worker pool",
+                    .{src_path},
+                ),
+            });
+        }
+        break;
+    }
+    return out.items;
+}
+
+/// Scaffold a manifest and a guest source file that build and validate as
+/// they stand. Refuses to overwrite either: a scaffolder that clobbers is a
+/// scaffolder nobody runs twice.
+fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    const manifest_text = manifest_mod.scaffoldManifest(arena, name) catch
+        usageExit(io, "'{s}' is not a usable tool name (lowercase letters, digits and underscores)", .{name});
+    const guest_text = try manifest_mod.scaffoldGuest(arena, name);
+
+    const manifest_path = try std.fmt.allocPrint(arena, "{s}/{s}.tool.json", .{ std.mem.trimEnd(u8, tools_dir, "/"), name });
+    const guest_path = try std.fmt.allocPrint(arena, "tools/zig/{s}.zig", .{name});
+
+    for ([_][]const u8{ manifest_path, guest_path }) |p| {
+        if (std.Io.Dir.cwd().statFile(io, p, .{})) |_| {
+            usageExit(io, "{s} already exists; pick another name or delete it first", .{p});
+        } else |_| {}
+    }
+
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), manifest_path, manifest_text);
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), guest_path, guest_text);
+
+    var buf: [1024]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf,
+        \\wrote {s}
+        \\wrote {s}
+        \\
+        \\Next: fill in the description and the schema, implement tool_main, then
+        \\  zig build tools && clanker plugins validate {s}
+        \\
+    , .{ manifest_path, guest_path, manifest_path }) catch "scaffolded\n";
+    try writeStdOut(io, msg);
 }
 
 fn cmdEval(init: std.process.Init, opts: Options) !void {
@@ -3566,6 +3947,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
         const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/send");
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/subscribe");
+        const is_chat_react = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/react");
+        const is_chat_edit = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/edit");
+        const is_chat_delete = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/delete");
+        const is_chat_pin = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/pin");
+        const is_chat_topic = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/topic");
+        const is_chat_pins = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/pins");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/stats");
         const is_metrics = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/metrics");
         const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
@@ -3590,7 +3977,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"a2a module disabled\"}");
         } else if ((is_notify or is_peers) and !cfg.modules.peers) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"peers module disabled\"}");
-        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
+        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe or is_chat_react or is_chat_edit or is_chat_delete or is_chat_pin or is_chat_topic or is_chat_pins) and !cfg.modules.chatrooms) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"token_stats module disabled\"}");
@@ -3646,6 +4033,18 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleChatSend(io, gpa, cfg, body, stream);
         } else if (is_chat_subscribe) {
             handleChatSubscribe(io, gpa, cfg, body, stream);
+        } else if (is_chat_react) {
+            handleChatReact(io, gpa, cfg, body, stream);
+        } else if (is_chat_edit) {
+            handleChatEdit(io, gpa, cfg, body, stream);
+        } else if (is_chat_delete) {
+            handleChatDelete(io, gpa, cfg, body, stream);
+        } else if (is_chat_pin) {
+            handleChatPin(io, gpa, cfg, body, stream);
+        } else if (is_chat_topic) {
+            handleChatTopic(io, gpa, cfg, body, stream);
+        } else if (is_chat_pins) {
+            handleChatPins(io, gpa, cfg, target, stream);
         } else if (is_stats) {
             handleStats(io, gpa, cfg, stream);
         } else if (is_plugin_config) {
@@ -3927,7 +4326,7 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
         return;
     };
-    var buf: [64 * 1024]u8 = undefined;
+    var buf: [128 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
@@ -3947,6 +4346,31 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         s.print("{d}", .{m.ts}) catch return;
         s.objectField("id") catch return;
         s.write(m.id) catch return;
+        if (m.thread_ts) |tts| {
+            s.objectField("thread_ts") catch return;
+            s.write(tts) catch return;
+        }
+        if (m.reactions) |rxns| {
+            s.objectField("reactions") catch return;
+            s.beginArray() catch return;
+            for (rxns) |r| {
+                s.beginObject() catch return;
+                s.objectField("emoji") catch return;
+                s.write(r.emoji) catch return;
+                s.objectField("from") catch return;
+                s.write(r.from) catch return;
+                s.endObject() catch return;
+            }
+            s.endArray() catch return;
+        }
+        if (m.edited) |e| {
+            s.objectField("edited") catch return;
+            s.write(e) catch return;
+        }
+        if (m.deleted) |d| {
+            s.objectField("deleted") catch return;
+            s.write(d) catch return;
+        }
         s.endObject() catch return;
     }
     s.endArray() catch return;
@@ -4034,6 +4458,203 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
     respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
+fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatReactBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    const emoji = parsed.emoji orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing emoji\"}");
+        return;
+    };
+    _ = room;
+    const added = chatrooms.toggleReaction(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, emoji, cfg.instance.name) catch |err| {
+        log.log(.error_, "POST /api/chat/react: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"react failed\"}");
+        return;
+    };
+    if (added) {
+        respond(stream, 200, "OK", "{\"ok\":true,\"added\":true}");
+    } else {
+        respond(stream, 200, "OK", "{\"ok\":true,\"added\":false}");
+    }
+}
+
+fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatEditBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    const text = parsed.text orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing text\"}");
+        return;
+    };
+    _ = room;
+    const result = chatrooms.editMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, text, cfg.instance.name) catch |err| {
+        log.log(.error_, "POST /api/chat/edit: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"edit failed\"}");
+        return;
+    };
+    if (result != null) {
+        respond(stream, 200, "OK", "{\"ok\":true}");
+    } else {
+        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
+    }
+}
+
+fn handleChatDelete(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatDeleteBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    _ = room;
+    const ok = chatrooms.deleteMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, cfg.instance.name) catch |err| {
+        log.log(.error_, "POST /api/chat/delete: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"delete failed\"}");
+        return;
+    };
+    if (ok) {
+        respond(stream, 200, "OK", "{\"ok\":true}");
+    } else {
+        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
+    }
+}
+
+fn handleChatPin(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatPinBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    _ = parsed.pin; // toggle semantics; the pin field is reserved for future use
+    const pinned = chatrooms.togglePin(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, msg_id) catch |err| {
+        log.log(.error_, "POST /api/chat/pin: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pin failed\"}");
+        return;
+    };
+    if (pinned) {
+        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":true}");
+    } else {
+        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":false}");
+    }
+}
+
+fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatTopicBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const topic = parsed.topic orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing topic\"}");
+        return;
+    };
+    chatrooms.setTopic(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, topic) catch |err| {
+        log.log(.error_, "POST /api/chat/topic: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"topic failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Parse room from query string: /api/chat/pins?room=...
+    const room = blk: {
+        if (std.mem.indexOf(u8, target, "?room=")) |idx| {
+            const raw = target[idx + 6 ..];
+            // Trim at next & if present
+            const end = std.mem.indexOf(u8, raw, "&") orelse raw.len;
+            break :blk percentDecode(arena, raw[0..end]) catch {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad room param\"}");
+                return;
+            };
+        }
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+
+    const pins = chatrooms.getPins(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, room) catch |err| {
+        log.log(.error_, "GET /api/chat/pins: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pins failed\"}");
+        return;
+    };
+
+    var buf: [16 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("pins") catch return;
+    s.beginArray() catch return;
+    if (pins) |pin_list| {
+        for (pin_list) |pin| {
+            s.write(pin) catch return;
+        }
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
 /// Decodes `%XX` escapes and `+` in a query-string value. Invalid escapes are
 /// left as the literal characters they are rather than rejected: this feeds a
 /// room-name comparison, and a name that fails to decode simply fails to match.
@@ -4083,6 +4704,34 @@ const ChatSendBody = struct {
 const ChatSubscribeBody = struct {
     room: ?[]const u8 = null,
     on: bool = true,
+};
+
+const ChatReactBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+    emoji: ?[]const u8 = null,
+};
+
+const ChatEditBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+    text: ?[]const u8 = null,
+};
+
+const ChatDeleteBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+};
+
+const ChatPinBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+    pin: bool = true,
+};
+
+const ChatTopicBody = struct {
+    room: ?[]const u8 = null,
+    topic: ?[]const u8 = null,
 };
 
 /// GET /api/chat/rooms — room stats + this instance's subscriptions.
@@ -4694,17 +5343,31 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
 /// hear that rather than fill memory.
 const steer_message_cap = 16;
 const goal_id_cap = 64;
+/// Same cap as isSlug enforces on a session id, so any session that could
+/// exist fits.
+const session_id_cap = 64;
 
 const GoalRunSlot = struct {
     /// 0 marks a free slot.
     goal_len: usize = 0,
     goal_buf: [goal_id_cap]u8 = @splat(0),
+    /// The session this run streams into, when it has one (a goal-only
+    /// `--goal` CLI run has none). Carried so a *different* browser/session
+    /// can find and open the live transcript of a run some other client
+    /// started — without this, GET /api/goals could say a goal is running
+    /// but nothing on the page could point at where.
+    session_len: usize = 0,
+    session_buf: [session_id_cap]u8 = @splat(0),
     /// Queued steering messages, serve_gpa-owned, drained oldest-first by
     /// steerPoll and freed by goalRunRelease when the run ends unpolled.
     queue: std.ArrayListUnmanaged([]u8) = .empty,
 
     fn goalId(self: *const GoalRunSlot) []const u8 {
         return self.goal_buf[0..self.goal_len];
+    }
+
+    fn sessionId(self: *const GoalRunSlot) []const u8 {
+        return self.session_buf[0..self.session_len];
     }
 };
 
@@ -4717,15 +5380,19 @@ threadlocal var current_goal_run_slot: ?usize = null;
 
 /// Claims a slot for a goal run starting on this thread. Returns false (and
 /// registers nothing) when the id does not fit or every slot is taken; the
-/// run proceeds unsteerable rather than failing.
-fn goalRunRegister(goal_id: []const u8) bool {
+/// run proceeds unsteerable rather than failing. `session_id` may be empty
+/// (a run with no session to point at still registers, just without one).
+fn goalRunRegister(goal_id: []const u8, session_id: []const u8) bool {
     if (goal_id.len == 0 or goal_id.len > goal_id_cap) return false;
+    if (session_id.len > session_id_cap) return false;
     _ = std.c.pthread_mutex_lock(&goal_run_mutex);
     defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
     for (&goal_run_slots, 0..) |*slot, i| {
         if (slot.goal_len != 0) continue;
         @memcpy(slot.goal_buf[0..goal_id.len], goal_id);
         slot.goal_len = goal_id.len;
+        @memcpy(slot.session_buf[0..session_id.len], session_id);
+        slot.session_len = session_id.len;
         current_goal_run_slot = i;
         return true;
     }
@@ -4747,16 +5414,22 @@ fn goalRunRelease() void {
     slot.* = .{};
 }
 
-/// Writes the ids of every goal with a run in flight as a JSON array, for
-/// GET /api/goals' `running` field.
-fn appendRunningGoalIds(w: *std.Io.Writer) void {
+/// Writes `{"id":..., "session":...}` for every goal with a run in flight, as
+/// a JSON array, for GET /api/goals' `running` field. `session` is "" when
+/// the run has none to point at.
+fn appendRunningGoals(w: *std.Io.Writer) void {
     var s = std.json.Stringify{ .writer = w };
     _ = std.c.pthread_mutex_lock(&goal_run_mutex);
     defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
     s.beginArray() catch return;
     for (&goal_run_slots) |*slot| {
         if (slot.goal_len == 0) continue;
+        s.beginObject() catch return;
+        s.objectField("id") catch return;
         s.write(slot.goalId()) catch return;
+        s.objectField("session") catch return;
+        s.write(slot.sessionId()) catch return;
+        s.endObject() catch return;
     }
     s.endArray() catch return;
 }
@@ -4907,8 +5580,8 @@ test "a finished run moves its goal to review, and only from active" {
 test "goal run registry: register, steer, poll, release" {
     serve_gpa = std.testing.allocator;
     defer serve_gpa = null;
-    try std.testing.expect(!goalRunRegister(""));
-    try std.testing.expect(goalRunRegister("g-123"));
+    try std.testing.expect(!goalRunRegister("", "sess-1"));
+    try std.testing.expect(goalRunRegister("g-123", "sess-1"));
     defer goalRunRelease();
 
     try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "hi"));
@@ -4923,8 +5596,8 @@ test "goal run registry: register, steer, poll, release" {
 
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    appendRunningGoalIds(&w);
-    try std.testing.expectEqualStrings("[\"g-123\"]", buf[0..w.end]);
+    appendRunningGoals(&w);
+    try std.testing.expectEqualStrings("[{\"id\":\"g-123\",\"session\":\"sess-1\"}]", buf[0..w.end]);
     // goalRunRelease (deferred) frees "then right", which was never polled;
     // the testing allocator's leak check is the assertion.
 }
@@ -5415,6 +6088,10 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
             if (m.value_ptr.cost_per_1m_output) |c| {
                 s.objectField("cost_per_1m_output") catch return;
                 s.write(c) catch return;
+            }
+            if (m.value_ptr.category.len > 0) {
+                s.objectField("category") catch return;
+                s.write(m.value_ptr.category) catch return;
             }
             s.endObject() catch return;
         }
@@ -6400,10 +7077,22 @@ fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         s.write(wf.name) catch return;
         s.objectField("description") catch return;
         s.write(wf.description) catch return;
+        if (wf.llm_description.len > 0 and !std.mem.eql(u8, wf.llm_description, wf.description)) {
+            s.objectField("llm_description") catch return;
+            s.write(wf.llm_description) catch return;
+        }
+        if (wf.tags.len > 0) {
+            s.objectField("tags") catch return;
+            s.write(wf.tags) catch return;
+        }
         s.objectField("arg_hint") catch return;
         s.write(wf.arg_hint) catch return;
         s.objectField("rel_path") catch return;
         s.write(wf.rel_path) catch return;
+        if (wf.chain_json != null) {
+            s.objectField("chain") catch return;
+            s.write(true) catch return;
+        }
         s.endObject() catch return;
     }
     s.endArray() catch return;
@@ -7239,7 +7928,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    appendRunningGoalIds(&out.writer);
+    appendRunningGoals(&out.writer);
     out.writer.writeAll("}") catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
@@ -7295,6 +7984,22 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// Whether a model can be handed image_url content blocks. A model that
+/// declares its capabilities (non-empty) but omits `image_in` is telling us
+/// it is not vision-capable — DeepSeek v4-flash's endpoint, for example, only
+/// accepts `content` as a plain string and rejects the typed block array with
+/// an opaque JSON-deserialize 400 ("unknown variant `image_url`, expected
+/// `text`"). A model with no capabilities declared leaves it unknown, so the
+/// attachment is attempted as before and a failure still surfaces the vision
+/// hint (enrichRunError).
+fn imageAttachmentsSupported(model: config.Model) bool {
+    if (model.capabilities.len == 0) return true;
+    for (model.capabilities) |cap| {
+        if (std.mem.eql(u8, cap, "image_in")) return true;
+    }
+    return false;
 }
 
 /// The webui surfaces a run failure as `[run failed: <message>]`. A bare
@@ -7502,6 +8207,23 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"image attachments are disabled: enable modules.multimodal in your config (the composer sent image attachment(s))\"}");
             return;
         }
+        // Refuse up front when the selected model declares its capabilities
+        // but not vision: sending image_url blocks to a text-only endpoint
+        // (DeepSeek v4-flash) fails with an opaque deserialize 400. Name the
+        // model and the config knob, so the failure reads as a choice.
+        if (!imageAttachmentsSupported(provider.activeModel())) {
+            const reason = std.fmt.allocPrint(
+                arena,
+                "the selected model {s}/{s} does not declare vision support (the image_in capability); attach the image to a vision-capable model, or add image_in to that model's capabilities in config if it does accept images",
+                .{ provider.name, provider.default_model },
+            ) catch null;
+            const err_body = if (reason) |r|
+                std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{r}) catch null
+            else
+                null;
+            respond(stream, 400, "Bad Request", err_body orelse "{\"ok\":false,\"error\":\"the selected model does not support image attachments\"}");
+            return;
+        }
         var imgs: std.ArrayList(types.ImagePart) = .empty;
         for (req.images) |im| {
             if (im.mime.len == 0 or im.b64.len == 0) continue;
@@ -7555,9 +8277,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // this connection works it. Registration failing (full table, oversize
         // id) just means this run cannot be steered — not that it cannot run.
         // `resolved.goal_id` so an auto-steered run registers too, not only
-        // one named by explicit id.
+        // one named by explicit id. The session id (may be empty) lets a
+        // different browser/session find and open this run's transcript.
         if (resolved.goal_id) |gid| {
-            if (goalRunRegister(gid)) a.steer_fn = &steerPoll;
+            if (goalRunRegister(gid, req.session)) a.steer_fn = &steerPoll;
         }
         defer goalRunRelease();
         // With a browser on the other end of this stream, ask_user has
@@ -7582,6 +8305,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // line: it is a control event, so a client that does not know it just
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
+        // Tells the client which goal (explicit or auto-steered) is behind
+        // this turn, if any — the client has no other way to know an
+        // auto-steered run was steered at all, since that resolution
+        // happens entirely server-side.
+        if (resolved.goal_id) |gid| writeStreamEvent(stream.socket.handle, "goal", .{ .id = gid });
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
@@ -8421,6 +9149,23 @@ test "a flag the command does not take is refused, not ignored" {
     try std.testing.expectEqualStrings("x", ok.model.?);
 }
 
+test "every flag a command accepts has a help description" {
+    // printCommandHelp renders each flag as a bullet with describe(); a flag
+    // with an empty or missing description would render a bare token with no
+    // purpose, which is the exact gap this help rework is closing.
+    for (std.enums.values(Flag)) |f| {
+        const d = f.describe();
+        try std.testing.expect(d.len > 0);
+        // The description is one phrase, not the flag token echoed back.
+        try std.testing.expect(!std.mem.eql(u8, d, f.name()));
+    }
+    // Every spec's flags also have a description, and the flag set is what
+    // the help lists (no orphan flag that is declared but never described).
+    for (&specs) |*s| {
+        for (s.flags) |f| try std.testing.expect(f.describe().len > 0);
+    }
+}
+
 test "--help after a command asks about that command" {
     const opts = try parse(&.{ "clanker", "run", "--help" }, null);
     try std.testing.expectEqual(Command.help, opts.command);
@@ -8586,6 +9331,22 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqualStrings("", bare.goal);
     const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("g1", with_goal.goal);
+}
+
+test "a model that declares its capabilities without image_in is refused image attachments" {
+    // DeepSeek v4-flash: capabilities declared, no image_in → text-only
+    // endpoint; refuse rather than send image_url blocks it rejects.
+    const no_vision = config.Model{ .capabilities = &.{ "thinking", "tool_use" } };
+    try std.testing.expect(!imageAttachmentsSupported(no_vision));
+
+    // A vision model declares image_in and is accepted.
+    const vision = config.Model{ .capabilities = &.{ "thinking", "tool_use", "image_in" } };
+    try std.testing.expect(imageAttachmentsSupported(vision));
+
+    // No capabilities declared leaves it unknown → attempted as before (a
+    // local Ollama/vLLM vision model that forgot to declare image_in keeps
+    // working; a failure still surfaces the vision hint).
+    try std.testing.expect(imageAttachmentsSupported(config.Model{}));
 }
 
 test "run failure detail names the provider and hints at vision when images were attached" {

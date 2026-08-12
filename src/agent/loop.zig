@@ -953,9 +953,9 @@ pub const Agent = struct {
         s.objectField("model") catch return;
         s.write(model) catch return;
         s.objectField("task") catch return;
-        s.write(if (task.len > reasoning_record_task_chars) task[0..reasoning_record_task_chars] else task) catch return;
+        s.write(autolearn.capUtf8(task, reasoning_record_task_chars)) catch return;
         s.objectField("reasoning") catch return;
-        s.write(if (reasoning.len > reasoning_record_reasoning_chars) reasoning[0..reasoning_record_reasoning_chars] else reasoning) catch return;
+        s.write(autolearn.capUtf8(reasoning, reasoning_record_reasoning_chars)) catch return;
         s.endObject() catch return;
 
         appendReasoningLine(std.Io.Dir.cwd(), io, gpa, buf[0..w.end]);
@@ -1333,6 +1333,7 @@ pub const Agent = struct {
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
+        var fence_extracted = false;
         if (std.mem.find(u8, s, "```")) |start| {
             const after_first = s[start + 3 ..];
             const body_start = if (std.mem.find(u8, after_first, "\n")) |nl| nl + 1 else 0;
@@ -1341,6 +1342,7 @@ pub const Agent = struct {
                 body = body[0..end];
             }
             s = std.mem.trim(u8, body, " \t\r\n");
+            fence_extracted = true;
         }
         // Unwrap a single-backtick inline code wrapper (markdown formatting
         // around a plain answer) so the returned value exactly matches the
@@ -1359,6 +1361,7 @@ pub const Agent = struct {
         // { ... }"), extract the first JSON object/array — the answer_format
         // eval expects an exact-match value, not prose.
         var js_start: ?usize = null;
+        var json_extracted = false;
         // Pick whichever of a JSON object or array appears first in the answer.
         // Preferring objects can misparse an expected array when prose contains
         // an earlier '{'; the answer_format eval needs the exact value.
@@ -1400,10 +1403,10 @@ pub const Agent = struct {
                 // Brace-balanced is not the same as JSON. `fn add(a: i32, b:
                 // i32) i32 { return a + b; }` balances, and taking it as the
                 // answer deleted the signature from every code answer that got
-                // this far — the stored reply became `{ return a + b; }`. Only
-                // a span that actually parses is treated as the value.
+                // this far, so only a span that actually parses is the value.
                 if (std.json.parseFromSliceLeaky(std.json.Value, self.arena, candidate, .{})) |_| {
                     s = candidate;
+                    json_extracted = true;
                     // If the model wrapped a bare value in {"answer": ...},
                     // unwrap to the exact value. Only triggers when an "answer"
                     // field is present, so a user-requested JSON object is
@@ -1416,11 +1419,9 @@ pub const Agent = struct {
         }
         // If no fence/JSON was found, the model likely wrapped the exact
         // answer in a prose preamble (e.g. "Here is the result:"). For the
-        // answer_format eval we need the exact value, so fall back to the last
-        // non-empty line and strip a leading "Answer:"/"Result:" prefix.
-        if (std.mem.find(u8, s, "```") == null and
-            std.mem.findScalar(u8, s, '{') == null and
-            std.mem.findScalar(u8, s, '[') == null)
+        // answer_format eval we need the exact value, so fall back to the
+        // first non-empty line and strip a leading "Answer:"/"Result:" prefix.
+        if (!json_extracted and !fence_extracted)
         {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
@@ -1508,8 +1509,10 @@ pub const Agent = struct {
                         if (lead[0] == '-') i = 1;
                         while (i < lead.len and (std.ascii.isDigit(lead[i]) or lead[i] == '.' or lead[i] == ',')) i += 1;
                         if (i > 0) s = std.mem.trim(u8, lead[0..i], " \t\r\n");
-                    } else if (std.mem.startsWith(u8, lead, "true") or std.mem.startsWith(u8, lead, "false")) {
-                        s = if (std.mem.startsWith(u8, lead, "true")) "true" else "false";
+                    } else if (std.mem.startsWith(u8, lead, "true") and (lead.len == 4 or !std.ascii.isAlphabetic(lead[4]))) {
+                        s = "true";
+                    } else if (std.mem.startsWith(u8, lead, "false") and (lead.len == 5 or !std.ascii.isAlphabetic(lead[5]))) {
+                        s = "false";
                     }
                 }
                 // Strip trailing punctuation from a numeric/boolean answer only;

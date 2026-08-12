@@ -31,11 +31,18 @@ comptime {
     _ = @import("config.zig");
     _ = @import("llm/types.zig");
     _ = @import("llm/providers.zig");
+    _ = @import("llm/providers/api.zig");
+    _ = @import("llm/providers/common.zig");
+    _ = @import("llm/providers/openai.zig");
+    _ = @import("llm/providers/anthropic.zig");
+    _ = @import("llm/providers/vertex.zig");
+    _ = @import("llm/auth.zig");
     _ = @import("llm/client.zig");
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
     _ = @import("tools/registry.zig");
+    _ = @import("tools/manifest.zig");
     _ = @import("tools/builder.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
@@ -72,6 +79,10 @@ comptime {
     _ = @import("research/harness.zig");
     _ = @import("research/autoresearch.zig");
     _ = @import("workflows.zig");
+    _ = @import("schedule/cron.zig");
+    _ = @import("schedule/store.zig");
+    _ = @import("schedule/runner.zig");
+    _ = @import("schedule/command.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),

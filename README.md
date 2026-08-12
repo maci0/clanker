@@ -42,7 +42,7 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | Key | Purpose |
 |-----|---------|
 | `default_provider` | Name of the active entry under `providers` |
-| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
+| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, optional `auth`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
 | `agent` | Loop limits, paths, sandbox root, and compaction |
 | `improve` | Self-improvement iteration and context size caps |
 | `instance` | This agent's `name` and `id` |
@@ -69,8 +69,10 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **Arena** – `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
 - **Blind model comparison** – `clanker compare "<prompt>" --with a --with b@model` asks 2-8 configured models the same thing concurrently (`ck_llm_many`) and shows the answers as A, B, C with nothing saying which model wrote which; a judge model or `--pick <letter>` decides, `--synthesize` merges them; the web UI's Compare tab shows the same answers side by side with a pick button per column, and stays blind until you choose
 - **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on
+- **Plugin manifest SDK** – a plugin is one `*.tool.json` manifest plus a WASM module, and the manifest is the whole sandbox policy. `clanker plugins new <name>` scaffolds a working pair, `clanker plugins validate` checks a manifest or a directory of them and names the offending key, and a manifest whose `wasm` is a bare filename resolves beside itself, so `{name.tool.json, name.wasm}` in one directory is a portable plugin. Field reference: [docs/manifest.md](docs/manifest.md)
 - **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
 - **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
+- **Scheduled runs** – `clanker schedule add "0 9 * * 1-5" "review yesterday's runs"` puts a recurring task in `state/schedule.json`; the system's own cron calls `clanker schedule run-due` to fire what is due (see below)
 - **Token budget** – `compact_threshold_bytes` and `max_total_tokens` controls
 - **Web UI** – internal WASM tool served at `GET /`
 
@@ -110,6 +112,39 @@ The server also exposes the peer/chatroom/board/goal/stats APIs over HTTP and
 an A2A agent card at `/.well-known/agent.json`. See the HTTP server section in
 [docs/README.md](docs/README.md#http-server).
 
+## Scheduled runs
+
+`clanker schedule` keeps a list of recurring tasks in `state/schedule.json` and
+records every fire in `state/schedule/log.jsonl`, so a recurring run is
+something the harness knows about rather than a line in someone's crontab.
+
+```sh
+./zig-out/bin/clanker schedule add "0 9 * * 1-5" "summarize yesterday's commits"
+./zig-out/bin/clanker schedule list
+```
+
+Nothing fires on its own. The system's own cron is the clock:
+
+```
+* * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due
+```
+
+`run-due` is safe to call every minute: it holds a lock for the duration of a
+sweep, so a run that takes longer than a minute is not stacked on top of
+itself. Fire one entry ahead of its schedule with `clanker schedule run <id>`.
+
+The spec is five fields — `minute hour day-of-month month day-of-week` — each
+`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list. Sunday is `0`
+or `7`; names (`MON`) and `@nicknames` are not accepted. When both day fields
+are restricted, the entry fires when *either* matches, as in Vixie cron. Fields
+are read in UTC unless the entry carries a fixed `--tz-offset` (`+02:00`,
+`-05:00`); there is no DST handling, on purpose.
+
+**A missed window fires once.** A machine that slept through a day of a `*/5`
+entry runs it once on waking and resumes on the normal grid — the windows it
+slept through are counted into the ledger and dropped, not replayed. See
+[docs/prds/0009-schedule.md](docs/prds/0009-schedule.md).
+
 ## Command reference
 
 `clanker` (no command) drops you into the REPL. `clanker <command>` runs one
@@ -126,6 +161,7 @@ task; `clanker --help` prints usage.
 | `sessions` | List saved sessions |
 | `session export <id> [path]` | Write one saved session as a self-contained HTML transcript (default `state/exports/<id>.html`) |
 | `tools list` | List registered WASM tools |
+| `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
 | `eval [name] [--tasks]` | Run evals |
 | `improve-self [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
@@ -137,6 +173,7 @@ task; `clanker --help` prints usage.
 | `chat history <room> [after]` | Read chatroom history (newest first) |
 | `chat rooms` | List chatrooms + subscriptions |
 | `chat subscribe <room> [on]` | Join/leave a chatroom |
+| `schedule <list\|add\|remove\|enable\|disable\|run\|run-due\|log>` | Run the agent on a cron-like schedule (see below) |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
 | `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |

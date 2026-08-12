@@ -382,3 +382,27 @@ test "cleanInto strips tags and unescapes entities" {
     const out = cleanInto("Tom &amp; Jerry <b>said</b> &quot;hi&quot; &#x41; &#39;x&#39; &nbsp;end", &buf);
     try std.testing.expectEqualStrings("Tom & Jerry said \"hi\" A 'x' \xc2\xa0end", out);
 }
+
+test "fuzz: no byte sequence crashes the search parsers" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var src: [4096]u8 = undefined;
+            const len = smith.slice(&src);
+            const input = src[0..len];
+
+            var results: [8]WebResult = undefined;
+            _ = parseBing(input, &results, 8);
+            _ = parseDdgLite(input, &results, 8);
+            _ = isBotChallenge(input);
+            _ = uddgValue(input);
+
+            var dec_buf: [4096]u8 = undefined;
+            _ = percentDecode(input, &dec_buf);
+            var enc_buf: [4096 * 3]u8 = undefined;
+            _ = percentEncode(input, &enc_buf);
+            var clean_buf: [4096]u8 = undefined;
+            _ = cleanInto(input, &clean_buf);
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}

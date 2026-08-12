@@ -1,6 +1,7 @@
 {
   "name": "symbols",
   "description": "find Zig declaration sites for a symbol (fn/const/struct/enum/union)",
+  "llm_description": "Find Zig declaration sites for a symbol (fn/const/struct/enum/union). Params: name (required), path (optional).",
   "wasm": "zig-out/tools/symbols.wasm",
   "input_schema": {
     "type": "object",

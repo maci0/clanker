@@ -1,6 +1,7 @@
 {
   "name": "web_search",
   "description": "Search the web. Tries DuckDuckGo Lite first and silently falls back to Bing Search when DDG is unreachable, serving its bot-challenge page, or returns nothing. No API key needed. Input: {\"query\": \"...\", \"max_results\": 1-20 (default 8), \"region\": \"optional, e.g. en-US\"}. Returns {\"ok\": true, \"backend\": \"duckduckgo\"|\"bing\", \"query\": \"...\", \"count\": N, \"results\": [{\"title\", \"url\", \"snippet\"}]}.",
+  "llm_description": "Web search: DuckDuckGo Lite first, silently falls back to Bing if DDG fails/blocks/empty. No API key needed. Input: {query, max_results: 1-20 (default 8), region: optional e.g. \"en-US\" (Bing only)}. Returns {ok, backend: \"duckduckgo\"|\"bing\", query, count, results: [{title,url,snippet}]}.",
   "input_schema": {
     "type": "object",
     "properties": {

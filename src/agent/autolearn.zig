@@ -46,7 +46,7 @@ const cap_name_bytes: usize = 128;
 /// codepoint. The JSONL log must stay valid UTF-8 even when an event field
 /// runs long; the cut backs up to a whole-codepoint boundary so a capped
 /// line is never corrupted by a dangling continuation byte.
-fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
+pub fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
     if (s.len <= max_bytes) return s;
     var end = max_bytes;
     // gated on s.len > max_bytes, so end < s.len: the read is in bounds.

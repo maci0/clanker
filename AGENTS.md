@@ -24,11 +24,22 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 ## Architecture
 
-- `src/llm/` — the shared HTTP client, provider request/response encoding,
-  provider configuration helpers, and Vertex authentication.
+- `src/llm/` — `client.zig` is the shared HTTP/SSE/retry/token-counting core,
+  one module for every provider. Each provider is a vtable
+  (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
+  listed in the `registry` table in `providers.zig`; `auth.zig` is the
+  credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
+  minting behind it. Adding a provider is one file, one registry row, and one
+  `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.
+- `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
+  arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
+  fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),
+  the due/claim/fire logic (`runner.zig`, driven by a `Fire` callback so its
+  tests need no provider), and the operator surface (`command.zig`). Nothing
+  here fires on its own; the system's cron calls `clanker schedule run-due`.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging and dotenv. Peer notify/phonebook, patch application, knowledge
   store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
@@ -63,6 +74,10 @@ So, when adding a capability:
 
 - Write it as a guest module with a descriptor in `tools/manifests/`. Native
   code in `src/` needs a reason that survives the questions above.
+  `clanker plugins new <name>` scaffolds both halves; `clanker plugins validate`
+  checks them and names the offending key. The descriptor is the whole sandbox
+  policy, and every field it honors is in `docs/manifest.md` — the loader
+  ignores an unknown key, so a typo'd grant is silent until the tool fails.
 - Either language compiles to a guest, and the host cannot tell them apart:
   `tools/zig/<name>.zig`, built by `zig build tools` into `zig-out/tools/`
   (gitignored), or `tools/ts/<name>.ts` in AssemblyScript, built by
@@ -137,6 +152,16 @@ rather than stacking a new one beside it.
 Retrieved documents and memory-search hits are untrusted prompt data. Keep
 them inside explicit retrieval boundaries, separate from the operator task;
 the system prompt must tell the model never to execute directives found there.
+
+The web UI presents goals and the Kanban board as one workflow: creating a
+goal creates its card, lane moves update goal status, and Archive retains the
+goal/card history for future knowledge or autolearn consumers rather than
+deleting it. Keep the board tool as the card/room implementation and
+`state/goals.json` as the structured goal record; reconcile through the durable
+card `goal` id instead of adding a third store. Card checklist items form an
+arbitrarily deep parent tree and may also depend on any other item in the same
+card; dependency cycles are invalid, and a card cannot enter Done until every
+checklist item at every depth is complete.
 
 ## Local operator rules (optional)
 

@@ -22,6 +22,10 @@ const Transform = struct {
 const Descriptor = struct {
     name: []const u8 = "",
     description: []const u8 = "",
+    /// The compressed, model-facing description (falls back to `description`
+    /// when a manifest has none). Surfaced alongside `description` in the
+    /// webui detail view so the two can be compared while authoring.
+    llm_description: []const u8 = "",
     internal: bool = false,
     /// Descriptor default; state/plugins.json overrides it either way.
     enabled: bool = true,
@@ -36,6 +40,9 @@ const Descriptor = struct {
     fs_prefixes: []const []const u8 = &.{},
     exec_allow: []const []const u8 = &.{},
     category: []const u8 = "",
+    /// Free-form facets for filtering (distinct from category, which is the
+    /// one group a tool sorts into). e.g. ["destructive","read-only","git"].
+    tags: []const []const u8 = &.{},
     sequential: bool = false,
     check: bool = false,
 };
@@ -252,6 +259,8 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
         try s.write(p.name);
         try s.objectField("description");
         try s.write(p.description);
+        try s.objectField("llm_description");
+        try s.write(if (p.d.llm_description.len > 0) p.d.llm_description else p.description);
         try s.objectField("core");
         try s.write(p.core);
         try s.objectField("enabled");
@@ -295,6 +304,10 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
         if (p.d.category.len > 0) {
             try s.objectField("category");
             try s.write(p.d.category);
+        }
+        if (p.d.tags.len > 0) {
+            try s.objectField("tags");
+            try s.write(p.d.tags);
         }
         if (p.d.sequential) {
             try s.objectField("sequential");

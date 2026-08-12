@@ -1,6 +1,7 @@
 {
   "name": "test_file",
   "description": "run one Zig test file, optionally --test-filter",
+  "llm_description": "Run one Zig test file. Params: file (required), filter (optional, passed as --test-filter).",
   "wasm": "zig-out/tools/test_file.wasm",
   "input_schema": {
     "type": "object",

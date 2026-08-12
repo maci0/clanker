@@ -1,6 +1,7 @@
 {
   "name": "file_ops",
   "description": "File operations that are not reading or editing text: move, copy, delete, mkdir, stat, append and hash (sha256 of the contents). Pass op plus path, and to for move and copy, or content for append. Use edit_file to change what is inside a file and read_file to look at it; use this when the file itself has to move, go away, or be measured. move and copy refuse a destination that already exists unless overwrite is set, and delete removes files rather than directories.",
+  "llm_description": "Non-text file ops. {op:'move'|'copy'|'delete'|'mkdir'|'stat'|'append'|'hash', path, to? (move/copy), content? (append), overwrite?}. hash is sha256. move/copy refuse an existing destination unless overwrite:true; delete removes files only, not directories.",
   "wasm": "zig-out/tools/file_ops.wasm",
   "enabled": true,
   "category": "code",

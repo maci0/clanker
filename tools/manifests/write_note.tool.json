@@ -1,6 +1,7 @@
 {
   "name": "write_note",
   "description": "Append a learning to persistent memory (state/learnings.md). Notes are included in the system prompt of future runs. Input: {\"note\": \"...\"}. Returns {\"ok\": true}.",
+  "llm_description": "Append a learning to persistent memory (state/learnings.md), included in future runs' system prompt. Input: {note}.",
   "wasm": "zig-out/tools/write_note.wasm",
   "input_schema": {
     "type": "object",

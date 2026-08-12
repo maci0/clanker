@@ -75,6 +75,12 @@ function buildToolRow(t) {
     llm.textContent = "llm";
     row.appendChild(llm);
   }
+  (t.tags || []).forEach(function (tagName) {
+    var tg = document.createElement("span");
+    tg.className = "tool-tag";
+    tg.textContent = tagName;
+    row.appendChild(tg);
+  });
   if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
   var desc = document.createElement("span");
   desc.className = "tool-desc";
@@ -181,6 +187,7 @@ export function showToolDetail(t) {
   if (t.sequential) tags.push("sequential");
   if (t.check) tags.push("check");
   if (t.transform) tags.push("transform " + t.transform.phase + " (order " + t.transform.order + ")");
+  (t.tags || []).forEach(function (tagName) { tags.push(tagName); });
   tags.push(t.enabled ? "enabled" : "disabled");
   meta.textContent = "  " + tags.join("  \u00b7  ");
   titleWrap.appendChild(meta);
@@ -199,6 +206,17 @@ export function showToolDetail(t) {
   desc.className = "tool-detail-desc";
   desc.textContent = t.description || "(no description)";
   _el.toolDetail.appendChild(desc);
+  // Shown only when it actually differs: an unmigrated tool's llm_description
+  // is a duplicate of description, and repeating it teaches nothing.
+  if (t.llm_description && t.llm_description !== t.description) {
+    var llmDesc = document.createElement("p");
+    llmDesc.className = "tool-detail-llm-desc";
+    var llmLabel = document.createElement("strong");
+    llmLabel.textContent = "For the model: ";
+    llmDesc.appendChild(llmLabel);
+    llmDesc.appendChild(document.createTextNode(t.llm_description));
+    _el.toolDetail.appendChild(llmDesc);
+  }
   var schema = t.input_schema;
   var props = schema && schema.properties ? Object.keys(schema.properties) : [];
   if (props.length) {
@@ -323,6 +341,18 @@ function loadWorkflows() {
         meta.className = "skill-meta";
         meta.textContent = wf.rel_path;
         card.appendChild(meta);
+        if (wf.chain) {
+          var chainTag = document.createElement("span");
+          chainTag.className = "tool-tag";
+          chainTag.textContent = "chain";
+          card.appendChild(chainTag);
+        }
+        (wf.tags || []).forEach(function (tagName) {
+          var tg = document.createElement("span");
+          tg.className = "tool-tag";
+          tg.textContent = tagName;
+          card.appendChild(tg);
+        });
         if (wf.description) {
           var desc = document.createElement("p");
           desc.className = "skill-desc";
@@ -392,7 +422,8 @@ export function bindTools(ctx) {
     ctx.bind(_el.tools, _toolState, function (s) {
       var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
         return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
-          (t.description || "").toLowerCase().indexOf(s.filter) !== -1;
+          (t.description || "").toLowerCase().indexOf(s.filter) !== -1 ||
+          (t.tags || []).some(function (tagName) { return tagName.toLowerCase().indexOf(s.filter) !== -1; });
       });
       _el.toolsStatus.textContent = s.filter
         ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")

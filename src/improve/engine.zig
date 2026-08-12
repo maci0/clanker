@@ -98,6 +98,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "if (problems.items.len > 0) {" },
     .{ .file = "src/gate/checks.zig", .needle = "exec_pattern_allow must not name git commands" },
     .{ .file = "src/gate/checks.zig", .needle = "capability_gate must not be disabled" },
+    // The root-level TOML check that catches a proposal replacing just a
+    // value line without the section header. Without these, the detail
+    // string can survive in dead code while the actual check is removed.
+    .{ .file = "src/gate/checks.zig", .needle = "weakensImprove(obj)" },
+    .{ .file = "src/gate/checks.zig", .needle = "hasGitInExecAllow(obj)" },
     // A build.zig change can make `zig build` succeed without installing the
     // staged executable. Capability evaluation must fail closed in that case,
     // otherwise removing the binary is enough to skip the entire eval suite.
@@ -617,6 +622,12 @@ pub const Engine = struct {
             };
             if (exists or c.old.len != 0) {
                 log.log(.warn, "proposal rejected: '{s}' already exists and may only be added to, not rewritten", .{c.file});
+                const reject_id = self.newId() catch null;
+                if (reject_id) |owned_id| {
+                    defer self.ctx.gpa.free(owned_id);
+                    self.hist.append(owned_id, .failed, opts.instructions, "rewrite an existing eval", &.{c.file}, 0, 0, try std.fmt.allocPrint(self.arena, "\"{s}\" may not be rewritten", .{c.file}), &.{}, null) catch |herr|
+                        log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+                }
                 self.feedback = try std.fmt.allocPrint(
                     self.arena,
                     "You tried to rewrite \"{s}\". Files under evals/ are the gate your own work is measured against: you may create a new one, never change or remove an existing one.\n{s}",

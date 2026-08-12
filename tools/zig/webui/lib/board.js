@@ -28,9 +28,10 @@ export function boardActionLine(raw) {
     case "claim": return "claimed a card";
     case "assign": return a.who ? "assigned a card to " + a.who : "left a card unassigned";
     case "delete": return "deleted a card";
-    case "subtask_add": return "added the subtask " + quoted(a.text);
-    case "subtask_toggle": return (a.done === false ? "unticked" : "ticked") + " a subtask";
-    case "subtask_remove": return "removed a subtask";
+    case "subtask_add": return "added the checklist item " + quoted(a.text);
+    case "subtask_toggle": return (a.done === false ? "unticked" : "ticked") + " a checklist item";
+    case "subtask_remove": return "removed a checklist item";
+    case "subtask_depend": return a.off ? "removed a checklist dependency" : "linked two checklist items";
     case "depend": return a.off ? "cleared a dependency" : "made a card wait on another";
     case "log": return "noted: " + a.what;
     case "usage": {
@@ -69,4 +70,3 @@ export function dueState(card) {
   if (left < 2 * 24 * 60 * 60) return "soon";
   return "ok";
 }
-

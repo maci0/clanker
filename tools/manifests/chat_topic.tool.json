@@ -1,0 +1,27 @@
+{
+  "name": "chat_topic",
+  "description": "Set or get the topic/description for a chatroom. With `topic` set, updates the channel topic. Without `topic`, returns the current one. Topics are shown in the room header.",
+  "llm_description": "Set or read a room's topic. {room, topic?} (omit topic to read current, max 1024 chars to set).",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room name"
+      },
+      "topic": {
+        "type": "string",
+        "description": "New topic text (omit to read current topic, max 1024 chars)"
+      }
+    },
+    "required": ["room"]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "topic"
+  },
+  "category": "chat"
+}

@@ -76,5 +76,36 @@ cheaper.
   the alternative leaks credentials into the sandbox.
 - Migration is mechanical and low-risk: the switches already isolate the
   per-kind code, so lifting each arm into a vtable entry is a refactor with the
-  existing per-kind tests as the safety net. It is not yet done; this ADR
-  records the target shape, and `src/llm/` is where it lands.
+  existing per-kind tests as the safety net.
+
+## Implementation notes
+
+Landed in `src/llm/`: the vtable is `providers/api.zig`, the registry is the
+`registry` table in `providers.zig`, and `providers/{openai,anthropic,vertex}.zig`
+are the three provider files. `client.zig` is the shared core and holds no
+`switch (provider.kind)`. Three things came out differently from the sketch
+above, recorded rather than papered over:
+
+- **A provider is one file plus one row plus one enum tag, not one file plus
+  one row.** `config.ProviderKind` is the `kind = "..."` config surface, so the
+  tag has to live in `config.zig`; making the registry the source of truth
+  would mean `config.zig` importing the provider modules that already import
+  it. `fromStr` was made reflective (`std.meta.stringToEnum`) so the tag is the
+  only edit there, and `providers.forKind` builds its lookup at comptime, so a
+  tag with no registry row is a compile error rather than a runtime surprise.
+  Three touch points in fixed places, against the seven scattered switches this
+  replaced.
+- **`parseStreamEvent` needed a neutral event type to be a real vtable entry.**
+  The two streaming paths did not merely parse differently, they wrote straight
+  into the client's accumulators. Each provider now returns a
+  `StreamEvent` (text, per-index tool-call fragments, a `UsageUpdate`, a finish
+  reason, a done flag) or `null` to ignore the frame, and a single
+  `StreamAccumulator` in `client.zig` folds it. That is what makes the codec
+  pure and host-testable, and it collapsed two token-accounting
+  implementations into one.
+- **`parseErrorDetail` is a sixth vtable entry.** It was in the same switch as
+  `parseResponse` and had nowhere else to go.
+
+The pure-codec-to-WASM move stays deferred as decided, and is now cheaper to
+reach for: `buildRequest`/`parseResponse`/`parseErrorDetail`/`parseStreamEvent`
+take no allocator-owning state, no credential and no I/O handle.

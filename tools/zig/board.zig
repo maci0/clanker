@@ -53,6 +53,7 @@ const Req = struct {
     text: ?[]const u8 = null,
     subtask: ?[]const u8 = null,
     subtask_id: ?[]const u8 = null,
+    parent_subtask_id: ?[]const u8 = null,
     done: ?bool = null,
     on: ?[]const u8 = null,
     depends_on: ?[]const u8 = null,
@@ -61,6 +62,7 @@ const Req = struct {
     /// Id of the goal (state/goals.json) the card mirrors; "" unlinks on
     /// update. Set at creation by the web UI's goal->board mirroring.
     goal: ?[]const u8 = null,
+    labels: ?[]const cards.Label = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
     cost: ?f64 = null,
@@ -78,6 +80,56 @@ const History = struct {
 
 fn pageCapExceeded(pages_read: usize, has_more: bool) bool {
     return pages_read >= max_pages and has_more;
+}
+
+fn checklistReaches(card: *const cards.Card, from: []const u8, sought: []const u8, depth: usize) bool {
+    if (std.mem.eql(u8, from, sought)) return true;
+    if (depth >= card.subtasks.len) return false;
+    for (card.subtasks) |sub| {
+        if (!std.mem.eql(u8, sub.id, from)) continue;
+        for (sub.depends_on) |next| {
+            if (checklistReaches(card, next, sought, depth + 1)) return true;
+        }
+    }
+    return false;
+}
+
+fn checklistComplete(card: *const cards.Card) bool {
+    for (card.subtasks) |sub| {
+        if (!sub.done) return false;
+    }
+    return true;
+}
+
+fn checklistItemReady(card: *const cards.Card, id: []const u8) bool {
+    for (card.subtasks) |sub| {
+        if (!std.mem.eql(u8, sub.id, id)) continue;
+        for (sub.depends_on) |dep_id| {
+            var satisfied = false;
+            for (card.subtasks) |candidate| {
+                if (std.mem.eql(u8, candidate.id, dep_id) and candidate.done) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            if (!satisfied) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+test "done requires every checklist node and dependency cycles are detectable" {
+    const subs = [_]cards.Subtask{
+        .{ .id = "a", .text = "root", .done = true, .depends_on = &.{"b"} },
+        .{ .id = "b", .text = "child", .parent = "a", .done = false },
+    };
+    const card: cards.Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
+    try std.testing.expect(!checklistComplete(&card));
+    try std.testing.expect(checklistReaches(&card, "a", "b", 0));
+    try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
+    try std.testing.expect(!checklistItemReady(&card, "a"));
+    try std.testing.expect(checklistItemReady(&card, "b"));
 }
 
 const Sent = struct {
@@ -227,6 +279,8 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []cons
         try s.write(c.deadline);
         try s.objectField("goal");
         try s.write(c.goal);
+        try s.objectField("labels");
+        try s.write(c.labels);
         try s.objectField("subtasks");
         try s.write(c.subtasks);
         try s.objectField("depends_on");
@@ -266,13 +320,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const only_for = if (std.mem.eql(u8, op, "list")) (req.who orelse "") else "";
 
     const msgs = history(alloc, room) catch |err| return lib.fail(out, switch (err) {
-        // Make the failure actionable: the board is a chatroom, so a board
-        // that cannot reach chatrooms just says "disabled" and nothing about
-        // what to do. Tell the operator which config keys to flip and that a
-        // restart is needed (chatrooms is a startup config, not a runtime
-        // toggle), so the message names the fix instead of restating the
-        // symptom.
+        // Make the failure actionable. The board is a chatroom, so a board
+        // that cannot reach chatrooms for *either* reason says "disabled" and
+        // nothing about what to do. Distinguish the two denials the host can
+        // return: chatrooms switched off (a config the operator set, fix by
+        // flipping the flag + restart) versus this board tool being denied
+        // chat access (a code/version mismatch — e.g. the host binary predates
+        // a tool rename — fix by rebuilding/restarting clanker). Reporting the
+        // wrong one as a config problem is what sent an operator hunting for a
+        // modules flag that was already on.
         error.SandboxDenied => "chatrooms are disabled, but the board is a chatroom — enable them to use the board: set modules.chatrooms = true (and chatrooms.on = true) in config.toml or config.local.toml, then restart clanker",
+        error.NoAccess => "the board tool is denied chat access to its room (not the chatrooms module — that is on); this is a tool-permission / clanker-version mismatch, rebuild clanker and restart it",
         error.TooLarge => "this room's log no longer fits in one read; the board cannot be folded from a partial log",
         else => "could not read the board's room",
     });
@@ -284,9 +342,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // is checked before the id so a request wrong in both ways is told the op is
     // not real: no id would have made it work.
     const known = [_][]const u8{
-        "create",      "add",            "update",         "move",       "claim",
-        "assign",      "close",          "delete",         "log",        "usage",
-        "subtask_add", "subtask_toggle", "subtask_remove", "depend_add", "depend_remove",
+        "create",        "add",            "update",         "move",           "claim",
+        "assign",        "close",          "delete",         "log",            "usage",
+        "subtask_add",   "subtask_toggle", "subtask_remove", "subtask_depend", "depend_add",
+        "depend_remove",
     };
     var ok_op = false;
     for (known) |k| {
@@ -321,6 +380,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .deadline = req.deadline,
             .who = assignee,
             .goal = req.goal,
+            .labels = req.labels,
         }) catch return lib.fail(out, "could not post the card to the room");
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
@@ -361,30 +421,60 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // Either reassigns, and "" clears.
             .who = req.who orelse req.assignee,
             .goal = req.goal,
+            .labels = req.labels,
         };
     } else if (std.mem.eql(u8, op, "move")) blk: {
         const col = req.column orelse return lib.fail(out, "which column?");
         if (!cards.validColumn(col)) return lib.fail(out, "no such column");
+        if (std.mem.eql(u8, col, cards.done_column) and !checklistComplete(cards.get(list, req.id).?))
+            return lib.fail(out, "finish every checklist item before moving this card to Done");
         break :blk .{ .action = "move", .todo = req.id, .column = col };
     } else if (std.mem.eql(u8, op, "claim"))
         .{ .action = "claim", .todo = req.id }
     else if (std.mem.eql(u8, op, "assign"))
         .{ .action = "assign", .todo = req.id, .who = req.who orelse "" }
-    else if (std.mem.eql(u8, op, "close"))
-        .{ .action = "close", .todo = req.id }
-    else if (std.mem.eql(u8, op, "delete"))
+    else if (std.mem.eql(u8, op, "close")) blk: {
+        if (!checklistComplete(cards.get(list, req.id).?))
+            return lib.fail(out, "finish every checklist item before closing this card");
+        break :blk .{ .action = "close", .todo = req.id };
+    } else if (std.mem.eql(u8, op, "delete"))
         .{ .action = "delete", .todo = req.id }
     else if (std.mem.eql(u8, op, "subtask_add")) blk: {
         const text = std.mem.trim(u8, req.text orelse "", " \t\r\n");
         if (text.len == 0 or text.len > cards.max_title_len)
             return lib.fail(out, "subtask text must be 1-512 characters");
-        break :blk .{ .action = "subtask_add", .todo = req.id, .text = text };
+        if (req.parent_subtask_id) |parent| {
+            const card = cards.get(list, req.id).?;
+            var found = false;
+            for (card.subtasks) |sub| {
+                if (std.mem.eql(u8, sub.id, parent)) found = true;
+            }
+            if (!found) return lib.fail(out, "no such parent checklist item on this card");
+        }
+        break :blk .{ .action = "subtask_add", .todo = req.id, .text = text, .parent = req.parent_subtask_id };
     } else if (std.mem.eql(u8, op, "subtask_toggle")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
+        if ((req.done orelse true) and !checklistItemReady(cards.get(list, req.id).?, sid))
+            return lib.fail(out, "finish this checklist item's dependencies first");
         break :blk .{ .action = "subtask_toggle", .todo = req.id, .subtask = sid, .done = req.done orelse true };
     } else if (std.mem.eql(u8, op, "subtask_remove")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
         break :blk .{ .action = "subtask_remove", .todo = req.id, .subtask = sid };
+    } else if (std.mem.eql(u8, op, "subtask_depend")) blk: {
+        const sid = subtask_id orelse return lib.fail(out, "which checklist item?");
+        const on = dep_id orelse return lib.fail(out, "which checklist item should it wait on?");
+        if (std.mem.eql(u8, sid, on)) return lib.fail(out, "a checklist item cannot wait on itself");
+        const card = cards.get(list, req.id).?;
+        var has_sid = false;
+        var has_on = false;
+        for (card.subtasks) |sub| {
+            if (std.mem.eql(u8, sub.id, sid)) has_sid = true;
+            if (std.mem.eql(u8, sub.id, on)) has_on = true;
+        }
+        if (!has_sid or !has_on) return lib.fail(out, "checklist dependency must name two items on this card");
+        if (!(req.off orelse false) and checklistReaches(card, on, sid, 0))
+            return lib.fail(out, "checklist dependency would create a cycle");
+        break :blk .{ .action = "subtask_depend", .todo = req.id, .subtask = sid, .on = on, .off = req.off orelse false };
     } else if (std.mem.eql(u8, op, "depend_add") or std.mem.eql(u8, op, "depend_remove")) blk: {
         const on = dep_id orelse return lib.fail(out, "which card does it wait on?");
         if (std.mem.eql(u8, on, req.id)) return lib.fail(out, "a card cannot wait on itself");

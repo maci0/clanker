@@ -1,3 +1,9 @@
+---
+description: "Workflow: memory RAG (OpenWebUI single-user) — augment answers with Knowledge via the memory tool."
+llm-description: Augment answers with Knowledge/memory-chunk retrieval (add docs, chunk, search, or inject via #collection).
+tags: memory, rag, knowledge
+---
+
 # Workflow: memory RAG (OpenWebUI single-user)
 
 Use configurable memory to augment answers with Knowledge.

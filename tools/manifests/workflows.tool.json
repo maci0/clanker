@@ -1,6 +1,7 @@
 {
   "name": "workflows",
   "description": "List or inspect reusable prompt workflows stored as markdown files in workflows/ (and .cursor/workflows). Chain-aware: workflows flagged [chain] carry an embedded tool pipeline (frontmatter chain:) and the chain tool can execute them. Input: {} to list, {\"name\":\"plan\"} to show one, {\"name\":\"plan\",\"args\":\"feature\"} to expand it into the full prompt, {\"name\":\"plan\",\"chain\":\"\"} to surface the embedded chain.",
+  "llm_description": "List/inspect reusable prompt workflows (markdown files in workflows/ and .cursor/workflows). Workflows flagged [chain] carry an embedded tool pipeline (frontmatter chain:), runnable via the chain tool. Input: {} lists all; {name} shows one; {name, args} expands args into the prompt; {name, chain: \"\"} surfaces the embedded chain.",
   "wasm": "zig-out/tools/workflows.wasm",
   "input_schema": {
     "type": "object",
