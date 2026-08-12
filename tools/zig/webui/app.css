@@ -2104,8 +2104,9 @@ h2#session-title {
 .md-task { list-style: none; margin-left: -1.2em; }
 .md-task input { margin-right: var(--space-2); }
 
-/* Board: columns scroll sideways as a group, each column scrolls down on
-   its own, so a long Backlog never pushes Done off the bottom. */
+/* Board: columns wrap to new rows when they don't fit the viewport width, so
+   the board adapts to any screen size without horizontal scrolling; each column
+   scrolls down on its own, so a long Backlog never pushes Done off the bottom. */
 .board {
   display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3);
   overflow-x: hidden; padding-bottom: var(--space-3); align-items: flex-start;
