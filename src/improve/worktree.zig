@@ -278,6 +278,11 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // the learnings/reasoning tools. Staged capability evals never catch
     // any of this because staging COPIES (dereferencing links); only the
     // worktree, where baseline/final gates run, has the links.
+    //
+    // Ensure host-side link targets exist before the access check: on a
+    // fresh checkout state/history/ is absent and the symlink is silently
+    // skipped, losing the cross-run dedup memory for the entire session.
+    std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
