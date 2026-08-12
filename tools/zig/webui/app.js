@@ -3138,11 +3138,16 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "rooms", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
   return arenaModulePromise;
+}
+var compareModulePromise = null;
+function loadCompareModule() {
+  if (!compareModulePromise) compareModulePromise = import("./features/compare.js");
+  return compareModulePromise;
 }
 var fleetModulePromise = null;
 function loadFleetModule() {
@@ -3167,6 +3172,9 @@ var viewLoaders = {
   arena: function () {
     return loadArenaModule().then(function (arena) { arena.bindArena(); return arena.loadArenaView(); });
   },
+  compare: function () {
+    return loadCompareModule().then(function (compare) { compare.bindCompare(); return compare.loadCompareView(); });
+  },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
   // Goals ride along with the board: the board->goal sync (moving a card
@@ -3186,6 +3194,7 @@ var VIEW_CONTAINERS = {
   runs: "run-graph",
   fleet: "fleet-runs",
   arena: "arena-list",
+  compare: "compare-list",
   rooms: "chat-log",
   goals: "goals",
   board: "board",
@@ -3248,6 +3257,7 @@ function showView(name, focusPanel) {
   var pendingSessionId = null;
   if (name.indexOf("chat?session=") === 0) { try { pendingSessionId = decodeURIComponent(name.slice(13)); } catch (e) {} name = "chat"; }
   if (name.indexOf("arena/") === 0) { window._pendingArenaId = decodeURIComponent(name.slice(6)); name = "arena"; }
+  if (name.indexOf("compare/") === 0) { window._pendingCompareId = decodeURIComponent(name.slice(8)); name = "compare"; }
   if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "board"; }
   if (name.indexOf("knowledge/") === 0) { pendingKnowledgeId = decodeURIComponent(name.slice(10)); name = "knowledge"; }
   if (pendingBoardCard) window._pendingBoardCard = pendingBoardCard;
@@ -3654,6 +3664,7 @@ var SLASH_CMDS = [
   { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
   { cmd: "/knowledge", desc: "Open Knowledge collections", run: function(){ showView("knowledge", true); } },
   { cmd: "/prompts", desc: "Open Prompts library", run: function(){ showView("prompts", true); } },
+  { cmd: "/compare", desc: "Open blind model comparisons", run: function(){ showView("compare", true); } },
   { cmd: "/new", desc: "New chat (alias for /clear)", run: function(){ document.getElementById("new-chat").click(); } },
   { cmd: "/help", desc: "Show keyboard shortcuts", run: function(){ document.getElementById("help-open").click(); } },
 ];

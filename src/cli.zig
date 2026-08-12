@@ -3594,6 +3594,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePrompts(io, gpa, cfg, environ_map, method, body, stream);
         } else if (std.mem.startsWith(u8, path, "/api/arena")) {
             handleArena(io, gpa, cfg, environ_map, method, path, stream);
+        } else if (std.mem.startsWith(u8, path, "/api/compare")) {
+            handleCompare(io, gpa, cfg, environ_map, method, path, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
@@ -5033,6 +5035,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/lib/markdown.js",
     "/webui/features/arena.js",
     "/webui/features/board.js",
+    "/webui/features/compare.js",
     "/webui/features/fleet.js",
     "/webui/features/goals.js",
     "/webui/features/knowledge.js",
@@ -5071,6 +5074,11 @@ fn handleWebuiAsset(
     // for both would alias the two caches and serve one file for the other's
     // path (the known cache-aliasing bug class; see docs/prds/0006-webui.md).
     const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
+    // Carries its directory for the same reason, and for one more: the
+    // Compare view is the blind side-by-side, so serving another module's
+    // bytes for its path is not only a wrong asset, it is the view that
+    // withholds the key failing to load at all.
+    const is_compare_view = std.mem.endsWith(u8, target, "features/compare.js");
     const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
     const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
     const is_prompts_view = std.mem.endsWith(u8, target, "features/prompts.js");
@@ -5107,8 +5115,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -6920,6 +6928,149 @@ test "arena route maps a bare path to a listing and a suffix to one match" {
     );
 }
 
+/// `GET /api/compare` lists past comparisons; `GET /api/compare/<id>` returns
+/// one, read blind; `POST /api/compare/<id>` with `{"pick":"<letter>"}` records
+/// the human's pick and reveals.
+///
+/// Read-mostly for the same reason `/api/arena` is: starting a comparison is
+/// several concurrent model calls and this server answers one request per
+/// connection. The one write it does take is the pick, which is a label and a
+/// file rewrite, and which goes to the same `compare` tool `clanker compare
+/// --show <id> --pick <letter>` calls rather than to a second implementation of
+/// recording a pick.
+fn handleCompare(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    method: []const u8,
+    path: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const tool_input = compareRouteToToolInput(arena, method, path, body) orelse {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    };
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "compare", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"compare tool unavailable\"}");
+        return;
+    };
+    if (!std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) {
+        respond(stream, 200, "OK", result);
+        return;
+    }
+    // A refused read means there is no such comparison; a refused pick means
+    // the letter was not one of the answers on the table. Same tool, two
+    // different things gone wrong, so not the same status.
+    if (std.mem.eql(u8, method, "POST")) {
+        respond(stream, 400, "Bad Request", result);
+    } else {
+        respond(stream, 404, "Not Found", result);
+    }
+}
+
+/// `/api/compare` -> the blind listing, `/api/compare/<id>` -> that comparison
+/// read blind, `POST /api/compare/<id>` -> record `{"pick":"B"}`.
+///
+/// `"reveal": false` on both read paths is the whole point of this mapping. The
+/// browser is the blind view, so it must not be handed a payload naming which
+/// model wrote which answer — not in a tooltip, not in an attribute, and not in
+/// JSON it holds and declines to paint. The tool honours it by withholding the
+/// key from the reply itself, and by overriding it once a pick is on record.
+///
+/// The id travels as JSON data, never spliced into a path, and the tool
+/// validates it with the same `isSafeId` the CLI path uses. Kept separate from
+/// `handleCompare` so the mapping is testable without a socket: `clanker serve`
+/// cannot accept a connection under this sandbox, so a route decision only
+/// reachable through the listener is a route decision with no test.
+fn compareRouteToToolInput(arena: std.mem.Allocator, method: []const u8, path: []const u8, body: []const u8) ?[]const u8 {
+    const prefix = "/api/compare";
+    if (!std.mem.startsWith(u8, path, prefix)) return null;
+    const rest = std.mem.trim(u8, path[prefix.len..], "/");
+
+    if (std.mem.eql(u8, method, "GET")) {
+        if (rest.len == 0) return "{\"reveal\":false}";
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("id") catch return null;
+        s.write(rest) catch return null;
+        s.objectField("reveal") catch return null;
+        s.write(false) catch return null;
+        s.endObject() catch return null;
+        return w.written();
+    }
+    if (std.mem.eql(u8, method, "POST")) {
+        // A pick names a comparison. Without an id there is nothing to record
+        // it against, and inventing one from "the newest" would let a stale tab
+        // vote on a comparison it never read.
+        if (rest.len == 0) return null;
+        const req = std.json.parseFromSliceLeaky(struct { pick: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        const pick = std.mem.trim(u8, req.pick, " \t\r\n");
+        if (pick.len == 0) return null;
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("id") catch return null;
+        s.write(rest) catch return null;
+        s.objectField("pick") catch return null;
+        s.write(pick) catch return null;
+        s.endObject() catch return null;
+        return w.written();
+    }
+    return null;
+}
+
+test "compare route keeps a browser read blind and carries a pick through" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The listing: blind, because a ledger row names the winning provider.
+    try std.testing.expectEqualStrings("{\"reveal\":false}", compareRouteToToolInput(arena, "GET", "/api/compare", "").?);
+    try std.testing.expectEqualStrings("{\"reveal\":false}", compareRouteToToolInput(arena, "GET", "/api/compare/", "").?);
+    // Reading one: blind too. This is the assertion the whole view rests on —
+    // a `true` here would hand the page the key it exists not to show.
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"compare-1786550737-ab12cd34\",\"reveal\":false}",
+        compareRouteToToolInput(arena, "GET", "/api/compare/compare-1786550737-ab12cd34", "").?,
+    );
+    // The pick goes to the same tool op the CLI's `--show <id> --pick <letter>`
+    // uses, so there is one recording path rather than two.
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"compare-1786550737-ab12cd34\",\"pick\":\"B\"}",
+        compareRouteToToolInput(arena, "POST", "/api/compare/compare-1786550737-ab12cd34", "{\"pick\":\" B \"}").?,
+    );
+    // Carried as data, not joined into a path, so it reaches the tool's
+    // isSafeId check and is refused there rather than escaping state/compare/.
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"../../etc/passwd\",\"reveal\":false}",
+        compareRouteToToolInput(arena, "GET", "/api/compare/../../etc/passwd", "").?,
+    );
+}
+
+test "compare route refuses a pick it cannot attribute" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // No id: nothing to record the pick against.
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare", "{\"pick\":\"B\"}") == null);
+    // No pick, a blank one, or an unreadable body.
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare/compare-1", "{}") == null);
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare/compare-1", "{\"pick\":\"  \"}") == null);
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare/compare-1", "not json") == null);
+    // Nothing else may reach the tool at all: a DELETE has no meaning here, and
+    // must not fall through to the read that a missing arm would make it.
+    try std.testing.expect(compareRouteToToolInput(arena, "DELETE", "/api/compare/compare-1", "") == null);
+    try std.testing.expect(compareRouteToToolInput(arena, "GET", "/api/arena", "") == null);
+}
+
 fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, method, "GET")) return "{\"action\":\"list\"}";
     if (std.mem.eql(u8, method, "POST")) {
@@ -7511,6 +7662,7 @@ var render_markdown: RenderCache = .{};
 var render_graph: RenderCache = .{};
 var render_board: RenderCache = .{};
 var render_board_view: RenderCache = .{};
+var render_compare_view: RenderCache = .{};
 var render_goals_view: RenderCache = .{};
 var render_knowledge_view: RenderCache = .{};
 var render_prompts_view: RenderCache = .{};
@@ -7548,6 +7700,7 @@ var gzip_markdown: GzipCache = .{};
 var gzip_graph: GzipCache = .{};
 var gzip_board: GzipCache = .{};
 var gzip_board_view: GzipCache = .{};
+var gzip_compare_view: GzipCache = .{};
 var gzip_goals_view: GzipCache = .{};
 var gzip_knowledge_view: GzipCache = .{};
 var gzip_prompts_view: GzipCache = .{};
@@ -8816,6 +8969,7 @@ test "the webui asset route covers every embedded module, arena.js included" {
     // in tools/zig/webui.zig but named in neither list here, so the Arena
     // view's dynamic import() 404'd against a server that had the bytes.
     try std.testing.expect(isWebuiAssetPath("/webui/features/arena.js"));
+    try std.testing.expect(isWebuiAssetPath("/webui/features/compare.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/features/todos.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/app.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/core/ui.js"));

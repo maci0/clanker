@@ -74,6 +74,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
     <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
     <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-compare" aria-controls="view-compare" aria-selected="false" tabindex="-1" data-view="compare">Compare</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
@@ -310,6 +311,35 @@ lamps carry further). The seven named palettes ride the same tokens.
           <h3 id="arena-transcript-head" class="sr-only">Move transcript</h3>
           <div id="arena-transcript"></div>
         </section>
+      </div>
+    </section>
+  </div>
+  <!-- Compare: the blind side-by-side. Everything in this panel is filled from
+       an un-revealed read of the comparison (`/api/compare` asks the tool for
+       one), so there is no markup here holding a provider name that CSS or a
+       tooltip could surface early. The key section stays empty until a pick is
+       recorded and the tool reveals. -->
+  <div class="view" id="view-compare" role="tabpanel" aria-labelledby="tab-compare" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Compare</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="compare-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="runs">
+        <section aria-labelledby="compare-list-head">
+          <h3 id="compare-list-head" class="sr-only">Comparisons</h3>
+          <div id="compare-list" class="compare-list"></div>
+        </section>
+        <p class="compare-prompt" id="compare-prompt"></p>
+        <p class="meta" id="compare-status" role="status" aria-live="polite"></p>
+        <section aria-labelledby="compare-answers-head">
+          <h3 id="compare-answers-head" class="sr-only">Answers, side by side</h3>
+          <div id="compare-answers" class="compare-answers"></div>
+        </section>
+        <div id="compare-verdict"></div>
+        <section id="compare-key" class="compare-key" hidden></section>
       </div>
     </section>
   </div>
