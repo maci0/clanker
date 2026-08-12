@@ -64,6 +64,7 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **`/goal`** – persistent structured goals steering agent runs
 - **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/tools`, `/sessions`, `/graph`, `/status`) served by internal WASM tools
 - **Execution graphs** – every run is recorded to `state/runs/`; replay it with `/graph` or `clanker graph <run-id>`
+- **Arena** – `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
 - **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on
 - **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
 - **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)

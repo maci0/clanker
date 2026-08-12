@@ -295,6 +295,7 @@ changes as tools are added.
 | `goal` | `state/` | Design and persist a structured goal that steers later runs |
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
+| `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
 | `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
@@ -389,6 +390,7 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/plugins [on\|off <name>]` | `cmd_plugins` | List plugins and switch the optional ones on or off |
 | `/status` | `cmd_status` | Show instance and peers |
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
+| `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
 
 ### `/graph`
@@ -429,6 +431,7 @@ iter 2
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Start the MCP server |
 | `goal` | Design and persist a structured goal |
+| `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--match <id>` prints a stored match |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
 | `chat send <room> "<text>"` | Send a message to a chatroom |
@@ -651,6 +654,8 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/plugins` | GET, POST | List plugins, or toggle one on/off |
 | `/api/plugins/config` | POST | Update a plugin's `config` object |
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |
+| `/api/arena` | GET | List past arena matches |
+| `/api/arena/<id>` | GET | One match: combatants, HP, per-round moves and the verdict. The arena view polls this while a match is running and stops on the verdict |
 | `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |

@@ -3078,7 +3078,12 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "fleet", "rooms", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "rooms", "knowledge", "prompts", "tools", "system"];
+var arenaModulePromise = null;
+function loadArenaModule() {
+  if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
+  return arenaModulePromise;
+}
 var fleetModulePromise = null;
 function loadFleetModule() {
   if (!fleetModulePromise) {
@@ -3099,6 +3104,9 @@ var viewLoaders = {
   fleet: function () {
     return loadFleetModule().then(function (fleet) { return fleet.refreshFleet(); });
   },
+  arena: function () {
+    return loadArenaModule().then(function (arena) { arena.bindArena(); return arena.loadArenaView(); });
+  },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
   // Goals ride along with the board: the board->goal sync (moving a card
@@ -3117,6 +3125,7 @@ var viewLoaders = {
 var VIEW_CONTAINERS = {
   runs: "run-graph",
   fleet: "fleet-runs",
+  arena: "arena-list",
   rooms: "chat-log",
   goals: "goals",
   board: "board",
@@ -3186,6 +3195,12 @@ function showView(name, focusPanel) {
   // left it polling a chat log nobody could see. Stop it here, and pick back
   // up where it left off if Rooms is reopened.
   if (currentView === "rooms" && name !== "rooms") stopChatPoll();
+  // Same reason, and the arena has two things to stop: the match poll and the
+  // canvas animation loop. Leaving either running on a view nobody can see is
+  // exactly the standing background timer the arena view is not allowed to be.
+  if (currentView === "arena" && name !== "arena" && arenaModulePromise) {
+    arenaModulePromise.then(function (arena) { arena.stopArena(); });
+  }
   currentView = name;
   saveView(name);
   VIEWS.forEach(function (v) {

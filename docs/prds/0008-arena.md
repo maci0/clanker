@@ -2,7 +2,27 @@
 
 ## Status
 
-Draft. Nothing below is built. Builds on shipped primitives: `ck_subagent`
+Phases 1, 2, 4, 5 and 8 are built: the pairwise match core, `clanker arena` /
+`/arena`, third-party judging, the web UI arena view, and Battle Royale mode.
+Phase 3 (multi-instance over a chatroom), 6 (advisory self-improve wiring) and
+7 (design-review seeding) are not.
+
+Two deviations from what is written below, both deliberate:
+
+- **Combatant turns go through `ck_llm`, not `ck_subagent`.** A debate move is
+  one bounded completion with no tools and no file access, so an agent run
+  would only add an iteration loop nothing uses; and `ck_subagent` returns
+  `NotFound` outside a parent agent run, which would have made `clanker arena`
+  impossible as a plain subcommand. The per-combatant `provider` override that
+  makes "different providers genuinely disagreeing" work is a `ck_llm` feature
+  already (`providers check` uses it).
+- **An untargeted move above two combatants is not refused at the tool
+  boundary** (see Battle Royale mode). A mid-match move has no tool boundary
+  left to be refused at, and dropping it would contradict "never dropped
+  silently", so it retaliates against whoever has damage in flight at it, else
+  aims at the strongest opponent left, and pays the weak-confidence floor.
+
+Builds on shipped primitives: `ck_subagent`
 and `ck_swarm` (`src/sandbox/host.zig`) for nested bounded agent runs,
 `src/peers/chatrooms.zig` + the peer HTTP fan-out (`POST /api/chat/message`)
 for the multi-instance transport, the Fleet pixel floor's canvas technique
@@ -338,16 +358,16 @@ line per move (matching tool-call card style), ending in a verdict block.
 
 Phase 1 — single-process core:
 
-- [ ] `arena` WASM tool: match setup, round loop over `ck_subagent`, move
+- [x] `arena` WASM tool: match setup, round loop over `ck_subagent`, move
       parsing with the weak-attack fallback, self-reported judging
-- [ ] `state/arena/<id>.json` persistence, one entry per round
-- [ ] Verdict synthesis at match end
-- [ ] Round cap clamped to a ceiling (mirrors `rlm`'s `max_depth`)
+- [x] `state/arena/<id>.json` persistence, one entry per round
+- [x] Verdict synthesis at match end
+- [x] Round cap clamped to a ceiling (mirrors `rlm`'s `max_depth`)
 
 Phase 2 — CLI and REPL:
 
-- [ ] `clanker arena "<question>" --for X --against Y`
-- [ ] `/arena` in `command_registry`, transcript cards per move, verdict block
+- [x] `clanker arena "<question>" --for X --against Y`
+- [x] `/arena` in `command_registry`, transcript cards per move, verdict block
 
 Phase 3 — multi-instance:
 
@@ -357,21 +377,21 @@ Phase 3 — multi-instance:
 
 Phase 4 — third-party judging:
 
-- [ ] Judge-provider option, distinct from both combatants
-- [ ] Fallback to self-reported judging when no third provider is
+- [x] Judge-provider option, distinct from both combatants
+- [x] Fallback to self-reported judging when no third provider is
       configured, logged as a downgrade
 
 Phase 5 — web UI:
 
-- [ ] Arena view, `GET /api/arena/<id>` polling only while the match is
+- [x] Arena view, `GET /api/arena/<id>` polling only while the match is
       running, stopped on verdict (not a standing background timer)
-- [ ] Canvas battle layout on the Fleet floor's sprite technique, HP bars,
+- [x] Canvas battle layout on the Fleet floor's sprite technique, HP bars,
       attack/block/counter/concede/final_stand poses, idle bob during the
       wait between moves, `prefers-reduced-motion` static fallback
-- [ ] `aria-live` status caption carrying real state in text, mirroring
+- [x] `aria-live` status caption carrying real state in text, mirroring
       `#fleet-floor-status` — the canvas stays `aria-hidden`
-- [ ] Real transcript rendered alongside the canvas, never only in it
-- [ ] Trash-compactor elimination sequence (bulldozer push -> hole -> wall
+- [x] Real transcript rendered alongside the canvas, never only in it
+- [x] Trash-compactor elimination sequence (bulldozer push -> hole -> wall
       closeup), skipped entirely under `prefers-reduced-motion` in favor of
       the status line's static "eliminated" text
 
@@ -393,13 +413,13 @@ Phase 7 — tool/skill design-review use case:
 
 Phase 8 — Battle Royale mode ("with cheese," 3-8 combatants):
 
-- [ ] `target` field on `attack`/`block`/`counter`, required once a match
+- [x] `target` field on `attack`/`block`/`counter`, required once a match
       has more than 2 combatants
-- [ ] Elimination at 0 HP instead of match-end; eliminated combatants stop
+- [x] Elimination at 0 HP instead of match-end; eliminated combatants stop
       taking turns and stop being a legal target
-- [ ] Last-standing / highest-HP-at-cap verdict, generalized from pairwise's
+- [x] Last-standing / highest-HP-at-cap verdict, generalized from pairwise's
       existing points fallback
-- [ ] Resolved: whether simultaneous multi-attacker targeting is cumulative
+- [x] Resolved: whether simultaneous multi-attacker targeting is cumulative
       damage or a holistic per-round judge call (see Open questions)
 
 ## Open questions / future work

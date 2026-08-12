@@ -594,6 +594,13 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     // stances; anything else is starting one, which needs all three. Caught
     // here so a missing side costs a usage error rather than a refusal from
     // the tool after the registry has been loaded.
+    // An empty --match is not a request to list: the tool treats blank as
+    // absent for every field, so it would silently print the listing instead of
+    // the match that was asked for.
+    if (opts.command == .arena and opts.arena_match != null and opts.arena_match.?.len == 0) {
+        setDiag(diag, "--match");
+        return error.MissingArg;
+    }
     if (opts.command == .arena and opts.arena_match == null) {
         if (opts.task == null) {
             setDiag(diag, "<question>");
@@ -3250,6 +3257,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleKnowledge(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
             handlePrompts(io, gpa, cfg, environ_map, method, body, stream);
+        } else if (std.mem.startsWith(u8, path, "/api/arena")) {
+            handleArena(io, gpa, cfg, environ_map, method, path, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
@@ -6389,6 +6398,80 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
     };
     const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 400 else 200;
     respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
+}
+
+/// `GET /api/arena` lists past matches; `GET /api/arena/<id>` returns one,
+/// including its per-round moves and HP, which is what the arena view polls
+/// while a match is running.
+///
+/// Read-only on purpose: starting a match is several minutes of model calls, and
+/// this server answers one request per connection. The view links to
+/// `clanker arena` / `/arena` for that rather than holding a socket open for it.
+fn handleArena(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    method: []const u8,
+    path: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    if (!std.mem.eql(u8, method, "GET")) {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const tool_input = arenaRouteToToolInput(arena, path);
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "arena", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"arena tool unavailable\"}");
+        return;
+    };
+    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 404 else 200;
+    respond(stream, status, if (status == 200) "OK" else "Not Found", result);
+}
+
+/// `/api/arena` -> list, `/api/arena/<id>` -> that match.
+///
+/// The id travels to the tool as JSON data, never spliced into a path, and the
+/// tool validates it with the same `isSafeId` the CLI path uses. Kept separate
+/// from `handleArena` so the mapping is testable without a socket: `clanker
+/// serve` cannot accept a connection under this sandbox, so a route decision
+/// that is only reachable through the listener is a route decision with no test.
+fn arenaRouteToToolInput(arena: std.mem.Allocator, path: []const u8) []const u8 {
+    const prefix = "/api/arena";
+    if (!std.mem.startsWith(u8, path, prefix)) return "{}";
+    const rest = std.mem.trim(u8, path[prefix.len..], "/");
+    if (rest.len == 0) return "{}";
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    s.beginObject() catch return "{}";
+    s.objectField("match") catch return "{}";
+    s.write(rest) catch return "{}";
+    s.endObject() catch return "{}";
+    return w.written();
+}
+
+test "arena route maps a bare path to a listing and a suffix to one match" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expectEqualStrings("{}", arenaRouteToToolInput(arena, "/api/arena"));
+    try std.testing.expectEqualStrings("{}", arenaRouteToToolInput(arena, "/api/arena/"));
+    try std.testing.expectEqualStrings(
+        "{\"match\":\"arena-1786543989-1dc9299d\"}",
+        arenaRouteToToolInput(arena, "/api/arena/arena-1786543989-1dc9299d"),
+    );
+    // A traversal attempt is carried as data, not joined into a path, so it
+    // reaches the tool's isSafeId check and is refused there rather than
+    // escaping state/arena/ on the way.
+    try std.testing.expectEqualStrings(
+        "{\"match\":\"../../etc/passwd\"}",
+        arenaRouteToToolInput(arena, "/api/arena/../../etc/passwd"),
+    );
 }
 
 fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {

@@ -73,6 +73,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <p class="rail-group" role="presentation">Watch</p>
     <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
     <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
@@ -265,6 +266,33 @@ lamps carry further). The seven named palettes ride the same tokens.
           <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
         </div>
         <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <div class="view" id="view-arena" role="tabpanel" aria-labelledby="tab-arena" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Arena</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="arena-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="runs">
+        <section aria-labelledby="arena-list-head">
+          <h3 id="arena-list-head" class="sr-only">Matches</h3>
+          <div id="arena-list" class="arena-list"></div>
+        </section>
+        <!-- The canvas is decorative; #arena-status carries the same state in
+             words and is what a screen reader or a reduced-motion session gets
+             instead of the animation. Same split as #fleet-floor. -->
+        <div id="arena-stage" class="fleet-floor" aria-hidden="true" hidden>
+          <canvas id="arena-canvas" width="640" height="200" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+        </div>
+        <p class="meta" id="arena-status" role="status" aria-live="polite"></p>
+        <section aria-labelledby="arena-transcript-head">
+          <h3 id="arena-transcript-head" class="sr-only">Move transcript</h3>
+          <div id="arena-transcript"></div>
+        </section>
       </div>
     </section>
   </div>
