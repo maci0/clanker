@@ -110,7 +110,7 @@ pub const Worktree = struct {
             if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
-                    log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
+                    log.log(.info, "improve-self: fast-forwarded {s} to {s} (merge-base: {s})", .{ self.base_branch, branch_sha, merge_base });
                     self.resyncLocalBranch(gpa, io, branch_sha);
                     self.merged = true;
                     copyBackLearnings(gpa, io, self.path);
@@ -130,7 +130,7 @@ pub const Worktree = struct {
             };
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
-                log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
+                log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s}, merge-base: {s})", .{ commit, self.base_branch, self.branch, merge_base });
                 self.resyncLocalBranch(gpa, io, commit);
                 self.merged = true;
                 copyBackLearnings(gpa, io, self.path);
