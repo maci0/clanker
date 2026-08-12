@@ -2827,6 +2827,15 @@ function moveGoalCardToColumn(goalId, column) {
   postBoard({ op: "move", id: cardId, column: column }, null);
 }
 
+/* The goal a board card is the mirror of, or null. Reverse of goalCardLinks:
+   iterate the goal->card map and return the goal that points at this card. */
+function goalIdForCard(cardId) {
+  for (var gid in goalCardLinks) {
+    if (goalCardLinks[gid] === cardId) return gid;
+  }
+  return null;
+}
+
 el.goalForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var objective = el.goalObjective.value.trim();
@@ -3094,6 +3103,25 @@ function postBoard(payload, status) {
     .then(readJson)
     .then(function (d) {
       renderBoard(d.board || board);
+      // A card moved into the board's done column is the board saying the
+      // work is finished. When that card is the mirror of a goal, close the
+      // goal too so the two stay in step: the user dragged the card to done,
+      // and the Goals panel should agree rather than still show it active.
+      if (payload.op === "move" && payload.column === doneColumn()) {
+        var gid = goalIdForCard(payload.id);
+        if (gid) {
+          var goal = null;
+          var gl = goalState.val || [];
+          for (var gi = 0; gi < gl.length; gi++) {
+            if (gl[gi].id === gid) { goal = gl[gi]; break; }
+          }
+          // Skip when the goal is already done (or gone): avoids re-posting
+          // when a goal->done card move bounces back through here.
+          if (goal && (goal.status || "active") !== "done") {
+            postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
+          }
+        }
+      }
       if (status) el.boardStatus.textContent = status;
       return d;
     })
