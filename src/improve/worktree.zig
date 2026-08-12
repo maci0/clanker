@@ -124,18 +124,18 @@ pub const Worktree = struct {
     /// auto-resolve, with nothing surfacing the growing backlog short of
     /// reading raw logs for "conflicts" by hand.
     ///
-    /// Uses `git update-ref` on the branch ref rather than `git reset
-    /// --hard`, which would operate on whatever repo the caller's cwd
-    /// points to — potentially the MAIN working tree after the caller has
-    /// chdir'd back from the worktree, silently resetting uncommitted
-    /// work in the user's checkout.
+    /// `git -C <worktree> reset --hard`: pinned to the worktree path so a
+    /// caller whose cwd has drifted (chdir'd back to the main tree) can
+    /// never reset the user's checkout — the concern that briefly moved
+    /// this to a bare `git update-ref` on the branch ref. That variant kept
+    /// the ref in lockstep but left the worktree's checked-out FILES at the
+    /// pre-merge content, and those files are what the next iteration's
+    /// context and staging copy from: proposals then build on a tree
+    /// missing everything the merge just folded in, re-introducing on the
+    /// next merge exactly what someone else had fixed. Both halves matter:
+    /// ref moved AND files synced.
     fn resyncLocalBranch(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
-        const full_ref = std.fmt.allocPrint(gpa, "refs/heads/{s}", .{self.branch}) catch |err| {
-            log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
-            return;
-        };
-        defer gpa.free(full_ref);
-        const argv = [_][]const u8{ "git", "update-ref", full_ref, new_sha };
+        const argv = [_][]const u8{ "git", "-C", self.path, "reset", "--hard", new_sha };
         const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
             log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
             return;
@@ -146,7 +146,7 @@ pub const Worktree = struct {
             .exited => |c| c == 0,
             else => false,
         };
-        if (!ok) log.log(.warn, "improve-self: git update-ref after merge-back failed: {s}", .{res.stderr});
+        if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
     }
 };
 
