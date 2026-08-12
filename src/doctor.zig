@@ -144,6 +144,26 @@ fn runChecks(
         cfg.agent.system_prompt_file,
     );
 
+    rep.section("worktrees");
+    if (dirExists(io, ".clanker-worktrees")) {
+        var wt_count: usize = 0;
+        var wt_dir = std.Io.Dir.cwd().openDir(io, ".clanker-worktrees", .{ .iterate = true }) catch null;
+        if (wt_dir) |*d| {
+            defer d.close(io);
+            var wt_it = d.iterate();
+            while (wt_it.next(io) catch null) |wt_entry| {
+                if (wt_entry.kind == .directory) wt_count += 1;
+            }
+        }
+        if (wt_count > 0) {
+            rep.line(.warn, ".clanker-worktrees", try std.fmt.allocPrint(arena, "{d} worktree(s) present; a killed improve-self run leaves these behind. Run `clanker prune` to clean up.", .{wt_count}));
+        } else {
+            rep.line(.ok, ".clanker-worktrees", "empty");
+        }
+    } else {
+        rep.line(.ok, ".clanker-worktrees", "none (clean)");
+    }
+
     rep.section("tools");
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
         rep.line(.fail, "tool manifests", @errorName(err));
