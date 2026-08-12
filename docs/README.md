@@ -226,7 +226,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
 entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
-`config.zig`, `doctor.zig`, and `janitor.zig`—sit directly under `src/`. Build
+`config.zig`, and `doctor.zig`—sit directly under `src/`. Build
 output (`zig-out/`) and `.zig-cache/` are generated and gitignored; Zig's
 dependency cache location is controlled by the Zig installation/environment.
 

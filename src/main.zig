@@ -71,7 +71,6 @@ comptime {
     _ = @import("tui/repl_vaxis.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
-    _ = @import("janitor.zig");
     _ = @import("research/engine.zig");
     _ = @import("research/ledger.zig");
     _ = @import("research/harness.zig");
@@ -129,7 +128,7 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(1);
         }
         switch (err) {
-            error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task text argument", .{}),
+            error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task: clanker run \"fix the build\" (or just clanker \"fix the build\")", .{}),
             error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
                 cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
             else
@@ -176,13 +175,21 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     cli.run(init, opts) catch |err| {
-        // A command failed after argument parsing succeeded: this is a
-        // runtime/general error (exit 1), distinct from the usage errors
-        // above (exit 2). Report it the same way every other clanker error
-        // is reported (log.log(.error_, ...)) instead of letting it fall
-        // through to Zig's default top-level handler, which would dump a
-        // raw stack trace with source paths and memory addresses.
-        log.log(.error_, "{s}", .{@errorName(err)});
+        // Common failures get a human line with a recovery hint, not a
+        // timestamped log record: this is an interactive moment, not a log
+        // collector ingest path.
+        const hint: ?[]const u8 = switch (err) {
+            error.MissingConfig => "config.toml not found; run `clanker setup` to create one",
+            error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
+            error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
+            error.ModuleDisabled => "this module is disabled in config.toml",
+            else => null,
+        };
+        if (hint) |h| {
+            cli.printUsageError(init.io, "{s}", .{h});
+        } else {
+            log.log(.error_, "{s}", .{@errorName(err)});
+        }
         std.process.exit(1);
     };
 }

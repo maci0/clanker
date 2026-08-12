@@ -1228,7 +1228,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         };
         if (unusable) |reason| {
             if (is_default)
-                log.log(.warn, "{s}: not configured, {s}; this is the default provider, so no provider is usable unqualified", .{ name, reason })
+                std.debug.print("  {s}: not configured ({s}) [default provider]\n", .{ name, reason })
             else
                 std.debug.print("  {s}: not configured ({s})\n", .{ name, reason });
             try rows.append(arena, .{

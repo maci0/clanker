@@ -1051,6 +1051,7 @@ const Model = struct {
         while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
         const keys =
             \\keys:
+            \\  Tab               complete a /command
             \\  Up/Down           recall previous input
             \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
             \\  Ctrl-C            stop the current turn, or quit when idle
@@ -1531,7 +1532,7 @@ const Model = struct {
             std.fmt.bufPrint(&scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
         else
             "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
             self.provider.name,
             self.provider.activeModelName(),
             activity,

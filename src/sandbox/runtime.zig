@@ -981,6 +981,49 @@ test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     try std.testing.expect(std.mem.indexOf(u8, out, "last: git exited 1: usage") == null);
 }
 
+test "cmd_janitor wasm tool scans and removes only shaped staging directories" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state/staging/imp-123");
+    try tmp.dir.createDirPath(io, "state/staging/keep-me");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/staging/imp-123/data", .data = "discard" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/staging/keep-me/data", .data = "preserve" });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"state/"},
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/cmd_janitor.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const scan = try mod.executeTool("{\"op\":\"scan\",\"state_dir\":\"state\"}");
+    defer std.testing.allocator.free(scan);
+    try std.testing.expect(std.mem.indexOf(u8, scan, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, scan, "orphaned staging directory") != null);
+
+    const pruned = try mod.executeTool("{\"op\":\"prune\",\"state_dir\":\"state\"}");
+    defer std.testing.allocator.free(pruned);
+    try std.testing.expect(std.mem.indexOf(u8, pruned, "Removed 7 B") != null);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/staging/imp-123", .{}));
+    _ = try tmp.dir.statFile(io, "state/staging/keep-me/data", .{});
+}
+
 test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();

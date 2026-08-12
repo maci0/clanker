@@ -105,7 +105,8 @@ export function toast(msg, kind) {
   });
   node.setAttribute("aria-label", msg + ". Press Enter, Space, or Escape to dismiss.");
   var timer;
-  function schedule() { timer = window.setTimeout(function () { node.remove(); }, 5000); }
+  var ms = node.hasAttribute("data-kind") ? 9000 : 5000;
+  function schedule() { timer = window.setTimeout(function () { node.remove(); }, ms); }
   node.addEventListener("mouseenter", function () { window.clearTimeout(timer); });
   node.addEventListener("mouseleave", schedule);
   node.addEventListener("focusin", function () { window.clearTimeout(timer); });
