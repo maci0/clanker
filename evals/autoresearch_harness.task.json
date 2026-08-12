@@ -1,6 +1,6 @@
 {
   "name": "autoresearch_harness",
   "kind": "task",
-  "prompt": "Read docs/prds/autoresearch.md and reply with the one-line harness contract.",
+  "prompt": "Read docs/prds/0004-autoresearch.md and reply with the one-line harness contract.",
   "criteria": [{ "includes": ["metric"] }]
 }

@@ -47,8 +47,8 @@ already closed.
 | Source | Why |
 |---|---|
 | `docs/WEBUI_REVIEW.md` | The polish/animation work already shipped, turn by turn — do not re-propose anything logged here as done |
-| `docs/prds/webui.md` | Phase plan, the named reference products, what's still marked Open |
-| `docs/prds/repl-tui.md` | TUI acceptance criteria, the widget-mapping table, what's still marked Open |
+| `docs/prds/0006-webui.md` | Phase plan, the named reference products, what's still marked Open |
+| `docs/prds/0005-repl-tui.md` | TUI acceptance criteria, the widget-mapping table, what's still marked Open |
 | `tools/zig/webui/index.html` | The 11 real views: chat, board, goals, runs, fleet, rooms, knowledge, prompts, tools, system, plus rail/header structure |
 | `tools/zig/webui/app.css` | Design tokens (`--accent`/`--surface`/`--fg-muted`), existing motion (`@keyframes suggestion-in`, `.skeleton`, lamp states), `prefers-reduced-motion` gating |
 | `tools/zig/webui/app.js` + `core/*.js` + `lib/*.js` | What actually drives interaction: composer, streaming, toasts, palette |

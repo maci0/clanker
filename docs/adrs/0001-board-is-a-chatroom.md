@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. See `docs/prds/kanban-board.md` for the full design.
+Accepted. See `docs/prds/0002-kanban-board.md` for the full design.
 
 ## Context
 
@@ -11,7 +11,7 @@ that only the web UI could reach, then a tool backed by its own file,
 `state/board.json`. The second shape left two stores for one idea — a
 room's todo list and the board file could disagree, and neither let a
 clanker read or change its own board consistently with what the web UI
-showed. Chatrooms (`docs/prds/chatrooms.md`) already give every instance a
+showed. Chatrooms (`docs/prds/0001-chatrooms.md`) already give every instance a
 replicated, append-only, peer-fanned-out log; building a second replication
 mechanism for the board specifically would duplicate that for no reason.
 
@@ -30,7 +30,7 @@ One board is now trivially consistent across the web UI and every
 tool-calling clanker, and it replicates for free over the existing peer
 mechanism. The cost: every read is a fold over the room's full history, so
 board size is bounded by the same `max_pages` cap chatroom history is
-(`docs/prds/kanban-board.md` § Known issues documents that the cap
+(`docs/prds/0002-kanban-board.md` § Known issues documents that the cap
 currently fails open — a partial fold — instead of erroring, which this
 decision makes more consequential than it would be for an ordinary chat
 room, since a partial board fold can resurrect deleted cards). Deleting a

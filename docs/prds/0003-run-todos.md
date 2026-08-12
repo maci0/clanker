@@ -10,7 +10,7 @@ half-true. Two layers, meant to be deliberately separate:
   (`src/agent/private_todos.zig`, capped at 100 items). `Agent.run` attaches
   a fresh list for every top-level run and `subagent.runNested` supplies its
   own list for nested work. It is gone when that run ends.
-- **Shared work** — the Kanban board (`docs/prds/kanban-board.md`): cards,
+- **Shared work** — the Kanban board (`docs/prds/0002-kanban-board.md`): cards,
   columns (`backlog`, `ready`, `doing`, `review`, `done` — five, not the
   three this doc originally said), claims, subtasks, cost, replicated to
   peers. `todo_*` **with** a `room` now hard-errors and points callers at

@@ -14,7 +14,7 @@ endpoint).
 
 **Since this was written, the `todo_*` ops' shared/room-scoped path was
 removed in favor of the board** (see Design below and
-`docs/prds/run-todos.md`). This revision updates the ops table and Design
+`docs/prds/0003-run-todos.md`). This revision updates the ops table and Design
 section to match; see Open questions for what that removal leaves unresolved.
 
 ## Problem
@@ -35,7 +35,7 @@ and must double as the replication layer for the Kanban board.
 4. One module, many tools: the guest forwards arguments verbatim; all logic
    host-side. Descriptors are marked `sequential` so concurrent tool calls
    never race on the log file.
-5. The board (see `docs/prds/kanban-board.md`) is a chatroom; no second store.
+5. The board (see `docs/prds/0002-kanban-board.md`) is a chatroom; no second store.
 
 ## Non-goals
 
@@ -74,7 +74,7 @@ can still explicitly name a DM room when reading history or subscribing.
 ("room todo lists are board cards now: use board_add, board_move,
 board_claim or board_list instead"). The shared/room-scoped todo list this
 section originally described has been fully replaced by the board (see
-`docs/prds/kanban-board.md`). What remains: inside a sub-agent run, the host
+`docs/prds/0002-kanban-board.md`). What remains: inside a sub-agent run, the host
 routes a room-less `todo_*` call to the run's private in-memory list
 (`src/agent/private_todos.zig`, wired only by `subagent.runNested`, capped
 at 100 items). Nothing is logged or fanned out; the list is discarded when
@@ -83,7 +83,7 @@ whenever the list is non-empty (not only when the run hits its iteration
 cap). Ids are `p1`, `p2`, ... to keep them distinct from shared-list message
 ids. A private todo is the run's working plan; shared work goes on the
 board. **Outside a sub-agent run** (a top-level run), no private list is ever
-attached, so `todo_*` without `room` fails too — see `docs/prds/run-todos.md`
+attached, so `todo_*` without `room` fails too — see `docs/prds/0003-run-todos.md`
 for the gap this leaves.
 
 **Inbox.** Each agent run injects a `[chatroom inbox]` user message with
@@ -132,7 +132,7 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 | Unsubscribed peer | Keeps nothing: a peer retains a message only for rooms it subscribes to |
 | Missing room/text | Named error per op, no write |
 | `todo_*` called with a `room` | Hard error: room todo lists are gone, use the board |
-| `todo_*` called with no `room` outside a sub-agent run | Hard error, and the error text itself is stale (see `docs/prds/run-todos.md`) |
+| `todo_*` called with no `room` outside a sub-agent run | Hard error, and the error text itself is stale (see `docs/prds/0003-run-todos.md`) |
 | Chatrooms disabled in config | Tools that depend on them fail loudly (board: "chatrooms are disabled, and the board is a chatroom"); bare chat tools do not, see above |
 | Duplicate delivery | Consumers deduplicate by message id (the board fold does) |
 

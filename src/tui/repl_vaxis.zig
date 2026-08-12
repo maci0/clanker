@@ -171,6 +171,10 @@ const ModelCandidate = struct {
     provider: []const u8,
     model: []const u8,
     display: []const u8,
+    /// Preformatted once into session-lifetime memory. Vaxis cells borrow
+    /// grapheme slices until the frame is flushed, so picker rows must not
+    /// point into a draw function's stack buffer.
+    label: []const u8,
     context_window: u32,
     cost_in: ?f64,
     cost_out: ?f64,
@@ -186,10 +190,22 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]
     while (pit.next()) |pentry| {
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
+            const display = mentry.value_ptr.display orelse mentry.key_ptr.*;
+            const label = if (mentry.value_ptr.cost_per_1m_input != null or mentry.value_ptr.cost_per_1m_output != null)
+                try std.fmt.allocPrint(arena, "{s}/{s}  {d} ctx  ${d}/${d} per 1M", .{
+                    pentry.key_ptr.*,
+                    display,
+                    mentry.value_ptr.context_window,
+                    mentry.value_ptr.cost_per_1m_input orelse 0,
+                    mentry.value_ptr.cost_per_1m_output orelse 0,
+                })
+            else
+                try std.fmt.allocPrint(arena, "{s}/{s}  {d} ctx", .{ pentry.key_ptr.*, display, mentry.value_ptr.context_window });
             try out.append(arena, .{
                 .provider = pentry.key_ptr.*,
                 .model = mentry.key_ptr.*,
-                .display = mentry.value_ptr.display orelse mentry.key_ptr.*,
+                .display = display,
+                .label = label,
                 .context_window = mentry.value_ptr.context_window,
                 .cost_in = mentry.value_ptr.cost_per_1m_input,
                 .cost_out = mentry.value_ptr.cost_per_1m_output,
@@ -243,6 +259,7 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     try std.testing.expectEqual(@as(usize, 2), cands.len);
     try std.testing.expectEqualStrings("kimi-k3", cands[0].provider);
     try std.testing.expectEqualStrings("moonshotai/kimi-k3", cands[0].display); // display overrides the bare model id
+    try std.testing.expectEqualStrings("kimi-k3/moonshotai/kimi-k3  1048576 ctx  $3/15 per 1M", cands[0].label);
     try std.testing.expectEqual(@as(?f64, 3), cands[0].cost_in);
     try std.testing.expectEqualStrings("deepseek", cands[1].provider);
     try std.testing.expectEqualStrings("deepseek-chat", cands[1].display); // no display set: falls back to the model id
@@ -253,7 +270,7 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
 // Slash-command registry: the single source of truth for what `submit`
 // dispatches and what `/help` prints. Adding an entry here is the whole
 // job — dispatch and the generated help list both derive from it, so a
-// command can no longer ship undocumented (the hazard docs/prds/repl-tui.md
+// command can no longer ship undocumented (the hazard docs/prds/0005-repl-tui.md
 // tracked against the old hand-maintained `printHelp` prose).
 // ---------------------------------------------------------------------
 
@@ -1026,7 +1043,7 @@ const Model = struct {
     /// The command list is generated from `command_registry`
     /// (`buildCommandHelp`), so a registry entry can never go undocumented —
     /// the property the deleted REPL's generated `:help` had
-    /// (docs/prds/repl-tui.md). The key bindings stay hand-written here:
+    /// (docs/prds/0005-repl-tui.md). The key bindings stay hand-written here:
     /// they are wired in the event handler, not the registry.
     fn printHelp(self: *Model) void {
         const commands = buildCommandHelp(self.arena) catch return;
@@ -1599,9 +1616,10 @@ const Model = struct {
         const y = self.transcript_bottom -| h;
         drawBox(surface, 0, y, surface.size.width, h, rule_style);
 
-        var qbuf: [256]u8 = undefined;
-        const qline = std.fmt.bufPrint(&qbuf, "/model {s}\xe2\x96\x8f", .{self.picker_query.items}) catch "/model";
-        writeRow(surface, y + 1, qline, .{ .bold = true });
+        writeRow(surface, y + 1, "/model ", .{ .bold = true });
+        var query_col: u16 = 7;
+        writeRowAt(surface, y + 1, &query_col, self.picker_query.items, .{ .bold = true });
+        writeRowAt(surface, y + 1, &query_col, "\xe2\x96\x8f", .{ .bold = true });
 
         if (matches.len == 0) {
             writeRow(surface, y + 2, "  no matching provider/model", .{ .dim = true });
@@ -1610,16 +1628,11 @@ const Model = struct {
         const sel = @min(self.picker_selected, matches.len - 1);
         var row: u16 = y + 2;
         for (matches[0..rows_shown], 0..) |cand, i| {
-            var lbuf: [256]u8 = undefined;
             const marker: []const u8 = if (i == sel) "\xe2\x80\xba " else "  ";
-            const line = if (cand.cost_in != null or cand.cost_out != null)
-                std.fmt.bufPrint(&lbuf, "{s}{s}/{s}  {d} ctx  ${d}/${d} per 1M", .{
-                    marker,                cand.provider,          cand.display, cand.context_window,
-                    cand.cost_in orelse 0, cand.cost_out orelse 0,
-                }) catch continue
-            else
-                std.fmt.bufPrint(&lbuf, "{s}{s}/{s}  {d} ctx", .{ marker, cand.provider, cand.display, cand.context_window }) catch continue;
-            writeRow(surface, row, line, if (i == sel) sel_style else .{});
+            const style = if (i == sel) sel_style else vaxis.Style{};
+            writeRow(surface, row, marker, style);
+            var col: u16 = 2;
+            writeRowAt(surface, row, &col, cand.label, style);
             row += 1;
         }
     }
@@ -1744,11 +1757,15 @@ test "an anchored view end holds its lines while the transcript grows" {
 
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {
     var col: u16 = 0;
+    writeRowAt(surface, row, &col, text, style);
+}
+
+fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, style: vaxis.Style) void {
     var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
     while (it.nextCodepointSlice()) |cp| {
-        if (col >= surface.size.width) break;
-        surface.writeCell(col, row, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
-        col += 1;
+        if (col.* >= surface.size.width) break;
+        surface.writeCell(col.*, row, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
+        col.* += 1;
     }
 }
 

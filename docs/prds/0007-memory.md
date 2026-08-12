@@ -4,7 +4,7 @@
 Pluggable embeddings (openai_compat default via `providers.base_url` + local_onnx ONNX opt-in), pluggable vector backends (builtin brute-force cosine default + muninndb/sqlite-vec behind `VectorStore` trait), markdown/fixed chunking (size/overlap configurable), WASM `memory` tool, wired via `memory_inject` mutator on `/api/run` `final_task` + chain/workflow steps.
 
 ## Scope
-Only `src/memory/**`, `src/knowledge/store.zig`, `src/config.zig`, `src/cli.zig`, `src/main.zig`, `tools/zig/memory.zig`, `tools/manifests/memory.tool.json`, `docs/prds/memory.md`, `workflows/**`. Do not break existing Knowledge/Prompts/archived/chat history or frontend beyond minimal wiring; keep guest under `lib.out_cap` (2 MiB).
+Only `src/memory/**`, `src/knowledge/store.zig`, `src/config.zig`, `src/cli.zig`, `src/main.zig`, `tools/zig/memory.zig`, `tools/manifests/memory.tool.json`, `docs/prds/0007-memory.md`, `workflows/**`. Do not break existing Knowledge/Prompts/archived/chat history or frontend beyond minimal wiring; keep guest under `lib.out_cap` (2 MiB).
 
 ## Config
 

@@ -135,10 +135,10 @@ room, one message per move (`chatrooms.append`, fanned out over the existing
 `POST /api/chat/message` peer push — no new transport). A combatant's turn
 is: read the room's messages since its last move, run its subagent call over
 that transcript, post the reply as the next message. This is the same
-`chatrooms.jsonl` + cursor machinery `docs/prds/chatrooms.md` already
+`chatrooms.jsonl` + cursor machinery `docs/prds/0001-chatrooms.md` already
 specifies, used as a turn-taking log instead of a free-form channel — closer
 to how `todo_*` used to ride chat messages before the board took over
-(`docs/prds/run-todos.md`) than to normal room chatter. The ordering
+(`docs/prds/0003-run-todos.md`) than to normal room chatter. The ordering
 guarantee this needs is weaker than a general chat log's: a round doesn't
 start until every combatant's move for the previous round is visible, so as
 long as each peer waits for its cue before moving (rather than racing to
@@ -188,7 +188,7 @@ initial ship.
 **Tool/skill design review (distinct from benchmarking).** Arena is not a
 replacement for measuring which of two implementations is faster or more
 correct — that question already has a right home: `evals/` +
-`capabilityGate` for pass/fail correctness, `docs/prds/autoresearch.md`'s
+`capabilityGate` for pass/fail correctness, `docs/prds/0004-autoresearch.md`'s
 `command -> scalar` harness for anything with a real metric. What neither of
 those does is compare *designs* before either is built, the way the
 `docs/prompts/*-review.md` prompts already do for a single reviewer working
@@ -269,7 +269,7 @@ way its own non-goal requires.
   ~900-1200ms), gated the same way the vaxis REPL's own tick handler is —
   polling only while the match status is "running", stopped the moment it
   reaches a verdict, never a background timer left ticking on a finished
-  match. No new socket: `docs/prds/webui.md`'s existing constraint that
+  match. No new socket: `docs/prds/0006-webui.md`'s existing constraint that
   `/api/run`'s stream is the one long-lived channel and everything else is
   polling holds here too.
 - **Reduced motion.** No animation loop scheduled at all
@@ -372,7 +372,7 @@ Phase 7 — tool/skill design-review use case:
 - **Replay/spectator mode.** Watching a finished match's rounds play back in
   the pixel view, distinct from the live-match case Phase 5 covers.
 - **Crossover with autoresearch.** Could a match's verdict feed into
-  `docs/prds/autoresearch.md`'s harness contract as a `command -> scalar`
+  `docs/prds/0004-autoresearch.md`'s harness contract as a `command -> scalar`
   metric (HP delta) for optimization loops that want a debate-shaped scoring
   function instead of a benchmark command? Unexplored.
 - **Does adversarial judging actually correlate with build-time outcomes?**

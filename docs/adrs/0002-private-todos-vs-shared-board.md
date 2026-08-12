@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. See `docs/prds/run-todos.md` for the full design and its current
+Accepted. See `docs/prds/0003-run-todos.md` for the full design and its current
 gaps (private todos are wired only for sub-agent runs, not top-level ones).
 
 ## Context
@@ -22,7 +22,7 @@ Two layers, same four verb names (`todo_add`/`todo_claim`/`todo_close`/
 `todo_list` for private; `board_*` for shared), disambiguated at the host by
 whether a private list is attached to the run — not by a `room` parameter
 callers pass (an earlier shape did that; room-scoped shared todo lists were
-removed once the board covered that need, see `docs/prds/chatrooms.md` §
+removed once the board covered that need, see `docs/prds/0001-chatrooms.md` §
 Known issues). Private todos live in memory only
 (`src/agent/private_todos.zig`), capped, and discarded when the run ends.
 
@@ -33,6 +33,6 @@ never fills with scratch plans nobody but the run itself cared about. The
 cost, currently unresolved: only sub-agent runs get a private list wired up
 (`subagent.runNested` attaches one); a top-level run has nowhere to put a
 scratch plan and `todo_*` simply fails there. That gap is tracked as an open
-question in `docs/prds/run-todos.md`, not treated as settled by this ADR —
+question in `docs/prds/0003-run-todos.md`, not treated as settled by this ADR —
 this decision fixes which two mechanisms exist and how they're told apart,
 not that every run currently has access to the private one.

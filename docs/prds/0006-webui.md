@@ -228,7 +228,7 @@ Phase 3 — see what the agents are doing:
 
 - [x] 3.1 Subagent runs recorded as their own graphs
 - [x] 3.2 Cross-agent view (Fleet: roster, DMs, nested-run grouping)
-- [x] 3.3 Board filtered view — text/assignee/blocked/priority filters on the existing board (board *is* the todo surface, per `docs/prds/kanban-board.md`); no second data store
+- [x] 3.3 Board filtered view — text/assignee/blocked/priority filters on the existing board (board *is* the todo surface, per `docs/prds/0002-kanban-board.md`); no second data store
 
 Phase 4 — `webui_pixelagents`:
 
