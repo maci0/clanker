@@ -1229,6 +1229,18 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 }
 
 fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
+    // The board is one guest (board.wasm) behind eleven manifest names, and it
+    // needs two ops, not one: it replicates each card into its room with "send"
+    // and folds that room's log back with "history" on every read. A
+    // one-op-per-tool rule silently broke both — the tool kept answering,
+    // because it ignores a failed replication, so the only visible symptom was
+    // cards that stopped crossing between instances.
+    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "board_"))
+        return std.mem.eql(u8, op, "history") or std.mem.eql(u8, op, "send");
+    // The janitor announces what it pruned into the room, and likewise drops
+    // the result on the floor if it cannot.
+    if (std.mem.eql(u8, tool_name, "cmd_janitor")) return std.mem.eql(u8, op, "send");
+
     const allowed_op: ?[]const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
         "send"
     else if (std.mem.eql(u8, tool_name, "chat_history"))
@@ -3853,6 +3865,56 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.indexOf(u8, peers, "instance") != null);
     try std.testing.expect(std.mem.indexOf(u8, peers, "providers") == null);
     try std.testing.expect(std.mem.indexOf(u8, peers, "agent") == null);
+}
+
+test "ck_chat access covers every shipped caller, one op at a time" {
+    // Each chat_* / todo_* manifest gets exactly the op it is named for, and
+    // nothing else.
+    const single = [_]struct { tool: []const u8, op: []const u8 }{
+        .{ .tool = "chat_send", .op = "send" },
+        .{ .tool = "chat_history", .op = "history" },
+        .{ .tool = "chat_rooms", .op = "rooms" },
+        .{ .tool = "chat_subscribe", .op = "subscribe" },
+        .{ .tool = "todo_add", .op = "todo_add" },
+        .{ .tool = "todo_claim", .op = "todo_claim" },
+        .{ .tool = "todo_close", .op = "todo_close" },
+        .{ .tool = "todo_list", .op = "todo_list" },
+    };
+    for (single) |c| {
+        try std.testing.expect(chatAccessAllowed(c.tool, c.op));
+        try std.testing.expect(!chatAccessAllowed(c.tool, "send") or std.mem.eql(u8, c.op, "send"));
+        try std.testing.expect(!chatAccessAllowed(c.tool, "rooms") or std.mem.eql(u8, c.op, "rooms"));
+    }
+
+    // board.wasm is registered under eleven manifest names and needs two ops:
+    // "send" replicates a card into the room, "history" folds that log back on
+    // read. Granting one op per tool broke replication silently, because the
+    // board ignores a failed chat call — so this is pinned per name, not just
+    // for the bare "board".
+    for ([_][]const u8{
+        "board",        "board_add",     "board_claim",  "board_cost",
+        "board_delete", "board_depend",  "board_list",   "board_log",
+        "board_move",   "board_subtask", "board_update",
+    }) |tool| {
+        try std.testing.expect(chatAccessAllowed(tool, "send"));
+        try std.testing.expect(chatAccessAllowed(tool, "history"));
+        // Not a blanket grant: the board has no business subscribing or
+        // enumerating rooms.
+        try std.testing.expect(!chatAccessAllowed(tool, "rooms"));
+        try std.testing.expect(!chatAccessAllowed(tool, "subscribe"));
+        try std.testing.expect(!chatAccessAllowed(tool, "todo_add"));
+    }
+
+    // The janitor announces what it pruned, and only that.
+    try std.testing.expect(chatAccessAllowed("cmd_janitor", "send"));
+    try std.testing.expect(!chatAccessAllowed("cmd_janitor", "history"));
+
+    // Fail closed for anything else, including a name that merely looks close.
+    for ([_][]const u8{ "", "chat", "boardroom", "unrelated", "arena" }) |tool| {
+        for ([_][]const u8{ "send", "history", "rooms", "subscribe", "todo_add" }) |op| {
+            try std.testing.expect(!chatAccessAllowed(tool, op));
+        }
+    }
 }
 
 test "parallel appends to one file all land" {

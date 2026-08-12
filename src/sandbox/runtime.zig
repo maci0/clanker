@@ -360,6 +360,10 @@ test "chat wasm tool executes (send + history via ck_chat)" {
         .state_dir = "",
         .state_base_dir = tmp.dir,
         .config_json = "{\"op\":\"send\"}",
+        // ck_chat is gated per registered tool name, so a test that leaves this
+        // unset is testing a guest no manifest describes — and would keep
+        // passing if the policy stopped allowing the real one.
+        .tool_self_name = "chat_send",
     };
 
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
@@ -484,6 +488,9 @@ test "board wasm tool folds a room log longer than one history page completely" 
                 .state_dir = "",
                 .state_base_dir = dir,
                 .config_json = config_json,
+                // The board is registered under eleven names; "board" is the
+                // one that has to be allowed both ck_chat ops it uses.
+                .tool_self_name = "board",
             };
             const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
             defer mod.deinit();
@@ -550,6 +557,9 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
                 .state_dir = "",
                 .state_base_dir = dir,
                 .config_json = config_json,
+                // The board is registered under eleven names; "board" is the
+                // one that has to be allowed both ck_chat ops it uses.
+                .tool_self_name = "board",
             };
             const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
             defer mod.deinit();
@@ -620,6 +630,8 @@ test "chat wasm tool routes roomless todo ops to the private list" {
             .cfg = &cfg,
             .private_todos = &todos,
             .config_json = try std.fmt.allocPrint(std.testing.allocator, "{{\"op\":\"{s}\"}}", .{step.op}),
+            // Each todo_* op is its own registered tool, named for the op.
+            .tool_self_name = step.op,
         };
         defer std.testing.allocator.free(@constCast(sb.config_json));
         const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
@@ -641,6 +653,7 @@ test "chat wasm tool routes roomless todo ops to the private list" {
         .environ_map = &env_map,
         .cfg = &cfg,
         .config_json = "{\"op\":\"todo_add\"}",
+        .tool_self_name = "todo_add",
     };
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();
@@ -677,6 +690,7 @@ test "ask_user wasm tool routes {parent:true} to the parent answerer" {
         .network_allow = &.{},
         .environ_map = &env_map,
         .parent_ask = .{ .ctx = undefined, .call = &stubParentAnswer },
+        .tool_self_name = "ask_user",
     };
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();
@@ -694,6 +708,7 @@ test "ask_user wasm tool routes {parent:true} to the parent answerer" {
         .root_dir = "/tmp/ck-sandbox-test",
         .network_allow = &.{},
         .environ_map = &env_map,
+        .tool_self_name = "ask_user",
     };
     const mod_top = try ToolModule.load(std.testing.allocator, io, &sb_top, wasm);
     defer mod_top.deinit();
@@ -726,6 +741,7 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
         .cfg = &cfg,
         .state_dir = "",
         .state_base_dir = tmp.dir,
+        .tool_self_name = "model_stats",
     };
 
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/stats.wasm", std.testing.allocator, .limited(1 << 20));
