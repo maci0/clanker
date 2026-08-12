@@ -32,6 +32,11 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
     const reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     const tool_defs = try reg.toToolDefs(arena);
 
+    // Stdout is the JSON-RPC channel, so the operator-facing banner goes to
+    // stderr. Without it a human typing `clanker mcp` sees a silent hang and
+    // cannot tell a working server from a wedged one.
+    log.log(.info, "mcp: serving {d} tool(s) over stdio (JSON-RPC, one line per message); waiting for a client on stdin, Ctrl-C to stop", .{tool_defs.len});
+
     // One line in, one line out, and the read must return as soon as a line
     // arrives. readSliceShort here was a deadlock: it blocks until it fills its
     // buffer or sees EOF, so a client that writes one request and waits for the
@@ -300,7 +305,7 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cache_
     // The agent warns about malformed tool output on its own paths; a tool
     // driven over MCP reaches the caller without passing through any of them,
     // and this is the surface tools are usually probed from.
-    toolout.warnIfMalformedAlloc(gpa, name, out);
+    toolout.warnIfMalformed(gpa, name, out);
     try respondText(s, out, false);
 }
 

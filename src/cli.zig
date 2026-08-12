@@ -467,6 +467,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .gate;
             } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
                 opts.command = .workflow;
+            } else if (std.mem.eql(u8, a, "version")) {
+                opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
                 // Not a command: treat it as the task, the way every other
                 // agent CLI takes a bare prompt (`clanker "fix the bug"`).
@@ -475,6 +477,16 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 if (std.mem.findScalar(u8, a, ' ') == null and a.len < 24) {
                     setDiag(diag, a);
                     return error.UnknownCommand;
+                }
+                // A multi-word prompt whose FIRST word is a command name is a
+                // quoting accident ("clanker 'workflow list'" via a script
+                // variable), not a task. Running it would silently start a
+                // goal-steered agent turn and spend real tokens; refuse and
+                // say both outs.
+                const first = a[0..(std.mem.findScalar(u8, a, ' ') orelse a.len)];
+                if (commandForHelp(first) != null) {
+                    setDiag(diag, a);
+                    return error.PromptLooksLikeCommand;
                 }
                 opts.command = .run;
                 opts.task = a;
@@ -2647,15 +2659,28 @@ fn cmdPrune(init: std.process.Init, apply: bool) !void {
     defer mod.deinit();
     const raw = try mod.executeTool(ibuf[0..iw.end]);
     defer init.gpa.free(raw);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
-    if (parsed != .object) return;
-    if (parsed.object.get("text")) |t| {
-        if (t == .string) {
-            const stdout = std.Io.File.stdout();
-            try stdout.writeStreamingAll(init.io, t.string);
-            if (!std.mem.endsWith(u8, t.string, "\n")) try stdout.writeStreamingAll(init.io, "\n");
-        }
+    const stdout = std.Io.File.stdout();
+    // Empty output reads as "did it even run?": when the tool has nothing to
+    // report, say so, and on scans point at the flag that would act on it.
+    const fallback: []const u8 = if (apply) "nothing to sweep; state is clean.\n" else "nothing to sweep; state is clean (janitor --yes would act on anything listed here).\n";
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        try stdout.writeStreamingAll(init.io, fallback);
+        return;
+    };
+    if (parsed != .object) {
+        try stdout.writeStreamingAll(init.io, fallback);
+        return;
     }
+    const t = parsed.object.get("text") orelse {
+        try stdout.writeStreamingAll(init.io, fallback);
+        return;
+    };
+    if (t != .string or std.mem.trim(u8, t.string, " \t\r\n").len == 0) {
+        try stdout.writeStreamingAll(init.io, fallback);
+        return;
+    }
+    try stdout.writeStreamingAll(init.io, t.string);
+    if (!std.mem.endsWith(u8, t.string, "\n")) try stdout.writeStreamingAll(init.io, "\n");
 }
 
 fn cmdGraph(init: std.process.Init, opts: Options) !void {
