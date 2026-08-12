@@ -87,7 +87,10 @@ The tool target is `wasm32-freestanding` (not `wasip1`).
 
 `clanker improve-self "<instruction>"` runs a gated loop:
 
-1. Collect relevant source files as context.
+1. Collect relevant source files as context. With `improve.plan_phase` on
+   (default) the model first proposes a short plan of ideas for the run and
+   each iteration implements one, with ideas deduplicated against the run's
+   own plan and against past history (`plan.zig`).
 2. Ask the model for a patch proposal (JSON with `summary`, `rationale`, `changes`).
    The context is a byte-budgeted slice of a much larger tree, so the model may
    instead answer `{"need": ["src/cli.zig", "docs/ROADMAP.md"], "reason": "..."}`
@@ -98,11 +101,23 @@ The tool target is `wasm32-freestanding` (not `wasip1`).
    not patched — and excludes `state/`, `.env` and `config.local.*` entirely.
 3. Validate and apply the proposal to `state/staging/<id>` inside an isolated
    Git worktree (or the current checkout if worktree creation fails).
-4. Run gates: `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint.
+4. Run gates: `zig build`, `zig build test`, `zig build tools`, `zig fmt`,
+   lint, and (with `improve.capability_gate` on) the deterministic capability
+   evals, which `improve.eval_provider` can aim at a cheaper/faster provider
+   than the one writing patches. Textual invariants (`gate_invariants` in
+   `engine.zig`) additionally assert that load-bearing code — the gate call
+   sites themselves, the worktree's shared-state arrays — survives in the
+   staged text, so a patch cannot quietly remove its own safety net.
 5. On green, promote and commit the changes in that worktree, then merge the
    commit back into the original checkout as `clanker: <summary> [imp-<id>]`.
 
-The history is stored in `state/history/` and can be reverted with `clanker revert <id>`.
+The history is stored in `state/history/` and can be reverted with `clanker
+revert <id>`. Human reverts are a feedback channel, not just an undo: at
+startup the loop detects promoted improvements that a person later reverted,
+records them as reverted in `state/improvements.jsonl`, and renders them with
+their revert reasons in the planning prompt so the same idea is not proposed
+again. Hand-written `"class": "veto"` records in the same file work the same
+way for features rejected on sight.
 
 ### Evals and gates (`src/evals/`, `src/gate/checks.zig`)
 
@@ -110,7 +125,10 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 - `selfhost_build`: `zig build`
 - `selfhost_tests`: `zig build test`
 - `selfhost_tools`: `zig build tools`
-- plus `zig fmt` and a lint check.
+- plus `zig fmt`, a lint check, and — in the improve loop — the capability
+  evals (`evals/*.task.json` run against the staged binary) and a
+  git-deny-guard that parses staged `config.toml`/`config.local.toml` changes
+  and rejects any that would let `exec_pattern_allow` name a git command.
 
 ### MCP server (`src/mcp/server.zig`)
 
@@ -404,7 +422,7 @@ iter 2
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `eval [name]` | Run evals |
-| `improve-self "<instructions>"` | Run the self-improvement loop |
+| `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) on the current checkout |
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
@@ -564,7 +582,15 @@ Fields:
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
 - `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
-- `improve`: settings for self-improvement (`max_context_bytes`, `capability_gate`, `max_cache_bytes`).
+- `improve`: settings for self-improvement.
+  - `max_context_bytes`: byte budget for the proposal context slice.
+  - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
+  - `capability_gate`: run the deterministic capability evals as a promotion gate (default true).
+  - `eval_provider`: provider name the staged capability-eval agents run on, so a fast/cheap model can score capability while a stronger one writes patches. Unset uses the loop's own provider.
+  - `plan_phase`: plan-then-patch — propose a deduplicated idea list once per run, then implement one idea per iteration (default true).
+  - `inert_gate`: reject changes classified as doing nothing observable (default true).
+  - `max_consecutive_test_only`: how many test-only changes may land in a row before one must touch behavior (default 3).
+  - `max_cache_bytes`: cap on the staging build cache before it is dropped.
 
 ### Environment variables
 
