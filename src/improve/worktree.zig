@@ -279,7 +279,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh worktree). The worktree builds its own zig-out once at run start;
     // staging already reuses the build cache via --cache-dir, so the link
     // bought nothing there anyway.
-    for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
+    for ([_][]const u8{ ".env", "config.local.toml", "config.local.json" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
