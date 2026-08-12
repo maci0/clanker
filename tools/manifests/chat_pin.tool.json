@@ -1,0 +1,26 @@
+{
+  "name": "chat_pin",
+  "description": "Pin or unpin a message in a chatroom (toggle). Pinned messages are shown in the channel's pin list. Also supports listing all pinned message ids for a room.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room name"
+      },
+      "msg_id": {
+        "type": "string",
+        "description": "Message id to pin/unpin (omit to list pins)"
+      }
+    },
+    "required": ["room"]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "pin"
+  },
+  "category": "chat"
+}

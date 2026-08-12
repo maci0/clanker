@@ -1,6 +1,7 @@
 {
   "name": "alarm",
   "description": "Set a reminder for your future self. A due alarm appears in the system prompt of every later run until handled, so use it to follow up on things that need time to pass: \"check whether CI went green\", \"re-poll the peer\", \"revisit the stuck goal\". One-shot: {\"action\":\"set\",\"message\":\"...\",\"in_minutes\":20} or with \"at\":<epoch seconds>. Recurring: add \"every_minutes\":30. {\"action\":\"list\"} shows all with due flags. When you have acted on a due alarm, call {\"action\":\"done\",\"id\":\"a-...\"}: a one-shot is removed, a recurring one advances to its next occurrence. {\"action\":\"cancel\",\"id\":\"a-...\"} deletes outright.",
+  "llm_description": "Set a future reminder; appears in the system prompt when due. actions: set{message,in_minutes|at,every_minutes?}, list, done{id}, cancel{id}.",
   "wasm": "zig-out/tools/alarm.wasm",
   "input_schema": {
     "type": "object",

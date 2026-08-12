@@ -1217,7 +1217,8 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .run-detail-output:empty::before { content: "(nothing recorded for this node)"; color: var(--fg-muted); }
 .run-detail-note {
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-  margin: 0 0 0.5rem; padding-left: 0.6rem; border-left: 2px solid var(--border);
+  margin: 0 0 0.5rem; padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm); background: var(--surface-2);
 }
 .diff-view { font-family: var(--mono); font-size: 12px; line-height: 1.5; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
 .diff-header { padding: 0.4rem 0.6rem; background: var(--surface-2); border-bottom: 1px solid var(--rule); font-weight: 600; color: var(--fg-muted); font-size: 11px; }
@@ -1311,7 +1312,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 /* What a card action reads as: a report of something that happened, not
    something anyone typed. */
 .chat-text.chat-action { color: var(--fg-muted); font-style: italic; }
-.chat-unfurl { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--accent-text); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 0.3rem 0.5rem; background: var(--surface-2); text-decoration: none; }
+.chat-unfurl { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); border-radius: var(--radius); padding: 0.3rem 0.5rem; background: var(--surface-2); text-decoration: none; }
 .chat-composer { display: flex; gap: 0.5rem; margin-top: 0.75rem; align-items: center; }
 .chat-composer input {
   flex: 1; min-width: 12rem; min-height: 40px; padding: 0.45rem 0.75rem 0.45rem 2.2rem;
@@ -1412,6 +1413,12 @@ button.tool-name:hover { color: var(--accent-text); }
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
   margin: 0.25rem 0 0.75rem; overflow-wrap: anywhere;
 }
+.tool-detail-llm-desc {
+  max-width: var(--measure);
+  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
+  margin: -0.4rem 0 0.75rem; overflow-wrap: anywhere;
+}
+.tool-detail-llm-desc strong { color: var(--fg-muted); font-weight: 700; }
 .tool-detail-h {
   font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-muted);
@@ -1786,6 +1793,32 @@ mark {
 }
 .goal-form label { color: var(--fg); font-family: var(--mono); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.02em; }
 .goal-form input { flex: 1 1 16rem; min-width: 0; }
+.board-goal-form {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 9rem auto;
+  align-items: end; gap: var(--space-2) var(--space-3);
+  padding: var(--space-4); background: var(--surface-raised); border-radius: var(--radius);
+}
+.board-goal-form label { grid-row: 1; }
+.board-goal-form input, .board-goal-form button { grid-row: 2; }
+.board-goal-form label { flex-basis: auto; }
+.board-filter {
+  margin-top: var(--space-3); border-radius: var(--radius);
+  display: grid; grid-template-columns: auto minmax(10rem, 1fr) auto auto auto minmax(5rem, auto) auto minmax(5rem, auto) auto minmax(5rem, auto);
+  align-items: center;
+}
+.board-list-controls { margin-top: var(--space-3); }
+.board-list-controls[hidden] { display: none; }
+.board-list-view { margin-top: var(--space-3); overflow-x: auto; }
+.board-empty {
+  max-width: 42rem; margin: var(--space-5) auto; padding: var(--space-4) 0;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; color: var(--fg-muted);
+}
+.board-empty[hidden] { display: none; }
+.board-empty strong { color: var(--fg); font-size: var(--step-1); }
+.board-empty span { max-width: 62ch; margin: 0 auto; }
+.board-activity { margin-top: var(--space-4); border-top: 1px solid var(--rule); padding-top: var(--space-3); }
+.board-activity > summary { color: var(--fg); font-weight: 700; cursor: pointer; }
+.board-activity-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin: var(--space-3) 0; color: var(--fg-muted); font-size: var(--step--1); }
 .goal-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
 .goal-actions:empty { display: none; margin: 0; }
 /* The per-run budget box sits on the same rule as its Work on this button. */
@@ -2110,6 +2143,8 @@ h2#session-title {
 .detail-row label { flex: 0 0 5.5rem; color: var(--fg-muted); font-family: var(--sans); font-size: 12px; font-weight: 500; }
 .detail-row input[type="text"], .detail-row input[type="date"], .detail-row textarea, .detail-row select { flex: 1; min-width: 0; }
 .detail-row input[type="checkbox"] { flex: none; }
+.checklist-add input { flex: 1 1 auto; min-width: 0; }
+.checklist-add button { flex: none; }
 .detail-row label.subtask {
   flex: 1; min-width: 0; text-transform: none; letter-spacing: normal;
   font-family: var(--sans); font-size: var(--step-0);
@@ -2294,9 +2329,22 @@ h2#session-title {
   .fleet-child-group, .fleet-children { gap: var(--space-1); }
   #view-board .board { gap: var(--space-3); }
   #view-board .board-col { min-width: 10rem; }
+  .board-goal-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .board-goal-form label, .board-goal-form input, .board-goal-form button { grid-row: auto; }
+  .board-goal-form label { margin-top: var(--space-2); }
+  .board-filter { grid-template-columns: auto minmax(10rem, 1fr) auto auto; }
 }
 @media (max-width: 40rem) {
   .fleet-children, .fleet-child-group, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }
+  #view-board .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
+  #view-board .section-head .toolbar-actions { gap: var(--space-2); }
+  #view-board .section-head button { min-height: 44px; }
+  .board-goal-form { display: flex; padding: var(--space-3); }
+  .board-goal-form input, .board-goal-form button { width: 100%; min-height: 44px; }
+  .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
+  .board-filter > input[type="search"] { flex: 1 1 14rem; min-height: 44px; }
+  .board-filter select { min-height: 44px; }
+  .board-empty { margin: var(--space-4) auto; align-items: flex-start; text-align: left; }
 }
 
 /* Arena: the match picker rows. The stage reuses .fleet-floor, and the
@@ -2320,8 +2368,7 @@ h2#session-title {
 .arena-combatant[data-winner="true"] .arena-combatant-name { color: var(--ok, #2fae4d); font-weight: 600; }
 .arena-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .arena-hp { width: 90px; height: 7px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; flex: none; }
-.arena-hp-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.4s ease; }
-@media (prefers-reduced-motion: reduce) { .arena-hp-fill { transition: none; } }
+.arena-hp-fill { display: block; height: 100%; border-radius: 999px; }
 .arena-graph > summary { cursor: pointer; font-size: 12px; color: var(--fg-muted); margin: 4px 0; }
 .arena-round { margin: 0.5rem 0; }
 .arena-round > summary { cursor: pointer; font-weight: 600; font-size: 13px; margin: 0.4rem 0; }

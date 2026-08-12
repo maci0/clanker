@@ -77,7 +77,7 @@ pub const max_body_len = 8 * 1024;
 /// The columns every room's board has. Not per-room state: a column set that
 /// replicated would need its own convergence rules for a value no caller has
 /// asked to change, so the workflow is fixed and the cards move through it.
-pub const columns = [_][]const u8{ "backlog", "ready", "doing", "review", "done" };
+pub const columns = [_][]const u8{ "backlog", "ready", "doing", "review", "done", "archive" };
 pub const default_column = "backlog";
 pub const done_column = "done";
 
@@ -148,9 +148,10 @@ pub const Card = struct {
     usage: Usage = .{},
 
     /// The three words the todo tools have always answered with, now read off
-    /// the column instead of a separate flag.
+    /// the column instead of a separate flag. Archived work is also closed:
+    /// archive changes retention/visibility, not whether the work is pending.
     pub fn status(self: *const Card) []const u8 {
-        if (std.mem.eql(u8, self.column, done_column)) return "closed";
+        if (std.mem.eql(u8, self.column, done_column) or std.mem.eql(u8, self.column, "archive")) return "closed";
         if (self.assignee.len > 0) return "claimed";
         return "open";
     }
@@ -685,6 +686,19 @@ test "a close and a later move converge on the move, in either order" {
     try std.testing.expectEqualStrings("doing", cb[0].column);
     // Nobody claimed it, and leaving done put it back to being unowned work.
     try std.testing.expectEqualStrings("open", cb[0].status());
+}
+
+test "archive retains a card and reports it closed" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const add = try encodeAdd(arena, "retained goal");
+    const archive = try encode(arena, .{ .action = "move", .todo = "m1", .column = "archive" });
+    const folded = try derive(arena, &.{ msg("m1", "x", 100, add), msg("m2", "x", 200, archive) });
+    try std.testing.expectEqual(@as(usize, 1), folded.len);
+    try std.testing.expectEqualStrings("archive", folded[0].column);
+    try std.testing.expectEqualStrings("closed", folded[0].status());
 }
 
 test "edits converge on the latest writer whatever the arrival order" {

@@ -10,7 +10,15 @@ const strField = @import("../util/json.zig").strField;
 
 pub const Tool = struct {
     name: []const u8,
+    /// The human-facing description: what a person reads in the webui Tools
+    /// view or the REPL's tool detail. Free to be as long as it needs to be.
     description: []const u8,
+    /// The model-facing description: sent in the catalog line every turn and
+    /// in the full schema when this tool is core or revealed, so its cost is
+    /// paid on nearly every request. Defaults to `description` when a
+    /// manifest omits `llm_description` (see `parseDescriptor`), so an
+    /// unmigrated tool still works — just not as cheaply.
+    llm_description: []const u8 = "",
     /// Wasm file name relative to the tools directory.
     wasm: []const u8,
     input_schema: json.Value,
@@ -345,7 +353,7 @@ pub const Registry = struct {
             // A tool whose schema is already loaded is marked, so the model
             // does not spend a call asking for what it can already call.
             const mark: []const u8 = if (revealed.contains(name)) "* " else "  ";
-            try out.writer.print("{s}{s}: {s}\n", .{ mark, name, firstLine(t.description) });
+            try out.writer.print("{s}{s}: {s}\n", .{ mark, name, firstLine(t.llm_description) });
         }
         return out.written();
     }
@@ -383,7 +391,7 @@ pub const Registry = struct {
             if (!in_core and !revealed.contains(t.name)) continue;
             try out.append(arena, .{
                 .name = t.name,
-                .description = t.description,
+                .description = t.llm_description,
                 .input_schema = t.input_schema,
                 .internal = t.internal,
             });
@@ -399,7 +407,7 @@ pub const Registry = struct {
             if (t.internal or !t.enabled) continue;
             try out.append(arena, .{
                 .name = t.name,
-                .description = t.description,
+                .description = t.llm_description,
                 .input_schema = t.input_schema,
                 .internal = t.internal,
             });
@@ -436,9 +444,13 @@ pub const Registry = struct {
             .object => |o| o,
             else => return error.DescriptorNotObject,
         };
+        const description = try strField(obj, "description");
         var t = Tool{
             .name = try strField(obj, "name"),
-            .description = try strField(obj, "description"),
+            .description = description,
+            // Falls back to the full description until the manifest carries
+            // its own compressed one.
+            .llm_description = description,
             .wasm = try strField(obj, "wasm"),
             // A schema without a "type" is rejected by the provider, and it
             // rejects the *whole* request: one malformed manifest takes every
@@ -446,6 +458,9 @@ pub const Registry = struct {
             // schema is what every tool in this registry has.
             .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
         };
+        if (obj.get("llm_description")) |ld| {
+            if (ld == .string and ld.string.len > 0) t.llm_description = ld.string;
+        }
         if (obj.get("check")) |c| {
             if (c == .bool) t.check = c.bool;
         }

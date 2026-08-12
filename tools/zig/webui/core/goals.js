@@ -20,20 +20,20 @@ export function goalStatusLabel(g, running) {
   var s = g.status || "unknown";
   if (s === "review") return "waiting for review";
   if (s === "active" && running) return "running";
+  if (s === "archived" || s === "abandoned") return "archived";
   return s;
 }
 
 export function isActiveGoal(g) { return (g.status || "active") === "active"; }
 
-/* The board column a goal's mirror card must sit in, or null when the goal
-   does not pin one (an active goal that nobody is running lives wherever it
-   was parked; done/abandoned goals only pin a column via explicit re-sync). */
+/* The board column a goal's card must sit in, or null when an idle active
+   goal is deliberately parked in one of the planning columns. */
 export function goalPinnedColumn(g, running) {
   var s = g.status || "active";
   if (s === "done") return "done";
   if (s === "review") return "review";
+  if (s === "archived" || s === "abandoned") return "archive";
   if (s === "active" && running) return "doing";
   return null;
 }
-
 

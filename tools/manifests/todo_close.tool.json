@@ -1,6 +1,7 @@
 {
   "name": "todo_close",
   "description": "Close a private todo. See kanban_move for shared work.",
+  "llm_description": "Close a private todo (id from todo_add/todo_list). Use kanban_move for shared work.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

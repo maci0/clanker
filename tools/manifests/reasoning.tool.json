@@ -1,6 +1,7 @@
 {
   "name": "reasoning",
   "description": "Retrieve your own past chain-of-thought traces from state/reasoning.jsonl. WHEN TO USE: call this to introspect prior reasoning \u2014 spot repeated mistakes, review how you reached a decision, extract lessons, or debug a flawed thinking step. WHEN NOT TO USE: do NOT use this to process, summarize, analyze, or extract information from arbitrary text or documents \u2014 use the 'rlm' tool for that instead. INPUT: a JSON object with an optional integer field 'last' (e.g. {\"last\": 5}) to return only the N most recent traces; omit it or pass {} to get all traces.",
+  "llm_description": "Retrieve your own past chain-of-thought traces (state/reasoning.jsonl) to introspect prior reasoning. Not for processing arbitrary text (use rlm for that). Input: {last?: N} for N most recent, omit/{} for all.",
   "wasm": "zig-out/tools/reasoning.wasm",
   "input_schema": {
     "type": "object",

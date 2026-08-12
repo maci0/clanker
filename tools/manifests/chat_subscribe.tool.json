@@ -1,6 +1,7 @@
 {
   "name": "chat_subscribe",
   "description": "Join or leave a clanker chatroom for this instance (on=true joins, on=false leaves). Subscribing makes this clanker receive that room's messages from peers and include it in chat_rooms. Config defaults in config.toml \"chatrooms\".\"rooms\" still apply.",
+  "llm_description": "Join/leave a chatroom for this instance. {room, on?} (on=true join, default; false leave). Subscribed rooms receive peer messages and appear in chat_rooms.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

@@ -15,6 +15,7 @@ var el = null;
 var _setTabCount = null;
 var _openRun = null;
 var _getKnownPeers = null;
+var _renderBoardList = null;
 
 
 export var board = { columns: [], cards: [] };
@@ -88,12 +89,9 @@ export function postBoard(payload, status) {
       // screen; the write itself still happened.
       if (forCurrentRoom) renderBoard(d.board || board);
       // A card move is the board speaking about the work's state. When the
-      // card mirrors a goal, the goal follows: done -> the goal is done,
-      // review -> it waits for review, and pulling a card back out of
-      // done/review reopens the goal. Anywhere else changes nothing — an
-      // active goal's card may sit in backlog, ready or doing, and an
-      // abandoned goal stays abandoned until someone reactivates it
-      // deliberately.
+      // A goal card follows its lane: Done and Review are verdict states,
+      // Archive is retained history, and pulling it back into planning
+      // reactivates it. Done -> Review is the visible re-evaluation action.
       if (!skipGoalSync && forCurrentRoom && payload.op === "move") {
         var gid = goalIdForCard(payload.id);
         var goal = null;
@@ -109,8 +107,10 @@ export function postBoard(payload, status) {
             postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
           } else if (payload.column === "review" && cur !== "review") {
             postGoal({ id: gid, status: "review" }, "Goal moved to review from the board.");
-          } else if (payload.column !== doneColumn() && payload.column !== "review" &&
-                     (cur === "done" || cur === "review")) {
+          } else if (payload.column === "archive" && cur !== "archived") {
+            postGoal({ id: gid, status: "archived" }, "Goal archived and retained for future learning.");
+          } else if (payload.column !== doneColumn() && payload.column !== "review" && payload.column !== "archive" &&
+                     (cur === "done" || cur === "review" || cur === "archived" || cur === "abandoned")) {
             postGoal({ id: gid, status: "active" }, "Goal reactivated from the board.");
           }
         }
@@ -186,6 +186,7 @@ export function renderBoard(next) {
     return T.option({ value: c.id }, c.title);
   }));
   if (keepCol) el.cardColumn.value = keepCol;
+  if (_renderBoardList) _renderBoardList();
 }
 
 function boardColumn(col, s) {
@@ -212,7 +213,7 @@ function boardColumn(col, s) {
     emptySlot.textContent = "Drop here — or ";
     var addLink = document.createElement("button");
     addLink.type = "button"; addLink.className = "secondary";
-    addLink.textContent = "Add card";
+    addLink.textContent = "Add goal";
     addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
     emptySlot.appendChild(addLink);
     items.push(emptySlot);
@@ -224,8 +225,8 @@ function boardColumn(col, s) {
 
   var quickAdd = T.div({ class: "board-quick-add", hidden: true });
   var qaInput = document.createElement("input");
-  qaInput.type = "text"; qaInput.placeholder = "Card title…"; qaInput.maxLength = 500;
-  var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Add";
+  qaInput.type = "text"; qaInput.placeholder = "Goal objective…"; qaInput.maxLength = 500;
+  var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Define";
   var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "secondary"; qaCancel.textContent = "✕";
   quickAdd.appendChild(qaInput); quickAdd.appendChild(qaSave); quickAdd.appendChild(qaCancel);
   function openQuickAdd(){ quickAdd.hidden = false; qaInput.focus(); }
@@ -250,8 +251,10 @@ function boardColumn(col, s) {
   });
   function doCreate(){
     var t = qaInput.value.trim(); if (!t) return;
-    qaSave.disabled = true;
-    postBoard({ op: "create", title: t, column: col.id }, "Card added to " + col.title + ".").finally(function(){ qaSave.disabled = false; closeQuickAdd(); });
+    el.goalObjective.value = t;
+    closeQuickAdd();
+    el.goalCriterion.focus();
+    el.boardStatus.textContent = "Add the completion criterion to create this goal card.";
   }
   qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
   var colEl = T.section({
@@ -287,7 +290,7 @@ function boardColumn(col, s) {
         (function(){
           var add = document.createElement("button");
           add.type = "button"; add.className = "secondary"; add.textContent = "+";
-          add.title = "Add card to " + col.title;
+          add.title = "Define a new goal card";
           add.style.minHeight = "24px"; add.style.padding = "0 0.45rem"; add.style.fontSize = "12px"; add.style.borderRadius = "999px";
           add.addEventListener("click", function(e){
             e.stopPropagation();
@@ -296,36 +299,6 @@ function boardColumn(col, s) {
           });
           var wrap = document.createElement("span");
           wrap.appendChild(add);
-          var isDone = (col.id === "done" || col.title.toLowerCase() === "done");
-          var isArchived = false;
-          try{ isArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
-          if (isDone) {
-            var arch = document.createElement("button");
-            var archived = isArchived && document.querySelector('[data-column="done"]') && document.querySelector('[data-column="done"]').hidden;
-            // reflect actual hidden state if already applied
-            try{ if (window.clankerBoardArchive) archived = true; }catch(_){}
-            arch.type = "button"; arch.className = "secondary"; arch.textContent = archived ? "Unarchive" : "Archive";
-            arch.title = archived ? "Show done cards again" : "Archive done cards (hide from this view)";
-            arch.style.minHeight = "24px"; arch.style.padding = "0 0.45rem"; arch.style.fontSize = "11px"; arch.style.borderRadius = "999px";
-            arch.addEventListener("click", function(e){
-              e.stopPropagation();
-              var currentlyArchived = false;
-              try{ currentlyArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
-              try{ if (window.clankerBoardArchive) currentlyArchived = true; }catch(_){}
-              var nextArchived = !currentlyArchived;
-              try{
-                if (nextArchived) window.localStorage.setItem("clanker.boardArchive", "1");
-                else window.localStorage.removeItem("clanker.boardArchive");
-                window.clankerBoardArchive = nextArchived;
-              }catch(_){}
-              var doneCol2 = document.querySelector('[data-column="done"]');
-              if (doneCol2) doneCol2.hidden = nextArchived;
-              try{ renderBoard(null); }catch(_){}
-              arch.textContent = nextArchived ? "Unarchive" : "Archive";
-              arch.title = nextArchived ? "Show done cards again" : "Archive done cards (hide from this view)";
-            });
-            wrap.appendChild(arch);
-          }
           return wrap;
         })()
       ),
@@ -702,8 +675,10 @@ function showCardDetail(id) {
   var asGoal = document.createElement("button");
   asGoal.type = "button";
   asGoal.className = "secondary";
-  asGoal.textContent = "Work as goal";
-  asGoal.title = "Run this card as a goal — reuses the goal it already mirrors, or creates one. The card moves to Doing, then to Review when the run finishes.";
+  asGoal.textContent = c.goal ? "Start work" : "Convert to goal";
+  asGoal.title = c.goal
+    ? "Start a run for this goal. The card moves to Doing, then Review when the run finishes."
+    : "Turn this legacy card into a goal and start it.";
   asGoal.addEventListener("click", function () {
     delete cardDrafts[c.id];
     workCardAsGoal(c);
@@ -722,8 +697,9 @@ function showCardDetail(id) {
   });
   fields.appendChild(del);
 
-  // ---- subtasks ----
-  var subs = detailSection(box, "Subtasks");
+  // Stored as `subtasks` for tool/API compatibility; on the board these are
+  // checklist items, because each one is independently checked off.
+  var subs = detailSection(box, "Checklist");
   (c.subtasks || []).forEach(function (s) {
     var row = document.createElement("div");
     row.className = "detail-row";
@@ -749,9 +725,9 @@ function showCardDetail(id) {
     drop.type = "button";
     drop.className = "rail-pin";
     drop.appendChild(icon("strike", 14));
-    drop.setAttribute("aria-label", "Remove subtask: " + s.text);
+    drop.setAttribute("aria-label", "Remove checklist item: " + s.text);
     drop.addEventListener("click", function () {
-      postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed subtask: " + s.text);
+      postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed checklist item: " + s.text);
     });
     row.appendChild(box);
     row.appendChild(lab);
@@ -784,14 +760,31 @@ function showCardDetail(id) {
     progRow.appendChild(pctLabel);
     subs.appendChild(progRow);
   }
-  var subIn = input("card-f-subtask", "text", "", "Add a subtask…");
+  var subIn = input("card-f-subtask", "text", "", "Add a checklist item…");
   subIn.maxLength = 500;
+  var subAdd = document.createElement("button");
+  subAdd.type = "button";
+  subAdd.className = "secondary";
+  subAdd.textContent = "Add item";
+  function addChecklistItem() {
+    var text = subIn.value.trim();
+    if (!text) return;
+    subAdd.disabled = true;
+    postBoard({ op: "subtask_add", id: c.id, text: text }, "Checklist item added.")
+      .then(function (ok) { if (ok) subIn.value = ""; })
+      .finally(function () { subAdd.disabled = false; });
+  }
   subIn.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" || !subIn.value.trim()) return;
     e.preventDefault();
-    postBoard({ op: "subtask_add", id: c.id, text: subIn.value.trim() }, null);
+    addChecklistItem();
   });
-  subs.appendChild(subIn);
+  subAdd.addEventListener("click", addChecklistItem);
+  var checklistAdd = document.createElement("div");
+  checklistAdd.className = "detail-row checklist-add";
+  checklistAdd.appendChild(subIn);
+  checklistAdd.appendChild(subAdd);
+  subs.appendChild(checklistAdd);
 
   // ---- dependencies ----
   var deps = detailSection(box, "Waiting on");
@@ -801,7 +794,7 @@ function showCardDetail(id) {
     row.className = "detail-row";
     var name = document.createElement("span");
     name.textContent = dep ? dep.title + "  ·  " + dep.column : depId + " (missing)";
-    if (dep && dep.column !== doneColumn()) name.className = "dep-open";
+    if (dep && dep.column !== doneColumn() && dep.column !== "archive") name.className = "dep-open";
     var drop = document.createElement("button");
     drop.type = "button";
     drop.className = "rail-pin";
@@ -933,12 +926,13 @@ export function bindBoard(deps) {
 
   bind(el.board, boardState, function (s) {
     var open = 0;
-    var done = s.columns.length ? s.columns[s.columns.length - 1].id : "done";
     s.cards.forEach(function (c) {
-      if (c.column !== done && (!s.mine || c.assignee === s.me)) open += 1;
+      if (c.column !== "done" && c.column !== "archive" && (!s.mine || c.assignee === s.me)) open += 1;
     });
     _setTabCount("board", open);
     el.boardEmpty.hidden = s.cards.length > 0;
+    var listControls = document.getElementById("board-list-controls");
+    if (listControls) listControls.hidden = s.cards.length === 0;
 
     // The detail panel is rebuilt with the board because it shows one of these
     // cards; the edit draft and the focus snapshot carry across it.
@@ -1075,21 +1069,10 @@ export function bindBoard(deps) {
       });
       table.appendChild(tbody); listView.appendChild(table);
     }
-    // bind on boardState changes
-    var _origRenderBoard = renderBoard;
-    // wrap to also refresh list
-    window.renderBoard = function(next){ var r=_origRenderBoard(next); try{ renderList(); }catch(_){} return r; };
-    // also directly bind to state
-    try{
-      // bind doesn't expose subscribe; poll via mutation: boardState.val setter triggers list
-      var _lastCards="";
-      setInterval(function(){
-        try{
-          var cur=JSON.stringify(boardState.val.cards||[])+boardState.val.text+boardState.val.mine+boardState.val.blockedOnly+boardState.val.priority+boardState.val.assignee;
-          if(cur!==_lastCards){ _lastCards=cur; renderList(); }
-        }catch(_){}
-      }, 600);
-    }catch(_){}
+    // Board writes already flow through renderBoard, so the list can update
+    // synchronously with the columns instead of polling forever in the
+    // background to rediscover the same state.
+    _renderBoardList = renderList;
     if(sortSel) sortSel.addEventListener("change", renderList);
     // initial
     try{ renderList(); }catch(_){}

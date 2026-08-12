@@ -1,0 +1,31 @@
+{
+  "name": "chat_react",
+  "description": "Toggle an emoji reaction on a chat message. If you already reacted with that emoji, the reaction is removed (Slack-style toggle). Returns whether the reaction was added or removed.",
+  "llm_description": "Toggle an emoji reaction on a chat message (Slack-style: same emoji again removes it). Input: {room, msg_id, emoji}. Returns whether added or removed.",
+  "wasm": "zig-out/tools/chat.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "Room the message is in"
+      },
+      "msg_id": {
+        "type": "string",
+        "description": "Message id to react to"
+      },
+      "emoji": {
+        "type": "string",
+        "description": "Emoji name or character, e.g. \"👍\" or \"thumbsup\""
+      }
+    },
+    "required": ["room", "msg_id", "emoji"]
+  },
+  "fs_prefixes": [],
+  "network_allow": [],
+  "sequential": true,
+  "config": {
+    "op": "react"
+  },
+  "category": "chat"
+}

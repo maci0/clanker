@@ -94,6 +94,8 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_llm` | One-shot model call; denied unless the descriptor sets `"llm": true` |
 | `ck_llm_many` | One prompt to several provider/model targets at once, each on its own thread, joined before returning: `{"prompt","system","max_tokens","targets":[{"provider","model"}]}` in, a JSON array of `{provider,model,ok,text\|error,ms,tokens}` in target order out. A guest is single-threaded, so a loop of `ck_llm` costs the sum of the models' latencies and this costs the slowest one. One failing target is a failing element, never a failing call. Same `"llm": true` grant and same session token budget as `ck_llm`; capped at 8 targets |
 | `ck_subagent` | Nested bounded agent run; needs a parent agent run to attach to |
+| `ck_swarm` | Fan-out: run multiple sub-agent tasks concurrently (capped at `max_swarm_tasks`); needs a parent agent run to attach to |
+| `ck_tool` | Invoke another WASM tool from within a tool; denied for recursive calls and depth > 0 |
 | `ck_ask` | Put a multiple-choice question to the human, when one is attached |
 | `ck_chat` | Send to or read a chatroom |
 | `ck_stats` | Token usage recorded so far |
@@ -191,9 +193,9 @@ peer keeps the message only when it subscribes to that room.
   marked `sequential` so concurrent tool calls never race on the log file.
 - Shared board: room-scoped `todo_*` (a `room` param on the shared list) was
   removed once the board covered the same need (see
-  `docs/adrs/0002-private-todos-vs-shared-board.md`). `board_add`, `board_move`,
-  `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`,
-  `board_cost`, `board_list`, `board_delete` (`tools/zig/board.zig`, one
+  `docs/adrs/0002-private-todos-vs-shared-board.md`). `kanban_add`, `kanban_move`,
+  `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`,
+  `kanban_cost`, `kanban_list`, `kanban_delete` (`tools/zig/board.zig`, one
   `board.wasm` module, one op each) work a shared Kanban board folded from
   the board room's chat log (see
   `docs/adrs/0001-board-is-a-chatroom.md`), with subtasks, dependencies, a
@@ -323,7 +325,7 @@ changes as tools are added.
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
 | `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_blind.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
-| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
+| `kanban_add`, `kanban_move`, `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_list`, `kanban_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
 Internal tools, never offered to the model:
 
@@ -481,7 +483,7 @@ iter 2
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
 | `stats` | Token usage per provider/model |
-| `serve [--host A] [--allow-host N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
@@ -764,17 +766,17 @@ The authority rule is:
 |-----------|--------|
 | `127.0.0.1:17921`, `192.168.1.5:17921`, `[::1]:17921`, any IP literal at the listen port | yes |
 | `localhost:17921` | yes |
-| a name passed to `--allow-host`, at the listen port or with no port | yes |
+| a name passed to `--serve-as`, at the listen port or with no port | yes |
 | any other name, e.g. `attacker.example:17921` | no |
 | any authority at a different port, or missing/duplicate `Host` | no |
 
 An IP literal is accepted because DNS rebinding needs a *name* whose resolution the attacker controls, and there is no resolution step to subvert in a literal. That is what makes `--host 0.0.0.0` usable on its own: a LAN client browsing to `http://192.168.1.5:17921/` is served. A name is not accepted on the same reasoning, so reaching the server through a real hostname (a reverse proxy, a `.lan` entry, a tailnet name) means naming it:
 
 ```sh
-clanker serve --host 0.0.0.0 --allow-host clanker.lan
+clanker serve --host 0.0.0.0 --serve-as clanker.lan
 ```
 
-`--allow-host` is repeatable, matched case-insensitively, and takes `--allow-host x` or `--allow-host=x`. Hot reload re-execs with the same `--host`, `--port` and `--allow-host` set, so a rebuild does not quietly narrow the policy.
+`--serve-as` is repeatable, matched case-insensitively, and takes `--serve-as x` or `--serve-as=x`. Hot reload re-execs with the same `--host`, `--port` and `--serve-as` set, so a rebuild does not quietly narrow the policy.
 
 ### `POST /api/run`
 

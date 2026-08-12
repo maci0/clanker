@@ -3,9 +3,9 @@
 ## Status
 
 Shipped. Single source of truth: `tools/zig/board.zig` + `tools/zig/cards.zig`.
-Surface: web UI board view + ten agent-facing tools (`board_list`,
-`board_add`, `board_move`, `board_update`, `board_claim`, `board_log`,
-`board_subtask`, `board_depend`, `board_cost`, `board_delete`, plus the
+Surface: web UI board view + ten agent-facing tools (`kanban_list`,
+`kanban_add`, `kanban_move`, `kanban_update`, `kanban_claim`, `kanban_log`,
+`kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_delete`, plus the
 multiplexed internal `board` entry point the web UI calls).
 
 ## Problem
@@ -69,13 +69,13 @@ the cursor never splits a timestamp group (`readHistoryAsc` in
 **Ops.** `list`, `create`/`add`, `update`, `move`, `claim`, `assign`,
 `close`, `delete`, `log`, `usage`, `subtask_add`, `subtask_toggle`,
 `subtask_remove`, `depend_add`, `depend_remove`. Eight of the ten
-agent-facing tools pin their op in the descriptor's `config`; `board_subtask`
-and `board_depend` instead take `op` as a request field (one tool, several
+agent-facing tools pin their op in the descriptor's `config`; `kanban_subtask`
+and `kanban_depend` instead take `op` as a request field (one tool, several
 sub-ops each) since a subtask/dependency action needs more than a fixed verb.
 The internal multiplexed `board` entry point always names the op in the
 request. Aliases (`subtask`/`subtask_id`, `on`/`depends_on`, `run`/`run_id`,
 and `who`/`assignee` on create and update) are accepted so old callers keep
-working. `create`/`board_add` takes `assignee` too, so a card can be put on
+working. `create`/`kanban_add` takes `assignee` too, so a card can be put on
 someone the moment it exists; the assignment folds as if stamped by the add
 itself, and a later `assign` or `claim` outranks it by the usual rule.
 
@@ -84,7 +84,7 @@ column, priority in {low, normal, high}, existing card id, no
 self-dependency, non-negative finite cost. A request wrong in both op and id
 is told the op is not real first.
 
-**Views, not permissions.** `board_list` accepts `who` to narrow the answer
+**Views, not permissions.** `kanban_list` accepts `who` to narrow the answer
 to what one clanker is concerned with. It narrows the answer, not the reach.
 
 ## Data model (per card)
@@ -103,17 +103,17 @@ runs — this one field is not itself an array, unlike the others above).
 
 ## Known issues
 
-- Resolved: `board_add` / `board_update` used to advertise an `assignee` field
+- Resolved: `kanban_add` / `kanban_update` used to advertise an `assignee` field
   that nothing read (`ignore_unknown_fields` silently dropped it). Both now
   honour `assignee` (and `who` as an alias): create stamps an initial
   assignment folded with the add itself; update reassigns or clears.
-- Resolved: `board_move`'s `position` field was a no-op (no ordering concept
+- Resolved: `kanban_move`'s `position` field was a no-op (no ordering concept
   exists in `cards.zig` or `board.zig`'s `move` handling). Removed from the
   manifest; see Open questions for card ordering as future work.
 - Resolved: a room log longer than one history page folded from its newest
   20 messages only — the host answered history newest-first, so the fold's
   `ts > after` cursor jumped to the top of the log after page one and every
-  older card silently vanished from `board_list`, below the page cap and
+  older card silently vanished from `kanban_list`, below the page cap and
   with no error. The fold now requests oldest-first pages (see Paging bound
   above).
 
@@ -145,5 +145,5 @@ runs — this one field is not itself an array, unlike the others above).
   instead of returning a partial fold, but compaction is the durable answer.
 - Column set is fixed in `cards.zig`; configurable columns would need a
   room-level config action, not a descriptor change.
-- `board_add`/`board_update`/`board_move` manifest fields above: implement
+- `kanban_add`/`kanban_update`/`kanban_move` manifest fields above: implement
   or remove.

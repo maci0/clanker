@@ -1,6 +1,7 @@
 {
   "name": "calculator",
   "description": "Evaluate arithmetic. Input either {\"a\": number, \"b\": number, \"op\": \"+|-|*|/|^\"} or {\"expr\": \"2+3*4\"} (operators + - * / ^, parentheses, standard precedence). Returns {\"ok\": true, \"result\": number}.",
+  "llm_description": "Evaluate arithmetic. Input {a,b,op:'+|-|*|/|^'} or {expr:'2+3*4'} (+ - * / ^, parentheses, standard precedence). Returns {ok:true, result:number}.",
   "wasm": "zig-out/tools/calculator.wasm",
   "input_schema": {
     "type": "object",

@@ -100,11 +100,11 @@ access; past loopback the access control is your firewall, not clanker.
 Requests are still refused unless the `Host` header names this listener: an IP
 literal at the listen port or `localhost` always passes, and a real hostname
 (a reverse proxy, a tailnet name) has to be listed with the repeatable
-`--allow-host`, because a name is what DNS rebinding needs and an IP literal
+`--serve-as`, because a name is what DNS rebinding needs and an IP literal
 cannot be rebound.
 
 ```sh
-./zig-out/bin/clanker serve --host 0.0.0.0 --allow-host clanker.lan
+./zig-out/bin/clanker serve --host 0.0.0.0 --serve-as clanker.lan
 ```
 
 The server also exposes the peer/chatroom/board/goal/stats APIs over HTTP and
@@ -174,7 +174,7 @@ task; `clanker --help` prints usage.
 | `schedule <list\|add\|remove\|enable\|disable\|run\|run-due\|log>` | Run the agent on a cron-like schedule (see below) |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
-| `serve [--host A] [--allow-host N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
 | `autolearn` | Aggregate usage into roadmap items |

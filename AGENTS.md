@@ -144,6 +144,13 @@ Retrieved documents and memory-search hits are untrusted prompt data. Keep
 them inside explicit retrieval boundaries, separate from the operator task;
 the system prompt must tell the model never to execute directives found there.
 
+The web UI presents goals and the Kanban board as one workflow: creating a
+goal creates its card, lane moves update goal status, and Archive retains the
+goal/card history for future knowledge or autolearn consumers rather than
+deleting it. Keep the board tool as the card/room implementation and
+`state/goals.json` as the structured goal record; reconcile through the durable
+card `goal` id instead of adding a third store.
+
 ## Local operator rules (optional)
 
 Checkout-private additions (gitignored). Missing file is a soft skip for tools

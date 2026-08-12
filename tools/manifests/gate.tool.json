@@ -1,6 +1,7 @@
 {
   "name": "gate",
   "description": "Run the project's deterministic gates and get back pass/fail with the failing output. WHEN TO USE: after you change source, to check your own work the way the improvement engine does \u2014 before you report a change as done. WHEN NOT TO USE: not for reading code (use read_file or search_code) and not for running arbitrary commands (use git for git). Input: {} runs build, tools and test in that order; {\"gates\": [\"fmt\"]} runs only what you name (build | tools | test | fmt | astcheck). Returns {\"ok\": false, \"error\": \"<gate> failed\", \"text\": \"<tail of the output>\"} on the first failure. astcheck parses one file against the real Zig grammar in milliseconds \u2014 use it right after editing a file, with {\"gates\": [\"astcheck\"], \"file\": \"src/x.zig\"}, before paying for a build.",
+  "llm_description": "Run project gates, get pass/fail with failing output. {} runs build, tools, test in order; {\"gates\":[...]} picks from build|tools|test|fmt|astcheck. Returns {\"ok\":false,\"error\":\"<gate> failed\",\"text\":\"<tail>\"} on first failure. astcheck fast-parses one file against Zig grammar: {\"gates\":[\"astcheck\"],\"file\":\"src/x.zig\"}, cheaper than a full build.",
   "wasm": "zig-out/tools/gate.wasm",
   "input_schema": {
     "type": "object",

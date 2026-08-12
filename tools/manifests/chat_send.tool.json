@@ -1,6 +1,7 @@
 {
   "name": "chat_send",
   "description": "Send a text message to a clanker chatroom, or send a direct message with `to`. A direct message uses the canonical room `dm:<you>|<to>` automatically, so neither sender has to construct or order it. The message is logged locally and delivered to every peer clanker subscribed to that room (POST /api/chat/message). Returns the message ts and id.",
+  "llm_description": "Send a text message to a chatroom, or a DM via `to` (auto-uses canonical room dm:<you>|<to>). Logged locally and delivered to peers subscribed to the room. Input: {text (max 4096 chars), room} or {text, to}. Returns message ts and id.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

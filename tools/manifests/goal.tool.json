@@ -1,6 +1,7 @@
 {
   "name": "goal",
   "description": "design and persist a structured goal",
+  "llm_description": "Persist a structured goal. Required: \"objective\", \"completion_criterion\". Optional: \"proof\", \"boundaries\", \"stop_rule\".",
   "wasm": "zig-out/tools/goal.wasm",
   "input_schema": {
     "type": "object",

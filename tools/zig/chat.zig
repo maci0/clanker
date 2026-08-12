@@ -1,5 +1,6 @@
-//! chat: clanker chatroom tools. One WASM module backs eight descriptors
-//! (chat_send / chat_history / chat_rooms / chat_subscribe and the shared
+//! chat: clanker chatroom tools. One WASM module backs thirteen descriptors
+//! (chat_send / chat_history / chat_rooms / chat_subscribe / chat_react /
+//! chat_edit / chat_delete / chat_topic / chat_pin and the shared
 //! todo-list tools todo_add / todo_claim / todo_close / todo_list); each
 //! descriptor's `config` object pins the op, e.g. {"op":"send"}. All state,
 //! subscription filtering, and peer fan-out happen host-side in ck_chat; this
@@ -41,12 +42,23 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "chat tool missing op in config");
     };
 
+    // Resolve compound ops: "topic" → set_topic/get_topic, "pin" → pin/get_pins.
+    const effective_op = if (std.mem.eql(u8, op, "topic")) blk: {
+        // If input contains a "topic" key, it's set_topic; otherwise get_topic.
+        const has_topic = std.mem.indexOf(u8, input, "\"topic\"") != null;
+        break :blk if (has_topic) "set_topic" else "get_topic";
+    } else if (std.mem.eql(u8, op, "pin")) blk: {
+        // If input contains a "msg_id" key, it's pin; otherwise get_pins.
+        const has_msg_id = std.mem.indexOf(u8, input, "\"msg_id\"") != null;
+        break :blk if (has_msg_id) "pin" else "get_pins";
+    } else op;
+
     // Re-emit the input object verbatim so we can inject the op: the host
     // ignores unknown fields, so this is just {"op":"send", ...args...}.
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(lib.alloc);
     try buf.appendSlice(lib.alloc, "{\"op\":\"");
-    try buf.appendSlice(lib.alloc, op);
+    try buf.appendSlice(lib.alloc, effective_op);
     try buf.appendSlice(lib.alloc, "\"");
     if (input.len > 2 and input[0] == '{') {
         // Merge the argument fields; input keeps its closing brace.
@@ -68,6 +80,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 "chat history needs \"room\", and optionally \"after\" (a timestamp)"
             else if (std.mem.eql(u8, op, "subscribe"))
                 "chat subscribe needs \"room\", and optionally \"on\" (true to join, false to leave)"
+            else if (std.mem.eql(u8, op, "react"))
+                "chat react needs \"room\", \"msg_id\", and \"emoji\""
+            else if (std.mem.eql(u8, op, "edit"))
+                "chat edit needs \"room\", \"msg_id\", and \"text\""
+            else if (std.mem.eql(u8, op, "delete"))
+                "chat delete needs \"room\" and \"msg_id\""
+            else if (std.mem.eql(u8, op, "topic"))
+                "chat topic needs \"room\" (and \"topic\" to set)"
+            else if (std.mem.eql(u8, op, "pin"))
+                "chat pin needs \"room\" (and \"msg_id\" to pin/unpin)"
             else
                 "the chat host rejected the arguments for this operation",
             else => @errorName(err),

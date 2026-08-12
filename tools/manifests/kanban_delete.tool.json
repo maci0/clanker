@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_delete",
   "description": "Remove a card from the board for everyone. Permanent: a deleted card cannot be brought back, because a peer that already dropped it would never learn to restore it.",
+  "llm_description": "Delete a card from the board for everyone. Permanent, cannot be restored. {\"id\"} required (card id from kanban_list); optional \"room\" (defaults 'board').",
   "input_schema": {
     "type": "object",
     "properties": {

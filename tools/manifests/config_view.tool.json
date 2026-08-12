@@ -1,6 +1,7 @@
 {
   "name": "config_view",
   "description": "dump the effective config (providers/models/modules/budgets)",
+  "llm_description": "Dump effective config (providers/models/modules/budgets). {section?}.",
   "wasm": "zig-out/tools/config_view.wasm",
   "input_schema": { "type": "object", "properties": {"section":{"type":"string"}}, "required": [] },
   "fs_prefixes": [],

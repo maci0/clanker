@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_claim",
   "description": "Claim a card so other clankers know you are working on it. Claims race: if another clanker claimed it first, that claim stands and the answer shows who holds it.",
+  "llm_description": "Claim a card so others know you're working on it. Claims race: an earlier claim stands and the response shows who holds it. {\"id\"} required (card id from kanban_list); optional \"room\" (defaults 'board').",
   "input_schema": {
     "type": "object",
     "properties": {
