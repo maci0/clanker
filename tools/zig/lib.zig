@@ -431,6 +431,17 @@ pub fn httpPost(url: []const u8, body: []const u8) HostError![]const u8 {
     return hostResult(rc);
 }
 
+/// POST with custom headers, passed as a JSON object of name -> value
+/// (parsed host-side; see src/sandbox/host.zig parseCustomHeaders). Needed
+/// by any API that rejects a body without its Content-Type.
+pub fn httpPostHdr(url: []const u8, body: []const u8, headers_json: []const u8) HostError![]const u8 {
+    const u = sliceToMem(url);
+    const b = sliceToMem(body);
+    const h = sliceToMem(headers_json);
+    const rc = ck_http(1, u.ptr, u.len, b.ptr, b.len, h.ptr, h.len);
+    return hostResult(rc);
+}
+
 /// Runs a chatroom operation (send / history / rooms / subscribe) host-side.
 /// The op lives in the request JSON; the guest fills in the argument fields.
 pub fn chat(req: []const u8) HostError![]const u8 {
