@@ -15,6 +15,7 @@ state/
 
 # User-local configuration (API keys live in env vars anyway)
 config.local.json
+config.local.toml
 
 # User-local project agent instructions
 .agents/

@@ -43,8 +43,10 @@ pub const Options = struct {
 };
 
 /// Directories/files copied into staging for the compile gate. Must be enough
-/// for `zig build` + `zig build test` + `zig build tools` to succeed.
-const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "README.md", "build.zig", "build.zig.zon", "config.json" };
+/// for `zig build` + `zig build test` + `zig build tools` to succeed. `vendor`
+/// is required because `build.zig` imports vendor/toml/src/root.zig as a
+/// local path module; without it the staged build can't find that module.
+const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "vendor", "README.md", "build.zig", "build.zig.zon", "config.toml" };
 
 /// Text that has to survive in a staged file for the patch to be considered.
 ///
@@ -173,12 +175,12 @@ fn nextStdSymbol(text: []const u8) ?Found {
 
 /// Copied into staging when present, so the staged binary can actually run.
 /// Never promoted back: neither path passes validatePath.
-const staging_runtime_files = [_][]const u8{ "config.local.json", ".env" };
+const staging_runtime_files = [_][]const u8{ "config.local.json", "config.local.toml", ".env" };
 
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
 const surface_rules =
-    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/bin/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.json.
+    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/bin/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.json, config.toml.
     \\You may CREATE a new evals/<name>.task.json, which adds a case to the suite your work is graded against. You may never modify or delete an eval that already exists.
 ;
 
@@ -1039,7 +1041,7 @@ pub const Engine = struct {
         // the model re-proposes cases that already exist and the whole
         // iteration is refused.
         try collectCandidates(self, "evals", keywords.items, &cands);
-        for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json" }) |f| {
+        for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json", "config.toml" }) |f| {
             try collectFile(self, f, keywords.items, &cands);
         }
         // A file the instruction names by path is the one being patched, and

@@ -26,7 +26,7 @@
       },
       "id": {
         "type": "string",
-        "description": "Stable notification delivery ID. Reuse it when retrying the same logical notification."
+        "description": "Stable notification delivery ID. Reuse it when retrying the same logical notification. If omitted, the tool generates one and echoes it back in the response (even on failure) for you to reuse on retry."
       }
     },
     "required": [
@@ -35,7 +35,9 @@
   },
   "fs_prefixes": [
     "config.json",
-    "config.local.json"
+    "config.local.json",
+    "config.toml",
+    "config.local.toml"
   ],
   "network_from_config": "peers",
   "category": "peers"

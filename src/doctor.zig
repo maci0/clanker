@@ -76,12 +76,14 @@ fn runChecks(
     rep: *Report,
 ) !void {
     rep.section("config");
-    if (!fileExists(io, "config.json")) {
-        rep.line(.fail, "config.json", "missing; run `clanker setup`");
+    const has_config = fileExists(io, "config.toml") or fileExists(io, "config.json");
+    if (!has_config) {
+        rep.line(.fail, "config.toml", "missing; run `clanker setup`");
         return;
     }
-    rep.line(.ok, "config.json", "");
-    rep.line(if (fileExists(io, "config.local.json")) .ok else .warn, "config.local.json", if (fileExists(io, "config.local.json")) "" else "absent; defaults from config.json only");
+    rep.line(.ok, if (fileExists(io, "config.toml")) "config.toml" else "config.json", "");
+    const has_local = fileExists(io, "config.local.toml") or fileExists(io, "config.local.json");
+    rep.line(if (has_local) .ok else .warn, if (fileExists(io, "config.local.toml")) "config.local.toml" else "config.local.json", if (has_local) "" else "absent; defaults from config.toml only");
 
     const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch |err| {
         rep.line(.fail, "config parses", @errorName(err));

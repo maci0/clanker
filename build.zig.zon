@@ -12,6 +12,8 @@
             .url = "git+https://github.com/rockorager/libvaxis#82cec0db8fc57c32f2ce4c1c3fc377052f4c86ba",
             .hash = "vaxis-0.6.0-BWNV_KwYCgB-L5MNRY8I8HGbKDE6KOxDPAVSaZ8-3lJ8",
         },
+        // toml (config.json -> config.toml migration) is vendored, not
+        // fetched: see vendor/toml/README.md for why.
     },
     .paths = .{
         "CHANGELOG.md",
@@ -24,5 +26,6 @@
         "tests",
         "skills",
         "evals",
+        "vendor",
     },
 }

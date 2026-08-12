@@ -5,6 +5,7 @@
 const std = @import("std");
 const json = std.json;
 const log = @import("util/log.zig");
+const toml_bridge = @import("util/toml_bridge.zig");
 
 pub const ProviderKind = enum {
     openai_compat,
@@ -375,7 +376,23 @@ pub const Config = struct {
 
     const LoadMode = enum { required, optional };
 
+    /// TOML takes precedence: `config.json` -> tries `config.toml` first, falls
+    /// back to the `.json` file if no `.toml` sibling exists.
     fn loadFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, mode: LoadMode) !?Config {
+        if (std.mem.endsWith(u8, file_name, ".json")) {
+            const toml_name = try std.fmt.allocPrint(arena, "{s}.toml", .{file_name[0 .. file_name.len - ".json".len]});
+            const raw = dir.readFileAlloc(io, toml_name, arena, .limited(1 << 20)) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => return err,
+            };
+            if (raw) |r| {
+                const root = toml_bridge.parseToJsonValue(arena, r) catch |err| {
+                    log.log(.error_, "config {s}: invalid TOML: {s}", .{ toml_name, @errorName(err) });
+                    return err;
+                };
+                return try parseConfig(arena, root);
+            }
+        }
         const raw = dir.readFileAlloc(io, file_name, arena, .limited(1 << 20)) catch |err| switch (err) {
             error.FileNotFound => switch (mode) {
                 .required => return error.MissingConfig,
@@ -383,12 +400,11 @@ pub const Config = struct {
             },
             else => return err,
         };
-        const cfg = try parseConfig(arena, raw);
-        return cfg;
+        const root = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+        return try parseConfig(arena, root);
     }
 
-    fn parseConfig(arena: std.mem.Allocator, raw: []const u8) !Config {
-        const root = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+    fn parseConfig(arena: std.mem.Allocator, root: json.Value) !Config {
         var cfg = Config{};
         const obj = switch (root) {
             .object => |o| o,
@@ -685,7 +701,17 @@ pub const Config = struct {
     }
 
     fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
-        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.c.getpid()});
+        var seed: u64 = @as(u64, @intCast(std.c.getpid())) *% 0x9e3779b97f4a7c15;
+        var host_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
+        if (std.posix.gethostname(&host_buf)) |host| {
+            for (host) |ch| seed ^= std.hash.Wyhash.hash(0, &[_]u8{ch});
+        } else |_| {}
+        seed ^= std.hash.Wyhash.hash(0, @as([*]const u8, @ptrCast(&seed))[0..8]);
+        var prng = std.Random.DefaultPrng.init(seed);
+        const n = prng.random().intRangeAtMost(u16, 100, 999);
+        const adjectives = [_][]const u8{ "amber", "cobalt", "crimson", "ember", "harbor", "indigo", "juniper", "lark", "moss", "nova", "obsidian", "quill", "river", "sable", "topaz", "willow" };
+        const adj = adjectives[prng.random().intRangeAtMost(usize, 0, adjectives.len - 1)];
+        return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ adj, n });
     }
 
     const ParsedAgent = struct {
@@ -760,14 +786,14 @@ pub const Config = struct {
         if (obj.get("git_commit")) |k| {
             a.git_commit = switch (k) {
                 .bool => |b| b,
-                else => a.git_commit,
+                else => return error.FieldNotBool,
             };
             f.git_commit = true;
         }
         if (obj.get("git_remote_ops")) |k| {
             a.git_remote_ops = switch (k) {
                 .bool => |b| b,
-                else => a.git_remote_ops,
+                else => return error.FieldNotBool,
             };
             f.git_remote_ops = true;
         }
@@ -799,7 +825,7 @@ pub const Config = struct {
         if (obj.get("tool_catalog")) |k| {
             a.tool_catalog = switch (k) {
                 .bool => |b| b,
-                else => a.tool_catalog,
+                else => return error.FieldNotBool,
             };
             f.tool_catalog = true;
         }
@@ -1065,9 +1091,11 @@ test "web.allow parses hostname entries onto Config" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
 
-    const cfg = try Config.parseConfig(arena_state.allocator(),
+    const arena = arena_state.allocator();
+    const root = try json.parseFromSliceLeaky(json.Value, arena,
         \\{"web":{"allow":["example.org","docs.example"]}}
-    );
+    , .{ .ignore_unknown_fields = true });
+    const cfg = try Config.parseConfig(arena, root);
     try std.testing.expectEqual(@as(usize, 2), cfg.web.allow.len);
     try std.testing.expectEqualStrings("example.org", cfg.web.allow[0]);
     try std.testing.expectEqualStrings("docs.example", cfg.web.allow[1]);

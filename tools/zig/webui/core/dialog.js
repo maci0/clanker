@@ -3,9 +3,14 @@ export var SHORTCUTS = [
   ["Ctrl/\u2318 + K", "Jump to a view, conversation, run, tool or action"],
   ["?", "This list"],
   ["1 \u2013 8", "Go to a view by number"],
-  ["\u2190 \u2192", "Move between tabs when one is focused"],
+  ["\u2190 \u2192 / \u2191 \u2193", "Move between tabs when one is focused"],
   ["Ctrl/\u2318 + Enter", "Run the task in the composer"],
   ["Ctrl/\u2318 + \u2190 \u2192", "Move the focused board card between columns"],
+  ["/", "Focus search (in board or run graph)"],
+  ["j / k", "Next / previous iteration (run graph)"],
+  ["n / N, F", "Next match / next failed node (run graph)"],
+  ["+ / - / 0", "Zoom in / out / reset (run graph)"],
+  ["Drag / Ctrl+wheel", "Pan / zoom the run graph"],
   ["Esc", "Close an overlay, or stop a running task"]
 ];
 
