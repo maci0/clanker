@@ -47,6 +47,10 @@ export function loadHljs() {
   return loadVendor("hljs.min.js", function () { return !!window.hljs; }).then(registerToml);
 }
 
+export function loadMermaid() {
+  return loadVendor("mermaid.min.js", function () { return !!(window.mermaid && window.mermaid.render); });
+}
+
 export var reducedMotion = (typeof window !== "undefined" && window.matchMedia)
   ? window.matchMedia("(prefers-reduced-motion: reduce)")
   : { matches: false };

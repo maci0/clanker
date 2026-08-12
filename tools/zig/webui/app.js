@@ -59,6 +59,7 @@ var el = {
   peersChip: document.getElementById("peers-chip"),
   sessionChip: document.getElementById("session-chip"),
   headerModel: document.getElementById("header-model"),
+  composerModel: document.getElementById("composer-model"),
   newChat: document.getElementById("new-chat"),
   themeToggle: document.getElementById("theme-toggle"),
   runsRefresh: document.getElementById("runs-refresh"),
@@ -201,24 +202,34 @@ function loadSession() {
 
 function renderSessionChip() {
   if (el.sessionChip) el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  var sel = el.modelSelect ? el.modelSelect.value : "";
+  var label = "";
+  if (sel && sel.indexOf(" ") !== -1) label = sel.slice(sel.indexOf(" ") + 1).trim();
+  else if (sel) label = sel;
   if (el.headerModel) {
-    var sel = el.modelSelect ? el.modelSelect.value : "";
-    var label = "";
-    if (sel && sel.indexOf(" ") !== -1) label = sel.slice(sel.indexOf(" ") + 1).trim();
-    else if (sel) label = sel;
     el.headerModel.textContent = label || "default model";
     el.headerModel.title = sel ? ("Model: " + sel + " — click to change") : "Model: default (from config) — click to change";
+  }
+  // The composer's model pill is the same value in a place the eye already
+  // is when composing — the Kimi/ChatGPT idiom — and clicking it opens the
+  // same picker the header chip opens.
+  if (el.composerModel) {
+    el.composerModel.textContent = label || "default model";
+    el.composerModel.title = sel ? ("Model: " + sel + " — click to change") : "Model: default (from config) — click to change";
   }
 }
 if (typeof window !== "undefined") {
   document.addEventListener("DOMContentLoaded", function(){
     var hm = document.getElementById("header-model");
-    if (hm) hm.addEventListener("click", function(){
+    var cm = document.getElementById("composer-model");
+    function openModelPicker() {
       var dest = document.getElementById("task");
       if (dest) { dest.focus(); dest.scrollIntoView({ behavior: "smooth", block: "center" }); }
       var ms = document.getElementById("model-search");
       if (ms) { try { ms.focus(); ms.select(); } catch(_){} }
-    });
+    }
+    if (hm) hm.addEventListener("click", openModelPicker);
+    if (cm) cm.addEventListener("click", openModelPicker);
   });
 }
 
@@ -858,6 +869,9 @@ var renderMarkdown = mdRenderMarkdown;
 var highlightInto = mdHighlightInto;
 var buildCodeBlock = mdBuildCodeBlock;
 var finalizeAnswer = mdFinalizeAnswer;
+window.clankerOpenRun = function (id) {
+  try { openRun(id); } catch (e) {}
+};
 window.clankerOpenCitation = function(ref){
   try{
     var stem = ref.split(":")[0].split("/").pop().split(".")[0];
@@ -1123,10 +1137,34 @@ function renderStats(turn, stats, task) {
     branchBtn.type = "button";
     branchBtn.className = "secondary";
     branchBtn.textContent = "Branch";
-    branchBtn.title = "Fork this conversation at this turn into a new session";
+    branchBtn.title = "Continue from this turn in a new conversation";
     branchBtn.addEventListener("click", function () {
-      var forkBtn = document.getElementById("session-fork");
-      if (forkBtn) forkBtn.click();
+      if (!currentSessionMeta()) {
+        el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+        return;
+      }
+      // The turn's own stratum index, which is the same 1-based number the
+      // server's branch endpoint cuts the transcript at.
+      var n = parseInt((turn.root.querySelector(".turn-depth") || {}).textContent, 10) || 1;
+      branchBtn.disabled = true;
+      fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/branch/" + n, { method: "POST" })
+        .then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok || !data.ok || !data.id) throw new Error(data.error || ("HTTP " + r.status));
+            return data.id;
+          });
+        })
+        .then(function (newId) {
+          sessionId = newId;
+          try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+          renderSessionChip();
+          el.sessionStatus.textContent = "Branched at turn " + n + ". You are now in the copy.";
+          return loadSessions();
+        })
+        .catch(function (err) {
+          el.sessionStatus.textContent = "Could not branch: " + err.message;
+        })
+        .finally(function () { branchBtn.disabled = false; });
     });
     actions.appendChild(branchBtn);
 
@@ -1135,7 +1173,7 @@ function renderStats(turn, stats, task) {
       if (!knownSessions || !knownSessions.length) return;
       var title = ((turn.root.querySelector(".turn-you") || {}).textContent || "").trim();
       var forks = knownSessions.filter(function(s){
-        return s.title && s.title.indexOf("fork of") !== -1 && s.id !== sessionId;
+        return s.title && (s.title.indexOf("fork of") !== -1 || s.title.indexOf("branch of") !== -1) && s.id !== sessionId;
       });
       // Heuristic: server titles forks as "fork of <original title>" — show any fork when on its parent
       var meta = currentSessionMeta();
@@ -1325,22 +1363,44 @@ el.form.addEventListener("submit", function (e) {
   startElapsed(startedAt);
   controller = new AbortController();
 
+  var liveGraph = { nodes: [], _byIter: {} };
+  function pushLiveNode(kind, detail, label, ms){
+    var iter = liveGraph.nodes.filter(function(n){ return n.kind==="llm"; }).length + 1;
+    var node = { kind: kind, detail: detail||label||kind, label: label||detail||kind, duration_ms: ms||0, prompt_tokens:0, completion_tokens:0, result_bytes:0, ok: true, iteration: iter };
+    liveGraph.nodes.push(node);
+    // fire a lightweight live-runs refresh so Runs shows progress even before done
+    try{
+      if (!liveGraph._timer) liveGraph._timer = setTimeout(function(){
+        liveGraph._timer=null;
+        // stash as a synthetic run for the picker — not persisted, just for live view
+        var synth = { run_id:"live", task: task, provider: (opts.provider||""), duration_ms: Date.now()-startedAt, total_prompt_tokens:0, total_completion_tokens:0, nodes: liveGraph.nodes.slice() };
+        // render into Runs if that view is open, otherwise just keep for final compare
+        if (document.getElementById("view-runs") && !document.getElementById("view-runs").hidden) {
+          try{ drawRun(synth); }catch(_){}
+        }
+        window._liveGraph = synth;
+      }, 250);
+    }catch(_){}
+  }
   var opts = runOptions();
   var statsRendered = false;
   var splitter = makeLineSplitter(function (line) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names); setTurnPhase(turn, "tool"); }
-      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); }
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); }
+      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
+        var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
+      }}
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
-      else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); }
+      else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
       else if (evt.type === "done") {
         renderStats(turn, evt, task);
         statsRendered = true;
         setTurnPhase(turn, "");
-      }
+        pushLiveNode("final", "done", "done", evt.ms||0);
+      } else if (evt.type === "llm_start" || evt.type === "llm") { pushLiveNode("llm", evt.model||"llm", evt.model||"llm", 0); }
       return;
     }
     var stick = nearBottom();
@@ -1473,11 +1533,13 @@ var pendingRunId = null;
    hiding <option>s with CSS isn't reliably respected by every browser's
    native combobox rendering, but replacing the option list outright always
    works. */
+function runFailed(r){ return r && (r.failed === true || r.ok === false || (r.nodes||[]).some(function(n){ return n.ok===false; })); }
 function renderRunOptions(filterText) {
   var q = (filterText || "").trim().toLowerCase();
-  var matches = !q ? allRuns : allRuns.filter(function (r) {
-    return (r.task || "").toLowerCase().indexOf(q) !== -1 || r.run_id.toLowerCase().indexOf(q) !== -1;
-  });
+  var failedOnly = q === "failed" || q === ":failed" || q === "⚠ failed";
+  var matches;
+  if (failedOnly) matches = allRuns.filter(function(r){ return runFailed(r); });
+  else matches = !q ? allRuns : allRuns.filter(function (r) { return (r.task || "").toLowerCase().indexOf(q) !== -1 || r.run_id.toLowerCase().indexOf(q) !== -1; });
   var previous = el.runSelect.value;
   el.runSelect.textContent = "";
   matches.forEach(function (r) {
@@ -1583,19 +1645,63 @@ function openRun(id) {
 function loadRun(id) {
   el.runGraph.textContent = "";
   skeletonRows(el.runGraph, 2);
-  // skeletonRows already set aria-busy; keep specific id in status line for screen readers
   el.runStatus.textContent = "Loading run " + id + "…";
   return fetch("/api/runs/" + encodeURIComponent(id))
     .then(readJson)
     .then(function (g) {
       el.runGraph.textContent = "";
       el.runGraph.removeAttribute("aria-busy");
+      populateCompareSelects();
       drawRun(g);
     })
     .catch(function (err) {
-      // Ensure no stale skeleton remains; showRunsError clears graph
       showRunsError("Could not load that run: " + err.message);
     });
+}
+function populateCompareSelects(){
+  var a=document.getElementById("run-compare-a"), b=document.getElementById("run-compare-b");
+  if(!a||!b) return;
+  var opts = allRuns.map(function(r){ var o=document.createElement("option"); o.value=r.run_id; o.textContent=runLabel(r); return o; });
+  // keep selections if already set
+  var keepA=a.value, keepB=b.value;
+  a.textContent=""; b.textContent="";
+  opts.forEach(function(o){ a.appendChild(o.cloneNode(true)); b.appendChild(o.cloneNode(true)); });
+  if(keepA) a.value=keepA; else if(allRuns[0]) a.value=allRuns[0].run_id;
+  if(keepB) b.value=keepB; else if(allRuns[1]) b.value=allRuns[1].run_id;
+  document.getElementById("run-compare").hidden = allRuns.length < 2;
+}
+function diffRuns(aId, bId){
+  var status=document.getElementById("run-compare-status"), clearBtn=document.getElementById("run-compare-clear");
+  if(!aId||!bId){ if(status) status.textContent="Pick two runs"; return; }
+  if(aId===bId){ if(status) status.textContent="Pick two different runs"; return; }
+  if(status) status.textContent="Comparing…";
+  Promise.all([fetch("/api/runs/"+encodeURIComponent(aId)).then(readJson), fetch("/api/runs/"+encodeURIComponent(bId)).then(readJson)]).then(function(pair){
+    var ga=pair[0], gb=pair[1];
+    var aNodes={}, bNodes={};
+    (ga.nodes||[]).forEach(function(n){ var k=n.label||n.detail||n.kind; aNodes[k]=(aNodes[k]||0)+1; });
+    (gb.nodes||[]).forEach(function(n){ var k=n.label||n.detail||n.kind; bNodes[k]=(bNodes[k]||0)+1; });
+    var added=[], removed=[], changed=[];
+    Object.keys(bNodes).forEach(function(k){ if(!aNodes[k]) added.push(k); });
+    Object.keys(aNodes).forEach(function(k){ if(!bNodes[k]) removed.push(k); });
+    (ga.nodes||[]).forEach(function(n){
+      var k=n.label||n.detail||n.kind;
+      var m=(gb.nodes||[]).find(function(x){ return (x.label||x.detail||x.kind)===k; });
+      if(m && (m.ok!==n.ok || Math.abs((m.duration_ms||0)-(n.duration_ms||0))> Math.max(80, (n.duration_ms||0)*0.25))) changed.push(k + " — " + (m.ok===false?"failed":"") + " " + (n.duration_ms||0)+"ms → "+(m.duration_ms||0)+"ms");
+    });
+    // Re-render current graph with highlights
+    drawRun(ga);
+    setTimeout(function(){
+      added.forEach(function(k){ el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.outline="2px solid var(--ok)"; }); });
+      removed.forEach(function(k){ el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
+      changed.forEach(function(k){ var lab=k.split(" — ")[0]; el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
+    }, 260);
+    if(status) status.textContent = added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
+    if(clearBtn) clearBtn.hidden=false;
+    el.runDetail.hidden=false; el.runDetail.textContent="";
+    var pre=document.createElement("pre"); pre.style.whiteSpace="pre-wrap"; pre.style.fontSize="12px";
+    pre.textContent = "A: "+aId+"\nB: "+bId+"\n\n+ added ("+added.length+"):\n"+added.join("\n")+"\n\n- removed ("+removed.length+"):\n"+removed.join("\n")+"\n\n~ changed ("+changed.length+"):\n"+changed.join("\n");
+    el.runDetail.appendChild(pre);
+  }).catch(function(e){ if(status) status.textContent="Diff failed: "+e.message; });
 }
 
 var metricsFor = graphMetricsFor;
@@ -2303,6 +2409,19 @@ el.runsRefresh.addEventListener("click", function () {
   el.runsRefresh.disabled = true;
   loadRuns().finally(function () { el.runsRefresh.disabled = false; });
 });
+(function(){
+  var go=document.getElementById("run-compare-go"), clr=document.getElementById("run-compare-clear");
+  if(!go) return;
+  go.addEventListener("click", function(){
+    var a=document.getElementById("run-compare-a"), b=document.getElementById("run-compare-b");
+    if(a&&b) diffRuns(a.value, b.value);
+  });
+  if(clr) clr.addEventListener("click", function(){
+    var s=document.getElementById("run-compare-status"); if(s) s.textContent="";
+    clr.hidden=true; el.runDetail.textContent=""; el.runDetail.hidden=true;
+    if(lastGraph) drawRun(lastGraph);
+  });
+})();
 
 var dmRoom = dmRoomMod;
 var dmSafeName = dmSafeNameMod;
@@ -2356,10 +2475,17 @@ function renderChatRooms(rooms) {
       return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
         var label = chatRoomLabel(r);
         if (r.messages) label += "  ·  " + r.messages;
-        // count only peers that are "up" — green dot like Slack presence
         var peerUp = knownPeers.some(function(p){ return p.name === r.room || p.name === dmPartner(r.room); });
         if (r.unread) label += " · " + r.unread + " new";
-        else if (peerUp && r.room.indexOf("dm:") === 0) label += " · online";
+        else if (r.room.indexOf("dm:") === 0) {
+          var partner = dmPartner(r.room);
+          var seen = (typeof lastSeenAt !== "undefined" && lastSeenAt[partner]) ? lastSeenAt[partner] : 0;
+          if (peerUp) label += " · online";
+          else if (seen) {
+            var mins = Math.floor((Date.now()/1000 - seen)/60);
+            label += " · " + (mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.floor(mins/60) + "h ago");
+          } else if (r.room.indexOf("dm:") === 0) label += " · offline";
+        }
         return T.option({ value: r.room }, label);
       }));
     }));
@@ -2439,38 +2565,30 @@ function joinIfNeeded(room) {
    check is belt and braces: two messages can share a timestamp at
    one-second resolution, and `after` is inclusive of neither side reliably
    once that happens. */
+var lastSeenAt = {};
 function pollChat(room) {
   return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
     .then(readJson)
     .then(function (data) {
       chatBackoff = chat_poll_base_ms;
-      // Leaving the failure notice up after recovery would keep promising a
-      // retry that already happened.
       if (chatFailing) {
         chatFailing = false;
         el.chatStatus.textContent = "Reconnected.";
       }
-      // The log is returned newest-first (it is read backwards to honour the
-      // 50-message limit); a conversation reads downwards, so it is flipped
-      // before appending.
       var fresh = (data.messages || [])
         .filter(function (m) { return !chatSeen[m.id]; })
         .sort(function (a, b) { return a.ts - b.ts; });
-      // Measured before anything is appended: whether to follow the
-      // conversation depends on where the reader was, not where they end up.
       var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
-      // reset grouping when loading fresh batch (rooms switch already clears, but keep day key fresh)
       if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = ""; }
       fresh.forEach(function (m) {
         rememberChatId(m.id);
         if (m.ts > chatLastTs) chatLastTs = m.ts;
+        lastSeenAt[m.from] = m.ts;
         var node = buildChatMessage(m);
         if (node._daySep) el.chatLog.appendChild(node._daySep);
         el.chatLog.appendChild(node);
       });
-      // Only chase the bottom for someone already at it. Scrolling a reader
-      // away from the message they are part-way through is worse than making
-      // them scroll down for themselves.
+      // presence dot freshness handled via CSS only — timestamps already in lastSeenAt for future use
       if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
     })
     .catch(function (err) {
@@ -2581,7 +2699,72 @@ function buildChatMessage(m) {
   }
   wrap.appendChild(text);
   if (wrap._unfurl) wrap.appendChild(wrap._unfurl);
-  // Slack-like hover quick actions (copy / emoji) — decorative for now, no wire yet
+  // ---- reactions (local, aggregated) ----
+  var reactStore = (function(){ try{ return JSON.parse(localStorage.getItem("clanker.reactions")||"{}"); }catch(_){ return {}; }})();
+  function saveReacts(){ try{ localStorage.setItem("clanker.reactions", JSON.stringify(reactStore)); }catch(_){} }
+  var msgKey = m.id || (m.from+":"+m.ts+":"+m.text.slice(0,40));
+  var reacts = reactStore[msgKey] || {};
+  var reactionsBar = document.createElement("div"); reactionsBar.className = "chat-reactions";
+  var EMOJIS = ["👍","❤️","🎉","🔥","👀","✅"];
+  function renderReacts(){
+    reactionsBar.textContent="";
+    Object.keys(reacts).forEach(function(emoji){
+      var cnt = reacts[emoji].length;
+      if(!cnt) return;
+      var pill = document.createElement("button"); pill.type="button"; pill.className="chat-reaction";
+      pill.textContent = emoji + " " + cnt; pill.title = reacts[emoji].join(", ");
+      var mine = reacts[emoji].indexOf(instanceName)!==-1; pill.setAttribute("data-mine", String(mine));
+      pill.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
+      reactionsBar.appendChild(pill);
+    });
+  }
+  function toggleReact(emoji){
+    reacts[emoji] = reacts[emoji] || [];
+    var at = reacts[emoji].indexOf(instanceName);
+    if(at!==-1) reacts[emoji].splice(at,1); else reacts[emoji].push(instanceName);
+    if(!reacts[emoji].length) delete reacts[emoji];
+    reactStore[msgKey]=reacts; if(!Object.keys(reacts).length) delete reactStore[msgKey];
+    saveReacts(); renderReacts();
+  }
+  renderReacts();
+  wrap.appendChild(reactionsBar);
+  // ---- threads (Slack-style, local grouping by replyTo) ----
+  var threadStore = (function(){ try{ return JSON.parse(localStorage.getItem("clanker.threads")||"{}"); }catch(_){ return {}; }})();
+  function saveThreads(){ try{ localStorage.setItem("clanker.threads", JSON.stringify(threadStore)); }catch(_){} }
+  var threadKey = m.id || msgKey;
+  var replies = threadStore[threadKey] || [];
+  var threadBar = document.createElement("div"); threadBar.className = "chat-thread-bar";
+  var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary";
+  function renderThreadBar(){
+    if(!replies.length){ threadBar.hidden=true; return; }
+    threadBar.hidden=false;
+    threadCount.textContent = "↳ " + replies.length + (replies.length===1?" reply":" replies");
+    threadBar.title = replies.slice(-2).map(function(r){return r.from+": "+r.text;}).join("\n");
+  }
+  threadBar.appendChild(threadCount);
+  var threadList = document.createElement("div"); threadList.className="chat-thread-list"; threadList.hidden=true;
+  function renderThreads(){
+    threadList.textContent="";
+    replies.forEach(function(r){
+      var row=document.createElement("div"); row.className="chat-thread-reply";
+      row.textContent=r.from+": "+r.text; threadList.appendChild(row);
+    });
+    renderThreadBar();
+  }
+  threadCount.addEventListener("click", function(e){ e.stopPropagation(); threadList.hidden=!threadList.hidden; });
+  threadBar.appendChild(threadList);
+  var replyBtn = document.createElement("button"); replyBtn.type="button"; replyBtn.className="secondary"; replyBtn.textContent="Reply";
+  replyBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    var t=prompt("Reply in thread:");
+    if(!t||!t.trim()) return;
+    replies.push({from: instanceName, text: t.trim(), ts: Math.floor(Date.now()/1000)});
+    threadStore[threadKey]=replies; saveThreads(); renderThreads(); threadList.hidden=false;
+  });
+  threadBar.appendChild(replyBtn);
+  renderThreads();
+  wrap.appendChild(threadBar);
+  // Slack-like hover quick actions (copy / emoji)
   var actions = document.createElement("div");
   actions.className = "chat-actions";
   actions.setAttribute("aria-hidden", "true");
@@ -2589,10 +2772,11 @@ function buildChatMessage(m) {
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
   copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
   actions.appendChild(copyBtn);
-  var reactBtn = document.createElement("button");
-  reactBtn.type = "button"; reactBtn.className = "secondary"; reactBtn.textContent = "♡";
-  reactBtn.title = "React";
-  actions.appendChild(reactBtn);
+  EMOJIS.forEach(function(emoji){
+    var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; b.title="React "+emoji;
+    b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
+    actions.appendChild(b);
+  });
   wrap.appendChild(actions);
   // update grouping state for next message
   _lastChatFrom = m.from;
@@ -2643,9 +2827,21 @@ el.chatRefresh.addEventListener("click", function () {
   loadChatRooms().finally(function () { el.chatRefresh.disabled = false; });
 });
 
+var typingAt = 0, typingTimer = null;
+function setTyping(on){
+  var ind = document.getElementById("chat-typing");
+  if(!ind){ ind=document.createElement("span"); ind.id="chat-typing"; ind.className="meta"; ind.style.marginLeft="0.6rem"; var picker=document.querySelector(".run-picker"); if(picker) picker.appendChild(ind); }
+  ind.textContent = on ? "typing…" : "";
+  ind.hidden = !on;
+}
+el.chatText.addEventListener("input", function(){
+  typingAt = Date.now();
+  setTyping(true);
+  if(typingTimer) clearTimeout(typingTimer);
+  typingTimer = setTimeout(function(){ if(Date.now()-typingAt >= 1800) setTyping(false); }, 2000);
+});
 el.chatText.addEventListener("keydown", function(e){
   if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {
-    // Slack-style @ mention hint — lightweight: show available peers/instance in status
     var peers = (knownPeers || []).map(function(p){ return p.name || p; }).join(", ");
     if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " — also: " + peers.split(",").slice(1,2).join("") + "…" : "");
   }
@@ -2845,6 +3041,9 @@ function showView(name, focusPanel) {
     else { deepRun = decodeURIComponent(rest2); }
     name = "runs";
   }
+  var pendingBoardCard = null;
+  if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "board"; }
+  if (pendingBoardCard) window._pendingBoardCard = pendingBoardCard;
   if (VIEWS.indexOf(name) === -1) name = "chat";
   // The rooms poll has no idea the view switched away from under it — only
   // document.hidden stopped it before, so leaving Rooms for Chat or Board
@@ -2895,10 +3094,19 @@ function showView(name, focusPanel) {
     startChatPoll(el.chatRoom.value);
   }
   if (deepRun) {
-    // preserve ?node= across the async Runs load
     window._pendingRunNode = deepNode || null;
     if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
     else pendingRunId = deepRun;
+  }
+  if (pendingBoardCard) {
+    // need board loaded first — defer until after viewLoaders[board] would have fired, then poll
+    var tries = 0;
+    (function tryOpen(){
+      tries++;
+      if (cardById(pendingBoardCard)) { openCardId = pendingBoardCard; try{ renderBoard(board); }catch(_){} return; }
+      if (tries < 20) setTimeout(tryOpen, 250);
+      else { openCardId = pendingBoardCard; try{ renderBoard(board); }catch(_){} }
+    })();
   }
 }
 
@@ -3459,6 +3667,9 @@ el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
 var providerCacheHolder = { list: providerCache };
 mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, fuzzyMatch: fuzzyMatch, providerCacheHolder: providerCacheHolder });
+// The picker module refreshes its own label on model change; the header chip
+// and composer pill mirror the same select, so they refresh here.
+if (el.modelSelect) el.modelSelect.addEventListener("change", renderSessionChip);
 
 paletteBind({
   VIEWS: VIEWS, showView: showView, el: el,

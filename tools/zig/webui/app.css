@@ -451,6 +451,24 @@ h1 {
     0 0 0 1px color-mix(in srgb, currentColor 35%, transparent),
     0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
 }
+/* The composer's model pill: the active model as a compact button beside the
+   run controls. The same value the header chip carries, rendered where the
+   eye already is when composing; no lamp dot — it is a control, not a state
+   lamp, and it already has hover/focus to signal that. */
+button.model-pill {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  display: inline-flex; align-items: center;
+  padding: 0.2rem 0.7rem; border-radius: 999px; cursor: pointer;
+  background: var(--surface-2); color: var(--fg-muted);
+  border: 1px solid var(--rule); max-width: 13rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+button.model-pill:hover,
+button.model-pill:focus-visible {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
 button.chip-btn {
   font-family: var(--sans); font-size: 12px; font-weight: 500;
   min-height: 32px; display: inline-flex; align-items: center;
@@ -674,6 +692,32 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 }
 .citation-chip:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border-color: var(--accent); }
 .citation-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- mermaid diagrams ----
+   A `mermaid` fence renders in place: the SVG sits centered on the answer's
+   surface with its own scroll for wide diagrams, and the source folds under
+   a disclosure below it. The renderer is a vendored lazy script, so this is
+   also the loading/error surface while it is fetched or when it fails. */
+.md-mermaid {
+  padding: var(--space-4) var(--space-3);
+  display: flex; justify-content: center; overflow-x: auto;
+  background: var(--surface-2);
+}
+.md-mermaid svg { max-width: 100%; height: auto; }
+.md-mermaid-error {
+  color: var(--danger); font-family: var(--mono); font-size: var(--step-0);
+  justify-content: flex-start; white-space: pre-wrap;
+}
+.mermaid-src { border-top: 1px solid var(--rule); }
+.mermaid-src summary {
+  cursor: pointer; font-family: var(--sans); font-size: 11px;
+  color: var(--fg-muted); padding: 0.3rem 0.5rem; user-select: none;
+}
+.mermaid-src pre {
+  margin: 0; padding: 0.5rem 0.75rem; overflow-x: auto;
+  font-family: var(--mono); font-size: var(--step--1);
+  background: var(--surface-2);
+}
 
 /* ---- fenced code blocks inside a finished answer ----
    The language tag and Copy button sit in their own header strip rather
@@ -1064,6 +1108,16 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem 0.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .chat-msg:hover .chat-actions { display: flex; }
 .chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: 11px; border-radius: 999px; }
+.chat-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.chat-reactions:empty { display: none; }
+.chat-reaction { font-size: 12px; padding: 0.1rem 0.4rem; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface-2); cursor: pointer; }
+.chat-reaction[data-mine="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.chat-thread-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; font-size: 12px; }
+.chat-thread-bar[hidden] { display: none; }
+.chat-thread-bar button { min-height: 22px; padding: 0 0.5rem; font-size: 11px; border-radius: 999px; }
+.chat-thread-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; border-left: 2px solid var(--rule); padding-left: 0.6rem; }
+.chat-thread-list[hidden] { display: none; }
+.chat-thread-reply { font-size: 12px; color: var(--fg); padding: 0.15rem 0; }
 .chat-msg:hover { background: color-mix(in srgb, var(--surface-2) 40%, transparent); border-left-color: var(--rule); }
 .chat-day { display: flex; align-items: center; gap: 0.75rem; font-family: var(--sans); font-size: 11px; font-weight: 600; color: var(--fg-muted); letter-spacing: 0.04em; text-transform: uppercase; padding: 0.5rem 0 0.35rem; margin-top: 0.4rem; border-top: 0; }
 .chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--rule) 60%, transparent); }
@@ -1659,6 +1713,10 @@ h2#session-title {
   .rail:not([data-open="true"]) { visibility: hidden; }
   .rail:not([data-open="true"]) * { visibility: hidden; }
   #rail-toggle { display: inline-flex; }
+  /* Collapse is a desktop affordance: under 60rem the rail is a drawer you
+     open and close as a whole, so the collapse toggle would describe a state
+     the drawer does not have. */
+  #rail-collapse { display: none; }
 }
 @media (min-width: 60.01rem) and (max-width: 72rem) {
   .rail[data-collapsed="true"] { width: 3.5rem; padding-inline: var(--space-2); }
@@ -1749,8 +1807,9 @@ h2#session-title {
 .board-quick-add input { flex: 1; min-height: 32px; font-size: 12px; border-radius: 999px; }
 .board-quick-add button { min-height: 32px; font-size: 12px; border-radius: 999px; }
 .board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-/* Over the limit is said, not enforced: see the endpoint's reasoning. */
 .board-col-count[data-over="true"] { color: var(--warn-text); }
+.board-col[data-over="true"] { box-shadow: inset 0 0 0 1.5px var(--warn); }
+.board-wip-banner { font-size: 11px; font-weight: 600; color: var(--warn-text); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid var(--warn); border-radius: var(--radius); padding: 0.25rem 0.5rem; margin: 0.3rem 0.5rem; text-align: center; }
 .board-cards {
   list-style: none; margin: 0; padding: 0 var(--space-2) var(--space-2);
   display: flex; flex-direction: column; gap: var(--space-2);
@@ -1780,9 +1839,19 @@ h2#session-title {
 .card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.1); }
 .card[aria-current="true"] .card-title { color: var(--accent-text); }
 .card[data-dragging="true"] { opacity: 0.5; transform: rotate(1deg) scale(1.02); }
-.card-cover { height: 6px; border-radius: 999px; margin: -0.65rem -0.75rem 0.4rem; background: var(--rule); }
+.card-cover { height: 6px; border-radius: 999px; margin: -0.65rem -0.75rem 0.4rem; background: var(--rule); overflow: hidden; }
 .card-cover[data-priority="high"] { background: var(--danger); }
 .card-cover[data-priority="low"] { background: var(--surface-2); }
+.card-cover-img { display: block; width: 100%; height: 84px; object-fit: cover; border-radius: 10px 10px 0 0; margin: -6px 0 0; }
+.card-cover--img { height: auto; background: transparent; }
+.card-labels { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.card-label { font-size: 10px; font-weight: 700; letter-spacing: 0.02em; padding: 0.05rem 0.4rem; border-radius: 999px; color: #fff; line-height: 1.4; }
+.card-label[data-color="green"] { background: #0a7a2e; }
+.card-label[data-color="yellow"] { background: #9a7a0a; color: #111; }
+.card-label[data-color="orange"] { background: #c45a0a; }
+.card-label[data-color="red"] { background: #c41212; }
+.card-label[data-color="purple"] { background: #6b2fb8; }
+.card-label[data-color="blue"] { background: #0b5ab8; }
 .card-title { overflow-wrap: anywhere; line-height: 1.35; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 0.3rem 0.5rem; color: var(--fg-muted); font-variant-numeric: tabular-nums; font-size: 11px; line-height: 1.3; }
 .card-flag { border-radius: 999px; padding: 0.1rem 0.5rem; border: 1px solid var(--rule); font-size: 11px; font-weight: 500; }

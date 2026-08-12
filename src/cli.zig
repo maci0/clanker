@@ -47,6 +47,7 @@ const webui_vendor_van = @embedFile("webui_vendor/van.js");
 const webui_vendor_vanui = @embedFile("webui_vendor/van-ui.js");
 const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
 const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
+const webui_vendor_mermaid = @embedFile("webui_vendor/mermaid.min.js");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -2629,7 +2630,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
-            std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js");
+            std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
+            std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js");
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
@@ -2689,6 +2691,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/hljs.min.js")) {
             respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js")) {
+            respondJs(gpa, stream, webui_vendor_mermaid, &gzip_mermaid, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
@@ -4633,6 +4637,34 @@ fn handleSessions(
     const rest = target["/api/sessions".len..];
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
+        // `POST /api/sessions/<id>/branch/<n>` cuts the conversation at turn
+        // n (1-based) and continues in a copy — the per-turn branch a chat
+        // UI offers. The numeric suffix is handled before id validation, for
+        // the same reason the fork suffix is: "<id>/branch/<n>" contains
+        // separators and would never pass isSlug.
+        if (std.mem.eql(u8, method, "POST")) {
+            if (branchSuffix(id)) |branch| {
+                const src_id = branch.src;
+                if (!validSessionId(src_id)) {
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
+                    return;
+                }
+                const new_id = session.branchSession(io, gpa, arena, std.Io.Dir.cwd(), src_id, branch.turn) catch |err| switch (err) {
+                    error.TurnOutOfRange => {
+                        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"turn out of range\"}");
+                        return;
+                    },
+                    else => {
+                        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                        return;
+                    },
+                };
+                var branch_buf: [256]u8 = undefined;
+                const branch_body = std.fmt.bufPrint(&branch_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{new_id}) catch return;
+                respond(stream, 200, "OK", branch_body);
+                return;
+            }
+        }
         // `POST /api/sessions/<id>/fork` branches a conversation. The fork
         // suffix is handled before the id validation below because
         // "<id>/fork" itself contains a separator and would never pass it.
@@ -4740,6 +4772,47 @@ fn handleSessions(
         return;
     };
     respondCompressible(arena, stream, accepts_gzip, listing);
+}
+
+const BranchRef = struct { src: []const u8, turn: usize };
+
+/// Splits a `POST /api/sessions/<id>/branch/<n>` target into its source id
+/// and 1-based turn number. Returns null when the target is not a branch
+/// request: no `/branch/` marker, or a turn number that is missing, zero, or
+/// not an integer. The source id is returned unchecked — `validSessionId`
+/// is the caller's job, since it must reject traversal attempts the same
+/// way the fork suffix does.
+fn branchSuffix(id: []const u8) ?BranchRef {
+    const marker = "/branch/";
+    const at = std.mem.indexOf(u8, id, marker) orelse return null;
+    const src = id[0..at];
+    const n = id[at + marker.len ..];
+    if (n.len == 0) return null;
+    const turn = std.fmt.parseInt(usize, n, 10) catch return null;
+    if (turn == 0) return null;
+    return .{ .src = src, .turn = turn };
+}
+
+test "branch route suffix parsing yields a valid source id and refuses traversal" {
+    // POST /api/sessions/<id>/branch/<n> splits into a valid source id and
+    // a 1-based turn number.
+    const r1 = branchSuffix("sess-abc/branch/3");
+    try std.testing.expect(r1 != null);
+    try std.testing.expect(validSessionId(r1.?.src));
+    try std.testing.expectEqual(@as(usize, 3), r1.?.turn);
+    // A traversal attempt in the source id is refused, not sanitised.
+    const bad = branchSuffix("../../etc/branch/1");
+    try std.testing.expect(bad != null);
+    try std.testing.expect(!validSessionId(bad.?.src));
+    // A real session id never contains the marker, so the rename POST for a
+    // plain id cannot be shadowed by the branch route.
+    try std.testing.expect(branchSuffix("sess-abc") == null);
+    try std.testing.expect(branchSuffix("sess-abc/branch") == null);
+    try std.testing.expect(branchSuffix("sess-abc/branch/") == null);
+    // The turn number must be a positive integer.
+    try std.testing.expect(branchSuffix("sess-abc/branch/0") == null);
+    try std.testing.expect(branchSuffix("sess-abc/branch/x") == null);
+    try std.testing.expect(branchSuffix("sess-abc/branch/3/4") == null);
 }
 
 /// Session ids reach the filesystem as a path fragment, so they are restricted
@@ -5589,6 +5662,7 @@ var gzip_van: GzipCache = .{};
 var gzip_vanui: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
 var gzip_hljs: GzipCache = .{};
+var gzip_mermaid: GzipCache = .{};
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a

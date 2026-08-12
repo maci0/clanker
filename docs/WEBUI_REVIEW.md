@@ -97,8 +97,60 @@ Scope: tighten layout density and bring composer + transcript in line with ChatG
 
 Verification for this entry: `zig build` green; `zig build test --summary all` `375/376` pass (`1` skipped) — run before pushing this review + PRD update.
 
+## Phase 6 — Chat UX parity (2026-08-12)
+
+Scope: close the four Kimi-Code-parity gaps the density slice left open in
+`docs/prds/webui.md` — per-turn branch, run-id citation chips, a model pill
+in the composer, and the collapsed icon rail.
+
+- **6.1 Per-turn Branch.** The Branch button on a turn card used to click the
+  session-level Fork (whole conversation, nothing truncated). Now each Branch
+  button posts that turn's own 1-based stratum index to
+  `POST /api/sessions/<id>/branch/<n>`, the server cuts the transcript after
+  the Nth user exchange (tool-call round included; a pending turn cuts before
+  its unanswered user message) and copies it under a new id titled
+  `branch of <title>`, and the page switches into the copy. Server:
+  `session.branchSession` + `turnCutoff` in `src/agent/session.zig` (turn 0 /
+  past-the-end → 400, traversal refused via `validSessionId`),
+  `branchSuffix` route parsing in `src/cli.zig`. Client: `app.js` branch
+  handler fetches `/branch/<n>` and `switchSession`s; the per-turn branch
+  timeline now matches `branch of` titles alongside `fork of`.
+- **6.2 Citation chips → openRun.** `lib/markdown.js` gains `RUN_RE` +
+  `appendRunRefs`: run references in an answer — bare `run-<ts>` / `sub-<ns>`,
+  or the trailing `[subagent run: sub-…]` a nested run appends — render as
+  accent chips that open that run's graph via the new `window.clankerOpenRun`
+  bridge in `app.js` (fallback: Runs tab + filter), alongside the existing
+  `file:line` callgraph citations. A `(?!\.\w)` guard keeps `run-1.sh`-style
+  filenames from false-positiving.
+- **6.3 Model pill inside composer.** The toolbar-actions row now leads with a
+  pill button (`#composer-model`) showing the active model, opening the same
+  picker the header chip opens (`openModelPicker`); `renderSessionChip`
+  mirrors the header chip's label, and a `change` listener on the hidden
+  `#model-select` refreshes both. Styled as a compact `999px` pill (no lamp
+  dot — it is a control, not a state lamp), accent hover/focus.
+- **6.4 Collapsed icon rail.** The collapse affordance shipped earlier
+  (`data-collapsed` → 3.5rem, `data-short` labels, persisted); the remaining
+  gap was the `#rail-collapse` toggle staying visible under 60rem where the
+  rail is an off-canvas drawer — it is now hidden there, since a drawer
+  collapses as a whole or not at all.
+
+Verification: `zig build` green; `zig build test --summary all` `406 pass, 1
+skip (407 total)`; `zig build tools` green; `zig fmt --check` clean; `node
+--check` on `app.js` + `lib/markdown.js`; live `clanker serve` — branch
+endpoint exercised end-to-end (`branch/1` returns a truncated copy with the
+tool round intact, `branch/0`/`branch/x` 400, `branch/9` "turn out of
+range", fork unaffected, original untouched), `/` + `/webui/*` 200 with
+`#composer-model` / `clankerOpenRun` / `composerModel` verified served.
+
+Note: a concurrent agent working in this same tree ran `git reset --hard`
+twice during this slice, wiping the Zig + markdown.js edits mid-flight; they
+were re-applied and the verification above was re-run against the surviving
+tree. The shared working tree now also carries that agent's own in-progress
+`app.js`/`app.css` work (live-graph nodes, run-compare, board covers) — none
+of it overlaps these changes.
+
 ## Left / next
 
-- Phase 6 items 6.1–6.4 per `docs/prds/webui.md` (Branch per turn, citation chips, model pill inside composer, collapsed rail) — none land in this slice beyond the CSS+grouping scaffolding already shipped.
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
+- Rerun the axe sweep over the Phase 6 additions (branch handler, run-ref chips, model pill) once the concurrent agent's in-flight `app.js` work settles.

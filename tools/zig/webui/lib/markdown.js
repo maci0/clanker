@@ -1,16 +1,58 @@
 // Vanilla, no bundler. Pure markdown + code rendering; depends on vendor loadHljs/copyText.
 // Imported by app.js during incremental ES-module split; app.js still ships its own
 // copy until the switch is flipped, so keep exports side-effect free.
-import { loadHljs, copyText } from "../core/vendor.js";
+import { loadHljs, loadMermaid, copyText } from "../core/vendor.js";
 
 export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
 export var CITATION_RE = /[a-zA-Z0-9_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/g;
+export var RUN_RE = /\[subagent run:\s*(?:sub|run)-\d+\]|\b(?:sub|run)-\d+\b(?!\.\w)/g;
+function runIdOf(m) {
+  var mm = /(sub|run)-\d+/.exec(m);
+  return mm ? mm[0] : m;
+}
+/* Run references (`run-<ts>`, `sub-<ns>`, or the trailing `[subagent run:
+   sub-…]` a nested run appends to its answer) become chips that open that
+   run's graph, the way file:line citations open the callgraph search. */
+export function appendRunRefs(parent, text) {
+  RUN_RE.lastIndex = 0;
+  var last = 0, m;
+  while ((m = RUN_RE.exec(text)) !== null) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    var ref = m[0];
+    var id = runIdOf(ref);
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "citation-chip run-chip";
+    chip.textContent = id;
+    chip.setAttribute("data-run", id);
+    chip.title = "Open run " + id;
+    chip.setAttribute("aria-label", "Open run " + id);
+    (function (rid, el) {
+      el.addEventListener("click", function (e) {
+        e.preventDefault();
+        try {
+          if (typeof window !== "undefined" && typeof window.clankerOpenRun === "function") { window.clankerOpenRun(rid); return; }
+        } catch (_) {}
+        try {
+          var rf = document.getElementById("run-filter");
+          if (rf) { rf.value = rid; rf.dispatchEvent(new Event("input", { bubbles: true })); }
+          var runsTab = document.getElementById("tab-runs");
+          if (runsTab) runsTab.click();
+        } catch (_) {}
+      });
+    })(id, chip);
+    parent.appendChild(chip);
+    last = RUN_RE.lastIndex;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
 export function appendCitedText(parent, text) {
   var re = CITATION_RE;
   re.lastIndex = 0;
   var last = 0, m;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    if (m.index > last) appendRunRefs(parent, text.slice(last, m.index));
     var ref = m[0];
     var chip = document.createElement("button");
     chip.type = "button";
@@ -36,7 +78,7 @@ export function appendCitedText(parent, text) {
     parent.appendChild(chip);
     last = re.lastIndex;
   }
-  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  if (last < text.length) appendRunRefs(parent, text.slice(last));
 }
 
 export function isSafeLinkUrl(url) {
@@ -276,6 +318,70 @@ export function buildCodeBlock(lang, code) {
   return wrap;
 }
 
+/* A `mermaid` fence renders as a diagram, with the source folded under a
+   disclosure the way the turn's thinking is — the diagram is the answer, the
+   source is the receipt. The raw code is parked in `data-src` until the
+   lazily-loaded renderer replaces it, so Copy answer and Export .md still
+   read `markdownSource`, never the rendered SVG. */
+export function buildMermaidBlock(code) {
+  var wrap = document.createElement("div");
+  wrap.className = "code-block mermaid-block";
+  var box = document.createElement("div");
+  box.className = "md-mermaid";
+  box.setAttribute("data-src", code);
+  box.textContent = "Diagram\u2026";
+  box.setAttribute("aria-label", "Diagram loading");
+  wrap.appendChild(box);
+  var src = document.createElement("details");
+  src.className = "mermaid-src";
+  var sum = document.createElement("summary");
+  sum.textContent = "source";
+  var pre = document.createElement("pre");
+  pre.textContent = code;
+  src.appendChild(sum);
+  src.appendChild(pre);
+  wrap.appendChild(src);
+  return wrap;
+}
+
+/* Renders every .md-mermaid in a subtree once the (lazily fetched) renderer
+   is in. Dark/light picks the mermaid theme from the page's data-theme so a
+   diagram on a night-shift palette is not a white island. Strict security
+   keeps diagram text inert under the page's own CSP. */
+export function renderMermaidBlocks(root) {
+  var boxes = root.querySelectorAll(".md-mermaid");
+  if (!boxes.length) return;
+  loadMermaid().then(function () {
+    var dt = (document.documentElement && document.documentElement.getAttribute("data-theme")) || "";
+    var dark = !(/light|system/.test(dt));
+    window.mermaid.initialize({
+      startOnLoad: false,
+      theme: dark ? "dark" : "default",
+      securityLevel: "strict",
+      fontFamily: "var(--mono)"
+    });
+    boxes.forEach(function (box) {
+      var code = box.getAttribute("data-src") || "";
+      var id = "mm-" + Math.random().toString(36).slice(2, 10);
+      window.mermaid.render(id, code).then(function (res) {
+        box.innerHTML = res.svg;
+        box.setAttribute("aria-label", "Mermaid diagram");
+        box.removeAttribute("data-src");
+      }).catch(function (err) {
+        box.classList.add("md-mermaid-error");
+        box.textContent = "Diagram failed to render: " + ((err && err.message) || err);
+        box.setAttribute("role", "alert");
+      });
+    });
+  }).catch(function () {
+    boxes.forEach(function (box) {
+      box.classList.add("md-mermaid-error");
+      box.textContent = "Could not load the diagram renderer.";
+      box.setAttribute("role", "alert");
+    });
+  });
+}
+
 export function finalizeAnswer(turn) {
   if (turn.answer.querySelector(".failed")) return;
   var raw = turn.root.markdownSource || turn.answer.textContent;
@@ -286,13 +392,14 @@ export function finalizeAnswer(turn) {
   while ((m = re.exec(raw))) {
     if (m[0] === "") break;
     if (m.index > last) frag.appendChild(renderMarkdown(raw.slice(last, m.index)));
-    frag.appendChild(buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
+    frag.appendChild(m[1].toLowerCase() === "mermaid" ? buildMermaidBlock(m[2].replace(/\n$/, "")) : buildCodeBlock(m[1], m[2].replace(/\n$/, "")));
     last = re.lastIndex;
   }
   if (last < raw.length) frag.appendChild(renderMarkdown(raw.slice(last)));
   turn.answer.textContent = "";
   turn.answer.className = "turn-answer md";
   turn.answer.appendChild(frag);
+  renderMermaidBlocks(turn.answer);
 }
 
 
