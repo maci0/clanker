@@ -72,6 +72,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_ask", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckAsk);
     try lk.defineFuncCtx("env", "ck_docker", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckDocker);
     try lk.defineFuncCtx("env", "ck_llm", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlm);
+    try lk.defineFuncCtx("env", "ck_llm_many", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlmMany);
     try lk.defineFuncCtx("env", "ck_chat", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckChat);
     try lk.defineFuncCtx("env", "ck_stats", h, fn (*zwasm.Caller) u32, &host.ckStats);
     try lk.defineFuncCtx("env", "ck_config", h, fn (*zwasm.Caller) u32, &host.ckConfig);
@@ -1576,6 +1577,106 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
     try std.testing.expectEqualStrings(id, entries[0].object.get("id").?.string);
     try std.testing.expectEqualStrings("draw", entries[0].object.get("winner").?.string);
     try std.testing.expect(entries[0].object.get("headline").?.string.len > 0);
+}
+
+/// One `compare` call against an isolated sandbox root. `llm` is left unset, so
+/// every `ck_llm_many` is denied — which is how these tests reach the tool's
+/// refusal paths without a provider account.
+fn compareCall(io: std.Io, root: []const u8, wasm: []const u8, env: *std.process.Environ.Map, input: []const u8) ![]u8 {
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"state/compare/"},
+        .environ_map = env,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    return mod.executeTool(input);
+}
+
+test "compare wasm tool refuses a comparison that is not one, before spending a call" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/compare.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const cases = [_]struct { input: []const u8, want: []const u8 }{
+        // No config in this sandbox, so "every configured provider" is none.
+        .{ .input = "{\"prompt\":\"q\"}", .want = "at least two models" },
+        .{ .input = "{\"prompt\":\"q\",\"providers\":[\"a\"]}", .want = "at least two models" },
+        .{ .input = "{\"prompt\":\"q\",\"providers\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}", .want = "at most 8" },
+        // Same provider and same model twice is one model sampled twice.
+        .{ .input = "{\"prompt\":\"q\",\"targets\":[{\"provider\":\"a\",\"model\":\"m\"},{\"provider\":\"a\",\"model\":\"m\"}]}", .want = "not a comparison" },
+        // Two models of one provider is the case that must NOT be refused, so
+        // it gets as far as the denied model call instead.
+        .{ .input = "{\"prompt\":\"q\",\"targets\":[{\"provider\":\"a\",\"model\":\"m1\"},{\"provider\":\"a\",\"model\":\"m2\"}]}", .want = "not allowed to call the model" },
+        .{ .input = "{\"prompt\":\"q\",\"providers\":[\"a\",\"b\"]}", .want = "not allowed to call the model" },
+    };
+    for (cases) |c| {
+        const outp = try compareCall(io, root, wasm, &env_map, c.input);
+        defer std.testing.allocator.free(outp);
+        if (std.mem.find(u8, outp, "\"ok\":false") == null or
+            std.mem.find(u8, outp, c.want) == null)
+        {
+            std.debug.print("compare refusal case {s}\n  wanted: {s}\n  got:    {s}\n", .{ c.input, c.want, outp });
+            return error.TestUnexpectedResult;
+        }
+    }
+
+    // Nothing was persisted: a comparison that never got an answer is not a
+    // comparison, and must not leave a file to list later.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/compare", .{}));
+}
+
+test "compare wasm tool lists nothing on a fresh sandbox and refuses a traversing id" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/compare.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const listed = try compareCall(io, root, wasm, &env_map, "{}");
+    defer std.testing.allocator.free(listed);
+    try std.testing.expect(std.mem.find(u8, listed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "no comparisons yet") != null);
+    // An empty listing still carries the array, so a caller never has to tell
+    // "none yet" apart from "this build has no such field".
+    var listing_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer listing_arena.deinit();
+    const listing = try std.json.parseFromSliceLeaky(std.json.Value, listing_arena.allocator(), listed, .{});
+    try std.testing.expectEqual(@as(usize, 0), listing.object.get("comparisons").?.array.items.len);
+
+    // An id that could climb out of state/compare/ is refused, not reported as
+    // a missing comparison.
+    for ([_][]const u8{ "../escape", "a/../../b", "a/b" }) |bad| {
+        const req = try std.fmt.allocPrint(std.testing.allocator, "{{\"id\":\"{s}\"}}", .{bad});
+        defer std.testing.allocator.free(req);
+        const outp = try compareCall(io, root, wasm, &env_map, req);
+        defer std.testing.allocator.free(outp);
+        try std.testing.expect(std.mem.find(u8, outp, "\"ok\":false") != null);
+        try std.testing.expect(std.mem.find(u8, outp, "no such comparison") != null);
+    }
 }
 
 test "arena wasm tool runs a battle royale to a verdict when no provider answers" {

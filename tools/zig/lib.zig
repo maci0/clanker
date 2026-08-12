@@ -32,6 +32,7 @@ extern fn ck_getenv(name_ptr: u32, name_len: u32) u32;
 extern fn ck_exec(argv_ptr: u32, argv_len: u32) u32;
 extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
+extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
 extern fn ck_stats() u32;
 extern fn ck_config() u32;
@@ -505,6 +506,24 @@ pub fn llmSystem(system: ?[]const u8, prompt: []const u8, provider: ?[]const u8,
 
     const req = sliceToMem(w.written());
     const rc = ck_llm(req.ptr, req.len);
+    return hostResult(rc);
+}
+
+/// One prompt to several models at once. `request` is the whole `ck_llm_many`
+/// object, built by the caller:
+/// `{"prompt": "...", "system": "...", "max_tokens": N,
+///   "targets": [{"provider": "<name>", "model": "<name>"}, ...]}`.
+/// Returns a JSON array with one element per target, in target order:
+/// `[{"provider":..,"model":..,"ok":true,"text":..,"ms":N,"tokens":N}, ...]`,
+/// a failing target being `{"ok":false,"error":..,"detail":..}` rather than a
+/// failure of the whole call.
+///
+/// A guest is single-threaded, so a loop of `llmWith` costs the sum of the
+/// models' latencies; the host runs these side by side and the call costs the
+/// slowest one. Requires `"llm": true` in the descriptor, exactly like `llm`.
+pub fn llmMany(request: []const u8) HostError![]const u8 {
+    const req = sliceToMem(request);
+    const rc = ck_llm_many(req.ptr, req.len);
     return hostResult(rc);
 }
 

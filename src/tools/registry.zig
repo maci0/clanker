@@ -881,7 +881,19 @@ test "a tool that calls the model says so in its descriptor" {
     var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{}) catch return error.SkipZigTest;
     defer man_dir.close(io);
 
-    const calls = [_][]const u8{ "lib.llm(", "lib.llmWith(", "lib.subagent(", "lib.subagentBriefed(" };
+    // Every guest helper that reaches a model. `lib.llmSystem` and
+    // `lib.llmMany` were missing, so `arena` (which only ever calls
+    // llmSystem) and `compare` (llmMany) were both invisible to this check —
+    // the exact hole it exists to close. A helper added to lib.zig without a
+    // line here silently re-opens it.
+    const calls = [_][]const u8{
+        "lib.llm(",
+        "lib.llmWith(",
+        "lib.llmSystem(",
+        "lib.llmMany(",
+        "lib.subagent(",
+        "lib.subagentBriefed(",
+    };
 
     var it = src_dir.iterate();
     while (it.next(io) catch null) |entry| {

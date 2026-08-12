@@ -723,6 +723,250 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     return h.writeResult(bytes, content);
 }
 
+/// Bound on targets per ck_llm_many call. Each one is an OS thread holding an
+/// open HTTPS connection for the length of a completion, so this is a real
+/// resource ceiling; it matches `max_swarm_tasks` for the same reason.
+const max_llm_many_targets: usize = 8;
+
+/// One leg of a ck_llm_many fan-out: everything the thread needs on the way in,
+/// everything it learned on the way out. `text` and `detail` are gpa-owned and
+/// freed by the caller after encoding, mirroring ckSwarm's SwarmCall.
+const LlmManyCall = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    ctx: *client.Ctx,
+    provider: *const config_mod.Provider,
+    messages: []const types.Message,
+    max_tokens: u32,
+    text: ?[]const u8 = null,
+    err: ?anyerror = null,
+    detail: ?[]const u8 = null,
+    ms: i64 = 0,
+    tokens: u64 = 0,
+
+    fn run(self: *@This()) void {
+        // Its own arena, so nothing crosses between legs: the only allocator
+        // shared with the other threads is the gpa underneath, which ckSwarm
+        // already hands to nested agents the same way.
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var err_detail: ?[]const u8 = null;
+        // `.awake` is monotonic: an NTP step mid-call would otherwise make one
+        // leg of the comparison look faster than it ran, or negative.
+        const t0 = std.Io.Timestamp.now(self.io, .awake);
+        const resp = client.chat(self.ctx, arena, .{
+            .provider = self.provider,
+            .messages = self.messages,
+            .max_tokens = self.max_tokens,
+        }, &err_detail) catch |e| {
+            self.ms = elapsedMsFrom(self.io, t0);
+            self.err = e;
+            // The provider's own error text is what makes a failed leg
+            // actionable ("model not found" vs "insufficient balance"); the
+            // error name alone is not.
+            if (err_detail) |d| self.detail = self.gpa.dupe(u8, d) catch null;
+            return;
+        };
+        self.ms = elapsedMsFrom(self.io, t0);
+        const content = resp.message.content orelse "";
+        self.tokens = if (resp.usage) |u| u.total_tokens else @intCast(@min(content.len / 4, std.math.maxInt(u32)));
+        self.text = self.gpa.dupe(u8, content) catch |e| {
+            self.err = e;
+            return;
+        };
+    }
+};
+
+fn elapsedMsFrom(io: std.Io, t0: std.Io.Timestamp) i64 {
+    return @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+}
+
+/// ck_llm_many(request) -> a JSON array of completions, one per target, in the
+/// order the targets were given.
+///
+/// Request: `{"prompt": "...", "system": "...", "max_tokens": N,
+///            "targets": [{"provider": "<name>", "model": "<name>"}, ...]}`.
+/// Reply:   `[{"provider":..,"model":..,"ok":true,"text":..,"ms":N,"tokens":N},
+///            {"provider":..,"model":..,"ok":false,"error":"..","ms":N}]`.
+///
+/// The point of a separate host function rather than a loop of `ck_llm` in the
+/// guest: a wasm guest is single-threaded, so N models asked one at a time cost
+/// the sum of their latencies. Here they run side by side on their own threads
+/// and cost the slowest one, which is what makes "ask five models the same
+/// question" a thing anyone would sit through. The fan-out mirrors `ck_swarm`'s
+/// (spawn, then join every leg before returning), so the caller never observes
+/// a half-finished batch and the parent stays parked on the tool call for the
+/// whole thing.
+///
+/// One failing target is a failing element, never a failing call: a comparison
+/// of five models where one provider is out of credit is still a comparison of
+/// four, and collapsing it to an error would throw the other four away.
+pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (raw.len == 0) return Err.invalid;
+
+    // Same gate as ck_llm: model access is a descriptor grant, and a batch of
+    // calls is not a way around it.
+    const access = h.sandbox.llm orelse {
+        log.log(.warn, "[llm] denied: tool descriptor does not set \"llm\": true", .{});
+        return Err.denied;
+    };
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return Err.invalid;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return Err.invalid,
+    };
+    const prompt = switch (obj.get("prompt") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    if (prompt.len == 0) return Err.invalid;
+    var system: ?[]const u8 = null;
+    if (obj.get("system")) |s| {
+        if (s == .string and s.string.len > 0) system = s.string;
+    }
+    var max_tokens = access.max_tokens;
+    if (obj.get("max_tokens")) |m| {
+        if (m == .integer and m.integer > 0 and m.integer <= std.math.maxInt(u32)) max_tokens = @intCast(m.integer);
+    }
+
+    const targets_val = obj.get("targets") orelse return Err.invalid;
+    if (targets_val != .array) return Err.invalid;
+    const targets = targets_val.array.items;
+    if (targets.len == 0) return Err.invalid;
+    if (targets.len > max_llm_many_targets) return Err.too_large;
+
+    const cfg = h.sandbox.cfg orelse {
+        log.log(.warn, "[llm] ck_llm_many needs config to resolve provider names", .{});
+        return Err.invalid;
+    };
+
+    const messages: []const types.Message = if (system) |sys| blk: {
+        const msgs = arena.alloc(types.Message, 2) catch return Err.invalid;
+        msgs[0] = .{ .role = .system, .content = sys };
+        msgs[1] = .{ .role = .user, .content = prompt };
+        break :blk msgs;
+    } else blk: {
+        const msgs = arena.alloc(types.Message, 1) catch return Err.invalid;
+        msgs[0] = .{ .role = .user, .content = prompt };
+        break :blk msgs;
+    };
+
+    const calls = arena.alloc(LlmManyCall, targets.len) catch return Err.too_large;
+    const names = arena.alloc([2][]const u8, targets.len) catch return Err.too_large;
+    for (targets, 0..) |t, i| {
+        if (t != .object) return Err.invalid;
+        const pname = switch (t.object.get("provider") orelse return Err.invalid) {
+            .string => |s| s,
+            else => return Err.invalid,
+        };
+        var provider = cfg.provider(pname) catch {
+            log.log(.warn, "[llm] unknown provider '{s}'", .{pname});
+            return Err.invalid;
+        };
+        var model_name = provider.activeModelName();
+        if (t.object.get("model")) |mv| {
+            if (mv == .string and mv.string.len > 0) {
+                // Copy the provider and swap its default model, mirroring
+                // ck_llm's own model override.
+                const copy = arena.create(config_mod.Provider) catch return Err.invalid;
+                copy.* = provider.*;
+                copy.default_model = mv.string;
+                provider = copy;
+                model_name = mv.string;
+            }
+        }
+        names[i] = .{ pname, model_name };
+        calls[i] = .{
+            .io = h.sandbox.io,
+            .gpa = h.sandbox.gpa,
+            .ctx = access.ctx,
+            .provider = provider,
+            .messages = messages,
+            .max_tokens = max_tokens,
+        };
+    }
+
+    log.log(.info, "[llm] → ck_llm_many ({d} targets, concurrent)", .{calls.len});
+    const threads = arena.alloc(std.Thread, calls.len) catch return Err.too_large;
+    var spawned: usize = 0;
+    while (spawned < calls.len) : (spawned += 1) {
+        threads[spawned] = std.Thread.spawn(.{}, LlmManyCall.run, .{&calls[spawned]}) catch break;
+    }
+    // Anything past `spawned` never ran. Rather than reporting it as a spawn
+    // failure and losing that model's answer, run the remainder inline: a
+    // comparison that is slower than it could have been still answers the
+    // question it was asked.
+    for (calls[spawned..]) |*c| c.run();
+    for (threads[0..spawned]) |th| th.join();
+
+    defer for (calls) |c| {
+        if (c.text) |t| h.sandbox.gpa.free(@constCast(t));
+        if (c.detail) |d| h.sandbox.gpa.free(@constCast(d));
+    };
+
+    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(buf);
+    var w: std.Io.Writer = .fixed(buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginArray() catch return Err.too_large;
+    var failures: usize = 0;
+    var total_tokens: u64 = 0;
+    for (calls, 0..) |c, i| {
+        s.beginObject() catch return Err.too_large;
+        s.objectField("provider") catch return Err.too_large;
+        s.write(names[i][0]) catch return Err.too_large;
+        s.objectField("model") catch return Err.too_large;
+        s.write(names[i][1]) catch return Err.too_large;
+        s.objectField("ms") catch return Err.too_large;
+        s.write(c.ms) catch return Err.too_large;
+        if (c.text) |t| {
+            total_tokens += c.tokens;
+            s.objectField("ok") catch return Err.too_large;
+            s.write(true) catch return Err.too_large;
+            s.objectField("tokens") catch return Err.too_large;
+            s.write(c.tokens) catch return Err.too_large;
+            s.objectField("text") catch return Err.too_large;
+            s.write(t) catch return Err.too_large;
+        } else {
+            failures += 1;
+            s.objectField("ok") catch return Err.too_large;
+            s.write(false) catch return Err.too_large;
+            s.objectField("error") catch return Err.too_large;
+            const name: []const u8 = if (c.err) |e| @errorName(e) else "no answer";
+            s.write(name) catch return Err.too_large;
+            if (c.detail) |d| {
+                s.objectField("detail") catch return Err.too_large;
+                s.write(d) catch return Err.too_large;
+            }
+        }
+        s.endObject() catch return Err.too_large;
+    }
+    s.endArray() catch return Err.too_large;
+    if (failures > 0) log.log(.warn, "[llm] ck_llm_many: {d}/{d} targets failed", .{ failures, calls.len });
+    log.log(.info, "[llm] ✓ ck_llm_many ({d} answered, ~{d} est. tokens)", .{ calls.len - failures, total_tokens });
+
+    // Charged once for the batch, against the same session budget a loop of
+    // ck_llm calls would have hit: running the calls side by side must not make
+    // them free.
+    if (h.sandbox.session_token_budget > 0) {
+        if (h.sandbox.used_session_tokens + total_tokens > h.sandbox.session_token_budget) {
+            log.log(.warn, "[llm] session token budget exceeded", .{});
+            return Err.too_large;
+        }
+        h.sandbox.used_session_tokens += total_tokens;
+    }
+    return h.writeResult(bytes, buf[0..w.end]);
+}
+
 /// ck_config() -> this tool's `config` object from its descriptor, as JSON.
 pub fn ckConfig(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
@@ -767,7 +1011,11 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     // provider is free to judge a match, i.e. is not already fighting it.
     // `.providers` answers that without handing it the api_key_env names
     // `.full` carries.
-    if (std.mem.eql(u8, tool_name, "providers") or std.mem.eql(u8, tool_name, "arena")) return .providers;
+    // compare needs it for two questions: which providers exist (so `clanker
+    // compare` with no --with can put the configured ones side by side) and
+    // which one is free to judge, i.e. is not itself an entrant.
+    if (std.mem.eql(u8, tool_name, "providers") or std.mem.eql(u8, tool_name, "arena") or
+        std.mem.eql(u8, tool_name, "compare")) return .providers;
     if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "cmd_status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
@@ -2504,6 +2752,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_ask", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckAsk) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_docker", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDocker) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_llm_many", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlmMany) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_stats", child_host, fn (*zwasm_mod.Caller) u32, &ckStats) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_config", child_host, fn (*zwasm_mod.Caller) u32, &ckConfig) catch return Err.invalid;

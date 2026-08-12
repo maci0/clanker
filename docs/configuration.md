@@ -40,6 +40,14 @@ is specified; each provider's `default_model` picks its active model. On the
 command line, `--provider <name>` and `--model <name>` or
 `--model <provider>/<model>` override both per run.
 
+A configured provider is not the same thing as a reachable one: `config.toml`
+ships stanzas for several backends and a given machine usually has a key for one
+or two of them. `clanker providers check` is what tells the two apart, and
+`clanker compare` puts their answers side by side once they do. `compare`'s own
+`judge = "auto"` default resolves to `default_provider` for exactly this reason,
+rather than hunting for a provider that is not an entrant and finding an
+unconfigured one.
+
 ## `[providers.<name>]`
 
 | Key | Type | Meaning |
