@@ -16,7 +16,6 @@ const worktree_mod = @import("improve/worktree.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
-const session_export = @import("agent/session_export.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
@@ -123,7 +122,7 @@ pub const Options = struct {
     /// an `after` ts (history) or an on/off token (subscribe).
     chat_sub: []const u8 = "rooms",
     /// `session export <id> [path]`: where the HTML transcript goes. Absent,
-    /// `session_export.defaultPath` picks `state/exports/<id>.html`. The id
+    /// The session_export tool picks `state/exports/<id>.html`. The id
     /// itself rides in `session`, the field every other command already reads
     /// a session id out of.
     session_out: ?[]const u8 = null,
@@ -308,10 +307,6 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             continue;
         }
         if (std.mem.eql(u8, a, "--version")) {
-            if (cmd_seen) {
-                setDiag(diag, a);
-                return error.UnknownArg;
-            }
             opts.command = .version;
             cmd_seen = true;
             continue;
@@ -337,7 +332,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 used = .provider;
             } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
                 opts.continue_last = true;
-                used = .session;
+                used = .continue_last;
             } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
                 opts.model = try takeValue(args, &idx, inline_value, a, diag);
                 used = .model;
@@ -996,20 +991,17 @@ fn renderUsage(buf: []u8) []const u8 {
 /// which is the least helpful thing a --help can do.
 fn printCommandHelp(io: std.Io, cmd: Command) void {
     const s = specFor(cmd) orelse return printUsage(io);
-    var buf: [4096]u8 = undefined;
+    var buf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
     if (s.detail.len > 0) w.print("\n{s}\n", .{s.detail}) catch {};
     if (s.flags.len > 0) {
-        w.writeAll("\nAccepts: ") catch {};
-        for (s.flags, 0..) |f, i| {
-            if (i > 0) w.writeAll(", ") catch {};
-            w.writeAll(f.name()) catch {};
+        w.writeAll("\nAccepts:\n") catch {};
+        for (s.flags) |f| {
+            w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
-        w.writeAll(", --verbose, --help, --version.\n") catch {};
-    } else {
-        w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
     }
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --help, -h.\n") catch {};
     writeStdOut(io, buf[0..w.end]) catch {};
 }
 
@@ -1021,6 +1013,7 @@ const Flag = enum {
     provider,
     model,
     session,
+    continue_last,
     goal,
     iters,
     dry_run,
@@ -1059,6 +1052,7 @@ const Flag = enum {
             .provider => "--provider",
             .model => "--model",
             .session => "--session",
+            .continue_last => "--continue, -c",
             .goal => "--goal",
             .iters => "--iters",
             .dry_run => "--dry-run",
@@ -1091,6 +1085,51 @@ const Flag = enum {
             .compare_synthesize => "--synthesize",
             .compare_reveal => "--reveal",
             .schedule_tz => "--tz-offset",
+        };
+    }
+
+    /// What the flag does and what it accepts, for `clanker <command> --help`.
+    /// One short phrase: the option shape (<name>, <id>, <n>, ...) and the
+    /// purpose, so a reader does not have to cross-reference the command's
+    /// detail block.
+    fn describe(self: Flag) []const u8 {
+        return switch (self) {
+            .provider => "use this provider instead of the configured default",
+            .model => "the model to use, or <provider>/<model> (alias -m)",
+            .session => "resume a saved conversation by id",
+            .continue_last => "pick up the most recently touched session",
+            .goal => "run against a persisted goal by id",
+            .iters => "cap the number of attempts (default 3)",
+            .dry_run => "propose changes without applying them",
+            .tasks => "run only the agent-driven evals, skipping the build gates",
+            .port => "listen port (default 17921)",
+            .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
+            .serve_as => "a hostname this server may present itself as; repeatable",
+            .yes => "confirm destructive actions without prompting",
+            .research_target => "file the agent may edit; repeatable, comma-separated",
+            .research_harness => "shell command whose output contains the metric",
+            .research_metric => "metric key to read (default: score)",
+            .research_direction => "min or max — whether lower or higher is better",
+            .research_pattern => "substring before the number to extract",
+            .research_budget => "per-experiment wall seconds (default 300)",
+            .arena_for => "the position the first combatant defends",
+            .arena_against => "the opposing position; must differ from --for",
+            .arena_for_provider => "which provider argues 'for'",
+            .arena_against_provider => "which provider argues 'against'",
+            .arena_rounds => "round cap (tool default 4, clamped to 12)",
+            .arena_judge => "self or third — who scores the moves",
+            .arena_judge_provider => "who judges; must not be a combatant",
+            .arena_match => "print a stored match instead of running one",
+            .arena_position => "a stance for a battle royale; repeat 3-8 times",
+            .arena_defend => "the implementation or wording to defend (text or file)",
+            .arena_alternative => "the alternative to attack from; replaces --for/--against",
+            .compare_with => "add a model; <provider> or <provider@model>, repeat 2-8 times",
+            .compare_judge => "who scores the answers; auto, none, or a provider",
+            .compare_show => "print a stored comparison instead of running one",
+            .compare_pick => "with --show, record that answer as your pick",
+            .compare_synthesize => "also merge the answers into one extra call",
+            .compare_reveal => "print the label-to-model key even with no verdict",
+            .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
         };
     }
 };
@@ -1128,10 +1167,10 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
 /// so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .goal }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     continue that saved conversation\n--continue, -c     continue the most recently touched one\n--goal <id>        run against a persisted goal" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last, .goal }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        run against a persisted goal" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
-    .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
+    .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
@@ -1158,7 +1197,7 @@ const specs = [_]Spec{
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates.\n--provider/--model run the eval agents on a specific backend (cmdEval already resolves them; the improve loop's eval_provider rides this)." },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
     .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
-    .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it" },
+    .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own — the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields — minute hour day-of-month month day-of-week — each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
 };
@@ -2903,11 +2942,10 @@ fn cmdSessions(init: std.process.Init) !void {
 /// `clanker session export <id> [path]` — one saved conversation written out
 /// as a self-contained HTML transcript.
 ///
-/// Currently native, but a candidate for a `cmd_*` WASM tool: `ck_fs_write`
-/// lets a guest write files directly (the way write_note and edit_file do),
-/// so the output-buffer-size concern that originally kept this native no
-/// longer applies. The rendering lives in `agent/session_export.zig` and is
-/// unit-tested there; this only resolves the id and the destination.
+/// Rendering and the default state/exports write live in the internal
+/// session_export WASM tool. A custom destination is written here from the
+/// tool's returned HTML because descriptor policy cannot safely grant an
+/// arbitrary caller-selected filesystem prefix.
 fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -2919,16 +2957,22 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "not a session id: '{s}'", .{id});
         return error.InvalidSessionId;
     }
-    const s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), id) catch |err| {
-        log.log(.error_, "cannot read session '{s}': {s} (clanker sessions lists them)", .{ id, @errorName(err) });
-        return err;
-    };
-    const html = try session_export.render(arena, s);
-    const path = opts.session_out orelse try session_export.defaultPath(arena, id);
-    // Atomic, so re-exporting over a file someone already has open leaves
-    // them the previous complete document rather than half of the new one.
-    try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, html);
-    const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, s.messages.len, html.len });
+    const input = try std.fmt.allocPrint(arena, "{{\"id\":{f},\"return_html\":{s}}}", .{
+        std.json.fmt(id, .{}),
+        if (opts.session_out != null) "true" else "false",
+    });
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "session_export", input);
+    const ExportResult = struct { ok: bool = false, path: []const u8 = "", messages: usize = 0, bytes: usize = 0, html: ?[]const u8 = null, @"error": ?[]const u8 = null };
+    const result = std.json.parseFromSliceLeaky(ExportResult, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
+    if (!result.ok) {
+        log.log(.error_, "cannot export session '{s}': {s}", .{ id, result.@"error" orelse "tool failed" });
+        return error.ToolFailed;
+    }
+    const path = opts.session_out orelse result.path;
+    if (opts.session_out != null) {
+        try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, result.html orelse return error.ToolFailed);
+    }
+    const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, result.messages, result.bytes });
     try writeStdOut(io, line);
 }
 
@@ -4285,7 +4329,7 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
         return;
     };
-    var buf: [64 * 1024]u8 = undefined;
+    var buf: [128 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
@@ -4575,20 +4619,21 @@ fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Parse room from query string: /api/chat/pins?room=...
-    const room = blk: {
-        if (std.mem.indexOf(u8, target, "?room=")) |idx| {
-            const raw = target[idx + 6 ..];
-            // Trim at next & if present
-            const end = std.mem.indexOf(u8, raw, "&") orelse raw.len;
-            break :blk percentDecode(arena, raw[0..end]) catch {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad room param\"}");
-                return;
-            };
+    var room: []const u8 = "";
+    if (std.mem.findScalar(u8, target, '?')) |q| {
+        var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
+        while (params.next()) |pair| {
+            if (std.mem.findScalar(u8, pair, '=')) |eq| {
+                const k = pair[0..eq];
+                const v = pair[eq + 1 ..];
+                if (std.mem.eql(u8, k, "room")) room = percentDecode(arena, v) catch v;
+            }
         }
+    }
+    if (room.len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
-    };
+    }
 
     const pins = chatrooms.getPins(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, room) catch |err| {
         log.log(.error_, "GET /api/chat/pins: {s}", .{@errorName(err)});
@@ -6048,6 +6093,10 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
                 s.objectField("cost_per_1m_output") catch return;
                 s.write(c) catch return;
             }
+            if (m.value_ptr.category.len > 0) {
+                s.objectField("category") catch return;
+                s.write(m.value_ptr.category) catch return;
+            }
             s.endObject() catch return;
         }
         s.endArray() catch return;
@@ -7032,10 +7081,22 @@ fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         s.write(wf.name) catch return;
         s.objectField("description") catch return;
         s.write(wf.description) catch return;
+        if (wf.llm_description.len > 0 and !std.mem.eql(u8, wf.llm_description, wf.description)) {
+            s.objectField("llm_description") catch return;
+            s.write(wf.llm_description) catch return;
+        }
+        if (wf.tags.len > 0) {
+            s.objectField("tags") catch return;
+            s.write(wf.tags) catch return;
+        }
         s.objectField("arg_hint") catch return;
         s.write(wf.arg_hint) catch return;
         s.objectField("rel_path") catch return;
         s.write(wf.rel_path) catch return;
+        if (wf.chain_json != null) {
+            s.objectField("chain") catch return;
+            s.write(true) catch return;
+        }
         s.endObject() catch return;
     }
     s.endArray() catch return;
@@ -7907,6 +7968,8 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
     s.objectField("instance") catch return;
     s.beginObject() catch return;
     s.objectField("name") catch return;
@@ -7927,6 +7990,22 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     s.endArray() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// Whether a model can be handed image_url content blocks. A model that
+/// declares its capabilities (non-empty) but omits `image_in` is telling us
+/// it is not vision-capable — DeepSeek v4-flash's endpoint, for example, only
+/// accepts `content` as a plain string and rejects the typed block array with
+/// an opaque JSON-deserialize 400 ("unknown variant `image_url`, expected
+/// `text`"). A model with no capabilities declared leaves it unknown, so the
+/// attachment is attempted as before and a failure still surfaces the vision
+/// hint (enrichRunError).
+fn imageAttachmentsSupported(model: config.Model) bool {
+    if (model.capabilities.len == 0) return true;
+    for (model.capabilities) |cap| {
+        if (std.mem.eql(u8, cap, "image_in")) return true;
+    }
+    return false;
 }
 
 /// The webui surfaces a run failure as `[run failed: <message>]`. A bare
@@ -8134,6 +8213,23 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"image attachments are disabled: enable modules.multimodal in your config (the composer sent image attachment(s))\"}");
             return;
         }
+        // Refuse up front when the selected model declares its capabilities
+        // but not vision: sending image_url blocks to a text-only endpoint
+        // (DeepSeek v4-flash) fails with an opaque deserialize 400. Name the
+        // model and the config knob, so the failure reads as a choice.
+        if (!imageAttachmentsSupported(provider.activeModel())) {
+            const reason = std.fmt.allocPrint(
+                arena,
+                "the selected model {s}/{s} does not declare vision support (the image_in capability); attach the image to a vision-capable model, or add image_in to that model's capabilities in config if it does accept images",
+                .{ provider.name, provider.default_model },
+            ) catch null;
+            const err_body = if (reason) |r|
+                std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{r}) catch null
+            else
+                null;
+            respond(stream, 400, "Bad Request", err_body orelse "{\"ok\":false,\"error\":\"the selected model does not support image attachments\"}");
+            return;
+        }
         var imgs: std.ArrayList(types.ImagePart) = .empty;
         for (req.images) |im| {
             if (im.mime.len == 0 or im.b64.len == 0) continue;
@@ -8215,6 +8311,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // line: it is a control event, so a client that does not know it just
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
+        // Tells the client which goal (explicit or auto-steered) is behind
+        // this turn, if any — the client has no other way to know an
+        // auto-steered run was steered at all, since that resolution
+        // happens entirely server-side.
+        if (resolved.goal_id) |gid| writeStreamEvent(stream.socket.handle, "goal", .{ .id = gid });
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
@@ -9054,6 +9155,23 @@ test "a flag the command does not take is refused, not ignored" {
     try std.testing.expectEqualStrings("x", ok.model.?);
 }
 
+test "every flag a command accepts has a help description" {
+    // printCommandHelp renders each flag as a bullet with describe(); a flag
+    // with an empty or missing description would render a bare token with no
+    // purpose, which is the exact gap this help rework is closing.
+    for (std.enums.values(Flag)) |f| {
+        const d = f.describe();
+        try std.testing.expect(d.len > 0);
+        // The description is one phrase, not the flag token echoed back.
+        try std.testing.expect(!std.mem.eql(u8, d, f.name()));
+    }
+    // Every spec's flags also have a description, and the flag set is what
+    // the help lists (no orphan flag that is declared but never described).
+    for (&specs) |*s| {
+        for (s.flags) |f| try std.testing.expect(f.describe().len > 0);
+    }
+}
+
 test "--help after a command asks about that command" {
     const opts = try parse(&.{ "clanker", "run", "--help" }, null);
     try std.testing.expectEqual(Command.help, opts.command);
@@ -9219,6 +9337,22 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqualStrings("", bare.goal);
     const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("g1", with_goal.goal);
+}
+
+test "a model that declares its capabilities without image_in is refused image attachments" {
+    // DeepSeek v4-flash: capabilities declared, no image_in → text-only
+    // endpoint; refuse rather than send image_url blocks it rejects.
+    const no_vision = config.Model{ .capabilities = &.{ "thinking", "tool_use" } };
+    try std.testing.expect(!imageAttachmentsSupported(no_vision));
+
+    // A vision model declares image_in and is accepted.
+    const vision = config.Model{ .capabilities = &.{ "thinking", "tool_use", "image_in" } };
+    try std.testing.expect(imageAttachmentsSupported(vision));
+
+    // No capabilities declared leaves it unknown → attempted as before (a
+    // local Ollama/vLLM vision model that forgot to declare image_in keeps
+    // working; a failure still surfaces the vision hint).
+    try std.testing.expect(imageAttachmentsSupported(config.Model{}));
 }
 
 test "run failure detail names the provider and hints at vision when images were attached" {

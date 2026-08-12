@@ -168,6 +168,10 @@ task; `clanker --help` prints usage.
 | `git <args...>` | Git passthrough |
 | `mcp` | Serve tools over MCP (stdio) |
 | `goal "<intent>"` | Design and persist a structured goal |
+| `arena "<question>" --for X --against Y` | Judged debate between two positions, or a battle royale |
+| `compare "<prompt>" [--with <provider>]...` | One prompt to several models at once, answers shown unlabeled |
+| `autoresearch [--target F] [--harness C]` | Measurement-driven research loop |
+| `workflow [list\|show\|run] [name]` | List, inspect, or run reusable prompt workflows |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `chat send <room> "<text>"` | Send a message to a chatroom |
 | `chat history <room> [after]` | Read chatroom history (newest first) |

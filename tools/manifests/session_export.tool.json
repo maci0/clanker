@@ -1,0 +1,16 @@
+{
+  "name": "session_export",
+  "description": "render one saved session as a self-contained HTML transcript",
+  "wasm": "zig-out/tools/session_export.wasm",
+  "input_schema": {
+    "type": "object",
+    "required": ["id"],
+    "properties": {
+      "id": { "type": "string" },
+      "return_html": { "type": "boolean" }
+    }
+  },
+  "fs_prefixes": ["state/sessions/", "state/exports/"],
+  "internal": true,
+  "category": "harness"
+}

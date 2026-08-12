@@ -24,6 +24,7 @@ import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loa
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
+import { goalStatusLabel } from "./core/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
@@ -74,6 +75,11 @@ var el = {
   railContext: document.getElementById("rail-context"),
   railToggle: document.getElementById("rail-toggle"),
   sessionTitle: document.getElementById("session-title"),
+  sessionStatusBar: document.getElementById("session-status-bar"),
+  statusGoal: document.getElementById("status-goal"),
+  statusTools: document.getElementById("status-tools"),
+  statusSubagent: document.getElementById("status-subagent"),
+  statusTodos: document.getElementById("status-todos"),
   railScrim: document.getElementById("rail-scrim"),
   promptList: document.getElementById("prompt-list"),
   promptSave: document.getElementById("prompt-save"),
@@ -113,7 +119,7 @@ var el = {
   sessionExport: document.getElementById("session-export"),
   sessionCopy: document.getElementById("session-copy"),
   runCopy: document.getElementById("run-copy"),
-  board: document.getElementById("board"),
+  board: document.getElementById("board-grid"),
   boardEmpty: document.getElementById("board-empty"),
   cardForm: document.getElementById("card-form"),
   cardTitle: document.getElementById("card-title"),
@@ -537,6 +543,41 @@ function enableDragScroll(node) {
   }, true);
 }
 enableDragScroll(el.railList);
+/* Drag-to-scroll on the conversation list. The rail is pinned and only the
+   list scrolls, so a pointer drags the history the way a touchscreen does.
+   A gesture that barely moves is still a click (it opens that conversation);
+   one that travels scrolls instead, and the click that follows it is
+   swallowed so a scroll does not also switch the conversation. */
+(function initRailListDrag() {
+  var list = el.railList;
+  if (!list) return;
+  var dragging = false, startY = 0, startTop = 0, dragged = false;
+  list.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    dragging = true; dragged = false;
+    startY = e.clientY; startTop = list.scrollTop;
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!dragging) return;
+    var dy = e.clientY - startY;
+    if (Math.abs(dy) > 4) dragged = true;
+    if (dragged) {
+      list.scrollTop = startTop - dy;
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("mouseup", function () {
+    dragging = false;
+    if (dragged) {
+      // The click fires after mouseup on the same element; catch it in the
+      // capture phase so it cannot reach the row's onclick and switch the
+      // conversation after a scroll.
+      var swallow = function (ev) { ev.preventDefault(); ev.stopPropagation(); window.removeEventListener("click", swallow, true); };
+      window.addEventListener("click", swallow, true);
+      dragged = false;
+    }
+  });
+})();
 
 function railItems() {
   return Array.prototype.slice.call(el.railList.querySelectorAll(".rail-item"));
@@ -664,6 +705,8 @@ function switchSession(id) {
   renderSessionOptions(null);
   el.transcript.textContent = "";
   el.sessionStatus.textContent = "Loading conversation…";
+  // Belongs to the turn just left behind, not the conversation being opened.
+  if (el.sessionStatusBar) el.sessionStatusBar.hidden = true;
   fetch("/api/sessions/" + encodeURIComponent(id))
     .then(readJson)
     .then(function (data) {
@@ -1472,6 +1515,55 @@ function handleSlashDocFile(task){
   return "[File: " + path + "]\n\n" + task;
 }
 
+// ---- session status bar: goal / tool-call / sub-agent / todos receipt ----
+// Reflects the turn currently streaming, or the last one that did — not the
+// whole session's history. Resets on every new submit; nothing here is
+// persisted, so a reload clears it the same way the live caret does.
+var statusToolCalls = 0;
+var statusSubagentCalls = 0;
+
+function resetSessionStatusBar() {
+  statusToolCalls = 0;
+  statusSubagentCalls = 0;
+  if (!el.sessionStatusBar) return;
+  el.sessionStatusBar.hidden = false;
+  [el.statusGoal, el.statusTools, el.statusSubagent, el.statusTodos].forEach(function (chip) {
+    if (chip) chip.hidden = true;
+  });
+}
+
+function setStatusGoal(goalId) {
+  if (!el.statusGoal) return;
+  var g = (goalState.val || []).filter(function (x) { return x.id === goalId; })[0];
+  el.statusGoal.hidden = false;
+  el.statusGoal.textContent = "Goal " + (g ? goalStatusLabel(g, true) : "active");
+  el.statusGoal.title = g ? g.objective : goalId;
+}
+
+function bumpStatusTools(calls) {
+  if (!el.statusTools) return;
+  var n = (calls || []).length;
+  if (n === 0) return;
+  statusToolCalls += n;
+  el.statusTools.hidden = false;
+  el.statusTools.textContent = "Tools (" + statusToolCalls + ")";
+  var subN = (calls || []).filter(function (c) { return c.name === "subagent" || c.name === "swarm"; }).length;
+  if (subN > 0 && el.statusSubagent) {
+    statusSubagentCalls += subN;
+    el.statusSubagent.hidden = false;
+    el.statusSubagent.textContent = "Sub Agent (" + statusSubagentCalls + ")";
+  }
+}
+
+function setStatusTodos(todos) {
+  if (!el.statusTodos) return;
+  var list = todos || [];
+  if (!list.length) { el.statusTodos.hidden = true; return; }
+  var done = list.filter(function (t) { return t.status === "closed"; }).length;
+  el.statusTodos.hidden = false;
+  el.statusTodos.textContent = "Todos (" + done + "/" + list.length + ")";
+}
+
 el.form.addEventListener("submit", function (e) {
   e.preventDefault();
   var task = el.task.value.trim();
@@ -1486,6 +1578,7 @@ el.form.addEventListener("submit", function (e) {
   // budget the harness will actually honor rather than a number it clamps
   // down anyway.
   var noLimit = el.unlimitedIterations && el.unlimitedIterations.checked;
+  resetSessionStatusBar();
   var turn = createTurn(task);
   if (isPlan) {
     /* The badge marks the proposal turn so renderStats can offer Apply, and
@@ -1537,14 +1630,15 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); }
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); bumpStatusTools(evt.calls); }
       else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
       // todo_* call moved it, never fetched — the list is in-memory server-side
       // and dies with the run, so the turn card is the only place it can live.
-      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} }
+      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} setStatusTodos(evt.todos); }
+      else if (evt.type === "goal") { setStatusGoal(evt.id); }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
@@ -2768,11 +2862,14 @@ function renderChatRooms(rooms) {
   return wanted;
 }
 
+var roomTopics = {};
 function loadChatRooms() {
   return fetch("/api/chat/rooms")
     .then(readJson)
     .then(function (data) {
       subscribedRooms = data.subscribed || [];
+      // Store topics
+      (data.rooms || []).forEach(function(r){ if(r.topic) roomTopics[r.room]=r.topic; });
       var wanted = renderChatRooms(data.rooms || []);
       if (wanted) return openChatRoom(wanted);
     })
@@ -2796,6 +2893,26 @@ function openChatRoom(room) {
   el.chatText.disabled = false;
   el.chatSend.disabled = false;
   el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
+  // Topic bar
+  var existingTopic = document.querySelector(".chat-topic");
+  if(existingTopic) existingTopic.remove();
+  if(roomTopics[room]){
+    var topicEl = document.createElement("div"); topicEl.className="chat-topic";
+    topicEl.textContent = "📌 " + roomTopics[room];
+    topicEl.title = "Channel topic — click to change";
+    topicEl.style.cursor = "pointer";
+    topicEl.addEventListener("click", function(){
+      var newTopic = prompt("Set channel topic:", roomTopics[room]||"");
+      if(newTopic !== null){
+        fetch("/api/chat/topic", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({room:room,topic:newTopic})
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if(d.ok){ roomTopics[room]=newTopic; topicEl.textContent="📌 "+newTopic; }
+        }).catch(function(){});
+      }
+    });
+    el.chatLog.parentNode.insertBefore(topicEl, el.chatLog);
+  }
   // Opening a room fills the log with its history, and a live region would
   // read every one of those out as if it had just arrived. Announcements
   // start once the backlog is in place.

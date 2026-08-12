@@ -18,7 +18,18 @@ const std = @import("std");
 pub const Workflow = struct {
     /// File stem, or `name:` from frontmatter when present.
     name: []const u8,
+    /// Human-facing: shown in the webui/CLI, never sent to the model.
     description: []const u8,
+    /// Model-facing: what actually lands in the system prompt's per-turn
+    /// catalog line (see `catalogText`). Falls back to `description` when a
+    /// workflow's frontmatter has no `llm_description`, so an unmigrated
+    /// workflow still works, just not as cheaply.
+    llm_description: []const u8 = "",
+    /// Free-form facets from frontmatter `tags: a, b, c` (comma-separated —
+    /// the frontmatter parser is a key:value-per-line subset, not real YAML,
+    /// so no bracketed array syntax). For filtering/organization; not sent
+    /// to the model.
+    tags: []const []const u8 = &.{},
     /// Hint shown in help, e.g. "[feature description]".
     arg_hint: []const u8,
     /// Prompt template body (frontmatter stripped, trimmed of leading/trailing blank lines).
@@ -159,10 +170,11 @@ pub fn catalogText(arena: std.mem.Allocator, workflows: []const Workflow) ![]con
     for (workflows) |wf| {
         const hint = if (wf.arg_hint.len > 0) wf.arg_hint else "";
         const chain_tag: []const u8 = if (wf.chain_json != null) " [chain]" else "";
+        const text = if (wf.llm_description.len > 0) wf.llm_description else wf.description;
         if (hint.len > 0) {
-            try w.writer.print("- {s} {s}: {s}{s}\n", .{ wf.name, hint, wf.description, chain_tag });
+            try w.writer.print("- {s} {s}: {s}{s}\n", .{ wf.name, hint, text, chain_tag });
         } else {
-            try w.writer.print("- {s}: {s}{s}\n", .{ wf.name, wf.description, chain_tag });
+            try w.writer.print("- {s}: {s}{s}\n", .{ wf.name, text, chain_tag });
         }
     }
     return w.written();
@@ -173,6 +185,8 @@ pub fn catalogText(arena: std.mem.Allocator, workflows: []const Workflow) ![]con
 fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u8, raw: []const u8) !Workflow {
     var name = try arena.dupe(u8, stem);
     var description: []const u8 = "";
+    var llm_description: []const u8 = "";
+    var tags: []const []const u8 = &.{};
     var arg_hint: []const u8 = "";
     var chain_json: ?[]const u8 = null;
     var body: []const u8 = raw;
@@ -206,6 +220,16 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
                         name = try arena.dupe(u8, val);
                     } else if (std.ascii.eqlIgnoreCase(key, "description") and val.len > 0) {
                         description = try arena.dupe(u8, val);
+                    } else if ((std.ascii.eqlIgnoreCase(key, "llm-description") or std.ascii.eqlIgnoreCase(key, "llm_description")) and val.len > 0) {
+                        llm_description = try arena.dupe(u8, val);
+                    } else if (std.ascii.eqlIgnoreCase(key, "tags") and val.len > 0) {
+                        var out_tags: std.ArrayList([]const u8) = .empty;
+                        var parts = std.mem.splitScalar(u8, val, ',');
+                        while (parts.next()) |part| {
+                            const t = std.mem.trim(u8, part, " \t");
+                            if (t.len > 0) out_tags.append(arena, try arena.dupe(u8, t)) catch {};
+                        }
+                        tags = out_tags.items;
                     } else if ((std.ascii.eqlIgnoreCase(key, "argument-hint") or std.ascii.eqlIgnoreCase(key, "arg_hint") or std.ascii.eqlIgnoreCase(key, "args_hint")) and val.len > 0) {
                         arg_hint = try arena.dupe(u8, val);
                     } else if (std.ascii.eqlIgnoreCase(key, "chain") and val.len > 0) {
@@ -234,6 +258,8 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
     return .{
         .name = name,
         .description = description,
+        .llm_description = llm_description,
+        .tags = tags,
         .arg_hint = arg_hint,
         .body = try arena.dupe(u8, body),
         .rel_path = try arena.dupe(u8, rel_path),

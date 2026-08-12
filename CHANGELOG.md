@@ -8,18 +8,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 ### Added
 
 - Initial CLI, REPL, HTTP, MCP, peer, and sandboxed WASM tool surfaces.
-<<<<<<< HEAD
 - Plugin manifest SDK: `manifest_version` in `*.tool.json`, a validator
   (`clanker plugins validate`), a scaffolder (`clanker plugins new <name>`), and
   a written field reference at [docs/manifest.md](docs/manifest.md). A manifest
   whose `wasm` is a bare filename now resolves beside its own manifest, so a
   `{name.tool.json, name.wasm}` directory is a portable plugin.
-=======
 - Optional per-provider `auth` key (`api_key` / `oauth_static` /
   `oauth_refresh`), selecting how a credential is acquired independently of the
   provider's `kind`. Unset keeps the existing auto-detection, so no existing
   config changes meaning.
->>>>>>> origin/main
 
 ### Compatibility notes
 

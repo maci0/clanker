@@ -1548,6 +1548,16 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .toolbar-actions { width: 100%; }
 }
 
+/* Density is useful with a mouse; coarse pointers need a reliably hittable
+   target across every view, including controls created dynamically. */
+@media (pointer: coarse) {
+  button, summary, input[type="text"], input[type="search"], input[type="number"],
+  input[type="date"], select { min-height: 44px; }
+  .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
+  .board-empty-slot button, .board-quick-add .board-add-actions button,
+  .card-quick-actions button { min-width: 44px; min-height: 44px; }
+}
+
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a
    press. Harmless on pointer devices too. */
 button:active:not(:disabled) {
@@ -1692,6 +1702,19 @@ button:active:not(:disabled) {
   color: var(--violet-text); white-space: nowrap;
   text-transform: uppercase; letter-spacing: 0.08em;
 }
+/* The current/last turn's receipt: goal, tool-call count, sub-agent count,
+   todo progress. Sits under the session title, above the transcript. */
+.session-status-bar {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+}
+.status-chip {
+  font-family: var(--mono); font-size: var(--step--1);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--rule); border-radius: var(--radius-pill);
+  color: var(--fg-muted); white-space: nowrap;
+}
+#status-goal { border-color: var(--violet); color: var(--violet-text); }
 input[type="checkbox"] {
   flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
   accent-color: var(--accent);
@@ -1809,14 +1832,35 @@ mark {
 .board-goal-form label { grid-row: 1; }
 .board-goal-form input, .board-goal-form button { grid-row: 2; }
 .board-goal-form label { flex-basis: auto; }
+/* Board header — Trello-style top bar */
+.board-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: var(--space-2) 0; margin-top: var(--space-3);
+}
+.board-header-icon { font-size: 1.2rem; }
+.board-header-title {
+  font-size: 1.1rem; font-weight: 700; margin: 0; letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.board-header-sep { flex: 1; }
+.board-header-btn {
+  font-size: 1rem; background: none; border: 1px solid var(--rule);
+  border-radius: 6px; padding: 0.2rem 0.5rem; cursor: pointer;
+  color: var(--fg-muted); transition: background 120ms ease;
+}
+.board-header-btn:hover { background: var(--surface-2); }
+.board-header-btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .board-filter {
-  margin-top: var(--space-3); border-radius: var(--radius);
+  margin-top: var(--space-2); border-radius: var(--radius);
   display: grid; grid-template-columns: auto minmax(10rem, 1fr) auto auto auto minmax(5rem, auto) auto minmax(5rem, auto) auto minmax(5rem, auto);
   align-items: center;
 }
 .board-list-controls { margin-top: var(--space-3); }
 .board-list-controls[hidden] { display: none; }
 .board-list-view { margin-top: var(--space-3); overflow-x: auto; }
+.board-list-title { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.board-lane-control { min-width: 32px; min-height: 32px; padding: 0 var(--space-2); font-size: 12px; border-radius: 999px; }
 .board-empty {
   max-width: 42rem; margin: var(--space-5) auto; padding: var(--space-4) 0;
   display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; color: var(--fg-muted);
@@ -1876,12 +1920,26 @@ main {
   display: flex; flex-direction: column; overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
+  flex: none; width: 15rem; align-self: stretch;
+  position: sticky; top: 0; max-height: 100vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
   background: var(--surface);
   padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
 }
 .rail:hover { scrollbar-color: var(--border) transparent; }
 .rail-head { display: flex; flex-direction: column; gap: var(--space-3); flex: none; }
+/* The rail is pinned: only the conversation list scrolls, not the whole
+   sidebar, so the tabs and the chat controls stay put while the history
+   moves under the pointer. The list owns the scrollbar. */
+.rail-nav { flex: none; }
+.rail-context {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
+}
+.rail-context[hidden] { display: none; }
+.rail-head { flex: none; display: flex; flex-direction: column; gap: var(--space-3); }
 .rail-new {
   min-height: 36px; padding: 0 1rem; width: 100%;
   border: 1px solid var(--accent); border-radius: 999px;
@@ -1894,10 +1952,14 @@ main {
 .rail-archived input { margin: 0; }
 .rail input[type="search"]::placeholder { font-size: 12px; }
 .rail-list {
+  flex: 1; min-height: 0;
   margin-top: var(--space-4); padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 1px;
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
+.rail-list:hover { scrollbar-color: var(--border) transparent; }
 /* A workspace is a folder: its conversations are indented under its name, so
    the nesting is visible rather than implied by order. */
 .rail-workspace {
@@ -2038,7 +2100,7 @@ h2#session-title {
 /* Board: columns scroll sideways as a group, each column scrolls down on
    its own, so a long Backlog never pushes Done off the bottom. */
 .board {
-  display: flex; gap: var(--space-3); margin-top: var(--space-4);
+  display: flex; gap: var(--space-3); margin-top: var(--space-3);
   overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start;
   /* Trello-style: fill available height so columns scroll internally */
   min-height: 60vh;
@@ -2048,7 +2110,7 @@ h2#session-title {
   border: 0; border-radius: 14px;
   background: var(--surface-2); max-height: calc(100vh - 14rem);
   padding-top: 0.25rem;
-  transition: background 180ms ease, box-shadow 180ms ease, min-width 250ms ease, max-width 250ms ease;
+  transition: background 180ms ease, box-shadow 180ms ease;
 }
 .board-col[data-collapsed="true"] { min-width: 2.6rem; max-width: 2.6rem; cursor: pointer; }
 .board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
@@ -2153,16 +2215,21 @@ h2#session-title {
 .card-cover-img { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 7px 7px 0 0; }
 .card-cover--img { height: auto; background: transparent; }
 
-/* Trello-style labels: pill chips on card face */
+/* Trello-style labels: pill chips on card face — compact bars that expand on hover */
 .card-labels { display: flex; flex-wrap: wrap; gap: 3px; }
 .card-label {
   font-size: 0; font-weight: 700; letter-spacing: 0.02em;
   padding: 0; width: 40px; height: 8px; border-radius: 4px;
-  color: #fff; line-height: 1.4; transition: all 150ms ease; cursor: pointer;
+  color: #fff; line-height: 1.4; cursor: pointer;
+  transition: height 120ms ease, width 80ms ease, padding 80ms ease, font-size 80ms ease;
+  overflow: hidden; white-space: nowrap;
 }
-/* On hover, labels expand to show text */
-.card:hover .card-label, .card:focus-within .card-label {
-  font-size: 10px; height: auto; padding: 0.05rem 0.4rem; width: auto; min-width: 40px;
+.card-labels .card-label { cursor: default; }
+/* On card hover, expand labels to show text (Trello-style toggle) */
+.card:hover .card-label,
+.card:focus-within .card-label {
+  font-size: 11px; height: auto; width: auto; min-width: 40px;
+  padding: 0.1rem 0.5rem;
 }
 .card-label[data-color="green"] { background: #22a24a; }
 .card-label[data-color="yellow"] { background: #c9a50a; color: #111; }
@@ -2228,7 +2295,7 @@ h2#session-title {
 .card-flag[data-goal="true"] { color: var(--accent-text); background: color-mix(in srgb, var(--surface-2) 88%, transparent); }
 .card-progress { color: var(--fg-muted); font-size: 11px; }
 .card-progress-bar { height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 0.2rem; }
-.card-progress-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 300ms ease; }
+.card-progress-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
 .card-progress-bar[data-done="true"] > span { background: var(--ok-fill); }
 
 /* Drag ghost styling */
@@ -2302,6 +2369,14 @@ h2#session-title {
 .label-picker-item[data-color="pink"] { background: #e85a9a; }
 .label-picker-item[data-color="lime"] { background: #6ab82f; }
 .label-picker-item[data-color="black"] { background: #444; }
+
+/* Card detail save button — Trello green accent */
+.card-detail-save-btn {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 0.4rem 1.2rem; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 120ms ease;
+}
+.card-detail-save-btn:hover { filter: brightness(1.1); }
 
 /* Board column count badge */
 .board-col-count-badge {

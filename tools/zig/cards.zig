@@ -132,6 +132,11 @@ pub const Usage = struct {
     runs: []const []const u8 = &.{},
 };
 
+pub const Label = struct {
+    color: []const u8,
+    text: []const u8 = "",
+};
+
 pub const Card = struct {
     id: []const u8,
     title: []const u8,
@@ -149,6 +154,7 @@ pub const Card = struct {
     /// card is nobody's mirror. The web UI keeps a goal and its board card in
     /// step by this link; it folds like any other edit (last writer wins).
     goal: []const u8 = "",
+    labels: []const Label = &.{},
     subtasks: []const Subtask = &.{},
     depends_on: []const []const u8 = &.{},
     log: []const LogEntry = &.{},
@@ -185,6 +191,7 @@ pub const Action = struct {
     off: ?bool = null,
     what: ?[]const u8 = null,
     goal: ?[]const u8 = null,
+    labels: ?[]const Label = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
     cost: ?f64 = null,
@@ -255,6 +262,7 @@ const State = struct {
     assigned_by: []const u8 = "",
     deadline: i64 = 0,
     goal: []const u8 = "",
+    labels: []const Label = &.{},
 
     title_at: Stamp = .{},
     body_at: Stamp = .{},
@@ -262,6 +270,7 @@ const State = struct {
     priority_at: Stamp = .{},
     deadline_at: Stamp = .{},
     goal_at: Stamp = .{},
+    labels_at: Stamp = .{},
     /// Claims use the lowest-(ts, id) rule, so this records the winner rather
     /// than the latest writer; an `assign` later than it overrides it.
     claim_at: Stamp = .{},
@@ -320,6 +329,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .column = if (act.column) |c| (if (validColumn(c)) c else default_column) else default_column,
             .priority = if (act.priority) |p| (if (validPriority(p)) p else "normal") else "normal",
             .deadline = act.deadline orelse 0,
+            .labels = act.labels orelse &.{},
         };
         // A goal link at creation folds like an update stamped with the add
         // itself, so a later update overrides it by the usual rule.
@@ -389,6 +399,12 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 if (c.goal_at.beaten(m.ts, m.id)) {
                     c.goal = v;
                     c.goal_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.labels) |v| {
+                if (c.labels_at.beaten(m.ts, m.id)) {
+                    c.labels = v;
+                    c.labels_at = .{ .ts = m.ts, .id = m.id };
                 }
             }
         } else if (std.mem.eql(u8, act.action, "move")) {
@@ -543,6 +559,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .assigned_by = c.assigned_by,
             .deadline = c.deadline,
             .goal = c.goal,
+            .labels = c.labels,
             .subtasks = subs.items,
             .depends_on = deps.items,
             .log = c.log.items,
@@ -775,6 +792,26 @@ test "goal link folds like an edit, in either order" {
     const plain = [_]Message{msg("m1", "x", 100, try encodeAdd(arena, "task"))};
     const cp = try derive(arena, &plain);
     try std.testing.expectEqualStrings("", cp[0].goal);
+}
+
+test "labels fold as one last-writer-wins card field" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const add = try encode(arena, .{ .action = "add", .title = "task", .labels = &.{.{ .color = "blue", .text = "api" }} });
+    const update = try encode(arena, .{ .action = "update", .todo = "m1", .labels = &.{
+        .{ .color = "green", .text = "ready" },
+        .{ .color = "pink", .text = "design" },
+    } });
+    const msgs = [_]Message{
+        .{ .from = "a", .text = add, .ts = 1, .id = "m1" },
+        .{ .from = "a", .text = update, .ts = 2, .id = "m2" },
+    };
+    const got = try derive(arena, &msgs);
+    try std.testing.expectEqual(@as(usize, 2), got[0].labels.len);
+    try std.testing.expectEqualStrings("green", got[0].labels[0].color);
+    try std.testing.expectEqualStrings("design", got[0].labels[1].text);
 }
 
 test "subtasks, dependencies and cost fold" {

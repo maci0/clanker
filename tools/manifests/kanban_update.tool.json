@@ -36,6 +36,16 @@
         "type": "integer",
         "description": "Unix seconds, or 0 for none"
       },
+      "labels": {
+        "type": "array",
+        "maxItems": 10,
+        "description": "Replacement label set for the card",
+        "items": {
+          "type": "object",
+          "properties": { "color": { "type": "string" }, "text": { "type": "string" } },
+          "required": ["color"]
+        }
+      },
       "room": {
         "type": "string",
         "description": "Board room name; omit for the default 'board' room"

@@ -341,6 +341,18 @@ function loadWorkflows() {
         meta.className = "skill-meta";
         meta.textContent = wf.rel_path;
         card.appendChild(meta);
+        if (wf.chain) {
+          var chainTag = document.createElement("span");
+          chainTag.className = "tool-tag";
+          chainTag.textContent = "chain";
+          card.appendChild(chainTag);
+        }
+        (wf.tags || []).forEach(function (tagName) {
+          var tg = document.createElement("span");
+          tg.className = "tool-tag";
+          tg.textContent = tagName;
+          card.appendChild(tg);
+        });
         if (wf.description) {
           var desc = document.createElement("p");
           desc.className = "skill-desc";

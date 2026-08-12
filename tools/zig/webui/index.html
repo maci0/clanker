@@ -115,6 +115,18 @@ lamps carry further). The seven named palettes ride the same tokens.
     <div class="section-head">
       <h2 id="session-title">…</h2>
     </div>
+    <!-- What the current/last turn actually did, at a glance: whether a goal
+         is steering it, how many tool calls it made, how many of those were
+         sub-agent delegations, and the run's private todo progress. Live
+         while streaming, left as a receipt once the turn finishes; resets
+         when the next turn starts. Session-lifetime only — not persisted,
+         so a reload clears it, same as the transcript's live caret does. -->
+    <div class="session-status-bar" id="session-status-bar" hidden>
+      <span class="status-chip" id="status-goal" hidden></span>
+      <span class="status-chip" id="status-tools" hidden></span>
+      <span class="status-chip" id="status-subagent" hidden></span>
+      <span class="status-chip" id="status-todos" hidden></span>
+    </div>
     <div class="run-picker" id="session-picker">
       <div class="session-actions">
         <button type="button" class="secondary" id="session-fork">Fork</button>
@@ -469,6 +481,12 @@ lamps carry further). The seven named palettes ride the same tokens.
       <form id="card-form" hidden>
         <input type="text" id="card-title"><select id="card-column"></select><button type="submit" id="card-add">Add</button>
       </form>
+      <div class="board-header" id="board-header">
+        <span class="board-header-icon">📋</span>
+        <h2 class="board-header-title" id="board-title">Board</h2>
+        <span class="board-header-sep"></span>
+        <button type="button" class="board-header-btn" id="board-toggle-list" title="Toggle list view">☰</button>
+      </div>
       <div class="transcript-tools board-filter" id="board-filter">
         <label for="board-filter-input">Filter</label>
         <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
@@ -479,9 +497,11 @@ lamps carry further). The seven named palettes ride the same tokens.
         <label for="board-filter-priority">Priority</label>
         <select id="board-filter-priority"><option value="">All</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select>
         <label for="board-filter-label">Label</label>
-        <select id="board-filter-label"><option value="">All</option><option value="green">green</option><option value="yellow">yellow</option><option value="orange">orange</option><option value="red">red</option><option value="purple">purple</option><option value="blue">blue</option></select>
+        <select id="board-filter-label"><option value="">All</option><option value="green">Green</option><option value="yellow">Yellow</option><option value="orange">Orange</option><option value="red">Red</option><option value="purple">Purple</option><option value="blue">Blue</option><option value="sky">Sky</option><option value="pink">Pink</option><option value="lime">Lime</option><option value="black">Black</option></select>
       </div>
-      <div class="board" id="board"></div>
+      <!-- Keep the DOM id distinct from the #board route. If both are
+           "board", native fragment scrolling opens this view halfway down. -->
+      <div class="board" id="board-grid"></div>
       <div class="toolbar-actions board-list-controls" id="board-list-controls">
         <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
       </div>
@@ -713,7 +733,7 @@ lamps carry further). The seven named palettes ride the same tokens.
      of arrow keys rather than retyping it exactly and risking a near-miss
      that quietly forks a new workspace. -->
 <div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
-  <div class="overlay-box" style="max-width: 42rem;"></div>
+  <div class="overlay-box" style="max-width: 48rem; max-height: 85vh;"></div>
 </div>
 
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>

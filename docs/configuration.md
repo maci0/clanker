@@ -166,7 +166,7 @@ overrides how it is *shown* (never what is *sent*).
 | `display` | string | unset | UI label when the wire id is not what a person calls it (e.g. `kimi-k3` shown as `moonshotai/kimi-k3`). Display only. |
 | `cost_per_1m_input` | float | unset | USD per 1M input tokens, for run cost accounting. |
 | `cost_per_1m_output` | float | unset | USD per 1M output tokens. |
-| `capabilities` | string[] | `[]` | Informational: `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`. Self-documents what the model supports. |
+| `capabilities` | string[] | `[]` | `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`. Self-documents what the model supports. A model that declares its capabilities but omits `image_in` is treated as non-vision: the webui refuses image attachments to it up front (instead of sending `image_url` blocks that a text-only endpoint such as DeepSeek v4-flash rejects), so declare `image_in` on any model that accepts images. A model with no `capabilities` declared is left unknown and the attachment is attempted. |
 
 ```toml
 [models."deepseek/deepseek-v4-flash"]

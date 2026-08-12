@@ -218,6 +218,7 @@ const ModelCandidate = struct {
     context_window: u32,
     cost_in: ?f64,
     cost_out: ?f64,
+    category: []const u8,
 };
 
 /// Flattens every configured provider's models into one list, in config
@@ -228,6 +229,7 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]
     var out: std.ArrayList(ModelCandidate) = .empty;
     var pit = cfg.providers.iterator();
     while (pit.next()) |pentry| {
+        const provider_start = out.items.len;
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
             const display = mentry.value_ptr.display orelse mentry.key_ptr.*;
@@ -249,8 +251,22 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]
                 .context_window = mentry.value_ptr.context_window,
                 .cost_in = mentry.value_ptr.cost_per_1m_input,
                 .cost_out = mentry.value_ptr.cost_per_1m_output,
+                .category = mentry.value_ptr.category,
             });
         }
+        // Sorted within this provider only — grouped-by-provider stays the
+        // outer shape, category just orders the models inside each group.
+        // Empty category sorts last (uncategorized models keep falling to
+        // the bottom rather than jumping ahead of every categorized peer).
+        std.mem.sort(ModelCandidate, out.items[provider_start..], {}, struct {
+            fn lt(_: void, a: ModelCandidate, b: ModelCandidate) bool {
+                const a_empty = a.category.len == 0;
+                const b_empty = b.category.len == 0;
+                if (a_empty != b_empty) return b_empty;
+                if (!std.mem.eql(u8, a.category, b.category)) return std.mem.lessThan(u8, a.category, b.category);
+                return std.mem.lessThan(u8, a.model, b.model);
+            }
+        }.lt);
     }
     return out.toOwnedSlice(arena);
 }

@@ -23,8 +23,77 @@
 //! the escaping were wrong.
 
 const std = @import("std");
-const types = @import("../llm/types.zig");
-const session = @import("session.zig");
+const lib = @import("lib.zig");
+
+const Role = enum {
+    system,
+    user,
+    assistant,
+    tool,
+
+    fn asStr(self: Role) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const ToolCall = struct { name: []const u8 = "", arguments: []const u8 = "" };
+const Message = struct {
+    role: Role,
+    content: ?[]const u8 = null,
+    tool_calls: ?[]const ToolCall = null,
+    images: ?[]const std.json.Value = null,
+};
+const Session = struct {
+    id: []const u8,
+    title: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    workspace: []const u8 = "",
+    archived: bool = false,
+    messages: []const Message = &.{},
+};
+const Request = struct { id: []const u8, return_html: bool = false };
+
+export fn run(ptr: u32, len: u32) callconv(.c) u64 {
+    return lib.run(ptr, len, toolMain);
+}
+
+fn validId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 128) return false;
+    for (id) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_')) return false;
+    return true;
+}
+
+fn toolMain(input: []const u8, out: *lib.Out) !void {
+    const req = std.json.parseFromSliceLeaky(Request, lib.alloc, input, .{ .ignore_unknown_fields = true }) catch
+        return lib.fail(out, "expected a session id");
+    if (!validId(req.id)) return lib.fail(out, "invalid session id");
+    const source = try std.fmt.allocPrint(lib.alloc, "state/sessions/{s}.json", .{req.id});
+    const raw = lib.fsRead(source) catch |err| return lib.failErr(out, err, "reading session");
+    const value = std.json.parseFromSliceLeaky(Session, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch |err|
+        return lib.failErr(out, err, "parsing session");
+    const html = render(lib.alloc, value) catch |err| return lib.failErr(out, err, "rendering session");
+    const path = try defaultPath(lib.alloc, req.id);
+    if (!req.return_html) lib.fsWrite(path, html) catch |err| return lib.failErr(out, err, "writing export");
+
+    var writer = lib.writer(out);
+    var json = lib.json(&writer);
+    try json.beginObject();
+    try json.objectField("ok");
+    try json.write(true);
+    try json.objectField("path");
+    try json.write(path);
+    try json.objectField("messages");
+    try json.print("{d}", .{value.messages.len});
+    try json.objectField("bytes");
+    try json.print("{d}", .{html.len});
+    if (req.return_html) {
+        try json.objectField("html");
+        try json.write(html);
+    }
+    try json.endObject();
+    lib.commit(out, &writer);
+}
 
 /// Writes `text` to `w` with every character that can change the meaning of
 /// the surrounding markup replaced by its entity.
@@ -117,7 +186,7 @@ fn writeTimestamp(w: *std.Io.Writer, unix_seconds: i64) !void {
     });
 }
 
-fn roleLabel(role: types.Role) []const u8 {
+fn roleLabel(role: Role) []const u8 {
     return switch (role) {
         .system => "System",
         .user => "You",
@@ -154,7 +223,7 @@ const style =
 ;
 
 /// Renders `s` as one complete HTML document. Caller owns the result.
-pub fn render(gpa: std.mem.Allocator, s: session.Session) ![]u8 {
+pub fn render(gpa: std.mem.Allocator, s: Session) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
     const w = &out.writer;
@@ -308,15 +377,14 @@ test "civilFromUnix converts the epoch, a leap day and a pre-epoch time" {
 
 test "render escapes a hostile transcript instead of emitting it as markup" {
     const gpa = std.testing.allocator;
-    const calls = [_]types.ToolCall{.{
-        .id = "call_1",
+    const calls = [_]ToolCall{.{
         .name = "exec<img src=x onerror=alert(1)>",
         .arguments = "{\"cmd\":\"echo \\\"a & b\\\" > out\"}",
     }};
-    const messages = [_]types.Message{
+    const messages = [_]Message{
         .{ .role = .user, .content = "render this: <script>alert(\"xss\")</script>" },
         .{ .role = .assistant, .content = "sure:\n```html\n<div class=\"x\">a & b</div>\n```", .tool_calls = &calls },
-        .{ .role = .tool, .content = "</pre><script>alert(1)</script><pre>", .tool_call_id = "call_1" },
+        .{ .role = .tool, .content = "</pre><script>alert(1)</script><pre>" },
     };
     const html = try render(gpa, .{
         .id = "sess-hostile",
@@ -348,7 +416,7 @@ test "render escapes a hostile transcript instead of emitting it as markup" {
 
 test "render produces a self-contained document with no external references" {
     const gpa = std.testing.allocator;
-    const messages = [_]types.Message{
+    const messages = [_]Message{
         .{ .role = .user, .content = "hello" },
         .{ .role = .assistant, .content = "hi" },
     };
