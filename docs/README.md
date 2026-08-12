@@ -240,7 +240,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
-| `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
+| `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
 entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
@@ -453,6 +453,7 @@ iter 2
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
+| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`src/agent/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `eval [name]` | Run evals |

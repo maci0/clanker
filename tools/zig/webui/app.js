@@ -1852,10 +1852,18 @@ function drawRun(g) {
       // — and this is raw string concatenation, not DOM building, so it needs
       // explicit escaping. It did not have it: a task containing markup was
       // written straight into <title>, <h1> and <p> of a file the browser then
-      // opens from a blob URL. The JSON dump below was already escaped, which
-      // is how the gap in the header stayed invisible.
+      // opens from a blob URL.
+      //
+      // The JSON dump below looked escaped and was not, which is how the gap
+      // in the header stayed invisible: it hand-rolled `.replace(/</g,"&lt;")`,
+      // a second escaper covering one of the five characters that matter. `<`
+      // alone does keep markup out of a <pre>, but leaving `&` means every
+      // entity a run's own text contains is decoded on the way back out, so a
+      // tool result holding the literal text "&lt;script&gt;" was shown as
+      // "<script>". One escaper, `core/utils.js`'s escapeHtml, at every
+      // interpolation site including this one.
       var esc = escapeHtml;
-      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + JSON.stringify(g, null, 2).replace(/</g,"&lt;") + "</pre>";
+      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + esc(JSON.stringify(g, null, 2)) + "</pre>";
       var blob = new Blob([html], {type:"text/html"});
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a"); a.href = url; a.download = g.run_id + ".html";
