@@ -174,7 +174,23 @@ pub const Worktree = struct {
             .exited => |c| c == 0,
             else => false,
         };
-        if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+        if (!ok) {
+            log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+            return;
+        }
+        // Verify HEAD actually moved to the expected SHA. A reset that
+        // exits 0 but leaves HEAD elsewhere (observed with some git
+        // versions when untracked files conflict) silently desyncs the
+        // worktree: the next iteration builds proposals against stale
+        // content and re-introduces changes the merge just landed.
+        const head_sha = run1(gpa, io, &.{ "git", "-C", self.path, "rev-parse", "HEAD" }) catch |err| {
+            log.log(.warn, "improve-self: could not verify HEAD after resync: {s}", .{@errorName(err)});
+            return;
+        };
+        defer gpa.free(head_sha);
+        if (!std.mem.eql(u8, head_sha, new_sha)) {
+            log.log(.warn, "improve-self: resync desync: expected HEAD={s} but got {s}; worktree may be stale", .{ new_sha, head_sha });
+        }
     }
 };
 
