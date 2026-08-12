@@ -39,14 +39,24 @@ pub fn buildGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, build_args
     return runZigArgs(gpa, io, dir, argv.items, "zig build");
 }
 
-/// Runs `zig build test` in `dir`.
+/// Runs `zig build test` in `dir`. Deliberately no cache-dir override (unlike
+/// toolsGate): several sandbox tests place their tmp roots at the literal
+/// relative path ".zig-cache/tmp/...", which only resolves when the test
+/// binary runs against the default local cache. The tests phase was measured
+/// at ~7-10s with a cold local cache anyway (zig's global cache carries the
+/// dependency artifacts), so there is little to win and a real assumption to
+/// break.
 pub fn testGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
     return runZig(gpa, io, dir, &.{ "build", "test", "--summary", "all" }, "zig build test");
 }
 
-/// Runs `zig build tools` in `dir`.
-pub fn toolsGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
-    return runZig(gpa, io, dir, &.{ "build", "tools", "--summary", "all" }, "zig build tools");
+/// Runs `zig build tools` (plus `extra_args`) in `dir`.
+pub fn toolsGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, extra_args: []const []const u8) !GateResult {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.appendSlice(gpa, &.{ "zig", "build", "tools", "--summary", "all" });
+    for (extra_args) |a| try argv.append(gpa, a);
+    return runZigArgs(gpa, io, dir, argv.items, "zig build tools");
 }
 
 /// Runs `zig fmt --check` on exactly the files changed by a proposal, so

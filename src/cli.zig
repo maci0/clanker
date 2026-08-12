@@ -788,7 +788,7 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     log.log(.info, "tests: {s}", .{if (test_gate.ok) "PASS" else "FAIL"});
     if (!test_gate.ok) return error.GateFailed;
 
-    var tools = try gate_checks.toolsGate(gpa, io, std.Io.Dir.cwd());
+    var tools = try gate_checks.toolsGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer tools.deinit(gpa);
     log.log(.info, "tools: {s}", .{if (tools.ok) "PASS" else "FAIL"});
     if (!tools.ok) return error.GateFailed;

@@ -82,7 +82,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = ".exited => |c| c == 0," },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
-    .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"tools\", \"--summary\", \"all\" }, \"zig build tools\")" },
+    .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
 };
 
 /// The next symbol worth looking up in `text`, reduced to its most specific
@@ -607,7 +607,8 @@ pub const Engine = struct {
         // ---- 5. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
         var gate_timer = GateTimer.start(self.ctx.io);
-        var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
+        const cache_args = self.sharedCacheArgs();
+        var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, cache_args);
         defer build.deinit(self.ctx.gpa);
         gate_timer.lap("build");
         if (!build.ok) {
@@ -624,7 +625,7 @@ pub const Engine = struct {
         // the working directory, and a fresh staging dir has none until this
         // gate builds them. Running tests first failed every proposal on a
         // missing artifact rather than on its own merits.
-        var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir);
+        var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir, cache_args);
         defer tools.deinit(self.ctx.gpa);
         gate_timer.lap("tools");
         if (!tools.ok) {
@@ -969,7 +970,7 @@ pub const Engine = struct {
         var g = switch (e.kind) {
             .selfhost_build => try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, dir, &.{}),
             .selfhost_tests => try gate_checks.testGate(self.ctx.gpa, self.ctx.io, dir),
-            .selfhost_tools => try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, dir),
+            .selfhost_tools => try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, dir, &.{}),
             else => return error.NotAGateEval,
         };
         defer g.deinit(self.ctx.gpa);
@@ -1576,28 +1577,25 @@ pub const Engine = struct {
         for (staging_runtime_files) |f| {
             copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch {};
         }
-        // Share the parent tree's zig cache: a fresh staging dir means a cold
-        // .zig-cache, and the gate's build/tools/tests then recompile the
-        // whole tree from scratch on every single proposal -- measured as the
-        // bulk of a 6-7 minute gate cycle. Zig's local cache is content-
-        // addressed and lock-guarded (concurrent builds against one cache are
-        // an ordinary supported case), so sharing it only changes speed, not
-        // verdicts: a staged edit hashes differently and rebuilds exactly
-        // what it invalidates. The link is a leaf entry no ck_fs path ever
-        // traverses (patch_apply writes source paths), so the sandbox's
-        // no-follow walk never sees it. Failure to link just means a cold
-        // build: correct, only slower, hence catch {}.
-        blk: {
-            const root = std.process.currentPathAlloc(self.ctx.io, self.ctx.gpa) catch break :blk;
-            defer self.ctx.gpa.free(root);
-            dir.createDirPath(self.ctx.io, ".zig-cache") catch break :blk;
-            const target = std.fmt.allocPrint(self.ctx.gpa, "{s}/.zig-cache", .{root}) catch break :blk;
-            defer self.ctx.gpa.free(target);
-            const link_path = std.fmt.allocPrint(self.ctx.gpa, "{s}/.zig-cache", .{staging}) catch break :blk;
-            defer self.ctx.gpa.free(link_path);
-            dir.symLink(self.ctx.io, target, link_path, .{}) catch |err|
-                log.log(.warn, "staging cache link failed ({s}); staged builds run cold", .{@errorName(err)});
-        }
+    }
+
+    /// `--cache-dir <parent .zig-cache>` args for the staged gates, so a
+    /// fresh staging dir does not mean a cold cache and a full recompile on
+    /// every proposal (measured: tools 16-24s cold vs ~0.25s shared). Zig's
+    /// local cache is content-addressed and lock-guarded, so sharing changes
+    /// speed, not verdicts. Passed as build args rather than symlinking
+    /// .zig-cache into staging: a symlink there broke the sandbox tests,
+    /// whose tmp roots live under the cache path and whose no-follow
+    /// safeJoinSecure walk (correctly) refuses to traverse a symlink.
+    /// Returns an empty slice when the cwd cannot be resolved: cold build,
+    /// correct but slower.
+    fn sharedCacheArgs(self: *Engine) []const []const u8 {
+        const root = std.process.currentPathAlloc(self.ctx.io, self.arena) catch return &.{};
+        const cache = std.fmt.allocPrint(self.arena, "{s}/.zig-cache", .{root}) catch return &.{};
+        const args = self.arena.alloc([]const u8, 2) catch return &.{};
+        args[0] = "--cache-dir";
+        args[1] = cache;
+        return args;
     }
 };
 
