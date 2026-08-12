@@ -374,11 +374,29 @@ pub const Verdict = struct {
 /// `dir` matters: reachability is a property of the tree as it will be after
 /// promotion, so a function the same proposal adds a caller for in a second
 /// file is reachable and must not be reported.
+///
+/// `recent_test_only_streak`: how many of the most recent accepted promotions
+/// were classified `test_only` consecutively. When >= `max_test_only_streak`
+/// (and the limit is nonzero), a `test_only` proposal is promoted to `inert`
+/// so the gate refuses it — advisory steering (classDistributionHint) cannot
+/// break a monoculture the model has learned to produce.
+pub const max_test_only_streak: usize = 3;
+
 pub fn classify(
     gpa: std.mem.Allocator,
     io: std.Io,
     dir: std.Io.Dir,
     changes: []const Change,
+) !Verdict {
+    return classifyWithStreak(gpa, io, dir, changes, 0);
+}
+
+pub fn classifyWithStreak(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    changes: []const Change,
+    recent_test_only_streak: usize,
 ) !Verdict {
     if (changes.len == 0) return .{ .class = .behavior, .unreachable_fns = &.{} };
 
@@ -445,7 +463,17 @@ pub fn classify(
         }
     }
 
-    if (!behaviour_changed) return .{ .class = .test_only, .unreachable_fns = &.{} };
+    if (!behaviour_changed) {
+        // A sustained run of test-only promotions is the monoculture the
+        // classDistributionHint tries to steer away from. When the streak
+        // hits the cap, refuse the proposal outright so the model is forced
+        // to produce something that changes behaviour.
+        if (recent_test_only_streak >= max_test_only_streak and max_test_only_streak > 0) {
+            log.log(.warn, "inert: refusing test_only proposal after {d} consecutive test_only promotions", .{recent_test_only_streak});
+            return .{ .class = .inert, .unreachable_fns = &.{} };
+        }
+        return .{ .class = .test_only, .unreachable_fns = &.{} };
+    }
 
     // Nothing was added, so there is nothing to be unreachable.
     if (added.items.len == 0 or !purely_additive)
