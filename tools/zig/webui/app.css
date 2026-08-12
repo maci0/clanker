@@ -2635,6 +2635,8 @@ h2#session-title {
   #view-board .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
   #view-board .section-head .toolbar-actions { gap: var(--space-2); }
   #view-board .section-head button { min-height: 44px; }
+  #view-board .board { flex-direction: column; }
+  #view-board .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
   .board-goal-form { display: flex; padding: var(--space-3); }
   .board-goal-form input, .board-goal-form button { width: 100%; min-height: 44px; }
   .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
