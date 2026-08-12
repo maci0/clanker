@@ -417,3 +417,4 @@ fn updateRefCas(gpa: std.mem.Allocator, io: std.Io, branch: []const u8, new_sha:
         else => false,
     };
 }
+
