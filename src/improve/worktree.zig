@@ -211,7 +211,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/autolearn.jsonl", "state/learnings.md" }) |name| {
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/autolearn.jsonl", "state/learnings.md", "state/runs" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
