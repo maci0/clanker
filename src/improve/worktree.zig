@@ -197,7 +197,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     const root = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(root);
 
-    for ([_][]const u8{ ".env", "config.local.toml", "zig-out" }) |name| {
+    for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
@@ -211,7 +211,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);

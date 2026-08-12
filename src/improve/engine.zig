@@ -1880,8 +1880,11 @@ const improve_user_fmt =
     \\
     \\# Earlier runs on this repository
     \\Work listed as accepted is already in the source you were given: do not
-    \\propose it again. Work listed as rejected failed for the stated reason;
-    \\do not repeat that mistake.
+    \\propose it again, and do not undo it. When your change replaces a line
+    \\or list that an accepted improvement touched, copy the CURRENT text from
+    \\the source above and extend it -- reconstructing it from memory has
+    \\silently reverted an accepted improvement before. Work listed as
+    \\rejected failed for the stated reason; do not repeat that mistake.
     \\{s}
     \\
     \\# Previous attempt feedback
