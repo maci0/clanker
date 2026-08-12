@@ -349,13 +349,24 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
             log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
 
+    // Open the main tree root as a Dir so reads resolve against it even
+    // when cwd has moved into the worktree (resyncLocalBranch calls us
+    // after chdir). Without this, cwd()-based reads get the worktree's
+    // own (just-reset, possibly empty) files instead of the main tree's
+    // current versions, silently losing cross-run memory on every resync.
+    var root_dir = std.Io.Dir.cwd().openDir(io, root, .{}) catch {
+        log.log(.warn, "improve-self: could not open root dir {s} for sandbox-readable copies", .{root});
+        return;
+    };
+    defer root_dir.close(io);
+
     for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
         // 16 MiB: autolearn's own log cap is 8 MiB (max_log_bytes,
         // src/agent/autolearn.zig) and the trim triggers only past it, so a
         // 4 MiB read limit here didn't truncate -- readFileAlloc errors on
         // oversize and the catch skipped the copy entirely, silently
         // dropping the shared memory exactly when it had grown most useful.
-        const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
+        const data = root_dir.readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
         defer gpa.free(data);
         const dst = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(dst);
