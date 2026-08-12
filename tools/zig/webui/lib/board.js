@@ -1,7 +1,7 @@
 // Vanilla, no bundler. Board card-action helpers — pure, no DOM, no page state.
 // Importable as ES module.
 
-export var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done" };
+export var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done", archive: "Archive" };
 
 export function boardActionLine(raw) {
   if (typeof raw !== "string" || raw.slice(0, 6) !== "@todo ") return null;
@@ -45,7 +45,10 @@ export function boardActionLine(raw) {
 }
 
 export function doneColumn(board) {
-  return board.columns.length ? board.columns[board.columns.length - 1].id : "done";
+  for (var i = 0; i < (board.columns || []).length; i++) {
+    if (board.columns[i].id === "done") return "done";
+  }
+  return "done";
 }
 
 export function blockers(card, board, cardByIdFn) {
@@ -55,7 +58,7 @@ export function blockers(card, board, cardByIdFn) {
   };
   return (card.depends_on || []).filter(function (id) {
     var dep = lookup(id);
-    return dep && dep.column !== doneColumn(board);
+    return dep && dep.column !== doneColumn(board) && dep.column !== "archive";
   });
 }
 
@@ -66,5 +69,4 @@ export function dueState(card) {
   if (left < 2 * 24 * 60 * 60) return "soon";
   return "ok";
 }
-
 

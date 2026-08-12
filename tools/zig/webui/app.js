@@ -4075,9 +4075,14 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
         });
     });
   }
-  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check, and summarize pass/fail per check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
-  wire("progress-eval", { task:"run evals: list tasks with criteria, run each, and summarize scores", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
-  wire("progress-providers", { task:"check providers: for each configured provider/model report reachable/missing auth/rate-limited", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  // These chores can legitimately run long (gate failures send the agent off
+  // to read source and fix them) and there is no checkbox here to raise the
+  // budget per-run the way the composer's "No limit" toggle does, so they ask
+  // for the same 1000 ceiling outright rather than silently inheriting
+  // cfg.agent.max_iterations (usually far lower) and cutting the run short.
+  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check, and summarize pass/fail per check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
+  wire("progress-eval", { task:"run evals: list tasks with criteria, run each, and summarize scores", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
+  wire("progress-providers", { task:"check providers: for each configured provider/model report reachable/missing auth/rate-limited", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
   if(stopBtn) stopBtn.addEventListener("click", function(){ if(progCtrl) try{progCtrl.abort();}catch(_){} });
   var histBtn=document.getElementById("progress-history-refresh");
   if(histBtn) histBtn.addEventListener("click", renderHistory);

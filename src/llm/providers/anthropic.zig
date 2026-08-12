@@ -184,7 +184,21 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                 try s.objectField("tool_use_id");
                 try common.jstr(&s, m.tool_call_id orelse "");
                 try s.objectField("content");
+                // Canonical array form: Anthropic accepts tool_result content
+                // either as a bare string or as an array of content blocks,
+                // but some Claude-compatible gateways normalize each block
+                // into `{ "tool_result": { content: [...] } }` and only
+                // accept the array form — a bare string fails with
+                // "content.0: Input should be a valid dictionary or object
+                // to extract fields from". The array form satisfies both.
+                try s.beginArray();
+                try s.beginObject();
+                try s.objectField("type");
+                try common.jstr(&s, "text");
+                try s.objectField("text");
                 try common.jstr(&s, m.content orelse "");
+                try s.endObject();
+                try s.endArray();
                 try s.endObject();
             },
             .assistant => {
@@ -595,6 +609,37 @@ test "assistant text precedes tool_use in the anthropic body" {
     try std.testing.expectEqualStrings("tool_use", blocks[1].object.get("type").?.string);
     // The conversation still has to end on a user turn.
     try std.testing.expectEqualStrings("user", msgs[msgs.len - 1].object.get("role").?.string);
+}
+
+test "a tool_result's content is an array of text blocks, not a bare string" {
+    // Regression: the tool_result `content` was serialized as a bare JSON
+    // string. Anthropic accepts that, but some Claude-compatible gateways
+    // normalize each content block into `{ "tool_result": { content: [...] } }`
+    // and require the array form; a bare string made `content[0]` a single
+    // character and failed with "Input should be a valid dictionary or object
+    // to extract fields from".
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const p = try config.Provider.single(arena, "claude", "https://api.anthropic.com", .anthropic, "claude-opus-4-6", .{ .max_tokens = 256 });
+    const calls = [_]types.ToolCall{.{ .id = "toolu_1", .name = "roadmap", .arguments = "{}" }};
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "go" },
+        .{ .role = .assistant, .tool_calls = &calls },
+        .{ .role = .tool, .tool_call_id = "toolu_1", .content = "tool output" },
+    };
+    const body = try buildRequest(arena, .{ .provider = &p, .messages = &messages });
+    defer arena.free(body);
+
+    const parsed = try json.parseFromSliceLeaky(json.Value, arena, body, .{});
+    const outer = parsed.object.get("messages").?.array.items[2].object.get("content").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), outer.len);
+    try std.testing.expectEqualStrings("tool_result", outer[0].object.get("type").?.string);
+    const blocks = outer[0].object.get("content").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), blocks.len);
+    try std.testing.expectEqualStrings("text", blocks[0].object.get("type").?.string);
+    try std.testing.expectEqualStrings("tool output", blocks[0].object.get("text").?.string);
 }
 
 test "an assistant turn with empty content emits no text block" {

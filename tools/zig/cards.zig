@@ -77,7 +77,7 @@ pub const max_body_len = 8 * 1024;
 /// The columns every room's board has. Not per-room state: a column set that
 /// replicated would need its own convergence rules for a value no caller has
 /// asked to change, so the workflow is fixed and the cards move through it.
-pub const columns = [_][]const u8{ "backlog", "ready", "doing", "review", "done" };
+pub const columns = [_][]const u8{ "backlog", "ready", "doing", "review", "done", "archive" };
 pub const default_column = "backlog";
 pub const done_column = "done";
 

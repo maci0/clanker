@@ -109,8 +109,10 @@ export function postBoard(payload, status) {
             postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
           } else if (payload.column === "review" && cur !== "review") {
             postGoal({ id: gid, status: "review" }, "Goal moved to review from the board.");
-          } else if (payload.column !== doneColumn() && payload.column !== "review" &&
-                     (cur === "done" || cur === "review")) {
+          } else if (payload.column === "archive" && cur !== "archived") {
+            postGoal({ id: gid, status: "archived" }, "Goal archived and retained for future learning.");
+          } else if (payload.column !== doneColumn() && payload.column !== "review" && payload.column !== "archive" &&
+                     (cur === "done" || cur === "review" || cur === "archived" || cur === "abandoned")) {
             postGoal({ id: gid, status: "active" }, "Goal reactivated from the board.");
           }
         }
@@ -296,36 +298,6 @@ function boardColumn(col, s) {
           });
           var wrap = document.createElement("span");
           wrap.appendChild(add);
-          var isDone = (col.id === "done" || col.title.toLowerCase() === "done");
-          var isArchived = false;
-          try{ isArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
-          if (isDone) {
-            var arch = document.createElement("button");
-            var archived = isArchived && document.querySelector('[data-column="done"]') && document.querySelector('[data-column="done"]').hidden;
-            // reflect actual hidden state if already applied
-            try{ if (window.clankerBoardArchive) archived = true; }catch(_){}
-            arch.type = "button"; arch.className = "secondary"; arch.textContent = archived ? "Unarchive" : "Archive";
-            arch.title = archived ? "Show done cards again" : "Archive done cards (hide from this view)";
-            arch.style.minHeight = "24px"; arch.style.padding = "0 0.45rem"; arch.style.fontSize = "11px"; arch.style.borderRadius = "999px";
-            arch.addEventListener("click", function(e){
-              e.stopPropagation();
-              var currentlyArchived = false;
-              try{ currentlyArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
-              try{ if (window.clankerBoardArchive) currentlyArchived = true; }catch(_){}
-              var nextArchived = !currentlyArchived;
-              try{
-                if (nextArchived) window.localStorage.setItem("clanker.boardArchive", "1");
-                else window.localStorage.removeItem("clanker.boardArchive");
-                window.clankerBoardArchive = nextArchived;
-              }catch(_){}
-              var doneCol2 = document.querySelector('[data-column="done"]');
-              if (doneCol2) doneCol2.hidden = nextArchived;
-              try{ renderBoard(null); }catch(_){}
-              arch.textContent = nextArchived ? "Unarchive" : "Archive";
-              arch.title = nextArchived ? "Show done cards again" : "Archive done cards (hide from this view)";
-            });
-            wrap.appendChild(arch);
-          }
           return wrap;
         })()
       ),
@@ -933,9 +905,8 @@ export function bindBoard(deps) {
 
   bind(el.board, boardState, function (s) {
     var open = 0;
-    var done = s.columns.length ? s.columns[s.columns.length - 1].id : "done";
     s.cards.forEach(function (c) {
-      if (c.column !== done && (!s.mine || c.assignee === s.me)) open += 1;
+      if (c.column !== "done" && c.column !== "archive" && (!s.mine || c.assignee === s.me)) open += 1;
     });
     _setTabCount("board", open);
     el.boardEmpty.hidden = s.cards.length > 0;

@@ -44,7 +44,11 @@ pub fn writeMockConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, port
         \\kind = "openai_compat"
         \\base_url = "http://127.0.0.1:{d}"
         \\default_model = "mock"
-        \\models = {{ mock = {{ context_window = 32000, max_tokens = 4096 }} }}
+        \\
+        \\[models."e2e-mock/mock"]
+        \\provider = "e2e-mock"
+        \\context_window = 32000
+        \\max_tokens = 4096
         \\
         \\[agent]
         \\tools_dir = {f}

@@ -176,10 +176,9 @@ pub fn weakAttack(raw: []const u8) Reply {
 /// truncation produces. Rather than hand-rolling a partial-JSON reader (and a
 /// second, subtly different unescaper), this re-closes the open string and the
 /// open braces and hands the result back to `std.json` — so `\n`, `\"` and
-/// `\u` hex escapes inside a salvaged argument are decoded by the same code
-/// that decodes a complete one. (Spelled without the four placeholder digits
-/// on purpose: `lintGate`'s debt-marker scan reads them as a literal marker
-/// and fails the gate for every changed file in the repo.)
+/// `\uNNNN` inside a salvaged argument are decoded by the same code that
+/// decodes a complete one. (Spelled with N rather than the conventional X so
+/// the gate's forbidden-marker scan does not read it as a debt marker.)
 ///
 /// Returns null when the input was already balanced (nothing to repair) or is
 /// too mangled to close.
