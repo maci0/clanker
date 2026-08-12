@@ -266,7 +266,7 @@ pub fn run(ptr: u32, len: u32, comptime handler: anytype) u64 {
         return pack(&out);
     };
     handler(input, &out) catch |err| {
-        writeErr(&out, @errorName(err));
+        failErr(&out, err, "tool execution") catch writeErr(&out, "tool execution failed while encoding the error response");
     };
     return pack(&out);
 }

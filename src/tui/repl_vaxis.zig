@@ -761,7 +761,7 @@ const Model = struct {
         }
         if (looksLikeSlashCommand(task)) {
             self.lines.append(self.arena, .{
-                .text = std.fmt.allocPrint(self.arena, "[unknown command: {s} — try /help]", .{std.mem.trim(u8, task, " \t")}) catch "[unknown command — try /help]",
+                .text = std.fmt.allocPrint(self.arena, "[unknown command: {s}, try /help]", .{std.mem.trim(u8, task, " \t")}) catch "[unknown command, try /help]",
                 .dim = true,
             }) catch {};
             return;
@@ -792,7 +792,7 @@ const Model = struct {
             // other turn.
             .goal => {
                 if (pc.args.len == 0) {
-                    self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "usage: /goal <intent> (e.g. /goal fix the failing eval)", .dim = true }) catch {};
                     return;
                 }
                 _ = self.runGoalTask(ctx, pc.args);

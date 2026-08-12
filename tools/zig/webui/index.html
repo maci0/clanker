@@ -41,7 +41,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <circle cx="14" cy="11" r="2" fill="#c9f2d3"/>
     <rect x="9" y="22" width="14" height="3" rx="1" fill="#77827b"/>
   </svg>clanker</h1>
-  <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model — click to change">…</button>
+  <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model (click to change)">…</button>
   <span id="instance-chip" hidden aria-hidden="true">connecting…</span>
   <span id="peers-chip" hidden aria-hidden="true"></span>
   <span id="session-chip" hidden aria-hidden="true">session …</span>
@@ -154,7 +154,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
-      <textarea id="task" name="task" placeholder="Ask anything — type / for prompts" required rows="3"
+      <textarea id="task" name="task" placeholder="Ask anything, type / for prompts" required rows="3"
                 role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
@@ -162,7 +162,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="model-picker">
           <input type="text" id="model-search" class="model-search" placeholder="config default" autocomplete="off"
                  role="combobox" aria-controls="model-list" aria-autocomplete="list" aria-expanded="false"
-                 title="Which provider and model runs this task — type to fuzzy-search">
+                 title="Which provider and model runs this task (type to fuzzy-search)">
           <ul class="palette-list model-list" id="model-list" role="listbox" aria-label="Provider and model" hidden></ul>
         </div>
         <select id="model-select" hidden aria-hidden="true" tabindex="-1"></select>
@@ -185,7 +185,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
-          <button type="button" class="chip model-pill" id="composer-model" title="Model — click to change">…</button>
+          <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)">…</button>
           <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
@@ -395,7 +395,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Prompts</h2>
         <button type="button" class="secondary" id="prompts-refresh">Refresh</button>
       </div>
-      <p class="meta">Saved prompt templates — OpenWebUI parity. Use <code>/</code> in the composer or click Use here to insert.</p>
+      <p class="meta">Saved prompt templates. Use <code>/</code> in the composer or click Use here to insert.</p>
       <form class="goal-form" id="prompts-create-form">
         <label for="prompts-title">Title</label>
         <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200">
@@ -494,7 +494,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <section id="settings-section">
       <div class="section-head">
         <h2>Settings</h2>
-        <span class="meta">Appearance, session, and system — local to this browser unless noted.</span>
+        <span class="meta">Appearance, session, and system. Local to this browser unless noted.</span>
       </div>
       <div class="settings-grid" style="display:grid;gap:0.9rem;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
         <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
@@ -521,7 +521,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <button type="button" class="secondary" id="settings-rename">Rename</button>
             <button type="button" class="secondary" id="settings-move">Move to workspace</button>
           </div>
-          <div class="meta" style="margin-top:0.35rem">Same actions as the chat header — surfaced here for discoverability (OpenWebUI-style user-menu discoverability, single-user).</div>
+          <div class="meta" style="margin-top:0.35rem">Same actions as the chat header, surfaced here for discoverability.</div>
         </div>
       </div>
       <p class="sr-only" id="settings-status" role="status" aria-live="polite"></p>

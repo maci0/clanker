@@ -212,14 +212,14 @@ function renderSessionChip() {
   else if (sel) label = sel;
   if (el.headerModel) {
     el.headerModel.textContent = label || "default model";
-    el.headerModel.title = sel ? ("Model: " + sel + " — click to change") : "Model: default (from config) — click to change";
+    el.headerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
   }
   // The composer's model pill is the same value in a place the eye already
   // is when composing — the Kimi/ChatGPT idiom — and clicking it opens the
   // same picker the header chip opens.
   if (el.composerModel) {
     el.composerModel.textContent = label || "default model";
-    el.composerModel.title = sel ? ("Model: " + sel + " — click to change") : "Model: default (from config) — click to change";
+    el.composerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
   }
 }
 if (typeof window !== "undefined") {
@@ -1320,8 +1320,8 @@ el.task.addEventListener("input", syncControls);
     listening = on;
     btn.textContent = on ? "●" : "🎙";
     btn.setAttribute("aria-pressed", String(on));
-    btn.title = on ? "Listening — click to stop" : "Voice input (click to start)";
-    el.task.placeholder = on ? "Listening…" : "Ask anything — type / for prompts";
+    btn.title = on ? "Listening (click to stop)" : "Voice input (click to start)";
+    el.task.placeholder = on ? "Listening…" : "Ask anything, type / for prompts";
   }
   btn.addEventListener("click", function(){
     if (listening && rec) { try{ rec.stop(); }catch(_){ } return; }
@@ -1332,7 +1332,7 @@ el.task.addEventListener("input", syncControls);
     var base = el.task.value;
     rec.onstart = function(){ setListening(true); };
     rec.onend = function(){ setListening(false); };
-    rec.onerror = function(){ setListening(false); el.sessionStatus.textContent = "Voice input failed — check microphone permission."; };
+    rec.onerror = function(){ setListening(false); el.sessionStatus.textContent = "Voice input failed: check microphone permission."; };
     rec.onresult = function(e){
       var transcript = "";
       for(var i=e.resultIndex;i<e.results.length;i++) transcript += e.results[i][0].transcript;
@@ -1734,14 +1734,14 @@ function diffRuns(aId, bId){
     (ga.nodes||[]).forEach(function(n){
       var k=n.label||n.detail||n.kind;
       var m=(gb.nodes||[]).find(function(x){ return (x.label||x.detail||x.kind)===k; });
-      if(m && (m.ok!==n.ok || Math.abs((m.duration_ms||0)-(n.duration_ms||0))> Math.max(80, (n.duration_ms||0)*0.25))) changed.push(k + " — " + (m.ok===false?"failed":"") + " " + (n.duration_ms||0)+"ms → "+(m.duration_ms||0)+"ms");
+      if(m && (m.ok!==n.ok || Math.abs((m.duration_ms||0)-(n.duration_ms||0))> Math.max(80, (n.duration_ms||0)*0.25))) changed.push(k + ": " + (m.ok===false?"failed":"") + " " + (n.duration_ms||0)+"ms → "+(m.duration_ms||0)+"ms");
     });
     // Re-render current graph with highlights
     drawRun(ga);
     setTimeout(function(){
       added.forEach(function(k){ el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.outline="2px solid var(--ok)"; }); });
       removed.forEach(function(k){ el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
-      changed.forEach(function(k){ var lab=k.split(" — ")[0]; el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
+      changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
     }, 260);
     if(status) status.textContent = added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
     if(clearBtn) clearBtn.hidden=false;
