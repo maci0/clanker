@@ -925,7 +925,7 @@ fn envAllowed(sb: *const Sandbox, name: []const u8) bool {
 /// ck_exec is still part of the guest boundary: inheriting the harness process
 /// environment here would let an allowed executable print API keys that the
 /// same guest is correctly denied through ck_env.
-fn execEnvironment(gpa: std.mem.Allocator, sb: *const Sandbox) !std.process.Environ.Map {
+pub fn execEnvironment(gpa: std.mem.Allocator, sb: *const Sandbox) !std.process.Environ.Map {
     var filtered = std.process.Environ.Map.init(gpa);
     errdefer filtered.deinit();
     var it = sb.environ_map.iterator();
@@ -1366,7 +1366,7 @@ fn parseCustomHeaders(
 /// find, cat and the rest - so a descriptor that declared nothing inherited
 /// more authority than most that declare something. Naming what you run costs
 /// one line, and every shipped tool that execs now does.
-fn execAllowed(allow: []const []const u8, cmd: []const u8) bool {
+pub fn execAllowed(allow: []const []const u8, cmd: []const u8) bool {
     for (allow) |c| {
         if (std.mem.eql(u8, cmd, c)) return true;
     }
@@ -2305,7 +2305,7 @@ const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 /// Returns null (falls back to the bare name) if `cmd` already looks like a
 /// path, PATH is unset, or nothing on it matches — never a hard failure, so
 /// exec_allow commands that behave fine today keep behaving the same way.
-fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
+pub fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
     if (std.mem.findScalar(u8, cmd, '/') != null) return null;
     const path_val = environ_map.get("PATH") orelse return null;
     var it = std.mem.splitScalar(u8, path_val, ':');
@@ -2317,6 +2317,65 @@ fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process
             continue;
         };
         return candidate;
+    }
+    return null;
+}
+
+/// The argument that tripped a deny token, so the caller can say which one it
+/// was instead of a bare "denied".
+pub const DeniedArg = struct { token: []const u8, arg: []const u8 };
+
+/// Why the exec policy refused an argv. See `execDenial`.
+pub const ExecDenial = union(enum) {
+    /// `git`, but not one of the subcommands the host allows.
+    git_verb,
+    /// `exec_pattern_allow` names this command, which makes it strict, and no
+    /// pattern matched the argv.
+    no_pattern_match,
+    /// A destructive verb or a run-something-else flag (`exec_deny_tokens`).
+    deny_token: DeniedArg,
+    /// A shell operator in an argument to a command that is itself a shell.
+    shell_operator: DeniedArg,
+};
+
+/// The argv-level half of the ck_exec gate, factored out of `ckExec` so the
+/// decision lives in exactly one place. Callers check `execAllowed(cmd)` first
+/// — that half needs only the command name, and refusing there avoids a PATH
+/// scan for a command that was never permitted.
+///
+/// `cmd` is the command as the caller named it (bare, before PATH resolution);
+/// `argv` is what would actually be spawned, argv[0] included. Null means the
+/// argv passes.
+///
+/// The second caller is the REPL's `!` shell escape
+/// (`src/tui/repl_vaxis.zig`): a line typed at the prompt is refused by
+/// exactly the rules that refuse a tool, rather than by a second, drifting
+/// copy of them.
+pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8) ?ExecDenial {
+    // exec_pattern_allow decides whether the deny list even applies. A command
+    // with a pattern is strict: only an argv matching one of its patterns runs,
+    // and a match also overrides the deny tokens for the args it grants. A
+    // command with no pattern stays under the deny-list check below.
+    var join_buf: [4096]u8 = undefined;
+    const policy = execPolicyFor(sb, argv, &join_buf);
+    if (std.mem.eql(u8, cmd, "git") and !gitVerbAllowed(argv, sb.git_remote_ops)) return .git_verb;
+    if (policy.governed) return if (policy.allowed) null else .no_pattern_match;
+
+    // deny-list check: match whole arguments / flag prefixes / word
+    // boundaries so single-char tokens like "-f", "rm", "gc" don't
+    // false-positive on innocent arguments.
+    for (argv) |arg| {
+        for (exec_deny_tokens) |t| {
+            // git_remote_ops lifts the PR-lifecycle verbs for `git` only;
+            // every other token stays denied.
+            if (sb.git_remote_ops and std.mem.eql(u8, cmd, "git") and isGitRemoteOpToken(t)) continue;
+            if (argDenied(arg, t)) return .{ .deny_token = .{ .token = t, .arg = arg } };
+        }
+        if (runsAShell(cmd)) {
+            for (shell_op_deny_tokens) |t| {
+                if (argDenied(arg, t)) return .{ .shell_operator = .{ .token = t, .arg = arg } };
+            }
+        }
     }
     return null;
 }
@@ -2858,44 +2917,14 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         }
     }
 
-    // exec_pattern_allow decides whether the deny list even applies. A command
-    // with a pattern is strict: only an argv matching one of its patterns runs,
-    // and a match also overrides the deny tokens for the args it grants. A
-    // command with no pattern stays under the deny-list check below.
-    var join_buf: [4096]u8 = undefined;
-    const policy = execPolicyFor(h.sandbox, argv.items, &join_buf);
-    if (std.mem.eql(u8, cmd, "git") and !gitVerbAllowed(argv.items, h.sandbox.git_remote_ops)) {
-        log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{});
+    if (execDenial(h.sandbox, cmd, argv.items)) |d| {
+        switch (d) {
+            .git_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{}),
+            .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd}),
+            .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, x.arg }),
+            .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, x.arg }),
+        }
         return Err.denied;
-    }
-    if (policy.governed) {
-        if (!policy.allowed) {
-            log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd});
-            return Err.denied;
-        }
-    } else {
-        // deny-list check: match whole arguments / flag prefixes / word
-        // boundaries so single-char tokens like "-f", "rm", "gc" don't
-        // false-positive on innocent arguments.
-        for (argv.items) |arg| {
-            for (exec_deny_tokens) |t| {
-                // git_remote_ops lifts the PR-lifecycle verbs for `git` only;
-                // every other token stays denied.
-                if (h.sandbox.git_remote_ops and std.mem.eql(u8, cmd, "git") and isGitRemoteOpToken(t)) continue;
-                if (argDenied(arg, t)) {
-                    log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ t, arg });
-                    return Err.denied;
-                }
-            }
-            if (runsAShell(cmd)) {
-                for (shell_op_deny_tokens) |t| {
-                    if (argDenied(arg, t)) {
-                        log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ t, arg });
-                        return Err.denied;
-                    }
-                }
-            }
-        }
     }
 
     log.log(.info, "[exec] → {s}", .{cmd});
@@ -2990,6 +3019,102 @@ fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []c
         try s.print("output was {d} bytes and was cut to {d}; narrow the pattern or the path to see the rest", .{ stdout.len, exec_stdout_keep });
     }
     try s.endObject();
+}
+
+/// What a command a native caller ran actually produced. `stdout`/`stderr` are
+/// owned by the caller's allocator.
+pub const ExecOutcome = struct {
+    code: u32,
+    stdout: []u8,
+    stderr: []u8,
+
+    pub fn deinit(self: ExecOutcome, gpa: std.mem.Allocator) void {
+        gpa.free(self.stdout);
+        gpa.free(self.stderr);
+    }
+};
+
+/// How far `execUnderPolicy` got.
+pub const ExecAttempt = union(enum) {
+    /// The command is not on `sb.exec_allow`.
+    not_allowed,
+    /// On the allowlist, but the argv tripped the policy.
+    denied: ExecDenial,
+    /// Allowed and gated, but the process could not be run.
+    failed: anyerror,
+    ran: ExecOutcome,
+};
+
+/// The ck_exec gate for a caller that is not a WASM guest: resolves the
+/// command through PATH, runs it past `execAllowed` + `execDenial`, and spawns
+/// it with the same filtered environment (`execEnvironment`) a guest gets — so
+/// an allowed binary still cannot print this project's API keys.
+///
+/// `clanker repl`'s `!` shell escape is the caller. It exists so that escape
+/// is *not* a raw shell: it runs a fixed argv through the same policy a tool
+/// goes through, with no shell interposed to expand globs, variables, pipes or
+/// redirections. There is deliberately no `cwd`, no stdin and no shell here —
+/// the process cwd is the sandbox root the REPL was started in.
+pub fn execUnderPolicy(
+    sb: *const Sandbox,
+    argv_in: []const []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) ExecAttempt {
+    if (argv_in.len == 0 or argv_in[0].len == 0) return .not_allowed;
+    const cmd = argv_in[0];
+    if (!execAllowed(sb.exec_allow, cmd)) {
+        log.log(.warn, "[exec] '{s}' is not on the caller's exec allowlist ({d} command(s))", .{ cmd, sb.exec_allow.len });
+        return .not_allowed;
+    }
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(sb.gpa);
+    const resolved = resolveExecPath(sb.gpa, sb.io, sb.environ_map, cmd);
+    defer if (resolved) |r| sb.gpa.free(r);
+    argv.append(sb.gpa, resolved orelse cmd) catch return .{ .failed = error.OutOfMemory };
+    argv.appendSlice(sb.gpa, argv_in[1..]) catch return .{ .failed = error.OutOfMemory };
+
+    if (execDenial(sb, cmd, argv.items)) |d| {
+        // A denial can name argv[0], which is the PATH-resolved path freed
+        // with this frame. Report the command as the caller named it instead,
+        // so the reason outlives the call. Tokens are static (exec_deny_tokens
+        // / shell_op_deny_tokens) and the remaining arguments belong to the
+        // caller, so only argv[0] needs the swap.
+        const outlives = struct {
+            fn arg(x: DeniedArg, argv0: []const u8, named: []const u8) DeniedArg {
+                return .{ .token = x.token, .arg = if (x.arg.ptr == argv0.ptr) named else x.arg };
+            }
+        };
+        return .{ .denied = switch (d) {
+            .deny_token => |x| .{ .deny_token = outlives.arg(x, argv.items[0], cmd) },
+            .shell_operator => |x| .{ .shell_operator = outlives.arg(x, argv.items[0], cmd) },
+            else => d,
+        } };
+    }
+
+    var child_env = execEnvironment(sb.gpa, sb) catch |err| return .{ .failed = err };
+    defer child_env.deinit();
+
+    log.log(.info, "[exec] → {s}", .{cmd});
+    const result = std.process.run(sb.gpa, sb.io, .{
+        .argv = argv.items,
+        .cwd = .{ .dir = std.Io.Dir.cwd() },
+        .environ_map = &child_env,
+        .stdout_limit = .limited(stdout_limit),
+        .stderr_limit = .limited(stderr_limit),
+    }) catch |err| {
+        log.log(.warn, "[exec] ✗ {s} — failed to run: {s}", .{ cmd, @errorName(err) });
+        return .{ .failed = err };
+    };
+    return .{ .ran = .{
+        .code = switch (result.term) {
+            .exited => |c| c,
+            else => 1,
+        },
+        .stdout = result.stdout,
+        .stderr = result.stderr,
+    } };
 }
 
 /// Keeps the head of `text`, ending on a line boundary so the last line is
@@ -3371,6 +3496,73 @@ test "execPolicyFor: no patterns leaves everything ungoverned" {
     const p = execPolicyFor(&sb, &gh, &join);
     try std.testing.expect(!p.governed);
     try std.testing.expect(!p.allowed);
+}
+
+test "execDenial: the argv-level gate ckExec and the REPL escape share" {
+    var sb = Sandbox{
+        .gpa = undefined,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = undefined,
+        .exec_allow = &.{ "git", "rg", "sh" },
+    };
+
+    // An ordinary read-only argv passes.
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "status" }) == null);
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "src" }) == null);
+
+    // A deny-list token refuses the argv, and the caller learns which token in
+    // which argument so it can say so.
+    const forced = execDenial(&sb, "rg", &.{ "/usr/bin/rg", "--force" }) orelse
+        return error.TestExpectedDenial;
+    try std.testing.expectEqualStrings("--force", forced.deny_token.token);
+    try std.testing.expectEqualStrings("--force", forced.deny_token.arg);
+
+    // For `git` the verb allowlist is consulted first, so a destructive verb
+    // is refused as an unlisted verb rather than as a deny token — the same
+    // refusal either way, but the precedence is worth pinning.
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "reset", "--hard" }).? == .git_verb);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "ls-remote" }).? == .git_verb);
+    // ...and git_remote_ops lifts exactly the PR-lifecycle verbs.
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "push" }) != null);
+    sb.git_remote_ops = true;
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "push" }) == null);
+    sb.git_remote_ops = false;
+
+    // Shell operators are refused only when the command is itself a shell:
+    // ">" is ordinary pattern syntax to rg.
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "a > b" }) == null);
+    const shell_op = execDenial(&sb, "sh", &.{ "/bin/sh", "-c", "a > b" }) orelse
+        return error.TestExpectedDenial;
+    try std.testing.expectEqualStrings(">", shell_op.shell_operator.token);
+
+    // A pattern makes its command strict; a non-matching argv is refused even
+    // though nothing on the deny list appears in it.
+    sb.exec_pattern_allow = &.{"gh pr create*"};
+    sb.exec_allow = &.{"gh"};
+    try std.testing.expect(execDenial(&sb, "gh", &.{ "/usr/bin/gh", "pr", "create" }) == null);
+    try std.testing.expect(execDenial(&sb, "gh", &.{ "/usr/bin/gh", "issue", "list" }).? == .no_pattern_match);
+}
+
+test "execUnderPolicy refuses a command that is not on the allowlist" {
+    var environ_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ_map.deinit();
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &environ_map,
+        .exec_allow = &.{"git"},
+    };
+    // Refused before any PATH lookup or spawn, so `.io` being undefined here
+    // is exactly the point: nothing runs.
+    try std.testing.expect(execUnderPolicy(&sb, &.{ "rm", "-rf", "/" }, 1024, 1024) == .not_allowed);
+    try std.testing.expect(execUnderPolicy(&sb, &.{}, 1024, 1024) == .not_allowed);
+    try std.testing.expect(execUnderPolicy(&sb, &.{""}, 1024, 1024) == .not_allowed);
 }
 
 test "ckFsStat uses safeJoin policy" {

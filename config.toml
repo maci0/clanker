@@ -132,6 +132,9 @@ seed = 0
 compact_threshold_bytes = 0
 git_remote_ops = false
 exec_pattern_allow = []
+# Extra commands the REPL's `!cmd` escape may run, on top of the union of every
+# tool's exec_allow. Empty = the escape can run exactly what the tools can.
+repl_exec_allow = []
 
 [instance]
 name = "clanker"
