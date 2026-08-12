@@ -489,6 +489,13 @@ function cardNode(c) {
     gf.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="3" fill="currentColor"/></svg>';
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
+    // The same rocket that the "Start work" button shows on the open card,
+    // surfaced on the closed card so goal runs are visible at a glance.
+    var sw = document.createElement("span");
+    sw.className = "card-badge";
+    sw.textContent = "\uD83D\uDE80"; // 🚀
+    sw.title = "Goal — Start work (opens a run)";
+    badges.appendChild(sw);
     hasBadges = true;
   }
 
