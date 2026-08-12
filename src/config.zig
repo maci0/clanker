@@ -1227,11 +1227,11 @@ pub const Config = struct {
         }
         if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
             .bool => |b| b,
-            else => im.capability_gate,
+            else => return error.FieldNotBool,
         };
         if (obj.get("arena_advisory")) |k| im.arena_advisory = switch (k) {
             .bool => |b| b,
-            else => im.arena_advisory,
+            else => return error.FieldNotBool,
         };
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
         if (obj.get("max_context_requests")) |k| {
@@ -1240,7 +1240,7 @@ pub const Config = struct {
         }
         if (obj.get("inert_gate")) |k| im.inert_gate = switch (k) {
             .bool => |b| b,
-            else => im.inert_gate,
+            else => return error.FieldNotBool,
         };
         if (obj.get("max_consecutive_test_only")) |k| {
             const n = try jsonInt(k, "max_consecutive_test_only");
@@ -1249,7 +1249,7 @@ pub const Config = struct {
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
         if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
             .bool => |b| b,
-            else => im.plan_phase,
+            else => return error.FieldNotBool,
         };
         return im;
     }
@@ -1317,10 +1317,9 @@ pub const Config = struct {
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
-                if (val == .bool) {
-                    f.ptr.* = val.bool;
-                    f.present.* = true;
-                }
+                if (val != .bool) return error.FieldNotBool;
+                f.ptr.* = val.bool;
+                f.present.* = true;
             }
         }
         return .{ .modules = m, .fields = mf };
@@ -2355,5 +2354,54 @@ test "resolveProvider splits provider/model and keeps opaque slash ids whole" {
     const d = try cfg.resolveProvider("kimi-k3", "zai/glm-5.2");
     try std.testing.expectEqualStrings("kimi-k3", d.name);
     try std.testing.expectEqualStrings("zai/glm-5.2", d.default_model);
+}
+test "improve bool fields reject non-bool values instead of silently defaulting" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[improve]
+        \\capability_gate = "yes"
+        ,
+    });
+    try std.testing.expectError(
+        error.FieldNotBool,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
+    );
+}
+
+test "modules flags reject non-bool values instead of silently defaulting" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[modules]
+        \\streaming = "false"
+        ,
+    });
+    try std.testing.expectError(
+        error.FieldNotBool,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
+    );
 }
 // --- memory helpers (appended via patch) ---
