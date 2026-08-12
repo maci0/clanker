@@ -231,6 +231,11 @@ pub const Improve = struct {
     /// stops self-improvement completely. Dropping it costs about a second,
     /// because the artifacts themselves live in zig's global cache. 0 disables.
     max_cache_bytes: u64 = 4 << 30,
+    /// How many times in one improve run the model may answer with a request
+    /// for files it was not shown instead of a patch. The context is a slice
+    /// of the tree, so this is the loop's only way to look anything up; each
+    /// one costs a call that produces no patch. 0 disables it.
+    max_context_requests: u32 = 3,
 };
 
 /// A peer clanker instance that may be notified about events.
@@ -949,7 +954,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes" }, "improve");
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
@@ -959,6 +964,10 @@ pub const Config = struct {
             else => im.capability_gate,
         };
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
+        if (obj.get("max_context_requests")) |k| {
+            const n = try jsonInt(k, "max_context_requests");
+            im.max_context_requests = if (n <= 0) 0 else @intCast(n);
+        }
         return im;
     }
 
