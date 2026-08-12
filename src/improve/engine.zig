@@ -1810,6 +1810,98 @@ test "errorTail falls back to the end when nothing looks like an error" {
     try std.testing.expectEqual(@as(u8, 'Z'), tail[tail.len - 1]);
 }
 
+test "a granted file reaches the context, once, in the focus block" {
+    // The whole point of the request round: docs/ is never collected, so
+    // docs/ROADMAP.md cannot reach the model any other way — which is why
+    // clanker-improve.sh pastes the planned items into the instruction by hand.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+
+    // Runs against the real tree from the repo root, so it needs docs/ to be
+    // there; a checkout without it has nothing to assert about.
+    std.Io.Dir.cwd().access(io, "docs/ROADMAP.md", .{}) catch return error.SkipZigTest;
+
+    const budget: usize = 256 * 1024;
+    const header = "===== FILE: docs/ROADMAP.md =====";
+
+    {
+        var hist = history_mod.History.init(std.testing.allocator, io, std.Io.Dir.cwd(), "state");
+        defer hist.deinit();
+        var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = hist, .instructions = "" };
+        const before = try engine.collectContext(budget);
+        try std.testing.expect(std.mem.indexOf(u8, before.bulk, header) == null);
+        try std.testing.expect(std.mem.indexOf(u8, before.focus, header) == null);
+    }
+
+    {
+        var hist = history_mod.History.init(std.testing.allocator, io, std.Io.Dir.cwd(), "state");
+        defer hist.deinit();
+        var engine = Engine{
+            .ctx = &ctx,
+            .arena = arena,
+            .provider = &provider,
+            .cfg = &cfg,
+            .hist = hist,
+            .instructions = "",
+            .granted = &.{"docs/ROADMAP.md"},
+        };
+        const after = try engine.collectContext(budget);
+
+        // In the volatile half, so a promotion cannot invalidate the cached bulk.
+        try std.testing.expect(std.mem.indexOf(u8, after.focus, header) != null);
+        // And exactly once. A file in the focus block used to be emitted into
+        // the bulk as well, which for a 310 KB file is 310 KB billed twice.
+        try std.testing.expect(std.mem.indexOf(u8, after.bulk, header) == null);
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, after.focus, header));
+    }
+}
+
+test "granting is bounded, refuses what does not exist, and does not double-count" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+    var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = undefined, .instructions = "" };
+
+    var missing: std.ArrayList([]const u8) = .empty;
+
+    // A path that does not exist is refused, not granted: collectFile drops an
+    // unreadable file with only a debug line, so granting one would look, from
+    // the next prompt, exactly like a file that turned out to be empty.
+    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"src/does_not_exist.zig"}, &missing));
+    try std.testing.expectEqual(@as(usize, 1), missing.items.len);
+    try std.testing.expectEqual(@as(usize, 0), engine.granted.len);
+
+    try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{"build.zig"}, &missing));
+    try std.testing.expectEqual(@as(usize, 1), engine.granted.len);
+
+    // Asking again for something already granted adds nothing — which is what
+    // makes the engine answer "you already have this" instead of looping.
+    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"build.zig"}, &missing));
+    try std.testing.expectEqual(@as(usize, 1), engine.granted.len);
+
+    // A later round accumulates onto the earlier one rather than replacing it.
+    try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{ "build.zig", "README.md" }, &missing));
+    try std.testing.expectEqual(@as(usize, 2), engine.granted.len);
+}
+
 test "a file named in the instruction is pinned into the context" {
     // Exact-match patching cannot work against a file the model never saw, so
     // "fix X in src/agent/loop.zig" has to ship loop.zig even when keyword
