@@ -225,7 +225,7 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
 
     // Validate name: alphanum, dash, underscore.
     for (name) |c| {
-        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' )) {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.')) {
             return error.InvalidWorkflowName;
         }
     }

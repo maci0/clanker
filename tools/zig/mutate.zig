@@ -40,8 +40,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const settings = std.json.parseFromSliceLeaky(Settings, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Settings{};
     const mode_is_json = !std.mem.eql(u8, settings.mode, "text");
 
-    const instruction_template = if (settings.instruction.len > 0) settings.instruction else
-        "Translate the human-readable text in this JSON tool result into {{lang}}.\n\nRules:\n- Return only the JSON, no fences and no commentary.\n- Keep the exact same structure, keys, and value types.\n- Leave identifiers, URLs, file paths, code, and numbers untouched.\n- If nothing needs translating, return the input unchanged.";
+    const instruction_template = if (settings.instruction.len > 0) settings.instruction else "Translate the human-readable text in this JSON tool result into {{lang}}.\n\nRules:\n- Return only the JSON, no fences and no commentary.\n- Keep the exact same structure, keys, and value types.\n- Leave identifiers, URLs, file paths, code, and numbers untouched.\n- If nothing needs translating, return the input unchanged.";
 
     const instruction = try interpolate(alloc, instruction_template, settings.lang, req.tool);
 
