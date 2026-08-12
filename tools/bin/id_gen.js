@@ -1,6 +1,6 @@
 export async function instantiate(module, imports = {}) {
   const adaptedImports = {
-    env: Object.assign(Object.create(globalThis), imports.env || {}, {
+    env: Object.setPrototypeOf({
       abort(message, fileName, lineNumber, columnNumber) {
         // ~lib/builtins/abort(~lib/string/String | null?, ~lib/string/String | null?, u32?, u32?) => void
         message = __liftString(message >>> 0);
@@ -27,7 +27,7 @@ export async function instantiate(module, imports = {}) {
         // lib/ck_now() => u64
         return ck_now() || 0n;
       },
-    }),
+    }, Object.assign(Object.create(globalThis), imports.env || {})),
   };
   const { exports } = await WebAssembly.instantiate(module, adaptedImports);
   const memory = exports.memory || imports.env.memory;

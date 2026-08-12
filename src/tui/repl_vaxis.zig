@@ -16,17 +16,16 @@
 //! event-driven, same principle as this session's KeyReader poll() fix in
 //! the old REPL.
 //!
-//! Deliberately not yet built (documented gaps, not oversights): a general
-//! slash-command palette/tab-complete (only quit, `/model`, and `/help` are
-//! handled by name in `submit` — `/model` opens a fuzzy provider/model
-//! picker, `handlePickerKey`, styled like Kimi Code's; `/help`/`?` prints
-//! `printHelp`'s hand-maintained command list, not a generated one), inline
+//! Deliberately not yet built (documented gaps, not oversights): slash-command
+//! tab-complete (commands dispatch through `command_registry`, the single
+//! source of truth `/help` is also generated from, but there is no completion
+//! UI over it yet — `/model` opens a fuzzy provider/model picker,
+//! `handlePickerKey`, styled like Kimi Code's), inline
 //! ask_user/approval prompts (falls back to the same "nobody attached"
-//! default a headless run gets), manual scroll-back (the transcript always
-//! shows its tail), and the left-bar tool-card styling from the old
-//! transcript.zig (tool calls render as plain dim lines here). Full list,
-//! with what a fix looks like for each: docs/ROADMAP.md's "vaxis REPL
-//! parity" entry under Planned.
+//! default a headless run gets). Full list, with what a fix looks like for
+//! each: docs/ROADMAP.md's "vaxis REPL parity" entry under Planned. Tool
+//! calls render as the established left-bar cards, built as plain strings by
+//! transcript.zig's card helpers and styled into cells at draw time.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -44,6 +43,8 @@ const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
+// `_mod` because saveConversation has a local named `transcript`.
+const transcript_mod = @import("transcript.zig");
 
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
@@ -95,20 +96,28 @@ fn onToken(delta: []const u8) void {
     bridge_stream_buf.appendSlice(bridge_gpa, clean) catch {};
 }
 
+/// Each batch of calls becomes one left-bar card (transcript.zig's card
+/// builders): the first call opens it, the rest of the batch joins the body,
+/// each call's arguments follow as a truncated one-line preview, and
+/// onToolResult closes it — the agent reports one timing per batch, so
+/// per-call cards would draw open corners nothing ever closes. Name and
+/// arguments are untrusted; the builders control-strip them (CWE-150).
 fn onToolCall(calls: []const types.ToolCall) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    for (calls) |c| {
-        const line = std.fmt.allocPrint(bridge_gpa, "\xe2\x9a\x99 {s}", .{c.name}) catch continue;
-        bridge_tool_lines.append(bridge_gpa, line) catch {};
+    for (calls, 0..) |c, i| {
+        const header = transcript_mod.toolCardHeader(bridge_gpa, c.name, i == 0) catch continue;
+        bridge_tool_lines.append(bridge_gpa, header) catch bridge_gpa.free(header);
+        const body = transcript_mod.toolCardArgs(bridge_gpa, c.arguments) catch null;
+        if (body) |b| bridge_tool_lines.append(bridge_gpa, b) catch bridge_gpa.free(b);
     }
 }
 
 fn onToolResult(elapsed_ms: u64) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    const line = std.fmt.allocPrint(bridge_gpa, "  \xe2\x86\xb3 done in {d}ms", .{elapsed_ms}) catch return;
-    bridge_tool_lines.append(bridge_gpa, line) catch {};
+    const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms) catch return;
+    bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
 }
 
 const RunThreadArgs = struct {
@@ -238,6 +247,213 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     try std.testing.expectEqual(@as(?f64, null), cands[1].cost_in);
 }
 
+// ---------------------------------------------------------------------
+// Slash-command registry: the single source of truth for what `submit`
+// dispatches and what `/help` prints. Adding an entry here is the whole
+// job — dispatch and the generated help list both derive from it, so a
+// command can no longer ship undocumented (the hazard docs/prds/repl-tui.md
+// tracked against the old hand-maintained `printHelp` prose).
+// ---------------------------------------------------------------------
+
+/// What a matched command does. Commands with bespoke UI or plumbing get
+/// their own arm that `runCommand` switches on; the internal `cmd_*` WASM
+/// tools (the same ones the CLI subcommands invoke) share one `.tool` arm
+/// carrying the tool name and its fixed argument string.
+const CommandAction = union(enum) {
+    quit,
+    help,
+    /// Opens the fuzzy provider/model picker, seeded with any args given.
+    model,
+    /// Routes into a goal-design agent turn (see `runGoalTask`).
+    goal,
+    /// Prints usage, or runs the measurement loop as a normal agent task.
+    autoresearch,
+    /// Runs the named internal `cmd_*` tool via `runInternalTool`.
+    tool: struct { name: []const u8, args: []const u8 },
+};
+
+/// One slash command the REPL understands.
+const CommandSpec = struct {
+    /// Primary spelling, leading slash included, matched exactly.
+    name: []const u8,
+    /// Alternate spellings, matched the same way ("?", bare "exit").
+    aliases: []const []const u8 = &.{},
+    /// Whether "<spelling> <args>" also matches, with the trimmed
+    /// remainder handed to the action.
+    takes_args: bool = false,
+    /// Shown after the spellings in /help ("[query]", "<intent>"); purely
+    /// documentation, not parsed.
+    arg_hint: []const u8 = "",
+    /// One line for the generated /help list. Never empty (tested).
+    help: []const u8,
+    action: CommandAction,
+};
+
+const command_registry = [_]CommandSpec{
+    .{ .name = "/help", .aliases = &.{"?"}, .help = "show this help", .action = .help },
+    .{ .name = "/model", .takes_args = true, .arg_hint = "[query]", .help = "switch provider/model (fuzzy picker; Enter picks, Esc cancels)", .action = .model },
+    .{ .name = "/sessions", .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
+    .{ .name = "/graph", .help = "list knowledge-graph entries", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
+    .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
+    .{ .name = "/plugins", .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
+    .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
+    .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
+    .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
+};
+
+/// A registry hit: which entry matched, plus whatever followed the
+/// matched spelling (trimmed; empty when nothing did).
+const ParsedCommand = struct {
+    spec: *const CommandSpec,
+    args: []const u8,
+};
+
+/// Matches `input` against one spelling of `spec`: exact, or
+/// "<spelling> <args>" when the spec takes arguments. Returns the trimmed
+/// remainder on a match, null otherwise ("/modelx" must not match "/model").
+fn matchSpelling(spec: *const CommandSpec, spelling: []const u8, input: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, input, spelling)) return "";
+    if (spec.takes_args and input.len > spelling.len and
+        std.mem.startsWith(u8, input, spelling) and input[spelling.len] == ' ')
+    {
+        return std.mem.trim(u8, input[spelling.len..], " ");
+    }
+    return null;
+}
+
+/// Registry lookup for a submitted line: trims, then tries every spelling
+/// of every entry. Null means "not a command" — bare text is a task for the
+/// agent, and `submit` reports unrecognized /slash input instead of sending
+/// it (see `looksLikeSlashCommand`).
+fn parseCommand(task: []const u8) ?ParsedCommand {
+    const input = std.mem.trim(u8, task, " \t");
+    for (&command_registry) |*spec| {
+        if (matchSpelling(spec, spec.name, input)) |args| return .{ .spec = spec, .args = args };
+        for (spec.aliases) |alias| {
+            if (matchSpelling(spec, alias, input)) |args| return .{ .spec = spec, .args = args };
+        }
+    }
+    return null;
+}
+
+/// True for input that was clearly meant as a slash command (leading '/'):
+/// when the registry lookup missed, this is what keeps a typo'd command out
+/// of the LLM conversation. Bare text without the slash stays a task.
+fn looksLikeSlashCommand(task: []const u8) bool {
+    const input = std.mem.trim(u8, task, " \t");
+    return input.len > 0 and input[0] == '/';
+}
+
+/// Widest "spellings [hint]" cell in the registry, computed at comptime so
+/// the generated help columns stay aligned no matter what gets added.
+const help_names_width = blk: {
+    var w: usize = 0;
+    for (command_registry) |spec| {
+        var n = spec.name.len;
+        for (spec.aliases) |a| n += 2 + a.len;
+        if (spec.arg_hint.len > 0) n += 1 + spec.arg_hint.len;
+        if (n > w) w = n;
+    }
+    break :blk w;
+};
+
+/// The command section of `/help`, generated from `command_registry`: one
+/// line per entry — every spelling comma-separated, the arg hint, then the
+/// help text in a common column. Returned as one newline-joined slice the
+/// caller owns.
+fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, "commands:");
+    for (command_registry) |spec| {
+        try out.appendSlice(alloc, "\n  ");
+        var col: usize = spec.name.len;
+        try out.appendSlice(alloc, spec.name);
+        for (spec.aliases) |alias| {
+            try out.appendSlice(alloc, ", ");
+            try out.appendSlice(alloc, alias);
+            col += 2 + alias.len;
+        }
+        if (spec.arg_hint.len > 0) {
+            try out.append(alloc, ' ');
+            try out.appendSlice(alloc, spec.arg_hint);
+            col += 1 + spec.arg_hint.len;
+        }
+        while (col < help_names_width + 2) : (col += 1) try out.append(alloc, ' ');
+        try out.appendSlice(alloc, spec.help);
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+test "every command registry entry is documented" {
+    for (command_registry) |spec| {
+        try std.testing.expect(spec.name.len > 0);
+        try std.testing.expect(spec.help.len > 0);
+    }
+}
+
+test "generated help mentions every command spelling and help line" {
+    const text = try buildCommandHelp(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    for (command_registry) |spec| {
+        try std.testing.expect(std.mem.indexOf(u8, text, spec.name) != null);
+        for (spec.aliases) |alias| {
+            try std.testing.expect(std.mem.indexOf(u8, text, alias) != null);
+        }
+        try std.testing.expect(std.mem.indexOf(u8, text, spec.help) != null);
+    }
+}
+
+test "parseCommand recognizes the REPL quit set" {
+    const quit_spellings = [_][]const u8{ "/quit", "/exit", "/q", "exit", "quit", "  /q  " };
+    for (quit_spellings) |s| {
+        const pc = parseCommand(s) orelse return error.TestExpectedCommand;
+        try std.testing.expect(pc.spec.action == .quit);
+    }
+    // A leading slash distinguishes a command from the same word as a task;
+    // a bare word that is not a quit command is a task.
+    try std.testing.expect(parseCommand("/quitnow") == null);
+    try std.testing.expect(parseCommand("exit handling is next") == null);
+    try std.testing.expect(parseCommand("") == null);
+    try std.testing.expect(parseCommand("please exit") == null);
+    // Quit takes no arguments, so "/quit now" is not a quit command.
+    try std.testing.expect(parseCommand("/quit now") == null);
+}
+
+test "parseCommand matches names, aliases, and arguments" {
+    const help = parseCommand("/help") orelse return error.TestExpectedCommand;
+    try std.testing.expect(help.spec.action == .help);
+    const qmark = parseCommand("?") orelse return error.TestExpectedCommand;
+    try std.testing.expect(qmark.spec.action == .help);
+    // "?" takes no args: "? something" is a task, not a help request.
+    try std.testing.expect(parseCommand("? something") == null);
+
+    const bare_model = parseCommand("/model") orelse return error.TestExpectedCommand;
+    try std.testing.expect(bare_model.spec.action == .model);
+    try std.testing.expectEqualStrings("", bare_model.args);
+    const seeded = parseCommand("/model kimi k3 ") orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("kimi k3", seeded.args);
+
+    const goal = parseCommand("/goal fix the failing eval") orelse return error.TestExpectedCommand;
+    try std.testing.expect(goal.spec.action == .goal);
+    try std.testing.expectEqualStrings("fix the failing eval", goal.args);
+
+    const sessions = parseCommand("/sessions") orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("cmd_sessions", sessions.spec.action.tool.name);
+    // The internal cmd_* commands take no free-form arguments yet.
+    try std.testing.expect(parseCommand("/sessions foo") == null);
+
+    try std.testing.expect(parseCommand("hello world") == null);
+    try std.testing.expect(parseCommand("/nope") == null);
+}
+
+test "looksLikeSlashCommand separates typo'd commands from tasks" {
+    try std.testing.expect(looksLikeSlashCommand("/nope"));
+    try std.testing.expect(looksLikeSlashCommand("  /nope  "));
+    try std.testing.expect(!looksLikeSlashCommand("hello /world"));
+    try std.testing.expect(!looksLikeSlashCommand(""));
+}
+
 /// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "latte",
 /// "frappe", "macchiato", "tokyonight", "storm", "day", "mono", "default").
 /// An env var rather than a flag because the REPL is also reached
@@ -273,7 +489,7 @@ const Model = struct {
     text_field: vxfw.TextField,
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
-    status_buf: [160]u8 = undefined,
+    status_buf: [192]u8 = undefined,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op — there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -297,6 +513,13 @@ const Model = struct {
     last_surface: ?vxfw.Surface = null,
     transcript_top: u16 = 0,
     transcript_bottom: u16 = 0,
+    /// Manual scrollback anchor: null while the transcript follows its tail
+    /// (the default — new output scrolls into view as it arrives). Non-null
+    /// pins the visible window to end at this absolute line index
+    /// (exclusive), so a streaming turn can append to `lines` without
+    /// yanking a reader back down. PgUp/PgDn/Home/End/Esc drive it; the
+    /// draw re-clamps it every frame (a resize changes what fits).
+    view_end: ?usize = null,
 
     /// Submitted-task history for the Up/Down recall every REPL has.
     /// `hist_idx == history.len` means "editing a fresh line", and the
@@ -409,82 +632,72 @@ const Model = struct {
         if (task.len == 0) return;
         self.text_field.reset();
 
-        // A quit command has to set `ctx.quit`, rather than merely stop the
-        // input handler: App.run returns on that flag and its caller's defer
-        // then restores the alternate screen, raw input, mouse mode, and
-        // bracketed paste before the shell regains the terminal.
-        if (isQuitCommand(task)) {
-            ctx.quit = true;
+        // Slash commands dispatch through `command_registry` — one lookup
+        // covering every spelling, instead of literal matches strewn about.
+        // An unrecognized /command is reported in the transcript rather than
+        // sent to the LLM (a typo'd command is not a task); bare text without
+        // the slash is still a task, bare "exit"/"quit" included (they are
+        // registry aliases of /quit).
+        if (parseCommand(task)) |pc| {
+            try self.runCommand(ctx, pc, task);
             return;
         }
-
-        // "/model" alone opens the picker on the full list; "/model kimi"
-        // seeds it with a starting query, so a remembered partial name is
-        // one Enter away instead of a blank list to type into again.
-        if (std.mem.eql(u8, task, "/model") or std.mem.startsWith(u8, task, "/model ")) {
-            self.openModelPicker(if (task.len > 6) std.mem.trim(u8, task[6..], " ") else "");
+        if (looksLikeSlashCommand(task)) {
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "[unknown command: {s} — try /help]", .{std.mem.trim(u8, task, " \t")}) catch "[unknown command — try /help]",
+                .dim = true,
+            }) catch {};
             return;
         }
-
-        if (std.mem.eql(u8, task, "/help") or std.mem.eql(u8, task, "?")) {
-            self.printHelp();
-            return;
-        }
-
-        if (std.mem.eql(u8, task, "/autoresearch") or std.mem.startsWith(u8, task, "/autoresearch ")) {
-            const args = if (task.len > 14) std.mem.trim(u8, task[14..], " ") else "";
-            if (args.len == 0 or std.mem.eql(u8, args, "--help") or std.mem.eql(u8, args, "-h")) {
-                self.lines.append(self.arena, .{ .text = "usage: /autoresearch --target <file> --harness \"<cmd>\" [--iters N] [--dry-run]", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  runs the measurement loop; use --dry-run to validate without LLM", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  example: /autoresearch --target tools/zig/calculator.zig --harness \"sh -c 'echo score: 1.0'\" --dry-run", .dim = true }) catch {};
-                return;
-            }
-            // Run as a normal agent task so /autoresearch benefits from the same streaming/history as any other task.
-            // The prompt tells the agent which CLI to invoke; the old stub just echoed a hint.
-        }
-
-        // General slash-command palette: /sessions, /graph, /status, /plugins
-        // run the same internal `cmd_*` WASM tools the CLI subcommands invoke,
-        // so the REPL is not a walled-off corner of clanker. Output is folded
-        // into the transcript as dim lines, exactly like a tool result.
-        if (self.runSlashCommand(ctx, task)) return;
 
         try self.submitTask(ctx, task);
     }
 
-    /// The general slash-command palette: /sessions, /graph, /status, /plugins
-    /// each run the internal `cmd_*` WASM tool the corresponding CLI subcommand
-    /// invokes (via `runtime.loadNamedTool`, the same loader cli.zig uses), and
-    /// /goal routes into a goal-design task (see below). Returns true when the
-    /// command was handled here (nothing should be submitted to the agent);
-    /// false for anything that is not a recognized slash command.
-    fn runSlashCommand(self: *Model, ctx: *vxfw.EventContext, task: []const u8) bool {
-        const Tool = struct { slash: []const u8, tool: []const u8, args: []const u8 };
-        const tools = [_]Tool{
-            .{ .slash = "/sessions", .tool = "cmd_sessions", .args = "" },
-            .{ .slash = "/graph", .tool = "cmd_graph", .args = "list" },
-            .{ .slash = "/status", .tool = "cmd_status", .args = "" },
-            .{ .slash = "/plugins", .tool = "cmd_plugins", .args = "" },
-        };
-        for (tools) |t| {
-            if (std.mem.eql(u8, task, t.slash)) return self.runInternalTool(t.tool, t.args);
+    /// Executes one registry command from `submit`. `task` is the raw
+    /// submitted line, which /autoresearch re-submits as an agent task when
+    /// given real arguments.
+    fn runCommand(self: *Model, ctx: *vxfw.EventContext, pc: ParsedCommand, task: []const u8) !void {
+        switch (pc.spec.action) {
+            // A quit command has to set `ctx.quit`, rather than merely stop
+            // the input handler: App.run returns on that flag and its
+            // caller's defer then restores the alternate screen, raw input,
+            // mouse mode, and bracketed paste before the shell regains the
+            // terminal.
+            .quit => ctx.quit = true,
+            .help => self.printHelp(),
+            // "/model" alone opens the picker on the full list; "/model kimi"
+            // seeds it with a starting query, so a remembered partial name is
+            // one Enter away instead of a blank list to type into again.
+            .model => self.openModelPicker(pc.args),
+            // /goal <intent> designs a goal through the agent (which calls
+            // the goal tool to persist it), matching `clanker goal
+            // "<intent>"`. Runs as a normal task so it streams like any
+            // other turn.
+            .goal => {
+                if (pc.args.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
+                    return;
+                }
+                _ = self.runGoalTask(ctx, pc.args);
+            },
+            .autoresearch => {
+                if (pc.args.len == 0 or std.mem.eql(u8, pc.args, "--help") or std.mem.eql(u8, pc.args, "-h")) {
+                    self.lines.append(self.arena, .{ .text = "usage: /autoresearch --target <file> --harness \"<cmd>\" [--iters N] [--dry-run]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  runs the measurement loop; use --dry-run to validate without LLM", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  example: /autoresearch --target tools/zig/calculator.zig --harness \"sh -c 'echo score: 1.0'\" --dry-run", .dim = true }) catch {};
+                    return;
+                }
+                // Run as a normal agent task so /autoresearch benefits from
+                // the same streaming/history as any other task. The prompt
+                // tells the agent which CLI to invoke.
+                try self.submitTask(ctx, task);
+            },
+            // /sessions, /graph, /status, /plugins run the same internal
+            // `cmd_*` WASM tools the CLI subcommands invoke, so the REPL is
+            // not a walled-off corner of clanker. Output is folded into the
+            // transcript as dim lines, exactly like a tool result.
+            .tool => |t| _ = self.runInternalTool(t.name, t.args),
         }
-        // /goal <intent> designs a goal through the agent (which calls the goal
-        // tool to persist it), matching `clanker goal "<intent>"`. Run it as a
-        // normal task so it streams like any other turn.
-        if (std.mem.eql(u8, task, "/goal")) {
-            self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
-            return true;
-        }
-        if (std.mem.startsWith(u8, task, "/goal ")) {
-            const intent = std.mem.trim(u8, task[6..], " ");
-            if (intent.len == 0) {
-                self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
-                return true;
-            }
-            return self.runGoalTask(ctx, intent);
-        }
-        return false;
     }
 
     /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
@@ -583,6 +796,10 @@ const Model = struct {
     /// finishTurn's read of self.thread against this store, seeing it still
     /// null and leaking the handle.
     fn submitTask(self: *Model, ctx: *vxfw.EventContext, task: []const u8) !void {
+        // Submitting snaps a scrolled-up view back to the tail: the echoed
+        // task and the streamed reply land there, and hiding them behind a
+        // frozen window would make Enter look like it did nothing.
+        self.view_end = null;
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
@@ -671,26 +888,25 @@ const Model = struct {
         self.session_id = id;
     }
 
-    /// The full command set is exactly what `submit` recognizes, so this is
-    /// hand-maintained rather than generated — unlike the deleted REPL's
-    /// `cmd_*` catalog (docs/prds/repl-tui.md), there is no
-    /// registry here yet to generate it from. Keep in sync by hand until
-    /// there is.
+    /// The command list is generated from `command_registry`
+    /// (`buildCommandHelp`), so a registry entry can never go undocumented —
+    /// the property the deleted REPL's generated `:help` had
+    /// (docs/prds/repl-tui.md). The key bindings stay hand-written here:
+    /// they are wired in the event handler, not the registry.
     fn printHelp(self: *Model) void {
-        const text =
-            \\commands:
-            \\  /help, ?          show this help
-            \\  /model [query]    switch provider/model (fuzzy picker; Enter picks, Esc cancels)
-            \\  /autoresearch ... measurement loop (see /autoresearch --help)
-            \\  /quit, /exit, /q  leave the REPL (bare "exit"/"quit" also work)
+        const commands = buildCommandHelp(self.arena) catch return;
+        var it = std.mem.splitScalar(u8, commands, '\n');
+        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        const keys =
             \\keys:
             \\  Up/Down           recall previous input
+            \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
             \\  Ctrl-C            stop the current turn, or quit when idle
             \\  Ctrl-Shift-C      copy the selection (or the input line)
             \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
         ;
-        var it = std.mem.splitScalar(u8, text, '\n');
-        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        var kit = std.mem.splitScalar(u8, keys, '\n');
+        while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
     }
 
     fn openModelPicker(self: *Model, seed_query: []const u8) void {
@@ -811,6 +1027,30 @@ const Model = struct {
                 // The picker is modal: every key goes to it, none of the
                 // clipboard/history/quit shortcuts below apply while it's open.
                 if (self.picker_open) return self.handlePickerKey(ctx, key);
+                // Manual scrollback. PgUp/PgDn page the transcript by a
+                // screenful (one line of overlap); Home jumps to the top and
+                // End/Esc return to the tail — but Home/End only act on the
+                // scroll while already scrolled up, so at the tail they keep
+                // their TextField cursor-motion meaning (aliases of
+                // Ctrl-A/Ctrl-E there). The paging math is pure
+                // (`scrollUpEnd` and friends, below tailStart); this just
+                // feeds it the current anchor and last-drawn height.
+                if (key.matches(vaxis.Key.page_up, .{})) {
+                    self.view_end = scrollUpEnd(self.view_end, self.lineCount(), self.availRows());
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches(vaxis.Key.page_down, .{})) {
+                    self.view_end = scrollDownEnd(self.view_end, self.lineCount(), self.availRows());
+                    return ctx.consumeAndRedraw();
+                }
+                if (self.view_end != null and key.matches(vaxis.Key.home, .{})) {
+                    self.view_end = scrollHomeEnd(self.lineCount(), self.availRows());
+                    return ctx.consumeAndRedraw();
+                }
+                if (self.view_end != null and (key.matches(vaxis.Key.end, .{}) or key.matches(vaxis.Key.escape, .{}))) {
+                    self.view_end = null;
+                    return ctx.consumeAndRedraw();
+                }
                 // Terminal convention: Ctrl+Shift+C copies the current
                 // selection (mouse-drag, same path as a drag release),
                 // falling back to the whole input line. Plain Ctrl+C keeps
@@ -1009,6 +1249,22 @@ const Model = struct {
         self.text_field.insertSliceAtCursor(text) catch {};
     }
 
+    /// Transcript line count, read under the bridge lock: finishTurn appends
+    /// to `self.lines` from the worker thread while a turn is in flight, and
+    /// the scroll keys land on the UI thread during exactly that window.
+    fn lineCount(self: *Model) usize {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        return self.lines.items.len;
+    }
+
+    /// The transcript height as of the last draw — what one "page" means.
+    /// Zero before the first frame, which the scroll math treats as a
+    /// one-line page.
+    fn availRows(self: *const Model) u16 {
+        return self.transcript_bottom -| self.transcript_top;
+    }
+
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
         const self: *Model = @ptrCast(@alignCast(ptr));
         const max = ctx.max.size();
@@ -1035,38 +1291,61 @@ const Model = struct {
         const streaming = bridge_streaming;
         const stream_snapshot = ctx.arena.dupe(u8, bridge_stream_buf.items) catch "";
 
-        const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
-        const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
-            self.provider.name,
-            self.provider.activeModelName(),
-            activity,
-            if (streaming) " thinking" else "ready",
-            if (self.session_id != null) " \xc2\xb7 " else "",
-            self.session_id orelse "",
-        }) catch "clanker (vaxis)";
-        writeRow(surface, 0, status, dim);
-
+        // Layout numbers before the status line: its scroll indicator needs
+        // the transcript height, which is only known once the input box has
+        // claimed its rows.
         const box_h: u16 = 3;
         const box_y = max.height -| box_h;
-        drawBox(surface, 0, box_y, max.width, box_h, rule_style);
-        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
-        var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
-        children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
-
         const top: u16 = 1;
         const bottom = box_y -| 1;
         self.transcript_top = top;
         self.transcript_bottom = bottom;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
+
+        // Manual scrollback: while `view_end` is set the visible window is
+        // anchored to an absolute line index, so a streaming turn appends to
+        // `lines` without yanking the reader back to the tail. Re-clamped
+        // every frame — a resize changes `avail_rows`, and once everything
+        // fits on screen the anchor dissolves back to tail-following.
+        const line_count = self.lines.items.len;
+        if (self.view_end != null and line_count <= avail_rows) self.view_end = null;
+        if (self.view_end) |ve| self.view_end = clampViewEnd(ve, line_count, avail_rows);
+        const view_end = self.view_end orelse line_count;
+
+        const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
+        const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
+        // "-N" is how many transcript lines sit below the frozen window —
+        // the reader's distance from the tail, and the cue that the view is
+        // not following new output right now.
+        var scroll_buf: [24]u8 = undefined;
+        const scroll_hint: []const u8 = if (self.view_end != null)
+            std.fmt.bufPrint(&scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
+        else
+            "";
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
+            self.provider.name,
+            self.provider.activeModelName(),
+            activity,
+            if (streaming) " thinking" else "ready",
+            scroll_hint,
+            if (self.session_id != null) " \xc2\xb7 " else "",
+            self.session_id orelse "",
+        }) catch "clanker (vaxis)";
+        writeRow(surface, 0, status, dim);
+
+        drawBox(surface, 0, box_y, max.width, box_h, rule_style);
+        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
+        var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
+        children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
+
         var row: u16 = top;
-        const start = tailStart(self.lines.items, avail_rows);
+        const start = tailStart(self.lines.items[0..view_end], avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
         const fence_on = active.reset.len > 0;
         var syn_style = syntax.Style.fromTheme(&active);
         var i: usize = start;
-        while (i < self.lines.items.len and row < bottom) : (i += 1) {
+        while (i < view_end and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
             if (l.fence_lang) |lang| {
                 var state = syntax.State.init(lang);
@@ -1079,18 +1358,26 @@ const Model = struct {
             } else {
                 // Completed lines wrap like the live stream does; writeRow
                 // would clip a long turn's reply to a single terminal row.
-                // Tool-call/result lines (dim) and an error turn's "[error: "
-                // prefix each get their own tint instead of sharing one grey.
+                // Tool cards (dim, left-bar shaped) get their own tint and a
+                // bar-preserving wrap; an error turn's "[error: " prefix gets
+                // its own tint too instead of sharing one grey.
+                if (l.dim and transcript_mod.isToolCardLine(l.text)) {
+                    writeWrappedCard(surface, &row, bottom, max.width, l.text, tool_style);
+                    continue;
+                }
                 const style = if (std.mem.startsWith(u8, l.text, "[error:"))
                     err_style
                 else if (l.dim)
-                    (if (std.mem.startsWith(u8, l.text, "\xe2\x9a\x99") or std.mem.startsWith(u8, l.text, "  \xe2\x86\xb3")) tool_style else dim)
+                    dim
                 else
                     vaxis.Style{};
                 writeWrapped(surface, &row, bottom, max.width, l.text, style);
             }
         }
-        if (streaming and row < bottom and stream_snapshot.len > 0) {
+        // The live stream renders only at the tail: a scrolled-up window is
+        // frozen history, and painting fresh tokens under it would both lie
+        // about where they belong and shove the anchored lines around.
+        if (streaming and self.view_end == null and row < bottom and stream_snapshot.len > 0) {
             self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
         }
 
@@ -1166,6 +1453,98 @@ fn tailStart(lines: []const Line, avail_rows: u16) usize {
     return if (n > want) n - want else 0;
 }
 
+// ---------------------------------------------------------------------
+// Manual-scrollback math. All pure over (anchor, line_count, avail_rows)
+// so the paging behaviour is unit-testable without a terminal: the anchor
+// is Model.view_end — null means "follow the tail", non-null is the
+// absolute line index (exclusive) the visible window ends at. Counted in
+// `lines` entries, same rough one-entry-per-row heuristic as tailStart.
+// ---------------------------------------------------------------------
+
+/// One PgUp/PgDn stride: a screenful less one line of overlap so the reader
+/// keeps a continuity line across pages, never less than one row.
+fn scrollPage(avail_rows: u16) usize {
+    return if (avail_rows > 1) avail_rows - 1 else 1;
+}
+
+/// Clamps an anchored window end to what can actually be shown: no earlier
+/// than one full screen from the top (the window always fills from line 0)
+/// and no later than the transcript's end.
+fn clampViewEnd(view_end: usize, line_count: usize, avail_rows: u16) usize {
+    const min_end = @min(line_count, avail_rows);
+    return @max(min_end, @min(view_end, line_count));
+}
+
+/// PgUp: one page up from `cur` (null = following the tail). Returns null —
+/// stay at the tail — when the whole transcript already fits on screen, so
+/// PgUp in a short session is a no-op rather than a stuck anchor.
+fn scrollUpEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
+    if (line_count <= avail_rows) return null;
+    const end = cur orelse line_count;
+    return clampViewEnd(end -| scrollPage(avail_rows), line_count, avail_rows);
+}
+
+/// PgDn: one page down; reaching (or crossing) the tail dissolves the
+/// anchor back to tail-following rather than pinning at the last line.
+fn scrollDownEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
+    const end = cur orelse return null;
+    const new_end = end + scrollPage(avail_rows);
+    if (new_end >= line_count) return null;
+    return clampViewEnd(new_end, line_count, avail_rows);
+}
+
+/// Home: jump to the very top (window [0, avail_rows)); null when there is
+/// no history above the first screen.
+fn scrollHomeEnd(line_count: usize, avail_rows: u16) ?usize {
+    if (line_count <= avail_rows) return null;
+    return avail_rows;
+}
+
+test "scrollPage is a screenful minus one line of overlap, never zero" {
+    try std.testing.expectEqual(@as(usize, 23), scrollPage(24));
+    try std.testing.expectEqual(@as(usize, 1), scrollPage(2));
+    try std.testing.expectEqual(@as(usize, 1), scrollPage(1));
+    try std.testing.expectEqual(@as(usize, 1), scrollPage(0));
+}
+
+test "scrollUpEnd pages up and clamps at the top" {
+    // 100 lines, 24 visible: the first PgUp anchors a page above the tail.
+    try std.testing.expectEqual(@as(?usize, 77), scrollUpEnd(null, 100, 24));
+    // Walking further up clamps so the window still fills from line 0.
+    var end: ?usize = null;
+    for (0..10) |_| end = scrollUpEnd(end, 100, 24);
+    try std.testing.expectEqual(@as(?usize, 24), end);
+    // Nothing above the first screen: stays following the tail.
+    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 10, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 24, 24));
+}
+
+test "scrollDownEnd pages down and dissolves at the tail" {
+    try std.testing.expectEqual(@as(?usize, 47), scrollDownEnd(24, 100, 24));
+    // A page that reaches past the last line returns to tail-following.
+    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(90, 100, 24));
+    // Already at the tail (null anchor): PgDn stays there.
+    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(null, 100, 24));
+}
+
+test "scrollHomeEnd jumps to the top only when there is history above" {
+    try std.testing.expectEqual(@as(?usize, 24), scrollHomeEnd(100, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollHomeEnd(24, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollHomeEnd(3, 24));
+}
+
+test "an anchored view end holds its lines while the transcript grows" {
+    // Frozen view: the anchor is an absolute index, so appended lines (a
+    // growing line_count) leave the visible window exactly where it was —
+    // the stick-to-tail behaviour lives entirely in the null anchor.
+    try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 200, 24));
+    try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 500, 24));
+    // A shrunk transcript (or one shorter than the anchor) re-clamps it in.
+    try std.testing.expectEqual(@as(usize, 40), clampViewEnd(50, 40, 24));
+    // And a taller terminal pulls a too-high anchor down to a full window.
+    try std.testing.expectEqual(@as(usize, 30), clampViewEnd(10, 200, 30));
+}
+
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {
     var col: u16 = 0;
     var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
@@ -1210,6 +1589,40 @@ fn writeWrappedSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16,
             if (w > 0) surface.writeCell(col, row.*, .{ .char = .{ .grapheme = bytes, .width = @intCast(w) }, .style = seg.style });
             col += w;
         }
+    }
+}
+
+/// writeWrapped for a tool-card line: continuation rows re-open with the
+/// card's left bar ("\u{2502}  ") so a long args preview wraps inside the
+/// card instead of spilling flush-left and breaking the shape the card
+/// builders drew. Terminals too narrow for bar + indent + a few glyphs fall
+/// back to the plain wrap rather than filling every row with prefix.
+fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style) void {
+    if (width < 8) return writeWrapped(surface, row, bottom, width, text, style);
+    var col: u16 = 0;
+    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (it.nextCodepointSlice()) |cp| {
+        if (row.* >= bottom) break;
+        if (std.mem.eql(u8, cp, "\n")) {
+            // Card lines are single-line by construction (cardPreview
+            // flattens newlines); handled anyway so a stray one degrades
+            // like writeWrapped instead of overprinting.
+            row.* += 1;
+            col = 0;
+            continue;
+        }
+        if (col >= width) {
+            row.* += 1;
+            col = 0;
+            if (row.* >= bottom) break;
+            var pit = std.unicode.Utf8Iterator{ .bytes = "\u{2502}  ", .i = 0 };
+            while (pit.nextCodepointSlice()) |pcp| {
+                surface.writeCell(col, row.*, .{ .char = .{ .grapheme = pcp, .width = 1 }, .style = style });
+                col += 1;
+            }
+        }
+        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
+        col += 1;
     }
 }
 
@@ -1299,34 +1712,6 @@ fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw
         if (row < n.last.row) try out.append(alloc, '\n');
     }
     return out.toOwnedSlice(alloc);
-}
-
-/// The commands that leave the REPL rather than being submitted to the
-/// agent. `clanker repl` is a shell: /quit, /exit, /q and a bare exit/quit
-/// all end the session; anything else is a task. The legacy REPL handled the
-/// same set in-process; this matches it.
-fn isQuitCommand(task: []const u8) bool {
-    const t = std.mem.trim(u8, task, " \t");
-    return std.mem.eql(u8, t, "/quit") or
-        std.mem.eql(u8, t, "/exit") or
-        std.mem.eql(u8, t, "/q") or
-        std.mem.eql(u8, t, "exit") or
-        std.mem.eql(u8, t, "quit");
-}
-
-test "isQuitCommand recognizes the REPL quit set" {
-    try std.testing.expect(isQuitCommand("/quit"));
-    try std.testing.expect(isQuitCommand("/exit"));
-    try std.testing.expect(isQuitCommand("/q"));
-    try std.testing.expect(isQuitCommand("exit"));
-    try std.testing.expect(isQuitCommand("quit"));
-    try std.testing.expect(isQuitCommand("  /q  "));
-    // A leading slash distinguishes a command from the same word as a task;
-    // a bare word that is not a quit command is a task.
-    try std.testing.expect(!isQuitCommand("/quitnow"));
-    try std.testing.expect(!isQuitCommand("exit handling is next"));
-    try std.testing.expect(!isQuitCommand(""));
-    try std.testing.expect(!isQuitCommand("please exit"));
 }
 
 /// Folds CR/LF runs in clipboard text to single spaces so a multi-line

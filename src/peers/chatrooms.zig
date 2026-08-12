@@ -237,7 +237,11 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // trimming replaces the log and a lock taken on the replaced file no
     // longer guards anything.
     const lock_path = try subPath(arena, state_dir, lock_file_name);
-    const lock = base.createFile(io, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
+    // createFileRetry, not createFile: racing creates of a not-yet-existing
+    // lock file spuriously fail ENOENT on macOS (see filelock.zig), and every
+    // such failure here is a concurrent append running unserialised — i.e. a
+    // silently dropped message.
+    const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
         // Best effort: a chat message is worth delivering unserialised rather
         // than dropping outright, but say so.
         log.log(.warn, "[chat] could not lock {s} ({s}); a concurrent write may be lost", .{ lock_path, @errorName(err) });
