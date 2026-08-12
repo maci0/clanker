@@ -230,6 +230,13 @@ pub const Engine = struct {
     /// File requests left in this run. Set from Options at the top of `run`;
     /// the only thing that makes the request round terminate.
     requests_left: u32 = 0,
+    /// Extra steering line injected into every prompt once several iterations
+    /// in a row have failed, on top of the per-attempt feedback and the
+    /// "do not repeat that mistake" note already in history_block -- both of
+    /// which a model can (and does) still talk past when an instruction keeps
+    /// pulling it toward the same idea. Empty until the streak crosses
+    /// stuck_hint_threshold; reset on the next accepted or no_change outcome.
+    stuck_hint: []const u8 = "",
 
     /// Score bands for the focus block, highest first. A file the instruction
     /// names is the file being patched and goes in whatever its size; a file
@@ -242,6 +249,7 @@ pub const Engine = struct {
         log.log(.info, "improve-self: {s}", .{opts.instructions});
         for (gate_evals) |g| log.log(.info, "gate: {s}", .{g});
         self.requests_left = opts.max_context_requests;
+        self.stuck_hint = "";
 
         self.hist = history_mod.History.init(self.ctx.gpa, self.ctx.io, std.Io.Dir.cwd(), "state");
         self.instructions = opts.instructions;
@@ -258,6 +266,16 @@ pub const Engine = struct {
         // stops the run instead of grinding through them.
         const no_change_stop_threshold = 8;
         var consecutive_no_change: usize = 0;
+        // A model that keeps reaching for the same idea (an instruction like
+        // "improve improve-self" naturally pulls toward one specific file or
+        // approach) can burn a long run repeating it: the per-attempt
+        // feedback and history's "do not repeat that mistake" line are both
+        // easy for a model to talk past when it's convinced the idea is
+        // right. Past this many consecutive iterations with nothing
+        // promoted, stuck_hint escalates to something more pointed than
+        // either already says.
+        const stuck_hint_threshold = 3;
+        var consecutive_failed: usize = 0;
         for (0..opts.iters) |iter| {
             log.log(.info, "--- improve iteration {d}/{d} ---", .{ iter + 1, opts.iters });
             var attempted = false;
@@ -299,6 +317,17 @@ pub const Engine = struct {
                 log.log(.info, "stopping early: {d} consecutive iterations found nothing left to change for this instruction ({d}/{d} iterations used)", .{ consecutive_no_change, iter + 1, opts.iters });
                 break;
             }
+
+            consecutive_failed = if (last_outcome == .accepted or last_outcome == .no_change) 0 else consecutive_failed + 1;
+            if (consecutive_failed >= stuck_hint_threshold) {
+                self.stuck_hint = try std.fmt.allocPrint(
+                    self.arena,
+                    "You have had {d} consecutive failed iterations. If your last few proposals were variations on the same idea, that idea is not working here -- stop refining it and propose something in a genuinely different file or area instead.",
+                    .{consecutive_failed},
+                );
+            } else {
+                self.stuck_hint = "";
+            }
         }
 
         const after = try self.gateScore();
@@ -333,6 +362,7 @@ pub const Engine = struct {
             gate_tail,
             if (history_block.len > 0) history_block else "(no earlier attempts)",
             last_error orelse "none",
+            self.stuck_hint,
         });
 
         log.log(.info, "iteration attempt {d}: asking model for a proposal ({d} bytes context)", .{ attempt, context.bytes });
@@ -1779,6 +1809,7 @@ const improve_user_fmt =
     \\{s}
     \\
     \\# Previous attempt feedback
+    \\{s}
     \\{s}
     \\
     \\Produce the patch proposal JSON now. Your response must be ONLY the JSON
