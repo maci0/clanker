@@ -2609,6 +2609,7 @@ function runGoal(g, opts) {
   // this only applies where a goal->card link exists (form-created goals).
   if (goalCardLinks[g.id]) {
     moveGoalCardToColumn(g.id, "doing");
+    logGoalRunState(g.id, "running");
   }
   if (opts.onStart) opts.onStart();
 
@@ -2654,7 +2655,10 @@ function runGoal(g, opts) {
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
       el.goalsStatus.textContent = "Goal run finished.";
-      if (goalCardLinks[g.id]) moveGoalCardToColumn(g.id, "review");
+      if (goalCardLinks[g.id]) {
+        moveGoalCardToColumn(g.id, "review");
+        logGoalRunState(g.id, "finished");
+      }
       if (opts.onDone) opts.onDone("finished");
     }
   }).catch(function (err) {
@@ -2663,13 +2667,19 @@ function runGoal(g, opts) {
     if (err && err.name === "AbortError") {
       setGoalStatus(g.id, "stopped");
       el.goalsStatus.textContent = "Goal run stopped.";
-      if (goalCardLinks[g.id]) moveGoalCardToColumn(g.id, "ready");
+      if (goalCardLinks[g.id]) {
+        moveGoalCardToColumn(g.id, "ready");
+        logGoalRunState(g.id, "stopped");
+      }
       if (opts.onDone) opts.onDone("stopped");
     } else {
       appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
       setGoalStatus(g.id, "failed");
       el.goalsStatus.textContent = "Goal run failed: " + err.message;
-      if (goalCardLinks[g.id]) moveGoalCardToColumn(g.id, "ready");
+      if (goalCardLinks[g.id]) {
+        moveGoalCardToColumn(g.id, "ready");
+        logGoalRunState(g.id, "failed");
+      }
       if (opts.onDone) opts.onDone("failed");
     }
   });
@@ -2758,6 +2768,7 @@ function postGoal(payload, status) {
       // browser (see goalCardLinks), not in state/goals.json.
       if (payload && payload.status === "done" && payload.id) {
         moveGoalCardToColumn(payload.id, "done");
+        logGoalRunState(payload.id, "done");
       }
       // A goal created from the Goals view (objective present, no id) is also
       // mirrored onto the board: it gets a card in the column that matches the
@@ -2825,6 +2836,18 @@ function moveGoalCardToColumn(goalId, column) {
   var cardId = goalCardLinks[goalId];
   if (!cardId) return;
   postBoard({ op: "move", id: cardId, column: column }, null);
+}
+
+/* Records a goal run's state on its board card so the card's activity log
+   reflects the run lifecycle, not just which column it sits in. The column
+   move already encodes where the work stands (doing / review / ready); the
+   log entry says what the run actually did, so a board reader can tell a run
+   that finished from one that was stopped or failed without opening the goal
+   panel. No-op when the goal has no linked card. */
+function logGoalRunState(goalId, state) {
+  var cardId = goalCardLinks[goalId];
+  if (!cardId) return;
+  postBoard({ op: "log", id: cardId, what: "goal run " + state }, null);
 }
 
 el.goalForm.addEventListener("submit", function (e) {
