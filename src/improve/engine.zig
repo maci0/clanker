@@ -2355,22 +2355,11 @@ fn parseFailedEvalNames(arena: std.mem.Allocator, detail: []const u8) ![]const [
 }
 
 fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
-    var s = content;
-    if (std.mem.startsWith(u8, s, "```")) {
-        if (std.mem.find(u8, s, "\n")) |nl| s = s[nl + 1 ..];
-    }
-    s = std.mem.trim(u8, s, " \t\r\n");
-    if (std.mem.endsWith(u8, s, "```")) s = s[0 .. s.len - 3];
-    s = std.mem.trim(u8, s, " \t\r\n");
-    // If the model wrapped the JSON with prose, extract the first {...} block.
+    var s = proposal_mod.stripMarkdownFence(content);
     if (s.len > 0 and s[0] != '{') {
-        if (std.mem.findScalar(u8, s, '{')) |i| {
-            s = s[i..];
-        }
+        if (std.mem.findScalar(u8, s, '{')) |i| s = s[i..];
     }
-    if (std.mem.lastIndexOfScalar(u8, s, '}')) |i| {
-        s = s[0 .. i + 1];
-    }
+    if (std.mem.lastIndexOfScalar(u8, s, '}')) |i| s = s[0 .. i + 1];
     return arena.dupe(u8, s) catch s;
 }
 

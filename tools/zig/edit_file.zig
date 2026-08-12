@@ -124,7 +124,4 @@ fn report(out: *lib.Out, path: []const u8, replaced: usize, bytes: usize) !void 
     out.len = w.end;
 }
 
-fn str(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
-    const v = obj.get(key) orelse return null;
-    return if (v == .string and v.string.len > 0) v.string else null;
-}
+const str = lib.strFieldRequired;

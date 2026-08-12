@@ -882,6 +882,13 @@ pub fn boolFieldMap(obj: std.json.ObjectMap, name: []const u8, fallback: bool) b
     };
 }
 
+/// A non-empty string field from an ObjectMap, or null when absent, wrong type,
+/// or empty. Does not trim whitespace.
+pub fn strFieldRequired(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
+    const v = obj.get(name) orelse return null;
+    return if (v == .string and v.string.len > 0) v.string else null;
+}
+
 /// A string field from an ObjectMap, returning "" when absent or not a string.
 /// Unlike `strFieldTrimmed`, does not trim whitespace.
 pub fn jsonStrField(obj: std.json.ObjectMap, name: []const u8) []const u8 {

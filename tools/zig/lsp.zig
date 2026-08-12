@@ -24,7 +24,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{}) catch
         return lib.fail(out, "input must be a JSON object");
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
@@ -204,10 +204,7 @@ fn parseUint(s: []const u8) usize {
     return n;
 }
 
-fn str(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
-    const v = obj.get(key) orelse return null;
-    return if (v == .string and v.string.len > 0) v.string else null;
-}
+const str = lib.strFieldRequired;
 
 fn uint(obj: std.json.ObjectMap, key: []const u8) ?usize {
     const v = obj.get(key) orelse return null;
