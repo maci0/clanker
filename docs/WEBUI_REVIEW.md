@@ -357,6 +357,94 @@ rows.
   descriptions, "4 skills." status, 0 page errors; screenshot
   `docs/assets/webui/skills.png`. Suite `431 pass, 1 skip (432 total)`.
 
+## Todos in the browser — the run's own checklist (2026-08-13)
+
+Phase 3.3, the last open item on the PRD's phase list. "Todos in the browser"
+turned out to be two questions with two different answers, and only one of them
+had been answered:
+
+- **Shared, durable work** is the Kanban board, and always was — room-scoped
+  todo lists were removed once the board covered that need
+  (`docs/prds/0001-chatrooms.md` § Known issues, ADR 0002). The board's
+  filtered view already shipped and is what the earlier `[x]` on 3.3 meant.
+- **A run's own working plan** is the private per-run list
+  (`src/agent/private_todos.zig`): `todo_add`/`todo_claim`/`todo_close`/
+  `todo_list` with no `room`, in memory, capped at 100, discarded when the run
+  returns. Nothing in the browser could see it. That is this slice.
+
+Design constraint that shaped everything: ephemerality is the feature
+(`docs/prds/0003-run-todos.md` § Non-goals), so the browser had to get a
+*window* onto the list, not a store of its own. No endpoint, no polling, no
+persistence — it rides the one long-lived channel that already exists.
+
+- **Server:** `List.rev` counts real changes. A `todo_list` read does not bump
+  it, and neither does re-claiming an item this run already holds or closing
+  an already-closed one — a run that polls its own list would otherwise push an
+  event per poll. `Agent.on_todos` (beside `on_tool_call`/`on_tool_result`)
+  fires once per tool batch whose `rev` moved, at the seam right after
+  `executeCalls` has joined its workers, so the deliberately unsynchronized
+  list has exactly one reader. `private_todos.listJson` is the same
+  `writeTodoArray` `todo_list` uses, so the model and the browser can never be
+  shown different ids, titles or status spellings.
+- **Transport:** `runStreamTodos` writes
+  `\x01{"type":"todos","todos":[…]}` on the run's own `/api/run` stream. The
+  array is spliced rather than re-encoded — `writeStreamEvent` would escape it
+  into a string, and its 4 KiB stack buffer cannot hold 100 items of 512-char
+  titles, so the line is built with `serve_gpa` instead. The whole list travels
+  every time, not a delta: a client that missed an event is never out of step.
+- **View:** `features/todos.js`, wired like every prior module (embed +
+  `out_cap` guard in `webui.zig`, `assetFor` route, `index.html` module tag,
+  `webui_asset_paths` entry, dedicated `render_todos_view`/`gzip_todos_view`
+  whose predicate aliases nothing). A per-turn `state()`/`bind()` signal, not a
+  module-level one — a finished turn must keep the checklist its run ended
+  with, not the next run's. Rendered above the answer through `T`, so every
+  title is a text node. Item state is a CSS box off `data-status` (`--ok-fill`
+  filled + a drawn tick when closed, `--accent` tinted when claimed) plus the
+  state in words beside it; no glyph stands in for an icon, and the panel is
+  `aria-live="polite"`. Palette variables only, so all ten `data-theme` blocks
+  get it for free.
+
+### Two bugs found on the way, both fixed here
+
+- **`features/arena.js` 404'd.** It was `@embedFile`'d and routed in
+  `tools/zig/webui.zig`, but named in neither the `is_webui` module gate nor
+  the `handleWebuiAsset` dispatch condition in `src/cli.zig` — two
+  hand-maintained copies of one set, and the Arena view's dynamic `import()`
+  fell through both. Found independently and fixed upstream in the same window
+  (`644dc37`, "webui: serve features/arena.js from the native server"), which
+  is itself the argument: two people hit the same trap in one day. This slice
+  keeps the fix and removes the trap — both lists now read a single
+  `webui_asset_paths`, and a test walks `tools/zig/webui/{core,lib,features}`
+  and fails on any `.js` the list has never heard of, so the next module cannot
+  repeat it.
+- **Unescaped interpolation in the run `Export .html` path.** `drawRun`'s
+  export builds a self-contained page by string concatenation and wrote
+  `g.run_id` and `g.task` raw into `<title>`, `<h1>` and `<p>`. The task is
+  operator- or agent-written text, and the file is then opened from a blob
+  URL, so markup in a task became markup in the export. The `JSON.stringify`
+  dump further down was already `<`-escaped, which is how the gap in the header
+  stayed invisible. Every interpolated field now goes through
+  `core/utils.js`'s `escapeHtml`.
+
+### Verified
+
+Live, with the configured DeepSeek provider (`providers check deepseek` ok,
+610ms), a real top-level `clanker run` driving `todo_add` x3, `todo_claim`,
+`todo_close`, `todo_list` through the real WASM tools. With `on_todos`
+temporarily probed to stderr, the run emitted exactly three events — the
+`todo_add` batch, the claim, the close — and **none** for the `todo_list` read,
+with the untrusted title `<b>report</b> the count` arriving JSON-encoded and
+intact. The probe was removed before commit.
+
+Not verified live: the browser rendering itself. `clanker serve` dies at
+`accept` (SIGSYS) in this environment, so nothing was clicked through and no
+screenshot was taken. Covered by test instead — `runStreamTodos`' framing
+(one line, `\x01`-prefixed, parses, markup survives as data), the asset route
+(`isWebuiAssetPath` plus the source-tree walk), and the `webui` wasm tool
+actually serving `features/todos.js` and `features/arena.js` with a JS content
+type rather than falling through to the page. Suite `583 pass, 2 skip (585
+total)`; 163/163 build steps.
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.

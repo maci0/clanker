@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch } from "./core/utils.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd } from "./core/ui.js";
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod } from "./core/vendor.js";
@@ -26,6 +26,7 @@ import { board, loadBoardRooms, renderBoard, setOpenCardId, cardModalKeyHandler,
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
+import { renderTurnTodos as todosRenderTurn } from "./features/todos.js";
 
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
@@ -42,6 +43,7 @@ var prettyJsonIfPossible = utilPrettyJsonIfPossible;
 var fmtInt = utilFmtInt;
 var fmtMs = utilFmtMs;
 var fmtCost = utilFmtCost;
+var escapeHtml = utilEscapeHtml;
 var providerCache = [];
 var runLabel = function (r) { return runLabelMod(r, clip); };
 var modelLabel = function (provider, model) { return modelLabelMod(provider, model, providerCache); };
@@ -1460,6 +1462,10 @@ el.form.addEventListener("submit", function (e) {
       else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
+      // The run's own private checklist (features/todos.js): pushed whenever a
+      // todo_* call moved it, never fetched — the list is in-memory server-side
+      // and dies with the run, so the turn card is the only place it can live.
+      else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
@@ -1831,7 +1837,15 @@ function drawRun(g) {
       var svg = el.runGraph.querySelector("svg.run-edges");
       var svgHtml = svg ? new XMLSerializer().serializeToString(svg) : "";
       var detailHtml = el.runDetail.hidden ? "" : el.runDetail.innerHTML;
-      var html = "<!doctype html><meta charset=utf-8><title>" + g.run_id + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + g.run_id + "</h1><p>" + (g.task||"") + " · " + g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + JSON.stringify(g, null, 2).replace(/</g,"&lt;") + "</pre>";
+      // Everything interpolated here is run data — the task is whatever the
+      // operator or a parent agent typed, the run id is a server-side string
+      // — and this is raw string concatenation, not DOM building, so it needs
+      // explicit escaping. It did not have it: a task containing markup was
+      // written straight into <title>, <h1> and <p> of a file the browser then
+      // opens from a blob URL. The JSON dump below was already escaped, which
+      // is how the gap in the header stayed invisible.
+      var esc = escapeHtml;
+      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + JSON.stringify(g, null, 2).replace(/</g,"&lt;") + "</pre>";
       var blob = new Blob([html], {type:"text/html"});
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a"); a.href = url; a.download = g.run_id + ".html";

@@ -103,18 +103,24 @@ Kimi-parity) landed inline rather than in a module; `core/icons.js`,
 `core/logs.js`, `core/plugins.js`, `core/palette.js`, `core/modelpicker.js`,
 `core/tools.js` plus `lib/markdown.js`, `lib/graph.js`, `lib/board.js`,
 `features/fleet.js`, `features/arena.js`, `features/board.js`,
-`features/goals.js`, `features/knowledge.js`, `features/prompts.js` are now
-real modules with
+`features/goals.js`, `features/knowledge.js`, `features/prompts.js`,
+`features/todos.js` are now real modules with
 real `import`/`export`, not `window.ck*` bridge globals. `app.js` itself is
 a native ES module (`type="module"`), not a classic deferred script. Every
 module needs three things wired together or a
 request 404s or hits the wrong cache: an `@embedFile` + comptime `encodedLen`
 guard in `tools/zig/webui.zig`, a `<script type="module">` tag in
-`index.html`, and both an `is_webui` allow-list entry *and* a dedicated
-`RenderCache`/`GzipCache` pair in `src/cli.zig`'s `handleWebuiAsset` — a
+`index.html`, an entry in `src/cli.zig`'s `webui_asset_paths`, *and* a
+dedicated `RenderCache`/`GzipCache` pair in `handleWebuiAsset` — a
 module missing the last part silently shares the generic `render_js`/
 `gzip_js` slot with whatever else falls through, a real cache-aliasing bug
-that shipped and was later caught and fixed.
+that shipped and was later caught and fixed. `webui_asset_paths` is one list
+because it used to be two: the module gate and the asset route were
+hand-maintained copies of the same set, and `features/arena.js` appeared in
+neither, so the Arena view's dynamic `import()` 404'd against a server that
+held its bytes (hit twice independently in one day — see `644dc37` and
+`docs/WEBUI_REVIEW.md`). A test now walks `tools/zig/webui/{core,lib,features}`
+and fails on any module the list has never heard of.
 
 **Ask bridge (`ask_user`).** A streaming run writes
 `\x01{"type":"ask","id":…,"question":…,"options":[…]}` down its own
@@ -194,6 +200,27 @@ from `GET /api/peers` (which dispatches the same sandboxed `peers` tool
 `clanker phonebook` uses — the page's CSP allows no other origin, so the
 browser never asks a peer anything itself).
 
+**Todos in the browser (3.3).** Two layers, because "todos" was two questions.
+Shared durable work is the Kanban board and always was, so that half is the
+board's own filtered view — no second store. A run's *own* working plan is the
+private per-run list (`src/agent/private_todos.zig`): in memory, capped,
+discarded when the run returns, and until now invisible to the page. It rides
+the one long-lived channel that already exists. `List.rev` counts real changes
+(a `todo_list` read is not one, and neither is re-claiming an item the run
+already holds); `Agent.on_todos` fires once per tool batch whose `rev` moved,
+on the run thread after `executeCalls` has joined, so the unsynchronized list
+has exactly one reader; `runStreamTodos` frames it as
+`\x01{"type":"todos","todos":[…]}` — spliced, not re-encoded, because
+`writeStreamEvent`'s 4 KiB stack buffer cannot hold 100 items of 512 chars.
+The whole list travels every time rather than a delta, so a client that missed
+an event is never out of step. `features/todos.js` renders it into the turn
+card above the answer through a per-turn `state()`/`bind()` signal — per turn,
+not per module, so a finished turn keeps the checklist its run ended with. Item
+state is a CSS-drawn box off `data-status` plus the state in words, never a
+glyph. Todo titles are model-written and therefore untrusted: they cross the
+wire JSON-encoded and reach the DOM as text nodes through `T`, so there is no
+interpolation step to escape.
+
 ## Known issues
 
 None currently known. The cache-aliasing bug mentioned above under ES module
@@ -213,6 +240,8 @@ pieces, it reproduces the same class of bug.
 | `session` id on `/api/run` fails `validSessionId` | `400 Bad Request` — closes a traversal bypass unique to this route, since the dedicated session routes validate the same fragment but `/api/run` didn't inherit that check for free |
 | Headless run / improve loop / nested subagent | No ask/confirm channel installed at all — no config value can gate them on an answer nobody is there to give |
 | A webui asset missing its `RenderCache`/`GzipCache` pair | Falls through to the generic `render_js`/`gzip_js` slot shared with whatever else also falls through — wrong content can be served for a different path (known-fixed instance, watch for recurrence) |
+| A webui module missing from `webui_asset_paths` | `404`, even though the bytes are embedded and `assetFor` routes them (the `features/arena.js` case, fixed; the route list is now one list instead of two, and a test walks the source tree for modules it has never heard of) |
+| `todos` event arriving for a turn that has already finished | Ignored: the panel is bound to that turn's own signal, so a later run cannot rewrite an earlier turn's checklist |
 
 ## Acceptance criteria
 
@@ -233,7 +262,7 @@ Phase 3 — see what the agents are doing:
 
 - [x] 3.1 Subagent runs recorded as their own graphs
 - [x] 3.2 Cross-agent view (Fleet: roster, DMs, nested-run grouping)
-- [x] 3.3 Board filtered view — text/assignee/blocked/priority filters on the existing board (board *is* the todo surface, per `docs/prds/0002-kanban-board.md`); no second data store
+- [x] 3.3 Todos in the browser, both layers. Shared durable work: the board's filtered view — text/assignee/blocked/priority filters on the existing board (the board *is* the shared todo surface, per `docs/prds/0002-kanban-board.md`); no second data store. A run's own working plan: the private per-run checklist (`src/agent/private_todos.zig`) rendered live in the turn card from `todos` events on the run's own `/api/run` stream (`features/todos.js`); still in memory, still discarded when the run returns, no endpoint and no polling added
 
 Phase 4 — `webui_pixelagents`:
 
