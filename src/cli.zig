@@ -158,6 +158,15 @@ fn takeValue(
         setDiag(diag, flag);
         return error.MissingArg;
     }
+    // Do not consume the next option as this option's value. Besides hiding
+    // the useful "needs a value" error, doing so changes the meaning of every
+    // token after it (`--provider --model x` used to make "--model" the
+    // provider and then diagnose `x` as a command). A literal value beginning
+    // with '-' remains expressible with the unambiguous `--flag=-value` form.
+    if (args[idx.*].len > 0 and args[idx.*][0] == '-') {
+        setDiag(diag, flag);
+        return error.MissingArg;
+    }
     return args[idx.*];
 }
 
@@ -5687,6 +5696,16 @@ test "flags take their value in either form" {
     try std.testing.expectEqual(@as(u16, 9099), b.port);
     // An empty value is missing, not empty.
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--port=" }, null));
+
+    // A following option is not the missing value. Consuming it would hide
+    // the actual mistake and reinterpret all remaining arguments.
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "run", "--provider", "--model", "x", "do work" }, &diag));
+    try std.testing.expectEqualStrings("--provider", diag);
+
+    // Dash-prefixed literal values still have an explicit, unambiguous form.
+    const literal = try parse(&.{ "clanker", "autoresearch", "--pattern=-", "--target=x", "--harness=true" }, null);
+    try std.testing.expectEqualStrings("-", literal.research_pattern.?);
 }
 
 test "a flag the command does not take is refused, not ignored" {

@@ -88,9 +88,11 @@ The tool target is `wasm32-freestanding` (not `wasip1`).
 
 1. Collect relevant source files as context.
 2. Ask the model for a patch proposal (JSON with `summary`, `rationale`, `changes`).
-3. Validate and apply the proposal to a staging copy of the project.
+3. Validate and apply the proposal to `state/staging/<id>` inside an isolated
+   Git worktree (or the current checkout if worktree creation fails).
 4. Run gates: `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint.
-5. On green, promote the changes to the live tree and commit as `clanker: <summary> [imp-<id>]`.
+5. On green, promote and commit the changes in that worktree, then merge the
+   commit back into the original checkout as `clanker: <summary> [imp-<id>]`.
 
 The history is stored in `state/history/` and can be reverted with `clanker revert <id>`.
 
@@ -505,6 +507,11 @@ Fields:
 - `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`). All default to `true`.
 - `improve`: settings for self-improvement (`max_context_bytes`, `capability_gate`, `max_cache_bytes`).
 
+### Environment variables
+
+- `CLANKER_ENV_FILE`: path to the `.env`-style file `dotenv.load` reads (default `./.env`; gated by `modules.dotenv`). Real environment variables always win over values loaded from this file. See `.env.example` for the keys providers reference via `api_key_env`.
+- `CLANKER_LOG_LEVEL`: `debug` | `info` | `warn` | `error` (default `info`). Lets a headless deployment (systemd, docker) set the log level without editing the invocation. `--verbose`/`-v` still overrides it to `debug` when both are given.
+
 ### Layered agent instructions
 
 At prompt construction and refresh, clanker appends these instruction files as separate sections, from broadest to narrowest:
@@ -599,10 +606,14 @@ The LLM client supports SSE streaming (`client.chatStream`). The agent parses th
 ## Self-improvement loop
 
 1. **Proposal**: model returns JSON `{summary, rationale, changes[]}`.
-2. **Staging**: copy project to `state/staging/<id>` and apply changes.
-3. **Gates**: run `zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint.
-4. **Promote**: if all pass, copy staged files into the live tree.
-5. **Commit**: `git commit -m "clanker: <summary> [imp-<id>]"`.
-6. **History**: store snapshot in `state/history/` for revert.
+2. **Isolation**: create a temporary Git worktree and branch. If that is not
+   possible, continue in the current checkout.
+3. **Staging**: copy the project to `state/staging/<id>` within that checkout
+   and apply changes through the sandboxed `patch_apply` tool.
+4. **Gates**: run `zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint.
+5. **Promote**: if all pass, copy staged files into the worktree checkout.
+6. **Commit**: commit there as `clanker: <summary> [imp-<id>]`, merge the
+   commit back into the original checkout, and remove the temporary worktree.
+7. **History**: store snapshots in `state/history/` for revert.
 
 Gate failures give feedback to retry.

@@ -130,6 +130,16 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(2);
     };
 
+    // CLANKER_LOG_LEVEL externalizes the log level for headless/service
+    // deployments (systemd, docker) that cannot pass --verbose on the
+    // invocation. --verbose still wins when both are given: it is the
+    // explicit, in-the-moment ask.
+    if (init.environ_map.get("CLANKER_LOG_LEVEL")) |lvl| {
+        if (log.Level.fromStr(lvl)) |level|
+            log.setLevel(level)
+        else
+            log.log(.warn, "CLANKER_LOG_LEVEL '{s}' is not one of debug|info|warn|error; ignoring", .{lvl});
+    }
     if (opts.verbose) log.setLevel(.debug);
 
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env

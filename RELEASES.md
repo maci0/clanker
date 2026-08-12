@@ -60,7 +60,10 @@ Before creating a tag:
 4. Run `zig build`, `zig build test`, `zig build tools`, and the end-to-end tests.
    Smoke-test the packaged release binary and its `--version` output, not only a
    checkout build.
-5. Create release notes from the changelog and create the immutable version tag.
+5. Run `./release-check.sh vMAJOR.MINOR.PATCH zig-out/bin/clanker`. CI repeats
+   this check for every version tag and rejects a tag, changelog, manifest, or
+   binary version mismatch.
+6. Create release notes from the changelog and create the immutable version tag.
    Never move a published tag or replace an artifact for an existing version;
    publish a new patch release instead.
 

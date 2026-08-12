@@ -1,6 +1,6 @@
 {
   "name": "patch_apply",
-  "description": "Applies a batch of exact-match text changes to files under state/staging/. Internal: used by the self-improve engine to materialize a proposal, never called by the model.",
+  "description": "Applies a batch of exact-match text changes to files under state/staging/ or state/autoresearch/. Internal: used by the self-improve engine and the autoresearch loop to materialize a proposal, never called by the model.",
   "wasm": "zig-out/tools/patch_apply.wasm",
   "input_schema": {
     "type": "object",
@@ -20,7 +20,7 @@
     },
     "required": ["changes"]
   },
-  "fs_prefixes": ["state/staging"],
+  "fs_prefixes": ["state/staging", "state/autoresearch"],
   "internal": true,
   "category": "harness"
 }

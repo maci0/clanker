@@ -5,6 +5,8 @@ const client = @import("../llm/client.zig");
 const proposal_mod = @import("../improve/proposal.zig");
 const ledger_mod = @import("ledger.zig");
 const harness_mod = @import("harness.zig");
+const registry = @import("../tools/registry.zig");
+const runtime = @import("../sandbox/runtime.zig");
 const log = @import("../util/log.zig");
 pub const Options = struct { targets: []const []const u8 = &.{}, harness_argv: []const []const u8 = &.{}, metric_name: []const u8 = "score", metric_pattern: []const u8 = "", direction: []const u8 = "min", iters: u32 = 3, dry_run: bool = false, research_dir: []const u8 = "state/autoresearch", budget_seconds: u32 = 300 };
 fn isTarget(path: []const u8, targets: []const []const u8) bool {
@@ -70,6 +72,41 @@ pub const Loop = struct {
         }
         if (best) |b| log.log(.info, "autoresearch {s} done: best {s} = {d}", .{ owned_id, opts.metric_name, b }) else log.log(.info, "autoresearch {s} done: no metric recorded", .{owned_id});
     }
+    /// Applies `changes` under `staging` through the sandboxed `patch_apply`
+    /// WASM tool instead of hand-rolled exact-match string replacement, the
+    /// same tool the self-improve engine uses for its own staging tree.
+    fn applyPatch(self: *Loop, staging: []const u8, changes: []const proposal_mod.Change) !void {
+        const gpa = self.ctx.gpa;
+        const io = self.ctx.io;
+        var reg = try registry.Registry.load(io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
+        const mod = try runtime.loadNamedTool(gpa, io, self.arena, self.ctx.environ_map, self.cfg, &reg, "patch_apply", null);
+        defer mod.deinit();
+
+        var enc: std.Io.Writer.Allocating = .init(self.arena);
+        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+        try s.beginObject();
+        try s.objectField("changes");
+        try s.beginArray();
+        for (changes) |c| {
+            const rel = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ staging, c.file });
+            try s.beginObject();
+            try s.objectField("file");
+            try s.write(rel);
+            try s.objectField("old");
+            try s.write(c.old);
+            try s.objectField("new");
+            try s.write(c.new);
+            try s.endObject();
+        }
+        try s.endArray();
+        try s.endObject();
+
+        const raw = try mod.executeTool(enc.written());
+        defer gpa.free(raw);
+        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
+            return error.PatchApplyFailed;
+        if (!resp.ok) return error.PatchApplyFailed;
+    }
     fn iterOnce(self: *Loop, opts: Options, iter: u32, run_dir_path: []const u8, best: *?f64) !bool {
         const gpa = self.ctx.gpa;
         const io = self.ctx.io;
@@ -114,27 +151,28 @@ pub const Loop = struct {
         const staging_path = try std.fmt.allocPrint(gpa, "{s}/staging", .{run_dir_path});
         defer gpa.free(staging_path);
         try std.Io.Dir.cwd().createDirPath(io, staging_path);
+        // Seed staging with the pristine copy of every target so the
+        // patch_apply tool (sandboxed to state/) has something to match
+        // "old" against; a target that does not exist yet is left unseeded,
+        // which is only valid for an append (old == "").
         for (proposal.changes) |ch| {
-            const staged_file = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging_path, ch.file });
-            defer gpa.free(staged_file);
-            if (std.mem.lastIndexOfScalar(u8, staged_file, '/')) |slash| std.Io.Dir.cwd().createDirPath(io, staged_file[0..slash]) catch {};
-            const orig = std.Io.Dir.cwd().readFileAlloc(io, ch.file, gpa, .limited(1 << 20)) catch "";
-            defer if (orig.len > 0) gpa.free(orig);
-            const new_content = if (ch.old.len == 0) try std.fmt.allocPrint(gpa, "{s}{s}", .{ orig, ch.new }) else if (std.mem.indexOf(u8, orig, ch.old)) |pos| try std.fmt.allocPrint(gpa, "{s}{s}{s}", .{ orig[0..pos], ch.new, orig[pos + ch.old.len ..] }) else {
+            const orig = std.Io.Dir.cwd().readFileAlloc(io, ch.file, gpa, .limited(1 << 20)) catch null;
+            defer if (orig) |o| gpa.free(o);
+            if (orig == null and ch.old.len > 0) {
                 log.log(.warn, "patch old not found in {s}", .{ch.file});
                 return false;
-            };
-            defer gpa.free(new_content);
-            var stage_dir = std.Io.Dir.cwd().openDir(io, staging_path, .{}) catch {
-                try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = staged_file, .data = new_content });
-                continue;
-            };
-            defer stage_dir.close(io);
-            if (std.mem.lastIndexOfScalar(u8, ch.file, '/')) |slash| stage_dir.createDirPath(io, ch.file[0..slash]) catch {};
-            stage_dir.writeFile(io, .{ .sub_path = ch.file, .data = new_content }) catch {
-                try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = staged_file, .data = new_content });
-            };
+            }
+            if (orig) |o| {
+                const staged_file = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging_path, ch.file });
+                defer gpa.free(staged_file);
+                if (std.mem.lastIndexOfScalar(u8, staged_file, '/')) |slash| std.Io.Dir.cwd().createDirPath(io, staged_file[0..slash]) catch {};
+                try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = staged_file, .data = o });
+            }
         }
+        self.applyPatch(staging_path, proposal.changes) catch |err| {
+            log.log(.warn, "autoresearch patch_apply failed: {s}", .{@errorName(err)});
+            return false;
+        };
         const stage_dir_opt: ?std.Io.Dir = std.Io.Dir.cwd().openDir(io, staging_path, .{}) catch null;
         const stage_dir = stage_dir_opt orelse std.Io.Dir.cwd();
         defer if (stage_dir_opt != null) stage_dir.close(io);

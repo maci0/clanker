@@ -149,10 +149,10 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     const branch = try std.fmt.allocPrint(gpa, "clanker/improve-self-{s}", .{id});
     errdefer gpa.free(branch);
 
-    // Deliberately outside state/: linkSharedState below symlinks state/
-    // itself into the worktree, and a worktree nested inside the directory
-    // it's about to be symlinked into is a loop (state/worktrees/<id>/state
-    // pointing back at state/, which contains state/worktrees/<id>/state...).
+    // Deliberately outside state/: a worktree under state/ would contain its
+    // own state directory inside the runtime state tree. Keeping worktrees in
+    // a dedicated ignored directory also lets linkSharedState expose only the
+    // few runtime files an isolated run needs.
     const path = try std.fmt.allocPrint(gpa, ".clanker-worktrees/{s}", .{id});
     errdefer gpa.free(path);
 

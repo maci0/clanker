@@ -1,8 +1,9 @@
 //! patch_apply: applies a batch of exact-match text changes to files under a
-//! sandboxed prefix. Used by the self-improve engine to materialize a
-//! proposal into its staging tree (state/staging/<id>/...); path validation
-//! and the decision to promote the result both stay in the native engine,
-//! this tool only performs the text edits.
+//! sandboxed prefix. Used by the self-improve engine (state/staging/<id>/...)
+//! and the autoresearch loop (state/autoresearch/<id>/staging/...) to
+//! materialize a proposal into their staging trees; path validation and the
+//! decision to promote the result both stay in the native caller, this tool
+//! only performs the text edits.
 //!
 //! Input:  {"changes": [{"file": "a.txt", "old": "...", "new": "..."}, ...]}
 //!         old == "" means append (or create the file if it does not exist).

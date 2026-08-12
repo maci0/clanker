@@ -48,11 +48,23 @@ const theme_mod = @import("theme.zig");
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
 /// here is text clanker didn't generate itself.
+fn isDroppedControl(c: u8) bool {
+    return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
+}
+
+/// Most streamed deltas contain no control bytes, so this only allocates
+/// when one is actually found, keeping the common case alloc-free on the
+/// per-token `onToken` path.
 fn stripControls(gpa: std.mem.Allocator, bytes: []const u8) []const u8 {
+    const first_drop = for (bytes, 0..) |c, i| {
+        if (isDroppedControl(c)) break i;
+    } else return bytes;
+
     var out: std.ArrayList(u8) = .empty;
-    for (bytes) |c| {
-        const drop = (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
-        if (!drop) out.append(gpa, c) catch return bytes;
+    out.ensureTotalCapacity(gpa, bytes.len) catch return bytes;
+    out.appendSliceAssumeCapacity(bytes[0..first_drop]);
+    for (bytes[first_drop..]) |c| {
+        if (!isDroppedControl(c)) out.appendAssumeCapacity(c);
     }
     return out.toOwnedSlice(gpa) catch bytes;
 }
@@ -1408,6 +1420,18 @@ test "mintSessionId produces a distinct valid id each call" {
     try std.testing.expect(std.mem.startsWith(u8, a, "sess-"));
     // Nanosecond-resolution ids of two consecutive mints are not equal.
     try std.testing.expect(!std.mem.eql(u8, a, b));
+}
+
+test "stripControls returns the input slice unchanged when nothing to drop" {
+    const clean = "hello\nworld\t!";
+    try std.testing.expectEqual(clean.ptr, stripControls(std.testing.allocator, clean).ptr);
+}
+
+test "stripControls drops control bytes but keeps newline and tab" {
+    const dirty = "a\x01b\nc\x7Fd\te";
+    const got = stripControls(std.testing.allocator, dirty);
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqualStrings("ab\ncd\te", got);
 }
 
 pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
