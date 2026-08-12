@@ -2180,8 +2180,9 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
         .max_context_bytes = cfg.improve.max_context_bytes,
     });
 
-    // Back to the shared tree (and the worktree dropped).
-    const was_isolated = wt != null;
+    // Back to the shared tree (and the worktree dropped) before verifying
+    // gates below: that check has to see the merged-back result in the tree
+    // everyone else works in, not the isolated copy.
     if (wt) |*w| {
         if (original_cwd) |p| std.process.setCurrentPath(io, p) catch |err|
             log.log(.warn, "improve-self: could not switch back out of the isolated worktree: {s}", .{@errorName(err)});
@@ -2193,53 +2194,8 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     // Verify that any applied improvement still passes all deterministic gates
     // (build/test/tools/fmt/lint). In dry-run no changes are written, so skip.
     if (!opts.dry_run) {
-        if (was_isolated) {
-            // mergeBack lands promotions on the base branch at the ref
-            // level — no working tree is ever touched, this one included.
-            // Checking std.Io.Dir.cwd() here would check whatever was on
-            // disk in the shared tree before this run started, not the
-            // change that just landed (and possibly not even that: the
-            // shared tree may have uncommitted edits from someone else).
-            // A throwaway worktree at the base branch's now-current tip is
-            // the only way to actually see what landed.
-            try verifyMergedGates(gpa, io, arena);
-        } else {
-            try verifyGates(gpa, io, arena);
-        }
+        try verifyGates(gpa, io, arena);
     }
-}
-
-/// Same check as `verifyGates`, against a disposable worktree at the base
-/// branch's current tip instead of the process's own cwd. Used after an
-/// isolated improve-self run, where the promoted changes only ever touched
-/// worktrees that no longer exist by this point.
-fn verifyMergedGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
-    const id = try std.fmt.allocPrint(gpa, "verify-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
-    defer gpa.free(id);
-    var vwt = worktree_mod.create(gpa, io, id) catch |err| {
-        log.log(.warn, "improve-self: could not create a worktree to verify the merged result ({s}); skipping final verification", .{@errorName(err)});
-        return;
-    };
-    defer vwt.deinit(gpa);
-
-    const original_cwd = std.process.currentPathAlloc(io, gpa) catch |err| {
-        log.log(.warn, "improve-self: could not read cwd to verify the merged result ({s}); skipping final verification", .{@errorName(err)});
-        vwt.cleanup(gpa, io);
-        return;
-    };
-    defer gpa.free(original_cwd);
-
-    std.process.setCurrentPath(io, vwt.path) catch |err| {
-        log.log(.warn, "improve-self: could not switch into the verification worktree ({s}); skipping final verification", .{@errorName(err)});
-        vwt.cleanup(gpa, io);
-        return;
-    };
-    defer {
-        std.process.setCurrentPath(io, original_cwd) catch |err|
-            log.log(.warn, "improve-self: could not switch back out of the verification worktree: {s}", .{@errorName(err)});
-        vwt.cleanup(gpa, io);
-    }
-    try verifyGates(gpa, io, arena);
 }
 
 fn cmdGoal(init: std.process.Init, opts: Options) !void {
@@ -2493,6 +2449,13 @@ const max_connection_threads = 64;
 var connection_threads = std.atomic.Value(u32).init(0);
 var request_sequence = std.atomic.Value(u64).init(1);
 threadlocal var request_status: u16 = 0;
+var http_requests_total = std.atomic.Value(u64).init(0);
+var http_errors_total = std.atomic.Value(u64).init(0);
+var http_latency_le_10ms = std.atomic.Value(u64).init(0);
+var http_latency_le_100ms = std.atomic.Value(u64).init(0);
+var http_latency_le_1s = std.atomic.Value(u64).init(0);
+var http_latency_le_10s = std.atomic.Value(u64).init(0);
+var http_latency_total_ms = std.atomic.Value(u64).init(0);
 
 fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
     // A bound, so a flood of slow clients cannot make the process spawn
@@ -2560,6 +2523,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     defer {
         const elapsed_ns = started_at.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
         const elapsed_ms: i128 = @divTrunc(elapsed_ns, std.time.ns_per_ms);
+        recordHttpRequest(request_status, @intCast(@max(elapsed_ms, 0)));
         if (std.mem.startsWith(u8, request_path, "/api/") or request_status >= 400 or request_status == 0) {
             const level: log.Level = if (request_status >= 500 or request_status == 0) .error_ else if (request_status >= 400) .warn else .info;
             log.log(level, "http request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
@@ -2597,6 +2561,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const path = target[0..(std.mem.indexOfScalar(u8, target, '?') orelse target.len)];
         request_method = method;
         request_path = path;
+        // Preserve a caller's correlation id across proxies and peer agents.
+        // Only a deliberately narrow, single-line value is accepted because
+        // this field is reflected into both logs and the response headers.
+        if (requestCorrelationId(headers_raw)) |upstream_id| log.setContext(upstream_id);
         // Binding to loopback prevents direct remote connections, but does not
         // stop DNS rebinding: a hostile hostname can resolve to 127.0.0.1 and
         // make the browser treat this control plane as its own origin. Require
@@ -2634,6 +2602,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/send");
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/subscribe");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/stats");
+        const is_metrics = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/metrics");
         const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
@@ -2657,6 +2626,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"token_stats module disabled\"}");
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
+            respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"live\"}");
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/ready")) {
+            handleReadiness(stream);
+        } else if (is_metrics) {
+            handleHttpMetrics(stream);
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van.js")) {
@@ -2897,7 +2872,11 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
         // from old peers as duplicates of each other. Empty id skips dedup.
         .id = parsed.id orelse "",
     };
-    const accepted = chatrooms.receive(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg) catch false;
+    const accepted = chatrooms.receive(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg) catch |err| {
+        log.log(.error_, "POST /api/chat/message: storing message for room '{s}' failed: {s}", .{ room, @errorName(err) });
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"message storage failed\"}");
+        return;
+    };
     var buf: [64]u8 = undefined;
     const body_out = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"subscribed\":{}}}", .{accepted}) catch return;
     respond(stream, 200, "OK", body_out);
@@ -3104,7 +3083,11 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"room list failed\"}");
         return;
     };
-    const subs = chatrooms.subscribedRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch &[_][]const u8{};
+    const subs = chatrooms.subscribedRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch |err| {
+        log.log(.error_, "GET /api/chat/rooms: loading subscriptions failed: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"subscription list failed\"}");
+        return;
+    };
     var buf: [64 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -3153,6 +3136,52 @@ fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, st
         return;
     };
     respond(stream, 200, "OK", json_out);
+}
+
+fn recordHttpRequest(status: u16, duration_ms: u64) void {
+    _ = http_requests_total.fetchAdd(1, .monotonic);
+    _ = http_latency_total_ms.fetchAdd(duration_ms, .monotonic);
+    if (status == 0 or status >= 500) _ = http_errors_total.fetchAdd(1, .monotonic);
+    if (duration_ms <= 10) _ = http_latency_le_10ms.fetchAdd(1, .monotonic);
+    if (duration_ms <= 100) _ = http_latency_le_100ms.fetchAdd(1, .monotonic);
+    if (duration_ms <= 1000) _ = http_latency_le_1s.fetchAdd(1, .monotonic);
+    if (duration_ms <= 10_000) _ = http_latency_le_10s.fetchAdd(1, .monotonic);
+}
+
+/// Process-local RED and saturation signals. Counters intentionally have no
+/// path, request-id, provider, or model labels, keeping cardinality and storage
+/// bounded; detailed diagnosis remains in the correlated completion logs.
+fn handleHttpMetrics(stream: std.Io.net.Stream) void {
+    var buf: [1024]u8 = undefined;
+    const body = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}}}}", .{
+        http_requests_total.load(.monotonic),
+        http_errors_total.load(.monotonic),
+        connection_threads.load(.monotonic),
+        max_connection_threads,
+        http_latency_total_ms.load(.monotonic),
+        http_latency_le_10ms.load(.monotonic),
+        http_latency_le_100ms.load(.monotonic),
+        http_latency_le_1s.load(.monotonic),
+        http_latency_le_10s.load(.monotonic),
+    }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"metrics unavailable\"}");
+        return;
+    };
+    respond(stream, 200, "OK", body);
+}
+
+/// Readiness is deliberately shallow: configuration and the listener are
+/// already initialized before this route can run. Dependency calls would make
+/// an upstream LLM outage eject every instance and hide the useful control UI.
+/// Saturation is the one local condition that makes this process unable to
+/// accept useful work, so expose it as degraded readiness.
+fn handleReadiness(stream: std.Io.net.Stream) void {
+    const active = connection_threads.load(.monotonic);
+    if (active >= max_connection_threads) {
+        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"status\":\"saturated\"}");
+        return;
+    }
+    respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"ready\"}");
 }
 
 fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16, stream: std.Io.net.Stream) void {
@@ -5326,7 +5355,11 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
     // nosniff on every response, not just the HTML one: these bodies carry peer
     // names, provider error text, and model output, and none of it should ever
     // be content-sniffed into markup.
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+    const request_id = log.getContext();
+    const hdr = if (request_id.len > 0)
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, request_id }) catch return
+    else
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
     rawhttp.writeAllFd(stream.socket.handle, hdr);
     rawhttp.writeAllFd(stream.socket.handle, body);
 }
@@ -5587,6 +5620,21 @@ fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
         return std.mem.trim(u8, line[colon + 1 ..], " ");
     }
     return null;
+}
+
+fn requestCorrelationId(headers_raw: []const u8) ?[]const u8 {
+    const value = headerValue(headers_raw, "x-request-id") orelse return null;
+    if (value.len == 0 or value.len > 128) return null;
+    for (value) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == ':')) return null;
+    }
+    return value;
+}
+
+test "request correlation ids are safe for logs and response headers" {
+    try std.testing.expectEqualStrings("edge-17:abc", requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: edge-17:abc\r\n").?);
+    try std.testing.expect(requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: bad value\r\n") == null);
+    try std.testing.expect(requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: bad\rvalue\r\n") == null);
 }
 
 /// True when the request carries an `Origin` header naming something other

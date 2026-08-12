@@ -392,6 +392,29 @@ function setRailOpen(open) {
   if (open) el.sessionFilter.focus();
 }
 
+function applyRailCollapsed(collapsed) {
+  el.rail.setAttribute("data-collapsed", String(collapsed));
+  var btn = document.getElementById("rail-collapse");
+  if (btn) { btn.textContent = collapsed ? "◨" : "◧"; btn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar"); btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar"; }
+  try { window.localStorage.setItem("clanker.railCollapsed", collapsed ? "1" : "0"); } catch (e) {}
+}
+
+(function initRail() {
+  try {
+    if (window.localStorage.getItem("clanker.railCollapsed") === "1") applyRailCollapsed(true);
+  } catch (e) {}
+  var cbtn = document.getElementById("rail-collapse");
+  if (cbtn) cbtn.addEventListener("click", function () {
+    var cur = el.rail.getAttribute("data-collapsed") === "true";
+    applyRailCollapsed(!cur);
+  });
+  // populate data-short for collapsed rail labels from existing tab text
+  document.querySelectorAll(".rail-tab").forEach(function (t) {
+    var txt = (t.textContent || "").trim();
+    if (!t.getAttribute("data-short") && txt) t.setAttribute("data-short", txt.slice(0, 2));
+  });
+})();
+
 function closeRailOnNarrow() {
   if (window.matchMedia && window.matchMedia("(max-width: 60rem)").matches) setRailOpen(false);
 }
@@ -2959,16 +2982,28 @@ function cardById(id) {
    filter. It used to clear #board and rebuild it, which is what forced the
    focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
    everything. */
-var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null });
+var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "" });
+
+function boardFilterState() {
+  return {
+    text: (document.getElementById("board-filter-input") || {}).value || "",
+    blockedOnly: !!(document.getElementById("board-filter-blocked") || {}).checked,
+    priority: (document.getElementById("board-filter-priority") || {}).value || ""
+  };
+}
 
 function renderBoard(next) {
   if (next) { board.columns = next.columns || []; board.cards = next.cards || []; }
+  var bf = boardFilterState();
   boardState.val = {
     columns: board.columns || [],
     cards: board.cards || [],
     mine: el.boardMine.checked,
     me: (el.instanceChip.textContent || "").trim(),
-    open: openCardId
+    open: openCardId,
+    text: bf.text.trim().toLowerCase(),
+    blockedOnly: bf.blockedOnly,
+    priority: bf.priority
   };
 
   // The "new card" column choice follows the board rather than a fixed list.
@@ -2984,6 +3019,7 @@ function boardColumn(col, s) {
   var shown = s.cards
     .filter(function (c) { return c.column === col.id; })
     .filter(function (c) { return !s.mine || c.assignee === s.me; })
+    .filter(function (c) { if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
     .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
   var over = col.wip && shown.length > col.wip;
@@ -3500,6 +3536,15 @@ function wireRefresh(button, load) {
 
 wireRefresh(el.boardRefresh, loadBoard);
 el.boardRoom.addEventListener("change", function () { loadBoard(); });
+["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority"].forEach(function(id){
+  var n=document.getElementById(id);
+  if(!n) return;
+  n.addEventListener(id==="board-filter-input" ? "input" : "change", function(){ renderBoard(null); });
+});
+var boardMine=document.getElementById("board-filter-mine");
+if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; renderBoard(null); });
+var topMine=document.getElementById("board-mine");
+if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; renderBoard(null); });
 
 
 /* ---------- web UI plugins ----------
@@ -3524,6 +3569,55 @@ function loadLog(name) { return logsLoadLog(name, el, readJson, fmtBytes); }
 
 el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
 el.logsRefresh.addEventListener("click", function () { loadLogList(); });
+
+// Phase 5 progress streaming — reuses /api/run event channel shape via fetch + reader.
+(function(){
+  var progCtrl=null, progEl=document.getElementById("progress-log"), progStatus=document.getElementById("progress-status");
+  var stopBtn=document.getElementById("progress-stop");
+  function append(t){ if(!progEl) return; progEl.textContent += t; progEl.scrollTop=progEl.scrollHeight; }
+  function wire(id, body){
+    var b=document.getElementById(id); if(!b) return;
+    b.addEventListener("click", function(){
+      if(progCtrl) try{progCtrl.abort();}catch(_){}
+      if(progEl) progEl.textContent="";
+      if(progStatus) progStatus.textContent="Running…";
+      if(stopBtn) stopBtn.hidden=false;
+      progCtrl=new AbortController();
+      fetch("/api/run", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body), signal: progCtrl.signal })
+        .then(function(r){
+          if(!r.ok) return r.text().then(function(t){ throw new Error(t || ("HTTP "+r.status)); });
+          if(!r.body) throw new Error("No stream");
+          var reader=r.body.getReader(), dec=new TextDecoder(), buf="";
+          function pump(){ return reader.read().then(function(ch){
+            if(ch.done){
+              // flush any buffered non-event line
+              if(buf) append(buf+"\n");
+              if(progStatus) progStatus.textContent="Done.";
+              if(stopBtn) stopBtn.hidden=true;
+              progCtrl=null; return;
+            }
+            buf += dec.decode(ch.value, {stream:true});
+            var lines=buf.split("\n"); buf=lines.pop();
+            lines.forEach(function(line){
+              if(!line) return;
+              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"tool")+"\n"); else if(e.type==="tool_result") append("  done "+(e.ms||0)+"ms\n"); else if(e.type==="done") append("done\n"); else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line+"\n"); } }
+              else append(line+"\n");
+            });
+            return pump();
+          }); }
+          return pump();
+        }).catch(function(e){
+          if(e && e.name==="AbortError") { if(progStatus) progStatus.textContent="[stopped]"; }
+          else { append("[failed] "+(e.message||e)+"\n"); if(progStatus) progStatus.textContent=e.message||"Failed"; }
+          if(stopBtn) stopBtn.hidden=true; progCtrl=null;
+        });
+    });
+  }
+  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  wire("progress-eval", { task:"run evals and report results", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  wire("progress-providers", { task:"check providers and report which are reachable", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  if(stopBtn) stopBtn.addEventListener("click", function(){ if(progCtrl) try{progCtrl.abort();}catch(_){} });
+})();
 
 /* ---------- overlays: command palette and shortcut sheet ---------- */
 

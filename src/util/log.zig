@@ -41,6 +41,10 @@ pub fn clearContext() void {
     context = "";
 }
 
+pub fn getContext() []const u8 {
+    return context;
+}
+
 fn unixMilliseconds() i128 {
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
     _ = std.c.clock_gettime(.REALTIME, &ts);

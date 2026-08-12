@@ -83,7 +83,20 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 - `axe-core` (`/tmp` vendored, `jsdom` over live `clanker serve` DOM): **0 critical / 0 total on all 8 views** — `docs/assets/webui/axe.json`.
 - `out_cap`: all 30 assets `ok` via `tools/zig/webui.zig` comptime `assetFor`+`encodedLen` (largest ~180 KB ≪ 2 MiB); `28 × type="module"` native, no bundler.
 
+## Density slice — 2026-08-12 (centered column, sticky composer, transcript polish)
+
+Scope: tighten layout density and bring composer + transcript in line with ChatGPT/Claude/OpenWebUI/Kimi Code local webui, while keeping the cabinet visual language.
+
+- **PRD + roadmap:** `docs/prds/webui.md` now records the density slice (centered `48rem` / `62rem` for Board/Runs/Fleet, tighter rail/header/section rhythm, pill composer) and adds planned **Phase 6 — Chat UX parity** (6.1 per-turn Branch, 6.2 citation chips → `openRun`, 6.3 model pill inside composer, 6.4 collapsed icon rail); `docs/ROADMAP.md` mirrors the new phase; this review is the working log entry for the slice.
+- **Composer → floating card:** `tools/zig/webui/app.css` sticky `bottom: 12px` `16px` radius `focus-within` lift (`color-mix` shadow), `Task` label sr-only inside the card, textarea `2.6rem→10rem` `field-sizing:content` with JS `autoGrow` fallback, pill `Submit`/`Stop` `999px`, `run-options`/`toolbar` gaps `space-2` with top rule, global `textarea` box kept for non-composer fields and `.composer textarea` borderless/transparent scoping.
+- **Header / rail / rhythm:** header `0.55rem` / `rule` hairline, nameplate plain mono (no engraved plate/shadow); rail `17→16rem` + `border-right`, tabs/items `32→30px`, `rail-context`/`rail-group` tightened, `section`/`section-head` `space-6→4`, empty hero `16px` pill with centered stagger, `transcript-tools` pill `999px` + `border-color` on `:has(:focus-visible)`.
+- **Transcript chrome:** user bubble `12px` `surface-2` card vs `turn-events` inset card, `turn-thinking` `<details>` collapsible disclosure + `.turn-foot-actions` hover-reveal action grouping (touch → always visible, reduced-motion → always visible, no opacity transition).
+- **Constraints honored:** `braces 600/600`, `node --check` on `core/composer.js` + `app.js` (28 modules), `zig build` green, `zig build test --summary all` `375/376` pass (`1` skipped).
+
+Verification for this entry: `zig build` green; `zig build test --summary all` `375/376` pass (`1` skipped) — run before pushing this review + PRD update.
+
 ## Left / next
 
+- Phase 6 items 6.1–6.4 per `docs/prds/webui.md` (Branch per turn, citation chips, model pill inside composer, collapsed rail) — none land in this slice beyond the CSS+grouping scaffolding already shipped.
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.

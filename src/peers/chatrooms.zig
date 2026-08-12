@@ -245,7 +245,10 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     };
     defer if (lock) |f| f.close(io);
 
-    const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(1 << 20)) catch null;
+    const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
     defer if (maybe_existing) |e| gpa.free(e);
     const existing = maybe_existing orelse &[_]u8{};
 
@@ -409,24 +412,24 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     const path = try subPath(arena, state_dir, sub_path);
     var rooms: std.ArrayList([]const u8) = .empty;
     var unsub: std.ArrayList([]const u8) = .empty;
-    if (base.readFileAlloc(io, path, arena, .limited(64 * 1024)) catch null) |raw| {
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch null;
-        if (parsed) |p| {
-            if (p == .object) {
-                if (p.object.get("rooms")) |rv| {
-                    if (rv == .array) {
-                        for (rv.array.items) |item| {
-                            if (item == .string) try rooms.append(arena, item.string);
-                        }
-                    }
-                }
-                if (p.object.get("unsubscribed")) |rv| {
-                    if (rv == .array) {
-                        for (rv.array.items) |item| {
-                            if (item == .string) try unsub.append(arena, item.string);
-                        }
-                    }
-                }
+    const raw = base.readFileAlloc(io, path, arena, .limited(64 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+    if (raw) |contents| {
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, contents, .{ .ignore_unknown_fields = true }) catch
+            return error.InvalidSubscriptionState;
+        if (parsed != .object) return error.InvalidSubscriptionState;
+        if (parsed.object.get("rooms")) |rv| {
+            if (rv != .array) return error.InvalidSubscriptionState;
+            for (rv.array.items) |item| {
+                if (item == .string) try rooms.append(arena, item.string);
+            }
+        }
+        if (parsed.object.get("unsubscribed")) |rv| {
+            if (rv != .array) return error.InvalidSubscriptionState;
+            for (rv.array.items) |item| {
+                if (item == .string) try unsub.append(arena, item.string);
             }
         }
     }
@@ -701,6 +704,23 @@ test "subscribe on/off round-trip" {
     const rooms2 = try subscribedRooms(tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms2.len);
     try std.testing.expectEqualStrings("ops", rooms2[0]);
+}
+
+test "subscribe does not overwrite malformed state" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const malformed = "{not-json";
+    try tmp.dir.writeFile(io, .{ .sub_path = sub_path, .data = malformed });
+    try std.testing.expectError(error.InvalidSubscriptionState, subscribe(tmp.dir, io, std.testing.allocator, arena, "", "ops", true));
+    const preserved = try tmp.dir.readFileAlloc(io, sub_path, arena, .limited(1024));
+    try std.testing.expectEqualStrings(malformed, preserved);
 }
 
 test "receive filters by subscription" {

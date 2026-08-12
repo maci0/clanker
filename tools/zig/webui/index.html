@@ -38,6 +38,7 @@ lamps carry further). The seven named palettes ride the same tokens.
   <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
   <span class="spacer"></span>
   <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
+  <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar">◧</button>
   <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
   <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
   <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
@@ -232,6 +233,10 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div id="fleet-runs"></div>
         </section>
         <div id="fleet-detail" class="run-detail" role="region" aria-label="Fleet run detail" hidden></div>
+        <div id="fleet-floor" class="fleet-floor" aria-hidden="true" hidden>
+          <canvas id="fleet-canvas" width="640" height="180" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+          <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
+        </div>
         <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
       </div>
     </section>
@@ -306,6 +311,14 @@ lamps carry further). The seven named palettes ride the same tokens.
         <select id="card-column"></select>
         <button type="submit" class="secondary" id="card-add">Add card</button>
       </form>
+      <div class="transcript-tools board-filter" id="board-filter" style="margin-top: var(--space-3);">
+        <label for="board-filter-input">Filter</label>
+        <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
+        <label for="board-filter-mine" class="checkbox-row"><input type="checkbox" id="board-filter-mine"> Only mine</label>
+        <label for="board-filter-blocked" class="checkbox-row"><input type="checkbox" id="board-filter-blocked"> Blocked only</label>
+        <label for="board-filter-priority">Priority</label>
+        <select id="board-filter-priority"><option value="">All</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select>
+      </div>
       <div class="board" id="board"></div>
       <!-- A sibling, not a child: inside .board it became a flex item after the
            last column and needed sideways scrolling to find, which is the
@@ -334,6 +347,19 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Progress</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="progress-gate">Run gate</button>
+          <button type="button" class="secondary" id="progress-eval">Run eval</button>
+          <button type="button" class="secondary" id="progress-providers">Check providers</button>
+          <button type="button" class="secondary danger" id="progress-stop" hidden>Stop</button>
+        </div>
+      </div>
+      <div class="run-detail" id="progress-log" role="log" aria-live="polite" aria-label="Progress log" style="max-height: 18rem; overflow:auto; white-space:pre-wrap; font-family: var(--mono); font-size: var(--step--1);"></div>
+      <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
+    </section>
     <section>
       <div class="section-head">
         <h2>Usage</h2>

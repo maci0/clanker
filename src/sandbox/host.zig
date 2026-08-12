@@ -663,8 +663,14 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         return Err.network;
     };
     const content = resp.message.content orelse "";
-    // Approximate token usage: 4 bytes per token (rough heuristic).
-    const est_tokens: u64 = @intCast(@min(content.len / 4, std.math.maxInt(u32)));
+    // Prefer the provider's own count; it is already computed for
+    // client.recordUsage, so budget enforcement and accounting agree on the
+    // same number instead of drifting apart on non-English or JSON-heavy
+    // output. Fall back to the byte heuristic only when a provider omits usage.
+    const est_tokens: u64 = if (resp.usage) |u|
+        u.total_tokens
+    else
+        @intCast(@min(content.len / 4, std.math.maxInt(u32)));
     const llm_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
     log.log(.info, "[llm] ✓ ck_llm … {d}ms (~{d} est. tokens)", .{ llm_ms, est_tokens });
     if (h.sandbox.session_token_budget > 0) {

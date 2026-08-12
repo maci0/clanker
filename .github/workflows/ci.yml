@@ -22,16 +22,18 @@ jobs:
       NO_COLOR: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.16.0
           use-cache: true
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -41,6 +43,7 @@ jobs:
         run: |
           shellcheck \
             clanker-improve.sh \
+            clanker-merge-worktree.sh \
             clanker-review.sh \
             release-check.sh \
             tools/grammars/build.sh \

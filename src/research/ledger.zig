@@ -1,4 +1,5 @@
 const std = @import("std");
+const atomic_write = @import("../util/atomic_write.zig");
 pub const Entry = struct { iter: u32, ts: i64, summary: []const u8 = "", ok: bool = false, metric: ?f64 = null, metric_name: []const u8 = "", duration_ms: u64 = 0, detail: []const u8 = "", stdout_tail: []const u8 = "", stderr_tail: []const u8 = "" };
 fn tail(text: []const u8, keep: usize) []const u8 {
     if (text.len <= keep) return text;
@@ -42,13 +43,16 @@ pub fn appendEntry(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, entry: E
     try s.endObject();
     w.writeAll("\n") catch return error.WriteFailed;
     const line = buf[0..w.end];
-    const existing = dir.readFileAlloc(io, "ledger.jsonl", gpa, .limited(10 << 20)) catch null;
+    const existing = dir.readFileAlloc(io, "ledger.jsonl", gpa, .limited(10 << 20)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
     defer if (existing) |e| gpa.free(e);
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     if (existing) |e| try out.appendSlice(gpa, e);
     try out.appendSlice(gpa, line);
-    try dir.writeFile(io, .{ .sub_path = "ledger.jsonl", .data = out.items });
+    try atomic_write.writeFile(io, dir, "ledger.jsonl", out.items);
 }
 pub fn bestMetric(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, direction: []const u8) !?f64 {
     const raw = dir.readFileAlloc(io, "ledger.jsonl", gpa, .limited(10 << 20)) catch return null;
@@ -112,4 +116,22 @@ test "bestMetric reads ledger" {
     try std.testing.expect(best_min != null and best_min.? == 1.0);
     const best_max = try bestMetric(gpa, io, tmp.dir, "max");
     try std.testing.expect(best_max != null and best_max.? == 2.0);
+}
+
+test "appendEntry preserves an oversized ledger" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const oversized = try gpa.alloc(u8, (10 << 20) + 1);
+    defer gpa.free(oversized);
+    @memset(oversized, 'x');
+    try tmp.dir.writeFile(io, .{ .sub_path = "ledger.jsonl", .data = oversized });
+
+    try std.testing.expectError(error.StreamTooLong, appendEntry(gpa, io, tmp.dir, .{ .iter = 1, .ts = 1 }));
+    const stat = try tmp.dir.statFile(io, "ledger.jsonl", .{});
+    try std.testing.expectEqual(@as(u64, oversized.len), stat.size);
 }

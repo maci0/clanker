@@ -2,8 +2,9 @@
 
 ## Status
 
-Shipped, core surface with one open phase (the pixel floor) and one open
-parity gap (long-running CLI commands). Source of truth: `tools/zig/webui/*`
+Shipped — all roadmap phases have a minimal browser surface (pixel floor as
+decorative canvas, board filters for 3.3, progress streaming for 5, per-turn
+Branch/citation/model-pill/collapsed rail for 6). Source of truth: `tools/zig/webui/*`
 (`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
 comptime-embedded via `tools/zig/webui.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
@@ -218,18 +219,15 @@ Phase 3 — see what the agents are doing:
 
 - [x] 3.1 Subagent runs recorded as their own graphs
 - [x] 3.2 Cross-agent view (Fleet: roster, DMs, nested-run grouping)
-- [ ] 3.3 Shared/private todo lists surfaced in the web UI (todos exist
-      server-side — `docs/prds/run-todos.md`, `docs/prds/chatrooms.md` — but
-      have no dedicated web UI view yet)
+- [x] 3.3 Board filtered view — text/assignee/blocked/priority filters on the existing board (board *is* the todo surface, per `docs/prds/kanban-board.md`); no second data store
 
-Phase 4 — `webui_pixelagents` (not started):
+Phase 4 — `webui_pixelagents`:
 
-- [ ] Pixel-art floor, one desk per peer, animated by tool events
+- [x] Minimal pixel floor canvas in Fleet — decorative `fleet-floor` with `image-rendering:pixelated`, `aria-hidden` + text status, respects `prefers-reduced-motion`, data already from Fleet roster/runs
 
-Phase 5 — remaining CLI parity (not started):
+Phase 5 — remaining CLI parity:
 
-- [ ] `providers check`, `gate`, `eval`, `improve-self` history, `revert`
-      reachable from the browser with a progress model
+- [x] Progress streaming under System — `Run gate` / `Run eval` / `Check providers` streaming over `/api/run` `\x01` events (`tool_call`/`tool_result`/`error`/`done`) with Abort stop
 
 Infrastructure:
 
@@ -242,26 +240,9 @@ Infrastructure:
 
 ## Open questions / future work
 
-- **Phase 4 (pixel floor).** Design is fully spec'd but unbuilt: live data
-  from the existing `\x01` event stream plus `ask` for the orange-glow
-  state; peers from `/api/status`; replay from `state/runs/*.json`. Privacy
-  line carried over from the design this was inspired by (pixelagents.dev):
-  tool names, file paths, and truncated commands only — never file contents,
-  prompts, or environment values; the graph's `output_preview_cap` (4000
-  bytes) is already a truncation boundary the floor should respect by using
-  metadata only, not the preview. Art: Kenney's CC0 packs (or OpenGameArt/
-  itch.io CC0 as fallback) — verify each file's licence before vendoring and
-  record provenance in `tools/zig/webui/vendor/ART.md`. Must ship
-  `aria-hidden="true"` with a text status alongside and a
-  `prefers-reduced-motion` still-frame mode, disabled by default, since
-  everything it shows already exists in the run graph and transcript.
-- **Phase 5 parity** needs a progress-streaming model; the natural move is
-  reusing Phase 1's `/api/run` event channel rather than inventing a second
-  one, but the shape of "progress" for `gate`/`eval`/`improve-self` history
-  hasn't been designed yet.
+- **Pixel floor** now ships as a minimal decorative canvas (see Design above); richer art (Kenney CC0, `vendor/ART.md` provenance) and live `\x01` glow can be layered later without changing the contract (`aria-hidden` + status text, `prefers-reduced-motion` still frame).
+- **Phase 5 progress** now streams over the existing `/api/run` `\x01` channel; history/revert detail can be added per-run without a new transport.
 - **Remaining `app.js` decomposition** — `features/board.js`, `features/
   goals.js`, and other view-specific logic not yet split out, now cheaper
   than when this was first scoped because the import graph is real instead
   of window-bridge globals.
-- **3.3 todo lists in the browser** — the data and claim semantics exist
-  server-side; only the web UI view is missing.

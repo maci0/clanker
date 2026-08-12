@@ -26,5 +26,7 @@ Then call the `goal` tool once:
 Only the first two are required, and a goal that stops there is worth keeping
 when the rest is genuinely unknown. Prefer a short honest goal to a padded one.
 
-Read `state/goals.json` first. If the new goal restates an open one, refine that
-instead of stacking a duplicate.
+Read `state/goals.json` first. The `goal` tool only appends; it cannot update an
+existing entry. If the intent restates an open goal, do not call `goal` and
+create a duplicate. Return that goal's id and explain that it already covers
+the intent.

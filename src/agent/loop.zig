@@ -1791,7 +1791,10 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"plugin disabled: {s}\"}}", .{tc.name});
         }
 
-        log.log(.debug, "running tool '{s}' in sandbox args ({d} bytes)={s}", .{ tc.name, tc.arguments.len, tc.arguments[0..@min(tc.arguments.len, 300)] });
+        // Tool arguments routinely contain prompts, message text, credentials,
+        // and file contents. Their size is useful for diagnosing oversized
+        // calls; their contents do not belong in production logs.
+        log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ tc.name, tc.arguments.len });
         const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
         const mod = if (self.modules.get(tc.name)) |m|
@@ -2339,7 +2342,7 @@ const ToolWorker = struct {
             .fuel = self.tool.fuel,
         };
 
-        log.log(.debug, "running tool '{s}' in sandbox args ({d} bytes)={s}", .{ self.tool.name, self.arguments.len, self.arguments[0..@min(self.arguments.len, 300)] });
+        log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ self.tool.name, self.arguments.len });
         const t0 = std.Io.Timestamp.now(io, .awake);
 
         var mod = try runtime.ToolModule.load(self.ctx.gpa, io, &sb, self.wasm_bytes);

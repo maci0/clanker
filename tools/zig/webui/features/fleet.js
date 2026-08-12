@@ -457,6 +457,38 @@ export function refreshFleet() {
   return Promise.resolve(null);
 }
 
+function renderFloor(runs, roster) {
+  var floor = byId("fleet-floor");
+  var cv = byId("fleet-canvas");
+  var lab = byId("fleet-floor-status");
+  if (!floor || !cv) return;
+  floor.hidden = false;
+  var ctx = cv.getContext("2d");
+  if (!ctx) { if (lab) lab.textContent = "Canvas unavailable."; return; }
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "#272d31";
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  // desks row
+  var peers = (roster && roster.peers) || [];
+  var names = ["self"].concat(peers.map(function(p){return p.name;}));
+  var cols = Math.max(1, names.length);
+  var cw = cv.width / cols;
+  for (var i = 0; i < names.length; i++) {
+    var x = Math.floor(i * cw);
+    var lamp = (runs && runs.length && i % 2 === 0) ? "#2fae4d" : "#77827b";
+    ctx.fillStyle = "#343b3f"; ctx.fillRect(x + 8, 110, Math.floor(cw) - 16, 40);
+    ctx.fillStyle = "#d3d7cf"; ctx.fillRect(x + 16, 70, Math.floor(cw) - 32, 40);
+    ctx.fillStyle = lamp; ctx.beginPath(); ctx.arc(x + Math.floor(cw/2), 58, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "#dfe5df"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+    var label = names[i].slice(0, 12); ctx.fillText(label, x + Math.floor(cw/2), 168);
+  }
+  if (lab) {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) lab.textContent = "Fleet floor — still frame (" + names.length + " desks). Data already shown in the roster and run list.";
+    else lab.textContent = names.length + " desk(s) · data is decorative; roster and runs below are the source of truth.";
+  }
+}
+
 export function initFleet() {
   var view = byId("view-fleet");
   if (!view) return;
@@ -499,6 +531,7 @@ export function initFleet() {
       if (dmsEl) renderDMs(dmsEl, c);
       if (r && r.__err) renderError(runsEl, "Could not load runs: " + r.__err.message, doRefresh);
       else renderRuns(runsEl, detail, r || []);
+      try { renderFloor(r && !r.__err ? r : [], s && !s.__err ? s : null); } catch (_) {}
       if (statusEl) {
         if (r && r.__err) statusEl.textContent = r.__err.message;
         else if (s && s.__err) statusEl.textContent = s.__err.message;

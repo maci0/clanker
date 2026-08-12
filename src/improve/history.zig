@@ -140,6 +140,12 @@ pub const History = struct {
         var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
 
         try s.beginObject();
+        // Written from entry 1 on: `changes` already needed one silent format
+        // migration (bare u64 -> hex string) inferred per-field from old data.
+        // A version lets the next one branch on "v" instead of re-deriving
+        // "this must be an old entry" from field shape.
+        try s.objectField("v");
+        try s.write(1);
         try s.objectField("id");
         try s.write(id);
         try s.objectField("ts");

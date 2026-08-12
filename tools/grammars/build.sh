@@ -36,4 +36,6 @@ srcs=(src/parser.c)
 cc -shared -fPIC -O2 -I src "${srcs[@]}" -o "$OUT_DIR/zig.so"
 
 printf 'built %s\n' "$OUT_DIR/zig.so"
+# The dollars are ast-grep metavariables and must remain literal in the example.
+# shellcheck disable=SC2016
 printf 'check it: ast-grep run --config sgconfig.yml -l zig -p "const \$A = @import(\$B);" src/main.zig\n'
