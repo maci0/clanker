@@ -406,12 +406,13 @@ pub fn nowSeconds() f64 {
     return @as(f64, @floatFromInt(ck_now())) / 1e9;
 }
 
-pub const HostError = error{ SandboxDenied, TooLarge, NetworkError, InvalidArg };
+pub const HostError = error{ SandboxDenied, NoAccess, TooLarge, NetworkError, InvalidArg };
 
 fn hostResult(rc: u32) HostError![]const u8 {
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
         1 => error.SandboxDenied,
+        7 => error.NoAccess,
         3 => error.TooLarge,
         4 => error.NetworkError,
         else => error.InvalidArg,
