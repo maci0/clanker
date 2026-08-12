@@ -121,6 +121,7 @@ tools_dir = "tools/manifests"
 skills_dir = "skills"
 system_prompt_file = "skills/SYSTEM.md"
 learnings_file = "state/learnings.md"
+workflows_dir = "workflows"
 sandbox_root = "."
 seed = 0
 compact_threshold_bytes = 0

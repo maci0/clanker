@@ -45,6 +45,8 @@ pub const PromptParts = struct {
     local_instructions_file: []const u8 = ".agents/AGENTS.md",
     /// HOME for `~/…` import resolution. Empty disables tilde expansion.
     home: []const u8 = "",
+    /// Rendered workflow catalog (from workflows.catalogText). Empty omits the section.
+    workflows_catalog: []const u8 = "",
 };
 
 /// Prefixed to the Skills and Learnings sections, both of which the agent
@@ -392,6 +394,25 @@ pub fn build(
             }
             try buf.appendSlice(arena, "\n\n");
         }
+    }
+
+    // Chaining hint — composable pipelines where each step's output feeds the next.
+    try buf.appendSlice(arena,
+        \\## Chaining outputs → inputs (mutate + chain)
+        \\
+        \\Two complementary ways to wire tools together without leaving the current turn:
+        \\
+        \\- **Mutate** — a transform plugin (`mutate`, off by default) that rewrites tool results via an LLM instruction before the agent sees them. Enable with `/plugins on mutate` and configure `instruction`/`lang`/`mode` (`json` or `text`) in `state/plugin_config.json`; it wraps every `after` result in `order` and declines to broken JSON automatically.
+        \\- **Chain** — a `chain` tool that runs a pipeline inside one call: steps like `{"tool":"read_file","args":{"path":"src/main.zig"}}` → `{"mutate":{"instruction":"Summarize the public API"}}` → `{"tool":"write_note","args":{"text":"{{prev}}","path":"state/notes/summary.md"}}`. String args support `{{prev}}`, `{{prev.field}}`, `{{prev.a[0]}}` and `{{vars.key}}`; `{{prev}}` is the prior step's raw output. Named chains live in `chains/*.json` and are loaded via `{"chain":"name"}`; `{"list":true}` and `{"show":"name"}` discover them. A failed step aborts the chain unless `stop_on_error:false`.
+        \\
+        \\
+    );
+
+    // Workflows catalog (Cursor-style reusable prompts).
+    if (parts.workflows_catalog.len > 0) {
+        try buf.appendSlice(arena, "## Workflows\n\nThe project has reusable prompt templates. To list or expand one, call the `workflows` tool: `{}` lists every workflow, `{\"name\":\"plan\"}` shows one, `{\"name\":\"plan\",\"args\":\"my feature\"}` expands it.\n\n");
+        try buf.appendSlice(arena, parts.workflows_catalog);
+        try buf.appendSlice(arena, "\n");
     }
 
     // Tool catalog. Count non-internal tools first so the section header

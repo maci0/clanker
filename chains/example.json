@@ -1,0 +1,6 @@
+{
+  "steps": [
+    {"tool": "list_files", "args": {"path": "tools/manifests"}},
+    {"mutate": {"instruction": "Pick 3 tool names that look useful for chaining. Return JSON {\"picked\":[...]}.", "mode": "json"}},
+    {"tool": "list_files", "args": {"path": "tools/manifests", "pattern": "{{prev.picked[0]}}"}} ]
+}

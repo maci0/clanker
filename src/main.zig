@@ -69,6 +69,7 @@ comptime {
     _ = @import("research/ledger.zig");
     _ = @import("research/harness.zig");
     _ = @import("research/autoresearch.zig");
+    _ = @import("workflows.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),

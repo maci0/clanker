@@ -81,6 +81,7 @@ pub const Command = enum {
     setup,
     prune,
     autoresearch,
+    workflow,
 };
 
 pub const Options = struct {
@@ -130,6 +131,9 @@ pub const Options = struct {
     research_direction: []const u8 = "min",
     research_pattern: ?[]const u8 = null,
     research_budget: u32 = 300,
+    workflow_sub: ?[]const u8 = null,
+    workflow_name: ?[]const u8 = null,
+    workflow_args: ?[]const u8 = null,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -380,6 +384,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .autoresearch;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
+            } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
+                opts.command = .workflow;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
                 // Not a command: treat it as the task, the way every other
                 // agent CLI takes a bare prompt (`clanker "fix the bug"`).
@@ -437,6 +443,22 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.room = a;
         } else if (opts.command == .chat and opts.message == null) {
             opts.message = a;
+        } else if (opts.command == .workflow) {
+            if (opts.workflow_sub == null) {
+                if (std.mem.eql(u8, a, "list") or std.mem.eql(u8, a, "show") or std.mem.eql(u8, a, "run")) {
+                    opts.workflow_sub = a;
+                } else {
+                    opts.workflow_sub = "show";
+                    opts.workflow_name = a;
+                }
+            } else if (opts.workflow_name == null) {
+                opts.workflow_name = a;
+            } else if (opts.workflow_args == null) {
+                opts.workflow_args = a;
+            } else {
+                const prev = opts.workflow_args.?;
+                opts.workflow_args = try std.fmt.allocPrint(std.heap.page_allocator, "{s} {s}", .{ prev, a });
+            }
         } else {
             setDiag(diag, a);
             return error.UnknownArg;
@@ -658,6 +680,7 @@ const specs = [_]Spec{
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{.tasks}, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates." },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
     .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
+    .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it" },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
 };
 
@@ -723,6 +746,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
         .autoresearch => try cmdAutoresearch(init, opts),
+        .workflow => try cmdWorkflow(init, opts),
     }
 }
 
@@ -2628,7 +2652,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
             std.mem.eql(u8, path, "/webui/van-boot.js") or
             std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/tools.js") or std.mem.eql(u8, path, "/webui/core/overlay.js") or std.mem.eql(u8, path, "/webui/core/search.js") or std.mem.eql(u8, path, "/webui/core/composer.js") or std.mem.eql(u8, path, "/webui/core/scroll.js") or
-            std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or
+            std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or std.mem.eql(u8, path, "/webui/features/knowledge.js") or std.mem.eql(u8, path, "/webui/features/prompts.js") or
             std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
@@ -2645,6 +2669,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_metrics = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/metrics");
         const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_skills = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/skills");
+        const is_workflows = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/workflows");
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
@@ -2685,7 +2710,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
                 std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/tools.js") or std.mem.eql(u8, path, "/webui/core/overlay.js") or std.mem.eql(u8, path, "/webui/core/search.js") or std.mem.eql(u8, path, "/webui/core/composer.js") or std.mem.eql(u8, path, "/webui/core/scroll.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
                 std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
                 std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
-                std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js")))
+                std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or
+                std.mem.eql(u8, path, "/webui/features/knowledge.js") or std.mem.eql(u8, path, "/webui/features/prompts.js")))
         {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
@@ -2732,6 +2758,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_skills) {
             handleSkills(io, gpa, cfg, acceptsGzip(headers_raw), stream);
+        } else if (is_workflows) {
+            handleWorkflows(io, gpa, cfg, acceptsGzip(headers_raw), stream);
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
@@ -2746,6 +2774,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleWebuiPluginAsset(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
+        } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
+            handleKnowledge(io, gpa, method, target, body, acceptsGzip(headers_raw), stream);
+        } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
+            handlePrompts(io, gpa, method, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
@@ -3444,6 +3476,9 @@ const RunRequestBody = struct {
     /// stored `max_iterations` (state/goals.json) is the default; when neither
     /// is set, cfg.agent.max_iterations applies. Clamped to 1..=1000.
     max_iterations: ?u32 = null,
+    /// Knowledge context: collection ids whose documents are injected into the
+    /// task context (OpenWebUI parity — #<collection> / @doc pattern).
+    knowledge: []const []const u8 = &.{},
 };
 
 /// The composer refuses images over 4 MB; the server enforces the same cap on
@@ -3858,6 +3893,8 @@ fn handleWebuiAsset(
     // path (the known cache-aliasing bug class; see docs/prds/webui.md).
     const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
     const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
+    const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
+    const is_prompts_view = std.mem.endsWith(u8, target, "features/prompts.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
     const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_labels = std.mem.endsWith(u8, target, "labels.js");
@@ -3884,8 +3921,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -4922,6 +4959,39 @@ fn handleSkills(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, a
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 
+fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const w_mod = @import("workflows.zig");
+    const list = w_mod.loadAllMerged(arena, io, cfg.agent.workflows_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"workflows scan failed\"}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("workflows") catch return;
+    s.beginArray() catch return;
+    for (list) |wf| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(wf.name) catch return;
+        s.objectField("description") catch return;
+        s.write(wf.description) catch return;
+        s.objectField("arg_hint") catch return;
+        s.write(wf.arg_hint) catch return;
+        s.objectField("rel_path") catch return;
+        s.write(wf.rel_path) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
 test "scanSkills mirrors the system prompt's discovery" {
     var gpa_state = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa_state.deinit();
@@ -5294,6 +5364,257 @@ test validGoalStatus {
     try std.testing.expect(!validGoalStatus("deleted; drop table"));
 }
 
+fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, target: []const u8, body: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    const kb = @import("knowledge/store.zig");
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const rest = if (target.len > "/api/knowledge".len) target["/api/knowledge".len..] else "";
+    if (rest.len == 0 and std.mem.eql(u8, method, "GET")) {
+        const list = kb.listCollections(io, arena, std.Io.Dir.cwd()) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"list failed\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return; s.write(true) catch return;
+        s.objectField("collections") catch return; s.beginArray() catch return;
+        for (list) |m| {
+            s.beginObject() catch return;
+            s.objectField("id") catch return; s.write(m.id) catch return;
+            s.objectField("title") catch return; s.write(m.title) catch return;
+            s.objectField("description") catch return; s.write(m.description) catch return;
+            s.objectField("doc_count") catch return; s.write(m.doc_count) catch return;
+            s.objectField("bytes") catch return; s.write(m.bytes) catch return;
+            s.objectField("created") catch return; s.write(m.created) catch return;
+            s.objectField("updated") catch return; s.write(m.updated) catch return;
+            s.endObject() catch return;
+        }
+        s.endArray() catch return; s.endObject() catch return;
+        respondCompressible(arena, stream, accepts_gzip, out.written());
+        return;
+    }
+    if (rest.len == 0 and std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(struct { title: []const u8 = "", description: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        const title = std.mem.trim(u8, req.title, " \t\r\n");
+        if (title.len == 0 or title.len > 200) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title required (1-200)\"}"); return; }
+        if (req.description.len > 1000) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"description too long\"}"); return; }
+        const col = kb.createCollection(io, arena, std.Io.Dir.cwd(), title, req.description) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"create failed\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s2 = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+        s2.beginObject() catch return;
+        s2.objectField("ok") catch return; s2.write(true) catch return;
+        s2.objectField("id") catch return; s2.write(col.id) catch return;
+        s2.objectField("title") catch return; s2.write(col.title) catch return;
+        s2.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+    if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
+        const q = extractQueryParam(target, "q") orelse "";
+        if (q.len == 0) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"q required\"}"); return; }
+        const cols_param = extractQueryParam(target, "collections") orelse "";
+        var col_ids2: std.ArrayList([]const u8) = .empty;
+        if (cols_param.len > 0) {
+            var it2 = std.mem.splitScalar(u8, cols_param, ',');
+            while (it2.next()) |cid| { const t2 = std.mem.trim(u8, cid, " \t"); if (t2.len > 0) col_ids2.append(arena, t2) catch continue; }
+        }
+        const hits2 = kb.search(io, arena, std.Io.Dir.cwd(), q, col_ids2.items, 20) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"search failed\"}");
+            return;
+        };
+        var out2: std.Io.Writer.Allocating = .init(arena);
+        var s2b = std.json.Stringify{ .writer = &out2.writer, .options = .{ .emit_null_optional_fields = false } };
+        s2b.beginObject() catch return;
+        s2b.objectField("ok") catch return; s2b.write(true) catch return;
+        s2b.objectField("hits") catch return; s2b.beginArray() catch return;
+        for (hits2) |h| {
+            s2b.beginObject() catch return;
+            s2b.objectField("collection_id") catch return; s2b.write(h.collection_id) catch return;
+            s2b.objectField("collection_title") catch return; s2b.write(h.collection_title) catch return;
+            s2b.objectField("doc_id") catch return; s2b.write(h.doc_id) catch return;
+            s2b.objectField("doc_name") catch return; s2b.write(h.doc_name) catch return;
+            s2b.objectField("snippet") catch return; s2b.write(h.snippet) catch return;
+            s2b.endObject() catch return;
+        }
+        s2b.endArray() catch return; s2b.endObject() catch return;
+        respondCompressible(arena, stream, accepts_gzip, out2.written());
+        return;
+    }
+    if (rest.len == 0 or rest[0] != '/') { respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}"); return; }
+    const after_slash = rest[1..];
+    const slash_pos = std.mem.indexOfScalar(u8, after_slash, '/');
+    const col_id = if (slash_pos) |pp| after_slash[0..pp] else after_slash;
+    const sub = if (slash_pos) |pp| after_slash[pp..] else "";
+    if (!kb.validCollectionId(col_id)) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}"); return; }
+    if (sub.len == 0 and std.mem.eql(u8, method, "GET")) {
+        const col = kb.loadCollection(io, arena, std.Io.Dir.cwd(), col_id) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return; s.write(true) catch return;
+        s.objectField("id") catch return; s.write(col.id) catch return;
+        s.objectField("title") catch return; s.write(col.title) catch return;
+        s.objectField("description") catch return; s.write(col.description) catch return;
+        s.objectField("docs") catch return; s.beginArray() catch return;
+        for (col.docs) |d| {
+            s.beginObject() catch return;
+            s.objectField("id") catch return; s.write(d.id) catch return;
+            s.objectField("name") catch return; s.write(d.name) catch return;
+            s.objectField("bytes") catch return; s.write(d.bytes) catch return;
+            s.objectField("created") catch return; s.write(d.created) catch return;
+            s.objectField("content") catch return; s.write(d.content) catch return;
+            s.endObject() catch return;
+        }
+        s.endArray() catch return; s.endObject() catch return;
+        respondCompressible(arena, stream, accepts_gzip, out.written());
+        return;
+    }
+    if (sub.len == 0 and std.mem.eql(u8, method, "DELETE")) {
+        kb.deleteCollection(io, arena, std.Io.Dir.cwd(), col_id) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
+            return;
+        };
+        respond(stream, 200, "OK", "{\"ok\":true}");
+        return;
+    }
+    if (std.mem.eql(u8, sub, "/docs") and std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(struct { name: []const u8 = "", content: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        if (req.name.len == 0 or req.name.len > 200) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"name required (1-200)\"}"); return; }
+        if (req.content.len == 0 or req.content.len > 500_000) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"content required, max 500KB\"}"); return; }
+        const doc = kb.addDoc(io, gpa, arena, std.Io.Dir.cwd(), col_id, req.name, req.content) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return; s.write(true) catch return;
+        s.objectField("id") catch return; s.write(doc.id) catch return;
+        s.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+    if (std.mem.startsWith(u8, sub, "/docs/") and std.mem.eql(u8, method, "DELETE")) {
+        const doc_id = sub["/docs/".len..];
+        if (doc_id.len == 0 or doc_id.len > 64) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad doc id\"}"); return; }
+        kb.deleteDoc(io, gpa, arena, std.Io.Dir.cwd(), col_id, doc_id) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
+            return;
+        };
+        respond(stream, 200, "OK", "{\"ok\":true}");
+        return;
+    }
+    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
+}
+
+fn extractQueryParam(target: []const u8, key: []const u8) ?[]const u8 {
+    const qpos = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    const qs = target[qpos + 1 ..];
+    var it = std.mem.splitScalar(u8, qs, '&');
+    while (it.next()) |pair| {
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (std.mem.eql(u8, pair[0..eq], key)) return pair[eq + 1 ..];
+    }
+    return null;
+}
+
+fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
+    const ps = @import("prompts/store.zig");
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    if (std.mem.eql(u8, method, "GET")) {
+        const all = ps.loadAll(io, arena, std.Io.Dir.cwd()) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"load failed\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return; s.write(true) catch return;
+        s.objectField("prompts") catch return; s.beginArray() catch return;
+        for (all) |pp| {
+            s.beginObject() catch return;
+            s.objectField("id") catch return; s.write(pp.id) catch return;
+            s.objectField("title") catch return; s.write(pp.title) catch return;
+            s.objectField("content") catch return; s.write(pp.content) catch return;
+            s.objectField("created") catch return; s.write(pp.created) catch return;
+            s.objectField("updated") catch return; s.write(pp.updated) catch return;
+            s.endObject() catch return;
+        }
+        s.endArray() catch return; s.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+    if (std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(struct { id: ?[]const u8 = null, title: []const u8 = "", content: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        if (req.id) |id| {
+            if (!ps.validPromptId(id)) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}"); return; }
+            const t = if (req.title.len > 0) req.title else null;
+            const c = if (req.content.len > 0) req.content else null;
+            const pp = ps.update(io, arena, std.Io.Dir.cwd(), id, t, c) catch {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such prompt\"}");
+                return;
+            };
+            var out: std.Io.Writer.Allocating = .init(arena);
+            var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+            s.beginObject() catch return;
+            s.objectField("ok") catch return; s.write(true) catch return;
+            s.objectField("id") catch return; s.write(pp.id) catch return;
+            s.endObject() catch return;
+            respond(stream, 200, "OK", out.written());
+            return;
+        }
+        if (req.title.len == 0 or req.title.len > 200 or req.content.len == 0 or req.content.len > 20000) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title 1-200 and content 1-20000 required\"}");
+            return;
+        }
+        const pp = ps.create(io, arena, std.Io.Dir.cwd(), req.title, req.content) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"create failed\"}");
+            return;
+        };
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+        s.beginObject() catch return;
+        s.objectField("ok") catch return; s.write(true) catch return;
+        s.objectField("id") catch return; s.write(pp.id) catch return;
+        s.endObject() catch return;
+        respond(stream, 200, "OK", out.written());
+        return;
+    }
+    if (std.mem.eql(u8, method, "DELETE")) {
+        const req = std.json.parseFromSliceLeaky(struct { id: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+            return;
+        };
+        if (!ps.validPromptId(req.id)) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}"); return; }
+        ps.remove(io, arena, std.Io.Dir.cwd(), req.id) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such prompt\"}");
+            return;
+        };
+        respond(stream, 200, "OK", "{\"ok\":true}");
+        return;
+    }
+    respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+}
+
 fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     if (!cfg.modules.goal) {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal module disabled\"}");
@@ -5421,7 +5742,31 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
         return;
     };
-    if (std.mem.trim(u8, task_text, " \t\r\n").len == 0) {
+    // Inject knowledge context when requested — selected collections' documents
+    // are prepended to the task so the model sees them without extra tool calls.
+    var final_task = task_text;
+    if (req.knowledge.len > 0) {
+        const kb = @import("knowledge/store.zig");
+        var kb_buf: std.ArrayList(u8) = .empty;
+        for (req.knowledge) |cid| {
+            if (!kb.validCollectionId(cid)) continue;
+            const col = kb.loadCollection(io, arena, std.Io.Dir.cwd(), cid) catch continue;
+            for (col.docs) |d| {
+                if (kb_buf.items.len > 100_000) break;
+                if (kb_buf.items.len > 0) kb_buf.appendSlice(arena, "\n\n") catch continue;
+                const header = std.fmt.allocPrint(arena, "[Knowledge: {s} / {s}]\n", .{ col.title, d.name }) catch continue;
+                kb_buf.appendSlice(arena, header) catch continue;
+                const limit = @min(d.content.len, 100_000 - kb_buf.items.len);
+                kb_buf.appendSlice(arena, d.content[0..limit]) catch continue;
+            }
+        }
+        if (kb_buf.items.len > 0) {
+            kb_buf.appendSlice(arena, "\n\n---\n\n") catch {};
+            kb_buf.appendSlice(arena, task_text) catch {};
+            final_task = kb_buf.items;
+        }
+    }
+    if (std.mem.trim(u8, final_task, " \t\r\n").len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");
         return;
     }
@@ -5557,7 +5902,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
         const t0 = std.Io.Timestamp.now(io, .awake);
-        const resp = a.run(&messages, task_text, &err_detail) catch |err| {
+        const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = err_detail orelse @errorName(err);
             writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
             return;
@@ -5569,7 +5914,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
         }
         if (has_session) {
-            const title_src = if (req.task.len > 0) req.task else task_text;
+            const title_src = if (req.task.len > 0) req.task else final_task;
             const title = title_src[0..@min(title_src.len, 60)];
             const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
             session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
@@ -5593,7 +5938,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    const resp = a.run(&messages, task_text, &err_detail) catch |err| {
+    const resp = a.run(&messages, final_task, &err_detail) catch |err| {
         const detail = err_detail orelse @errorName(err);
         // Escape `detail` through the JSON stringifier: provider error text
         // can contain quotes, backslashes, or newlines that plain bufPrint
@@ -5761,6 +6106,8 @@ var render_graph: RenderCache = .{};
 var render_board: RenderCache = .{};
 var render_board_view: RenderCache = .{};
 var render_goals_view: RenderCache = .{};
+var render_knowledge_view: RenderCache = .{};
+var render_prompts_view: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_chat: RenderCache = .{};
 var render_labels: RenderCache = .{};
@@ -5794,6 +6141,8 @@ var gzip_graph: GzipCache = .{};
 var gzip_board: GzipCache = .{};
 var gzip_board_view: GzipCache = .{};
 var gzip_goals_view: GzipCache = .{};
+var gzip_knowledge_view: GzipCache = .{};
+var gzip_prompts_view: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_chat: GzipCache = .{};
 var gzip_labels: GzipCache = .{};
@@ -6665,4 +7014,69 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
     const autoresearch_mod = @import("research/autoresearch.zig");
     var eng = autoresearch_mod.Loop{ .ctx = &ctx, .arena = arena, .provider = provider, .cfg = &cfg };
     try eng.run(.{ .targets = targets.items, .harness_argv = harness_argv.items, .metric_name = opts.research_metric orelse "score", .metric_pattern = opts.research_pattern orelse "", .direction = opts.research_direction, .iters = opts.iters, .dry_run = false, .research_dir = "state/autoresearch", .budget_seconds = opts.research_budget });
+}
+
+fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const workflows_mod = @import("workflows.zig");
+    const wfs = try workflows_mod.loadAllMerged(arena, io, cfg.agent.workflows_dir);
+    const sub = opts.workflow_sub orelse "list";
+    if (std.mem.eql(u8, sub, "list")) {
+        if (wfs.len == 0) {
+            try writeStdOut(io, "no workflows found");
+            if (cfg.agent.workflows_dir.len > 0) {
+                var buf: [512]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, " in {s}/ (add markdown files there)\n", .{cfg.agent.workflows_dir}) catch ".\n";
+                try writeStdOut(io, msg);
+            } else {
+                try writeStdOut(io, " (workflows disabled: agent.workflows_dir is empty)\n");
+            }
+            return;
+        }
+        for (wfs) |wf| {
+            var buf: [1024]u8 = undefined;
+            const line = if (wf.arg_hint.len > 0)
+                std.fmt.bufPrint(&buf, "{s} {s} — {s}\n", .{ wf.name, wf.arg_hint, wf.description }) catch continue
+            else
+                std.fmt.bufPrint(&buf, "{s} — {s}\n", .{ wf.name, wf.description }) catch continue;
+            try writeStdOut(io, line);
+        }
+        return;
+    }
+    if (std.mem.eql(u8, sub, "show")) {
+        const name = opts.workflow_name orelse {
+            log.log(.error_, "workflow show needs a name — try `clanker workflow list`", .{});
+            return error.MissingArg;
+        };
+        const wf = workflows_mod.findByName(wfs, name) orelse {
+            log.log(.error_, "no workflow named '{s}'", .{name});
+            return error.MissingArg;
+        };
+        try writeStdOut(io, wf.body);
+        try writeStdOut(io, "\n");
+        return;
+    }
+    if (std.mem.eql(u8, sub, "run")) {
+        const name = opts.workflow_name orelse {
+            log.log(.error_, "workflow run needs a name", .{});
+            return error.MissingArg;
+        };
+        const wf = workflows_mod.findByName(wfs, name) orelse {
+            log.log(.error_, "no workflow named '{s}'", .{name});
+            return error.MissingArg;
+        };
+        const expanded = try workflows_mod.instantiate(arena, wf.body, opts.workflow_args orelse "");
+        var run_opts = opts;
+        run_opts.command = .run;
+        run_opts.task = expanded;
+        run_opts.workflow_sub = null;
+        run_opts.workflow_name = null;
+        run_opts.workflow_args = null;
+        try cmdRun(init, run_opts);
+        return;
+    }
+    log.log(.error_, "unknown workflow subcommand '{s}' (expected list, show, or run)", .{sub});
+    return error.BadSubcommand;
 }

@@ -264,6 +264,8 @@ const CommandAction = union(enum) {
     help,
     /// Opens the fuzzy provider/model picker, seeded with any args given.
     model,
+    workflows,
+    workflow,
     /// Routes into a goal-design agent turn (see `runGoalTask`).
     goal,
     /// Prints usage, or runs the measurement loop as a normal agent task.
@@ -292,6 +294,8 @@ const CommandSpec = struct {
 const command_registry = [_]CommandSpec{
     .{ .name = "/help", .aliases = &.{"?"}, .help = "show this help", .action = .help },
     .{ .name = "/model", .takes_args = true, .arg_hint = "[query]", .help = "switch provider/model (fuzzy picker; Enter picks, Esc cancels)", .action = .model },
+    .{ .name = "/workflows", .help = "list reusable prompt workflows", .action = .workflows },
+    .{ .name = "/workflow", .takes_args = true, .arg_hint = "<name> [args]", .help = "run a workflow (expands {{args}} then runs as a task)", .action = .workflow },
     .{ .name = "/sessions", .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
     .{ .name = "/graph", .help = "list knowledge-graph entries", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
     .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
@@ -687,10 +691,28 @@ const Model = struct {
                     self.lines.append(self.arena, .{ .text = "  example: /autoresearch --target tools/zig/calculator.zig --harness \"sh -c 'echo score: 1.0'\" --dry-run", .dim = true }) catch {};
                     return;
                 }
-                // Run as a normal agent task so /autoresearch benefits from
-                // the same streaming/history as any other task. The prompt
-                // tells the agent which CLI to invoke.
                 try self.submitTask(ctx, task);
+            },
+            .workflows => {
+                _ = self.runWorkflowsTool("");
+            },
+            .workflow => {
+                if (pc.args.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /workflow <name> [args]  — try /workflows to list", .dim = true }) catch {};
+                    return;
+                }
+                const space = std.mem.indexOfScalar(u8, pc.args, ' ');
+                const wf_name = if (space) |i| std.mem.trim(u8, pc.args[0..i], " \t") else pc.args;
+                const wf_args = if (space) |i| std.mem.trim(u8, pc.args[i + 1 ..], " \t") else "";
+                const prompt = self.expandWorkflow(wf_name, wf_args) catch |err| {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[workflow '{s}': {s}]", .{ wf_name, @errorName(err) }) catch "[workflow failed]", .dim = true }) catch {};
+                    return;
+                } orelse {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[no workflow named '{s}' — try /workflows]", .{wf_name}) catch "[unknown workflow]", .dim = true }) catch {};
+                    return;
+                };
+                defer self.gpa.free(prompt);
+                try self.submitTask(ctx, prompt);
             },
             // /sessions, /graph, /status, /plugins run the same internal
             // `cmd_*` WASM tools the CLI subcommands invoke, so the REPL is
@@ -766,6 +788,38 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = self.arena.dupe(u8, trimmed) catch trimmed, .dim = true }) catch {};
         }
         return true;
+    }
+
+    fn runWorkflowsTool(self: *Model, name: []const u8) bool {
+        const workflows_mod = @import("../workflows.zig");
+        const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch {
+            self.lines.append(self.arena, .{ .text = "[could not list workflows]", .dim = true }) catch {};
+            return true;
+        };
+        if (name.len == 0) {
+            if (wfs.len == 0) {
+                self.lines.append(self.arena, .{ .text = "[no workflows found — add markdown files to workflows/]", .dim = true }) catch {};
+                return true;
+            }
+            for (wfs) |wf| {
+                const line = if (wf.arg_hint.len > 0)
+                    std.fmt.allocPrint(self.arena, "  {s} {s} — {s}", .{ wf.name, wf.arg_hint, wf.description }) catch continue
+                else
+                    std.fmt.allocPrint(self.arena, "  {s} — {s}", .{ wf.name, wf.description }) catch continue;
+                self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+            }
+            self.lines.append(self.arena, .{ .text = "  (run one with /workflow <name> [args])", .dim = true }) catch {};
+            return true;
+        }
+        return true;
+    }
+
+    fn expandWorkflow(self: *Model, name: []const u8, args: []const u8) !?[]u8 {
+        const workflows_mod = @import("../workflows.zig");
+        const wfs = try workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir);
+        const wf = workflows_mod.findByName(wfs, name) orelse return null;
+        const expanded = try workflows_mod.instantiate(self.arena, wf.body, args);
+        return try self.gpa.dupe(u8, expanded);
     }
 
     /// Submits a goal-design task through the agent, exactly like

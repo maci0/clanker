@@ -306,6 +306,7 @@ Every tool is a WASM plugin; the descriptor decides how much of the harness it g
 | `internal` | Hidden from the model's tool catalog (slash commands, the web UI, transforms) |
 | `enabled` | Default on/off state; ships `false` for anything that spends tokens on its own |
 | `llm` | May call the model through `ck_llm`; forces sequential execution |
+| `tool_call` | May call another tool through `ck_tool` (used by `chain`); denied unless true and `tool_allow` allows the target |
 | `config` | Free-form settings object, returned to the guest by `ck_config` |
 | `transform` | Marks the tool as a chain link: `{ "phase": "before"\|"after", "tools": ["*"], "order": 50 }` |
 | `network_from_config` | `"peers"` or `"providers"`: the harness adds those configured hosts to `network_allow` at load |
@@ -355,7 +356,7 @@ A descriptor with `"llm": true` may call `ck_llm(prompt)` and get completion tex
 
 The harness reads `provider`, `model`, and `max_tokens` to build that call; every other key is the plugin's own and reaches it verbatim through `ck_config`.
 
-The shipped `translate` plugin combines all of it: an `after` transform on every tool, off by default, that asks its configured model to translate the human-readable text in a tool result into `config.lang` before the next layer sees it. It validates that the answer is still JSON and declines rather than passing on corrupted output.
+The shipped `translate` plugin combines all of it: an `after` transform on every tool, off by default, that asks its configured model to translate the human-readable text in a tool result into `config.lang` before the next layer sees it. It validates that the answer is still JSON and declines rather than passing on corrupted output. `mutate` generalizes it with a configurable `instruction`/`lang`/`mode` (`json`|`text`) so one plugin covers translate/summarize/extract/redact. `chain` is the pipeline runner: one call runs N `tool` steps via `ck_tool` interleaved with inline `mutate` reshapes, with `{{prev}}`/`{{prev.field}}`/`{{vars.key}}` substitution and named chains in `chains/*.json`.
 
 ## REPL slash commands
 

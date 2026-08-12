@@ -68,6 +68,8 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
+    <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
     <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
     <button type="button" class="rail-tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
   </nav>
@@ -351,6 +353,53 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
 
   </div>
+  <div class="view" id="view-knowledge" role="tabpanel" aria-labelledby="tab-knowledge" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Knowledge</h2>
+        <button type="button" class="secondary" id="knowledge-refresh">Refresh</button>
+      </div>
+      <p class="meta" id="knowledge-hint"></p>
+      <form class="goal-form" id="knowledge-create-form">
+        <label for="knowledge-title">New collection</label>
+        <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200">
+        <label for="knowledge-desc">Description</label>
+        <input type="text" id="knowledge-desc" placeholder="Optional description" maxlength="1000">
+        <button type="button" class="secondary" id="knowledge-create">Create</button>
+      </form>
+      <div class="transcript-tools" style="margin-top: var(--space-3);">
+        <label for="knowledge-search">Search</label>
+        <input type="search" id="knowledge-search" placeholder="Search all documents…" autocomplete="off">
+        <button type="button" class="secondary" id="knowledge-search-btn">Search</button>
+      </div>
+      <div id="knowledge-search-out" style="margin-top: 0.5rem;"></div>
+      <div id="knowledge-list" style="margin-top: var(--space-3);"></div>
+      <div id="knowledge-detail" class="run-detail" role="region" aria-label="Collection detail" hidden></div>
+      <p class="sr-only" id="knowledge-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
+  <div class="view" id="view-prompts" role="tabpanel" aria-labelledby="tab-prompts" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Prompts</h2>
+        <button type="button" class="secondary" id="prompts-refresh">Refresh</button>
+      </div>
+      <p class="meta">Saved prompt templates — OpenWebUI parity. Use <code>/</code> in the composer or click Use here to insert.</p>
+      <form class="goal-form" id="prompts-create-form">
+        <label for="prompts-title">Title</label>
+        <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200">
+        <label for="prompts-content">Content</label>
+        <textarea id="prompts-content" rows="4" placeholder="Prompt content…" maxlength="20000"></textarea>
+        <button type="button" class="secondary" id="prompts-create">Create</button>
+      </form>
+      <div class="transcript-tools" style="margin-top: var(--space-3);">
+        <label for="prompts-filter">Filter</label>
+        <input type="search" id="prompts-filter" placeholder="Filter prompts…" autocomplete="off">
+      </div>
+      <div id="prompts-list" style="margin-top: var(--space-3);"></div>
+      <p class="sr-only" id="prompts-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
   <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -371,6 +420,12 @@ lamps carry further). The seven named palettes ride the same tokens.
              Read-only: skills are authored by the agent itself via edit_skill. -->
         <div id="skills" class="skills"></div>
         <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
+        <h3 class="detail-head" style="margin-top: var(--space-5);">Workflows</h3>
+        <!-- Workflows are reusable prompt templates (Cursor parity) in workflows/
+             and .cursor/workflows. Listed here so the page mirrors what the agent
+             sees and what `clanker workflow list` reports. -->
+        <div id="workflows" class="skills"></div>
+        <p class="sr-only" id="workflows-status" role="status" aria-live="polite"></p>
         <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
       </div>
     </section>
@@ -534,6 +589,8 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/lib/board.js"></script>
 <script type="module" src="/webui/features/board.js"></script>
 <script type="module" src="/webui/features/goals.js"></script>
+<script type="module" src="/webui/features/knowledge.js"></script>
+<script type="module" src="/webui/features/prompts.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>

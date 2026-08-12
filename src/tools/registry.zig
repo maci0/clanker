@@ -76,6 +76,12 @@ pub const Tool = struct {
     /// in host.zig, never the whole process environment: that is where the API
     /// keys are.
     env_allow: []const []const u8 = &.{},
+    /// May call other tools through `ck_tool`. Only the chain tool needs it.
+    tool_call: bool = false,
+    /// When `tool_call` is true, which tool names it may invoke via `ck_tool`.
+    /// Null / empty = all enabled non-internal tools.
+    tool_allow: ?[]const []const u8 = null,
+
     /// Ask the human before running this tool, when a confirm channel is
     /// installed (agent.confirm_writes). Unset, the answer is derived from
     /// what the descriptor grants: anything with exec or filesystem access —
@@ -533,6 +539,15 @@ pub const Registry = struct {
         }
         if (obj.get("transform")) |tv| {
             if (tv == .object) t.transform = try parseTransform(arena, tv.object);
+        }
+        if (obj.get("tool_call")) |tv| {
+            if (tv == .bool) t.tool_call = tv.bool;
+        }
+        if (obj.get("tool_allow")) |tv| {
+            switch (tv) {
+                .array => |arr| t.tool_allow = try strArray(arena, arr),
+                else => {},
+            }
         }
         return t;
     }

@@ -24,6 +24,8 @@ import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loa
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
 import { board, loadBoardRooms, renderBoard, setOpenCardId, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
+import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
+import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
 
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
@@ -1451,7 +1453,8 @@ el.form.addEventListener("submit", function (e) {
       temperature: typeof opts.temperature === "number" ? opts.temperature : null,
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,
       plan: isPlan,
-      research: isResearch
+      research: isResearch,
+      knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : [])
     }),
     signal: controller.signal
   }).then(function (resp) {
@@ -3040,7 +3043,7 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "fleet", "rooms", "tools", "system"];
+var VIEWS = ["chat", "board", "goals", "runs", "fleet", "rooms", "knowledge", "prompts", "tools", "system"];
 var fleetModulePromise = null;
 function loadFleetModule() {
   if (!fleetModulePromise) {
@@ -3064,6 +3067,8 @@ var viewLoaders = {
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
   board: function () { return loadBoardRooms(); },
+  knowledge: function(){ return kbLoad(); },
+  prompts: promptsLoadView,
   tools: loadTools,
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
@@ -3392,8 +3397,36 @@ if (window.MutationObserver) {
    the tasks worth repeating are long, and retyping them is where the habit
    of using the tool dies. */
 var loadPrompts = compLoadPrompts;
-var savePrompts = function () { compSavePrompts(prompts); };
+var _origSavePrompts = compSavePrompts;
+var savePrompts = function () {
+  _origSavePrompts(prompts);
+  try {
+    var toSync = prompts.slice();
+    fetch("/api/prompts").then(function(r){ return r.json(); }).then(function(data){
+      var server = (data && data.prompts) || [];
+      var have = {};
+      server.forEach(function(p){ have[p.content] = true; have[p.title] = true; });
+      toSync.forEach(function(text){
+        if (have[text]) return;
+        var title = text.slice(0, 60).trim() || "Untitled";
+        fetch("/api/prompts", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ title: title, content: text }) }).catch(function(){});
+      });
+    }).catch(function(){});
+  } catch(e) {}
+};
 var prompts = loadPrompts();
+try {
+  fetch("/api/prompts").then(function(r){ return r.json(); }).then(function(data){
+    var server = (data && data.prompts) || [];
+    var changed = false;
+    server.forEach(function(p){
+      var text = p.content || p.title;
+      if (!text) return;
+      if (prompts.indexOf(text) === -1) { prompts.push(text); changed = true; }
+    });
+    if (changed) _origSavePrompts(prompts);
+  }).catch(function(){});
+} catch(e) {}
 
 el.promptSave.addEventListener("click", function () {
   var text = el.task.value.trim();
@@ -3462,7 +3495,10 @@ var SLASH_CMDS = [
   { cmd: "/fork", desc: "Fork this conversation", run: function(){ document.getElementById("session-fork").click(); } },
   { cmd: "/branch", desc: "Branch from last turn", run: function(){ var b=document.querySelector(".turn:last-child .turn-foot-actions button"); if(b) b.click(); } },
   { cmd: "/clear", desc: "Start a new conversation", run: function(){ document.getElementById("new-chat").click(); } },
-  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4.1", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
+  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
+  { cmd: "/knowledge", desc: "Open Knowledge collections", run: function(){ showView("knowledge", true); } },
+  { cmd: "/prompts", desc: "Open Prompts library", run: function(){ showView("prompts", true); } },
+  { cmd: "/new", desc: "New chat (alias for /clear)", run: function(){ document.getElementById("new-chat").click(); } },
   { cmd: "/help", desc: "Show keyboard shortcuts", run: function(){ document.getElementById("help-open").click(); } },
 ];
 function slashQuery(){
@@ -3773,6 +3809,66 @@ document.addEventListener("keydown", function (e) {
   if (cardModalKeyHandler(e)) return;
   if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
+
+try { kbBind(); } catch(_){}
+try { promptsBind(); } catch(_){}
+
+// # prompt for knowledge — typing # shows collections to inject context
+var kbMentionActive = false;
+var kbMentionIndex = 0;
+function kbMentionQuery() {
+  var v = el.task.value;
+  var hashAt = v.lastIndexOf("#");
+  if (hashAt === -1) return null;
+  if (hashAt > 0 && v.charAt(hashAt - 1) !== " " && v.charAt(hashAt - 1) !== "\n") return null;
+  var q = v.slice(hashAt + 1).toLowerCase();
+  if (q.indexOf(" ") !== -1 || q.indexOf("\n") !== -1) return null;
+  return { at: hashAt, q: q };
+}
+function renderKbMentionList() {
+  var mq = kbMentionQuery();
+  if (!mq) { kbMentionActive = false; el.promptList.hidden = true; return; }
+  fetch("/api/knowledge").then(function(r){ return r.json(); }).then(function(data){
+    var cols = (data && data.collections) || [];
+    var matches = cols.filter(function(c){ return c.title.toLowerCase().indexOf(mq.q) !== -1 || c.id.toLowerCase().indexOf(mq.q) !== -1; }).slice(0, 6);
+    if (!matches.length) { el.promptList.hidden = true; kbMentionActive = false; return; }
+    el.promptList.textContent = "";
+    kbMentionActive = true;
+    kbMentionIndex = Math.min(kbMentionIndex, matches.length - 1);
+    matches.forEach(function(c, i){
+      var li = document.createElement("li");
+      li.className = "palette-item"; li.id = "prompt-item-" + i;
+      li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===kbMentionIndex));
+      var k = document.createElement("span"); k.className="palette-kind"; k.textContent="# " + c.title; li.appendChild(k);
+      var label = document.createElement("span"); label.className="palette-label"; label.textContent=c.doc_count + " docs"; li.appendChild(label);
+      li.addEventListener("mousedown", function(e){
+        e.preventDefault();
+        if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) kbSelected.push(c.id);
+        var before = el.task.value.slice(0, mq.at);
+        var after = el.task.value.slice(mq.at + 1 + mq.q.length);
+        el.task.value = before + "#" + c.title + " " + after;
+        kbMentionActive = false;
+        el.promptList.hidden = true;
+        el.task.focus();
+        var hint = document.getElementById("knowledge-hint");
+        if (hint) hint.textContent = kbSelected.length + " collection(s) will be included in the next prompt.";
+      });
+      el.promptList.appendChild(li);
+    });
+    el.promptList.hidden = false;
+    el.task.setAttribute("aria-expanded","true");
+    el.task.setAttribute("aria-activedescendant","prompt-item-"+kbMentionIndex);
+  }).catch(function(){});
+}
+var _origTaskHandler = taskInputHandler;
+function taskInputHandler2(){
+  var mq = kbMentionQuery();
+  if (mq) { renderKbMentionList(); return; }
+  kbMentionActive = false;
+  _origTaskHandler();
+}
+el.task.removeEventListener("input", taskInputHandler);
+el.task.addEventListener("input", taskInputHandler2);
 
 renderSessionChip();
 renderSessionOptions([]);

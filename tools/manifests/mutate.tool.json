@@ -1,0 +1,25 @@
+{
+  "name": "mutate",
+  "description": "Generic mutator transform: rewrites tool results via an LLM instruction (translate, summarize, extract, redact…). Enable once, configure per-checkout or per-tool via config_editable. Wraps after-phase.",
+  "wasm": "zig-out/tools/mutate.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "tool": { "type": "string" },
+      "phase": { "type": "string" },
+      "payload": { "type": "string" }
+    }
+  },
+  "internal": true,
+  "enabled": false,
+  "llm": true,
+  "transform": { "phase": "after", "tools": ["*"], "order": 50 },
+  "config": {
+    "instruction": "Translate the human-readable text in this JSON tool result into {{lang}}. Keep the exact same structure, keys, and value types. Leave identifiers, URLs, file paths, code, and numbers untouched. If nothing needs translating, return the input unchanged.",
+    "lang": "en",
+    "mode": "json",
+    "max_tokens": 2048
+  },
+  "category": "transform",
+  "config_editable": ["instruction", "lang", "mode", "max_tokens"]
+}

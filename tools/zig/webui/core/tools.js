@@ -264,6 +264,7 @@ export function loadTools() {
       renderTools(_el.toolFilter.value);
       return loadSkills();
     })
+    .then(function () { return loadWorkflows(); })
     .catch(function (err) {
       _el.tools.textContent = "";
       var p = document.createElement("p");
@@ -271,6 +272,51 @@ export function loadTools() {
       p.textContent = "Could not load tools: " + err.message;
       _el.tools.appendChild(p);
       _el.toolsStatus.textContent = p.textContent;
+    });
+}
+
+/* Workflows live next to skills: GET /api/workflows mirrors the same
+   discovery (workflows/ plus .cursor/workflows as fallback, missing → []). */
+function loadWorkflows() {
+  var box = document.getElementById("workflows");
+  var status = document.getElementById("workflows-status");
+  if (!box) return Promise.resolve();
+  return fetch("/api/workflows")
+    .then(_readJson)
+    .then(function (data) {
+      var list = (data && data.workflows) || [];
+      box.textContent = "";
+      box.hidden = list.length === 0;
+      list.forEach(function (wf) {
+        var card = document.createElement("div");
+        card.className = "skill-card";
+        var name = document.createElement("span");
+        name.className = "skill-name";
+        name.textContent = wf.name;
+        card.appendChild(name);
+        if (wf.arg_hint) {
+          var hint = document.createElement("span");
+          hint.className = "skill-meta";
+          hint.textContent = wf.arg_hint;
+          card.appendChild(hint);
+        }
+        var meta = document.createElement("span");
+        meta.className = "skill-meta";
+        meta.textContent = wf.rel_path;
+        card.appendChild(meta);
+        if (wf.description) {
+          var desc = document.createElement("p");
+          desc.className = "skill-desc";
+          desc.textContent = wf.description;
+          card.appendChild(desc);
+        }
+        box.appendChild(card);
+      });
+      if (status) status.textContent = list.length + (list.length === 1 ? " workflow." : " workflows.");
+    })
+    .catch(function () {
+      box.hidden = true;
+      if (status) status.textContent = "Could not load workflows.";
     });
 }
 

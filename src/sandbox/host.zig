@@ -204,6 +204,13 @@ pub const Sandbox = struct {
     exec_pattern_allow: []const []const u8 = &.{},
     /// Environment variables a guest may read, from the tool's manifest.
     env_allow: []const []const u8 = &.{},
+    /// May call another tool via `ck_tool`. Default false — only the chain
+    /// tool sets this.
+    tool_call: bool = false,
+    tool_allow: ?[]const []const u8 = null,
+    tool_self_name: []const u8 = "",
+    tool_registry: ?*const registry.Registry = null,
+    tool_call_depth: u8 = 0,
     /// A nested run's private todo list (src/agent/private_todos.zig), wired
     /// only by subagent.runNested. When set, todo_* ops that name no "room"
     /// operate on it instead of a shared room list; null for top-level agents.
@@ -294,6 +301,11 @@ pub fn sandboxFor(
         .git_remote_ops = cfg.agent.git_remote_ops,
         .exec_pattern_allow = cfg.agent.exec_pattern_allow,
         .env_allow = tool.env_allow,
+        .tool_call = tool.tool_call,
+        .tool_allow = tool.tool_allow,
+        .tool_self_name = tool.name,
+        .tool_registry = null,
+        .tool_call_depth = 0,
         .fs_prefixes = tool.fs_prefixes,
         .fuel = tool.fuel,
         .environ_map = environ_map,
@@ -2191,6 +2203,166 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
 /// callback (wired only inside sub-agent runs) for the parent target. When
 /// the requested answerer is not attached the call returns Err.not_found so
 /// the model can decide for itself.
+/// ck_tool: a `tool_call:true` tool synchronously calls another tool.
+/// Input: {"tool":"name","args":{...} | "raw json string"}.
+/// Output: callee's JSON result (written to host arena).
+/// Denied when tool_call is false, depth>0, self-recursion, allowlist miss,
+/// unknown/disabled/internal target, or bad shape.
+pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (!h.sandbox.tool_call) return Err.denied;
+    if (h.sandbox.tool_call_depth > 0) return Err.denied;
+    const reg = h.sandbox.tool_registry orelse return Err.denied;
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const v = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return Err.invalid;
+    if (v != .object) return Err.invalid;
+    const tool_name = switch (v.object.get("tool") orelse return Err.invalid) {
+        .string => |s| s,
+        else => return Err.invalid,
+    };
+    if (tool_name.len == 0) return Err.invalid;
+    if (h.sandbox.tool_self_name.len > 0 and std.mem.eql(u8, tool_name, h.sandbox.tool_self_name)) return Err.denied;
+    if (h.sandbox.tool_allow) |allow| if (allow.len > 0) {
+        var ok = false;
+        for (allow) |a| if (std.mem.eql(u8, a, tool_name)) {
+            ok = true;
+            break;
+        };
+        if (!ok) return Err.denied;
+    };
+    const target = reg.get(tool_name) orelse return Err.not_found;
+    if (!target.enabled) return Err.not_found;
+    if (target.internal) return Err.not_found;
+    var args_json: []const u8 = "{}";
+    if (v.object.get("args")) |av| {
+        if (av == .string) {
+            args_json = av.string;
+        } else {
+            var aw: std.Io.Writer.Allocating = .init(arena);
+            var js = std.json.Stringify{ .writer = &aw.writer, .options = .{} };
+            js.write(av) catch return Err.invalid;
+            args_json = aw.written();
+        }
+    }
+    const wasm_path = target.wasm;
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(h.sandbox.io, wasm_path, h.sandbox.gpa, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return Err.not_found,
+        error.OutOfMemory => return Err.too_large,
+        else => return Err.invalid,
+    };
+    defer h.sandbox.gpa.free(wasm_bytes);
+    var child_sb: Sandbox = h.sandbox.*;
+    h.sandbox.tool_call_depth += 1;
+    defer h.sandbox.tool_call_depth -= 1;
+    child_sb.tool_call = false;
+    child_sb.tool_allow = null;
+    child_sb.tool_registry = null;
+    child_sb.tool_call_depth = 0;
+    child_sb.tool_self_name = target.name;
+    child_sb.fs_prefixes = target.fs_prefixes;
+    child_sb.exec_allow = target.exec_allow;
+    child_sb.network_allow = target.network_allow;
+    child_sb.env_allow = target.env_allow;
+    child_sb.fuel = target.fuel;
+    child_sb.config_json = target.config_json;
+    child_sb.llm = null;
+    if (target.network_from_config.len > 0) {
+        if (h.sandbox.cfg) |cfg| {
+            if (config_mod.configuredHosts(cfg, arena, target.network_from_config)) |extra| {
+                if (extra.len > 0) {
+                    var merged: std.ArrayList([]const u8) = .empty;
+                    merged.appendSlice(arena, child_sb.network_allow) catch {};
+                    merged.appendSlice(arena, extra) catch {};
+                    child_sb.network_allow = merged.toOwnedSlice(arena) catch child_sb.network_allow;
+                }
+            } else |_| {}
+        }
+    }
+    if (target.llm) {
+        if (h.sandbox.llm) |parent_llm| {
+            child_sb.llm = .{ .ctx = parent_llm.ctx, .provider = parent_llm.provider, .max_tokens = parent_llm.max_tokens };
+        }
+    }
+    // Inline WASM load (avoid runtime import cycle) — same as runtime.ToolModule but without the type wrapper.
+    const zwasm_mod = @import("zwasm");
+    var engine = zwasm_mod.Engine.init(h.sandbox.gpa, .{}) catch return Err.invalid;
+    defer engine.deinit();
+    var linker = engine.linker();
+    defer linker.deinit();
+    const child_host = arena.create(Host) catch return Err.too_large;
+    child_host.* = .{ .sandbox = &child_sb, .rng = std.Random.DefaultPrng.init(0x9E3779B97F4A7C15 ^ @as(u64, @intCast(std.hash.Wyhash.hash(0, tool_name)))) };
+    linker.defineFuncCtx("env", "ck_log", child_host, fn (*zwasm_mod.Caller, u32, u32, u32) void, &ckLog) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_now", child_host, fn (*zwasm_mod.Caller) u64, &ckNow) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_random", child_host, fn (*zwasm_mod.Caller) u64, &ckRandom) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_http", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32, u32, u32, u32) u32, &ckHttp) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_read", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckFsRead) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_read_range", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsReadRange) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_write_range", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32, u32) u32, &ckFsWriteRange) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_append", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsAppend) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_copy", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsCopy) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_rename", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsRename) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_delete", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckFsDelete) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_mkdir", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckFsMkdir) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_stat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckFsStat) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_find", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsFind) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_grep", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsGrep) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_env", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckEnv) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_hash", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckHash) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_write", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) u32, &ckFsWrite) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_write_if", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32, u32, u32) u32, &ckFsWriteIf) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_fs_list", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckFsList) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_getenv", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckGetenv) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_exec", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckExec) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_std_api", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckStdApi) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_subagent", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckSubagent) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_swarm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckSwarm) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_ask", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckAsk) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_docker", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDocker) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_stats", child_host, fn (*zwasm_mod.Caller) u32, &ckStats) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_config", child_host, fn (*zwasm_mod.Caller) u32, &ckConfig) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_harness_config", child_host, fn (*zwasm_mod.Caller) u32, &ckHarnessConfig) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_result", child_host, fn (*zwasm_mod.Caller) u64, &ckResult) catch return Err.invalid;
+    linker.defineFuncCtx("env", "abort", child_host, fn (*zwasm_mod.Caller, u32, u32, u32, u32) void, &struct {
+        fn f(_: *zwasm_mod.Caller, _: u32, _: u32, _: u32, _: u32) void {}
+    }.f) catch return Err.invalid;
+    var mod = engine.compile(wasm_bytes) catch return Err.invalid;
+    defer mod.deinit();
+    var inst = linker.instantiate(&mod, .{ .fuel = .{ .limited = 10_000_000_000 }, .max_memory_pages = .{ .limited = 256 } }) catch return Err.invalid;
+    defer inst.deinit();
+    if (inst.exportFuncSig("host_arena")) |_| {
+        var af = inst.typedFunc(fn () u32, "host_arena");
+        child_host.arena_base = af.call(.{}) catch 0;
+        child_host.arena_cur = child_host.arena_base;
+    }
+    if (inst.exportFuncSig("host_arena_size")) |_| {
+        var sf = inst.typedFunc(fn () u32, "host_arena_size");
+        const sz = sf.call(.{}) catch 0;
+        if (sz > 0) child_host.arena_cap = sz;
+    }
+    var scratch_fn = inst.typedFunc(fn (u32) u32, "scratch");
+    const sp = scratch_fn.call(.{@intCast(args_json.len)}) catch return Err.invalid;
+    if (sp == 0) return Err.too_large;
+    const mem = inst.memory() orelse return Err.invalid;
+    const slice = mem.slice();
+    if (@as(u64, sp) + args_json.len > slice.len) return Err.too_large;
+    @memcpy(slice[sp .. sp + args_json.len], args_json);
+    var run_fn = inst.typedFunc(fn (u32, u32) u64, "run");
+    const packed_val = run_fn.call(.{ sp, @intCast(args_json.len) }) catch return Err.invalid;
+    const out_ptr: u32 = @intCast(packed_val >> 32);
+    const out_len: u32 = @intCast(packed_val & 0xFFFF_FFFF);
+    const mem2 = inst.memory() orelse return Err.invalid;
+    const s2 = mem2.slice();
+    if (@as(u64, out_ptr) + out_len > s2.len) return Err.invalid;
+    const result = s2[out_ptr .. out_ptr + out_len];
+    return h.writeResult(bytes, result);
+}
+
 pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;

@@ -38,6 +38,7 @@ extern fn ck_config() u32;
 extern fn ck_harness_config() u32;
 extern fn ck_result() u64;
 extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
+extern fn ck_tool(ptr: u32, len: u32) u32;
 extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
 extern fn ck_swarm(json_ptr: u32, json_len: u32) u32;
 extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
@@ -729,6 +730,36 @@ pub fn dockerRequest(method: []const u8, path: []const u8) DockerError![]const u
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
         1 => error.SandboxDenied,
+        4 => error.NetworkError,
+        else => error.InvalidArg,
+    };
+}
+
+pub const ToolCallError = error{ SandboxDenied, NotFound, TooLarge, InvalidArg, NetworkError };
+
+/// Call another tool via ck_tool (only allowed for `tool_call:true` guests, i.e. chain).
+pub fn toolCall(name: []const u8, args_json: []const u8) ToolCallError![]const u8 {
+    var buf: [16 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return error.InvalidArg;
+    s.objectField("tool") catch return error.InvalidArg;
+    s.write(name) catch return error.InvalidArg;
+    s.objectField("args") catch return error.InvalidArg;
+    const v = std.json.parseFromSliceLeaky(std.json.Value, alloc, args_json, .{}) catch null;
+    if (v) |val| {
+        s.write(val) catch return error.InvalidArg;
+    } else {
+        s.write(args_json) catch return error.InvalidArg;
+    }
+    s.endObject() catch return error.InvalidArg;
+    const req = sliceToMem(buf[0..w.end]);
+    const rc = ck_tool(req.ptr, req.len);
+    return switch (rc) {
+        0 => readResult() orelse error.InvalidArg,
+        1 => error.SandboxDenied,
+        2 => error.NotFound,
+        3 => error.TooLarge,
         4 => error.NetworkError,
         else => error.InvalidArg,
     };

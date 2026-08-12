@@ -430,8 +430,24 @@ pub const Engine = struct {
             log.log(.error_, "proposal rejected: {s}", .{@errorName(err)});
             // A path rejection has nothing to do with JSON escaping, and the
             // generic advice below sent the model straight back to the same
-            // path on every retry.
+            // path on every retry within one iteration -- but that feedback
+            // never reached the *next* iteration (attempt 0 always starts
+            // with last_error = null), and this whole catch block never
+            // recorded anything to history, so a fresh iteration had no
+            // memory of it either. A model whose instruction naturally draws
+            // it back to the same forbidden file (an "improve improve-self"
+            // instruction pulling toward src/improve/proposal.zig, say) could
+            // repeat the identical rejected proposal every iteration for the
+            // rest of a long run. Recording it here means the next iteration
+            // sees it in history_block ("what earlier runs already did and
+            // where they failed") even on a fresh attempt 0.
             if (rejected_path) |bad| {
+                const id = self.newId() catch null;
+                if (id) |owned_id| {
+                    defer self.ctx.gpa.free(owned_id);
+                    self.hist.append(owned_id, .failed, opts.instructions, "propose a change outside the modifiable surface", &.{bad}, 0, 0, try std.fmt.allocPrint(self.arena, "\"{s}\" is not allowed to write", .{bad}), &.{}) catch |herr|
+                        log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+                }
                 self.feedback = try std.fmt.allocPrint(
                     self.arena,
                     "You proposed a change to \"{s}\", which you are not allowed to write.\n" ++

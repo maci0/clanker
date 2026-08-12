@@ -1,0 +1,40 @@
+{
+  "name": "chain",
+  "description": "Pipeline runner: chain tool calls where each step's output feeds the next. Steps can be tools (via ck_tool) or inline LLM mutates. Supports {{prev}} / {{prev.field}} / {{vars.key}} substitution and named chains from chains/*.json. Use {steps:[{tool,args}|{mutate:{instruction,mode}}]} or {chain:\"name\", vars:{}} or {list:true}/{show:\"name\"}.",
+  "wasm": "zig-out/tools/chain.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "tool": { "type": "string", "description": "Tool to invoke. Mutually exclusive with mutate." },
+            "args": { "type": "object", "description": "Args for the tool. String values may contain {{prev}} / {{prev.path}} / {{vars.key}}." },
+            "mutate": {
+              "type": "object",
+              "properties": {
+                "instruction": { "type": "string" },
+                "mode": { "type": "string", "description": "json (default) or text" }
+              },
+              "required": ["instruction"]
+            },
+            "stop_on_error": { "type": "boolean" }
+          }
+        }
+      },
+      "chain": { "type": "string", "description": "Named chain from chains/<name>.json" },
+      "vars": { "type": "object" },
+      "list": { "type": "boolean" },
+      "show": { "type": "string" }
+    }
+  },
+  "llm": true,
+  "sequential": true,
+  "tool_call": true,
+  "fs_prefixes": ["chains"],
+  "category": "chain",
+  "config": { "chains_dir": "chains", "max_steps": 16, "max_tokens": 2048 },
+  "config_editable": ["max_steps", "max_tokens"]
+}
