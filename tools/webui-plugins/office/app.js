@@ -950,9 +950,18 @@ clanker.registerView({
       window.setTimeout(function () { speaker.bubble = null; }, 6000);
     }
 
+    /* The host never unmounts a view, it only toggles the panel's hidden
+       attribute. So all background work gates on visibility: the RAF loop
+       parks itself, and the interval callbacks no-op until refresh (called
+       on every re-activation) wakes everything back up. */
+    function viewHidden() {
+      var view = container.closest(".view");
+      return !!(view && view.hidden);
+    }
+
     var polling = false;
     function poll() {
-      if (polling || offices.length === 0) return Promise.resolve();
+      if (polling || offices.length === 0 || viewHidden()) return Promise.resolve();
       polling = true;
       return Promise.all(offices.map(function (o) {
         return api.getJSON("/api/chat/messages?room=" + encodeURIComponent(o.room) + "&after=" + o.cursor)
@@ -986,7 +995,7 @@ clanker.registerView({
        this instance, so ringing for ourselves would wake nobody and refresh
        our own lastSeen, looping ring -> doze -> ring forever. */
     function checkAlarm() {
-      if (!alarmOn.val) return;
+      if (!alarmOn.val || viewHidden()) return;
       var now = nowSec();
       offices.forEach(function (o) {
         var sleepers = o.agents.filter(function (a) { return a.name !== instanceName && asleep(a); })
@@ -1007,15 +1016,17 @@ clanker.registerView({
 
     var last = 0;
     function frame(now) {
+      if (viewHidden()) { raf = 0; last = 0; return; }
       var dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;
       if (stepAgents(dt) | stepJanitor(dt, now) | stepSleep(now) || dirty) { draw(); dirty = false; }
       raf = window.requestAnimationFrame(frame);
     }
     var raf = window.requestAnimationFrame(frame);
-    var timer = window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
-    var alarmTimer = window.setInterval(checkAlarm, 5000);
-    var janitorTimer = window.setInterval(function () {
+    window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
+    window.setInterval(checkAlarm, 5000);
+    window.setInterval(function () {
+      if (viewHidden()) return;
       api.getJSON("/api/janitor").then(function (jr) {
         if (!jr || !jr.ok) return;
         janitor.bytes = jr.bytes;
@@ -1024,13 +1035,25 @@ clanker.registerView({
       }).catch(function () {});
     }, 30000);
 
-    // The page keeps a mounted view around; stop the loop if it ever goes away.
-    container.addEventListener("clanker:unmount", function () {
-      window.cancelAnimationFrame(raf);
-      window.clearInterval(timer);
-      window.clearInterval(janitorTimer);
-      window.clearInterval(alarmTimer);
-    });
+    // Restart the RAF loop frame() parked while the view was hidden, and
+    // catch up on messages missed meanwhile. Idempotent: frame keeps raf
+    // truthy while running, and poll() no-ops when one is in flight.
+    function resume() {
+      dirty = true;
+      if (!raf) raf = window.requestAnimationFrame(frame);
+      poll().then(function () { dirty = true; });
+    }
+
+    /* The refresh hook is the plugin API's resume path, but the host marks a
+       view loaded after the first successful mount and never calls the loader
+       again, so watch the panel's hidden attribute too: it flips on every
+       view switch. */
+    this.refresh = resume;
+    var panel = container.closest(".view");
+    if (panel) {
+      new MutationObserver(function () { if (!panel.hidden) resume(); })
+        .observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+    }
 
     window.addEventListener("resize", function () { dirty = true; });
 

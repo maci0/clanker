@@ -89,6 +89,11 @@ lamps carry further). The seven named palettes ride the same tokens.
       <button type="button" class="rail-new" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations</label>
       <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+      <!-- The Archive action tells people to toggle this; without it an
+           archived conversation could never be listed or unarchived again. -->
+      <label class="rail-archived" for="archived-toggle">
+        <input type="checkbox" id="archived-toggle"> Show archived
+      </label>
     </div>
     <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
   </div>
