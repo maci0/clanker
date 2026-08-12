@@ -1321,14 +1321,14 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
 
 /// Public, unauthenticated directory of provider/model specs (context window,
 /// pricing, capabilities) maintained outside this repo. Used so a model's
-/// metadata does not have to be hand-typed into config.json and kept in sync
+/// metadata does not have to be hand-typed into config.toml and kept in sync
 /// by hand.
 const models_dev_url = "https://models.dev/api.json";
 
 /// `clanker providers catalog <query>` — search the models.dev directory for
 /// provider or model ids/families containing `query` (case-insensitive) and
 /// print what it knows about each match. Read-only; nothing here touches
-/// config.json.
+/// config.toml.
 fn cmdProvidersCatalog(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -1642,7 +1642,7 @@ fn reportUnfinishedRun(
         log.log(.info, "the assistant produced no prose before stopping; `clanker graph` replays what it did", .{});
     }
     if (err == error.MaxIterationsExceeded) {
-        log.log(.info, "raise agent.max_iterations in config.json (currently {d}) if the task needs more steps", .{a.max_iterations});
+        log.log(.info, "raise agent.max_iterations in config.toml (currently {d}) if the task needs more steps", .{a.max_iterations});
     }
 }
 
@@ -3727,7 +3727,7 @@ const RunRequestBody = struct {
     /// Images the composer attached to this task (multimodal runs).
     images: []const RunImage = &.{},
     /// Optional per-run overrides, the request-shaped equivalent of
-    /// `--provider` and the model's sampling settings in config.json. Empty or
+    /// `--provider` and the model's sampling settings in config.toml. Empty or
     /// null means "use what the config says".
     provider: []const u8 = "",
     model: []const u8 = "",

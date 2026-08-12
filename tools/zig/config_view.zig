@@ -1,11 +1,12 @@
 //! config_view: dump the effective config so the agent knows its own settings
-//! (providers, models, modules, budgets). Shows config.toml/config.json +
-//! config.local.toml/config.local.json (local wins, .toml wins over .json,
-//! matching src/config.zig's own load order). Optional {"section": "modules"}
-//! filters to one top-level key (JSON files only: a TOML file's section can't
-//! be picked out without a TOML parser, which this wasm tool doesn't carry).
+//! (providers, models, modules, budgets). The full dump shows config.toml +
+//! config.local.toml raw (local last, matching src/config.zig's load order).
+//! Optional {"section": "modules"} filters to one top-level key of the
+//! HOST-MERGED config via ck_harness_config -- a wasm guest carries no TOML
+//! parser, so structured access goes through the host, which already parsed
+//! and merged both files.
 //! Input:  {"section": "modules" | "providers" | ""}
-//! Output: {"ok": true, "text": "<JSON>"}
+//! Output: {"ok": true, "text": "<TOML dump or JSON section>"}
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -22,7 +23,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (s == .string) section = s.string;
         }
     }
-    const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml/config.json unreadable");
+    const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml unreadable");
     const local = lib.readConfigFile("config.local");
 
     var text: std.ArrayList(u8) = .empty;
@@ -41,12 +42,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try text.appendSlice(lib.alloc, l.text);
         }
     } else {
-        // Section filter: prefer local, fall back to base.
-        const chosen = if (local) |l| l else base;
-        if (!std.mem.endsWith(u8, chosen.name, ".json")) {
-            return lib.fail(out, "section filter needs a JSON config; the active file is TOML");
-        }
-        const v = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, chosen.text, .{ .ignore_unknown_fields = true }) catch return lib.fail(out, "parse");
+        // Section filter over the host-merged config: ck_harness_config
+        // returns it as JSON however it was stored on disk, and already has
+        // the local override applied.
+        const v = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch return lib.fail(out, "parse");
         if (v == .object) {
             if (v.object.get(section)) |sec| {
                 var buf: [65536]u8 = undefined;

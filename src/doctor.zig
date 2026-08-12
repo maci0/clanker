@@ -81,14 +81,14 @@ fn runChecks(
         return;
     }
     rep.line(.ok, "config.toml", "");
-    // The loader falls back to the .json sibling, so reporting only on the
-    // .toml called a local override absent while it was being applied.
     if (fileExists(io, "config.local.toml"))
         rep.line(.ok, "config.local.toml", "")
-    else if (fileExists(io, "config.local.json"))
-        rep.line(.ok, "config.local.json", "no .toml sibling, so the .json applies")
     else
         rep.line(.warn, "config.local.toml", "absent; defaults from config.toml only");
+    // TOML is canonical and the loader reads nothing else; a leftover
+    // pre-migration file silently does nothing, which is worth saying.
+    if (fileExists(io, "config.local.json"))
+        rep.line(.warn, "config.local.json", "ignored; convert to config.local.toml and delete it");
 
     const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch |err| {
         rep.line(.fail, "config parses", @errorName(err));
@@ -204,7 +204,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
 }
 
 /// Provider name to the env var it reads, for the "what could I use" hint.
-/// Only providers clanker ships in config.json need an entry; anything else
+/// Only providers clanker ships in config.toml need an entry; anything else
 /// is reported by name from the config itself.
 fn wouldWork(environ_map: *std.process.Environ.Map, cfg: *const config.Config, arena: std.mem.Allocator) !?[]const u8 {
     var it = cfg.providers.iterator();

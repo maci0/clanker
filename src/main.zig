@@ -162,7 +162,7 @@ pub fn main(init: std.process.Init) !void {
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
     // (existing real env vars always win). Gated by the modules.dotenv flag,
     // and skipped for --help/--version: neither touches a provider or reads
-    // a key, so there is no reason for either to read config.json/.env off
+    // a key, so there is no reason for either to read config.toml/.env off
     // disk or print the "loaded N key(s)" line ahead of its own output.
     if (opts.command != .help and opts.command != .version) {
         const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
