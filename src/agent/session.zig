@@ -417,6 +417,20 @@ test "compactMessages counts tool-call arguments toward the token estimate" {
     try std.testing.expectEqualStrings("bbbb", messages.items[1].content.?);
 }
 
+test "estimatedTokens rounds up so short messages are not free" {
+    try std.testing.expectEqual(@as(usize, 1), estimatedTokens(.{ .role = .user, .content = "a" }));
+    try std.testing.expectEqual(@as(usize, 1), estimatedTokens(.{ .role = .user, .content = "abcd" }));
+    try std.testing.expectEqual(@as(usize, 2), estimatedTokens(.{ .role = .user, .content = "abcde" }));
+    // A tool-call-only message contributes its arguments toward the token
+    // estimate: 10 bytes -> ceil(10/4) = 3 tokens.
+    const m = types.Message{ .role = .assistant, .tool_calls = &.{.{
+        .id = "c",
+        .name = "read",
+        .arguments = "abcdefghij",
+    }} };
+    try std.testing.expectEqual(@as(usize, 3), estimatedTokens(m));
+}
+
 test "compactMessages preserves system messages even when they exceed the budget" {
     var messages: std.ArrayList(types.Message) = .empty;
     defer messages.deinit(std.testing.allocator);
