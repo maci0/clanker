@@ -79,3 +79,8 @@ Automatically observed from usage patterns (`state/autolearn.jsonl` + `state/run
 - Optimize the most-used tools: git, calculator (usage tracked in state/autolearn.jsonl).
 - Fix 'git' tool errors (1 failure(s), last: ).
 - Build a dedicated tool or skill for the recurring task 'Summarize the last 3 git commits' (seen 2 time(s)) — automate it so future runs are one tool call instead of a full agent loop.
+
+## 2026-08-12 — gh workflow verification
+
+Verified the sandbox exec-pattern allow + gh tooling end-to-end by landing a
+real change through branch → commit → push → PR → merge.

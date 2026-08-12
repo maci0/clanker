@@ -536,6 +536,40 @@ test "listSessions reports the byte weight of each conversation" {
     try std.testing.expectEqual(@as(usize, 0), empty.len);
 }
 
+test "listSessions counts tool-call argument bytes toward the session weight" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try saveSession(io, allocator, arena, tmp.dir, .{
+        .id = "tool-weight",
+        .title = "tool calls",
+        .messages = &.{
+            .{ .role = .user, .content = "hello" },
+            .{ .role = .assistant, .tool_calls = &.{.{
+                .id = "c1",
+                .name = "read_file",
+                .arguments = "{\"path\":\"build.zig\"}",
+            }} },
+        },
+        .created = 1,
+        .updated = 2,
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    // "hello" (5) + the tool-call arguments (20) = 25 bytes of transcript weight.
+    try std.testing.expectEqual(@as(usize, 25), list[0].bytes);
+    try std.testing.expectEqual(@as(usize, 2), list[0].messages);
+}
+
 test "rename and delete change only the selected saved session" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
@@ -745,4 +779,41 @@ test "setWorkspace moves a session into a workspace and back" {
     try setWorkspace(io, gpa, arena, tmp.dir, "ws-move", "");
     const loose = try loadSession(io, gpa, arena, tmp.dir, "ws-move");
     try std.testing.expectEqualStrings("", loose.workspace);
+}
+
+test "listSessions orders by most recently updated" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "older",
+        .title = "older",
+        .messages = &.{},
+        .created = 100,
+        .updated = 100,
+    });
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "newer",
+        .title = "newer",
+        .messages = &.{},
+        .created = 50,
+        .updated = 200,
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 2), list.len);
+    try std.testing.expectEqualStrings("newer", list[0].id);
+    try std.testing.expectEqualStrings("older", list[1].id);
 }
