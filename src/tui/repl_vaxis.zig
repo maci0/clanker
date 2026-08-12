@@ -16,11 +16,11 @@
 //! event-driven, same principle as this session's KeyReader poll() fix in
 //! the old REPL.
 //!
-//! Deliberately not yet built (documented gaps, not oversights): a general
-//! slash-command palette/tab-complete (only quit, `/model`, and `/help` are
-//! handled by name in `submit` — `/model` opens a fuzzy provider/model
-//! picker, `handlePickerKey`, styled like Kimi Code's; `/help`/`?` prints
-//! `printHelp`'s hand-maintained command list, not a generated one), inline
+//! Deliberately not yet built (documented gaps, not oversights): slash-command
+//! tab-complete (commands dispatch through `command_registry`, the single
+//! source of truth `/help` is also generated from, but there is no completion
+//! UI over it yet — `/model` opens a fuzzy provider/model picker,
+//! `handlePickerKey`, styled like Kimi Code's), inline
 //! ask_user/approval prompts (falls back to the same "nobody attached"
 //! default a headless run gets). Full list, with what a fix looks like for
 //! each: docs/ROADMAP.md's "vaxis REPL parity" entry under Planned. Tool
@@ -247,6 +247,213 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     try std.testing.expectEqual(@as(?f64, null), cands[1].cost_in);
 }
 
+// ---------------------------------------------------------------------
+// Slash-command registry: the single source of truth for what `submit`
+// dispatches and what `/help` prints. Adding an entry here is the whole
+// job — dispatch and the generated help list both derive from it, so a
+// command can no longer ship undocumented (the hazard docs/prds/repl-tui.md
+// tracked against the old hand-maintained `printHelp` prose).
+// ---------------------------------------------------------------------
+
+/// What a matched command does. Commands with bespoke UI or plumbing get
+/// their own arm that `runCommand` switches on; the internal `cmd_*` WASM
+/// tools (the same ones the CLI subcommands invoke) share one `.tool` arm
+/// carrying the tool name and its fixed argument string.
+const CommandAction = union(enum) {
+    quit,
+    help,
+    /// Opens the fuzzy provider/model picker, seeded with any args given.
+    model,
+    /// Routes into a goal-design agent turn (see `runGoalTask`).
+    goal,
+    /// Prints usage, or runs the measurement loop as a normal agent task.
+    autoresearch,
+    /// Runs the named internal `cmd_*` tool via `runInternalTool`.
+    tool: struct { name: []const u8, args: []const u8 },
+};
+
+/// One slash command the REPL understands.
+const CommandSpec = struct {
+    /// Primary spelling, leading slash included, matched exactly.
+    name: []const u8,
+    /// Alternate spellings, matched the same way ("?", bare "exit").
+    aliases: []const []const u8 = &.{},
+    /// Whether "<spelling> <args>" also matches, with the trimmed
+    /// remainder handed to the action.
+    takes_args: bool = false,
+    /// Shown after the spellings in /help ("[query]", "<intent>"); purely
+    /// documentation, not parsed.
+    arg_hint: []const u8 = "",
+    /// One line for the generated /help list. Never empty (tested).
+    help: []const u8,
+    action: CommandAction,
+};
+
+const command_registry = [_]CommandSpec{
+    .{ .name = "/help", .aliases = &.{"?"}, .help = "show this help", .action = .help },
+    .{ .name = "/model", .takes_args = true, .arg_hint = "[query]", .help = "switch provider/model (fuzzy picker; Enter picks, Esc cancels)", .action = .model },
+    .{ .name = "/sessions", .help = "list saved sessions", .action = .{ .tool = .{ .name = "cmd_sessions", .args = "" } } },
+    .{ .name = "/graph", .help = "list knowledge-graph entries", .action = .{ .tool = .{ .name = "cmd_graph", .args = "list" } } },
+    .{ .name = "/status", .help = "show configuration and state status", .action = .{ .tool = .{ .name = "cmd_status", .args = "" } } },
+    .{ .name = "/plugins", .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
+    .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
+    .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
+    .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
+};
+
+/// A registry hit: which entry matched, plus whatever followed the
+/// matched spelling (trimmed; empty when nothing did).
+const ParsedCommand = struct {
+    spec: *const CommandSpec,
+    args: []const u8,
+};
+
+/// Matches `input` against one spelling of `spec`: exact, or
+/// "<spelling> <args>" when the spec takes arguments. Returns the trimmed
+/// remainder on a match, null otherwise ("/modelx" must not match "/model").
+fn matchSpelling(spec: *const CommandSpec, spelling: []const u8, input: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, input, spelling)) return "";
+    if (spec.takes_args and input.len > spelling.len and
+        std.mem.startsWith(u8, input, spelling) and input[spelling.len] == ' ')
+    {
+        return std.mem.trim(u8, input[spelling.len..], " ");
+    }
+    return null;
+}
+
+/// Registry lookup for a submitted line: trims, then tries every spelling
+/// of every entry. Null means "not a command" — bare text is a task for the
+/// agent, and `submit` reports unrecognized /slash input instead of sending
+/// it (see `looksLikeSlashCommand`).
+fn parseCommand(task: []const u8) ?ParsedCommand {
+    const input = std.mem.trim(u8, task, " \t");
+    for (&command_registry) |*spec| {
+        if (matchSpelling(spec, spec.name, input)) |args| return .{ .spec = spec, .args = args };
+        for (spec.aliases) |alias| {
+            if (matchSpelling(spec, alias, input)) |args| return .{ .spec = spec, .args = args };
+        }
+    }
+    return null;
+}
+
+/// True for input that was clearly meant as a slash command (leading '/'):
+/// when the registry lookup missed, this is what keeps a typo'd command out
+/// of the LLM conversation. Bare text without the slash stays a task.
+fn looksLikeSlashCommand(task: []const u8) bool {
+    const input = std.mem.trim(u8, task, " \t");
+    return input.len > 0 and input[0] == '/';
+}
+
+/// Widest "spellings [hint]" cell in the registry, computed at comptime so
+/// the generated help columns stay aligned no matter what gets added.
+const help_names_width = blk: {
+    var w: usize = 0;
+    for (command_registry) |spec| {
+        var n = spec.name.len;
+        for (spec.aliases) |a| n += 2 + a.len;
+        if (spec.arg_hint.len > 0) n += 1 + spec.arg_hint.len;
+        if (n > w) w = n;
+    }
+    break :blk w;
+};
+
+/// The command section of `/help`, generated from `command_registry`: one
+/// line per entry — every spelling comma-separated, the arg hint, then the
+/// help text in a common column. Returned as one newline-joined slice the
+/// caller owns.
+fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, "commands:");
+    for (command_registry) |spec| {
+        try out.appendSlice(alloc, "\n  ");
+        var col: usize = spec.name.len;
+        try out.appendSlice(alloc, spec.name);
+        for (spec.aliases) |alias| {
+            try out.appendSlice(alloc, ", ");
+            try out.appendSlice(alloc, alias);
+            col += 2 + alias.len;
+        }
+        if (spec.arg_hint.len > 0) {
+            try out.append(alloc, ' ');
+            try out.appendSlice(alloc, spec.arg_hint);
+            col += 1 + spec.arg_hint.len;
+        }
+        while (col < help_names_width + 2) : (col += 1) try out.append(alloc, ' ');
+        try out.appendSlice(alloc, spec.help);
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+test "every command registry entry is documented" {
+    for (command_registry) |spec| {
+        try std.testing.expect(spec.name.len > 0);
+        try std.testing.expect(spec.help.len > 0);
+    }
+}
+
+test "generated help mentions every command spelling and help line" {
+    const text = try buildCommandHelp(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    for (command_registry) |spec| {
+        try std.testing.expect(std.mem.indexOf(u8, text, spec.name) != null);
+        for (spec.aliases) |alias| {
+            try std.testing.expect(std.mem.indexOf(u8, text, alias) != null);
+        }
+        try std.testing.expect(std.mem.indexOf(u8, text, spec.help) != null);
+    }
+}
+
+test "parseCommand recognizes the REPL quit set" {
+    const quit_spellings = [_][]const u8{ "/quit", "/exit", "/q", "exit", "quit", "  /q  " };
+    for (quit_spellings) |s| {
+        const pc = parseCommand(s) orelse return error.TestExpectedCommand;
+        try std.testing.expect(pc.spec.action == .quit);
+    }
+    // A leading slash distinguishes a command from the same word as a task;
+    // a bare word that is not a quit command is a task.
+    try std.testing.expect(parseCommand("/quitnow") == null);
+    try std.testing.expect(parseCommand("exit handling is next") == null);
+    try std.testing.expect(parseCommand("") == null);
+    try std.testing.expect(parseCommand("please exit") == null);
+    // Quit takes no arguments, so "/quit now" is not a quit command.
+    try std.testing.expect(parseCommand("/quit now") == null);
+}
+
+test "parseCommand matches names, aliases, and arguments" {
+    const help = parseCommand("/help") orelse return error.TestExpectedCommand;
+    try std.testing.expect(help.spec.action == .help);
+    const qmark = parseCommand("?") orelse return error.TestExpectedCommand;
+    try std.testing.expect(qmark.spec.action == .help);
+    // "?" takes no args: "? something" is a task, not a help request.
+    try std.testing.expect(parseCommand("? something") == null);
+
+    const bare_model = parseCommand("/model") orelse return error.TestExpectedCommand;
+    try std.testing.expect(bare_model.spec.action == .model);
+    try std.testing.expectEqualStrings("", bare_model.args);
+    const seeded = parseCommand("/model kimi k3 ") orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("kimi k3", seeded.args);
+
+    const goal = parseCommand("/goal fix the failing eval") orelse return error.TestExpectedCommand;
+    try std.testing.expect(goal.spec.action == .goal);
+    try std.testing.expectEqualStrings("fix the failing eval", goal.args);
+
+    const sessions = parseCommand("/sessions") orelse return error.TestExpectedCommand;
+    try std.testing.expectEqualStrings("cmd_sessions", sessions.spec.action.tool.name);
+    // The internal cmd_* commands take no free-form arguments yet.
+    try std.testing.expect(parseCommand("/sessions foo") == null);
+
+    try std.testing.expect(parseCommand("hello world") == null);
+    try std.testing.expect(parseCommand("/nope") == null);
+}
+
+test "looksLikeSlashCommand separates typo'd commands from tasks" {
+    try std.testing.expect(looksLikeSlashCommand("/nope"));
+    try std.testing.expect(looksLikeSlashCommand("  /nope  "));
+    try std.testing.expect(!looksLikeSlashCommand("hello /world"));
+    try std.testing.expect(!looksLikeSlashCommand(""));
+}
+
 /// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "latte",
 /// "frappe", "macchiato", "tokyonight", "storm", "day", "mono", "default").
 /// An env var rather than a flag because the REPL is also reached
@@ -425,82 +632,72 @@ const Model = struct {
         if (task.len == 0) return;
         self.text_field.reset();
 
-        // A quit command has to set `ctx.quit`, rather than merely stop the
-        // input handler: App.run returns on that flag and its caller's defer
-        // then restores the alternate screen, raw input, mouse mode, and
-        // bracketed paste before the shell regains the terminal.
-        if (isQuitCommand(task)) {
-            ctx.quit = true;
+        // Slash commands dispatch through `command_registry` — one lookup
+        // covering every spelling, instead of literal matches strewn about.
+        // An unrecognized /command is reported in the transcript rather than
+        // sent to the LLM (a typo'd command is not a task); bare text without
+        // the slash is still a task, bare "exit"/"quit" included (they are
+        // registry aliases of /quit).
+        if (parseCommand(task)) |pc| {
+            try self.runCommand(ctx, pc, task);
             return;
         }
-
-        // "/model" alone opens the picker on the full list; "/model kimi"
-        // seeds it with a starting query, so a remembered partial name is
-        // one Enter away instead of a blank list to type into again.
-        if (std.mem.eql(u8, task, "/model") or std.mem.startsWith(u8, task, "/model ")) {
-            self.openModelPicker(if (task.len > 6) std.mem.trim(u8, task[6..], " ") else "");
+        if (looksLikeSlashCommand(task)) {
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "[unknown command: {s} — try /help]", .{std.mem.trim(u8, task, " \t")}) catch "[unknown command — try /help]",
+                .dim = true,
+            }) catch {};
             return;
         }
-
-        if (std.mem.eql(u8, task, "/help") or std.mem.eql(u8, task, "?")) {
-            self.printHelp();
-            return;
-        }
-
-        if (std.mem.eql(u8, task, "/autoresearch") or std.mem.startsWith(u8, task, "/autoresearch ")) {
-            const args = if (task.len > 14) std.mem.trim(u8, task[14..], " ") else "";
-            if (args.len == 0 or std.mem.eql(u8, args, "--help") or std.mem.eql(u8, args, "-h")) {
-                self.lines.append(self.arena, .{ .text = "usage: /autoresearch --target <file> --harness \"<cmd>\" [--iters N] [--dry-run]", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  runs the measurement loop; use --dry-run to validate without LLM", .dim = true }) catch {};
-                self.lines.append(self.arena, .{ .text = "  example: /autoresearch --target tools/zig/calculator.zig --harness \"sh -c 'echo score: 1.0'\" --dry-run", .dim = true }) catch {};
-                return;
-            }
-            // Run as a normal agent task so /autoresearch benefits from the same streaming/history as any other task.
-            // The prompt tells the agent which CLI to invoke; the old stub just echoed a hint.
-        }
-
-        // General slash-command palette: /sessions, /graph, /status, /plugins
-        // run the same internal `cmd_*` WASM tools the CLI subcommands invoke,
-        // so the REPL is not a walled-off corner of clanker. Output is folded
-        // into the transcript as dim lines, exactly like a tool result.
-        if (self.runSlashCommand(ctx, task)) return;
 
         try self.submitTask(ctx, task);
     }
 
-    /// The general slash-command palette: /sessions, /graph, /status, /plugins
-    /// each run the internal `cmd_*` WASM tool the corresponding CLI subcommand
-    /// invokes (via `runtime.loadNamedTool`, the same loader cli.zig uses), and
-    /// /goal routes into a goal-design task (see below). Returns true when the
-    /// command was handled here (nothing should be submitted to the agent);
-    /// false for anything that is not a recognized slash command.
-    fn runSlashCommand(self: *Model, ctx: *vxfw.EventContext, task: []const u8) bool {
-        const Tool = struct { slash: []const u8, tool: []const u8, args: []const u8 };
-        const tools = [_]Tool{
-            .{ .slash = "/sessions", .tool = "cmd_sessions", .args = "" },
-            .{ .slash = "/graph", .tool = "cmd_graph", .args = "list" },
-            .{ .slash = "/status", .tool = "cmd_status", .args = "" },
-            .{ .slash = "/plugins", .tool = "cmd_plugins", .args = "" },
-        };
-        for (tools) |t| {
-            if (std.mem.eql(u8, task, t.slash)) return self.runInternalTool(t.tool, t.args);
+    /// Executes one registry command from `submit`. `task` is the raw
+    /// submitted line, which /autoresearch re-submits as an agent task when
+    /// given real arguments.
+    fn runCommand(self: *Model, ctx: *vxfw.EventContext, pc: ParsedCommand, task: []const u8) !void {
+        switch (pc.spec.action) {
+            // A quit command has to set `ctx.quit`, rather than merely stop
+            // the input handler: App.run returns on that flag and its
+            // caller's defer then restores the alternate screen, raw input,
+            // mouse mode, and bracketed paste before the shell regains the
+            // terminal.
+            .quit => ctx.quit = true,
+            .help => self.printHelp(),
+            // "/model" alone opens the picker on the full list; "/model kimi"
+            // seeds it with a starting query, so a remembered partial name is
+            // one Enter away instead of a blank list to type into again.
+            .model => self.openModelPicker(pc.args),
+            // /goal <intent> designs a goal through the agent (which calls
+            // the goal tool to persist it), matching `clanker goal
+            // "<intent>"`. Runs as a normal task so it streams like any
+            // other turn.
+            .goal => {
+                if (pc.args.len == 0) {
+                    self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
+                    return;
+                }
+                _ = self.runGoalTask(ctx, pc.args);
+            },
+            .autoresearch => {
+                if (pc.args.len == 0 or std.mem.eql(u8, pc.args, "--help") or std.mem.eql(u8, pc.args, "-h")) {
+                    self.lines.append(self.arena, .{ .text = "usage: /autoresearch --target <file> --harness \"<cmd>\" [--iters N] [--dry-run]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  runs the measurement loop; use --dry-run to validate without LLM", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  example: /autoresearch --target tools/zig/calculator.zig --harness \"sh -c 'echo score: 1.0'\" --dry-run", .dim = true }) catch {};
+                    return;
+                }
+                // Run as a normal agent task so /autoresearch benefits from
+                // the same streaming/history as any other task. The prompt
+                // tells the agent which CLI to invoke.
+                try self.submitTask(ctx, task);
+            },
+            // /sessions, /graph, /status, /plugins run the same internal
+            // `cmd_*` WASM tools the CLI subcommands invoke, so the REPL is
+            // not a walled-off corner of clanker. Output is folded into the
+            // transcript as dim lines, exactly like a tool result.
+            .tool => |t| _ = self.runInternalTool(t.name, t.args),
         }
-        // /goal <intent> designs a goal through the agent (which calls the goal
-        // tool to persist it), matching `clanker goal "<intent>"`. Run it as a
-        // normal task so it streams like any other turn.
-        if (std.mem.eql(u8, task, "/goal")) {
-            self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
-            return true;
-        }
-        if (std.mem.startsWith(u8, task, "/goal ")) {
-            const intent = std.mem.trim(u8, task[6..], " ");
-            if (intent.len == 0) {
-                self.lines.append(self.arena, .{ .text = "usage: /goal <intent> — e.g. /goal fix the failing eval", .dim = true }) catch {};
-                return true;
-            }
-            return self.runGoalTask(ctx, intent);
-        }
-        return false;
     }
 
     /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
@@ -691,18 +888,16 @@ const Model = struct {
         self.session_id = id;
     }
 
-    /// The full command set is exactly what `submit` recognizes, so this is
-    /// hand-maintained rather than generated — unlike the deleted REPL's
-    /// `cmd_*` catalog (docs/prds/repl-tui.md), there is no
-    /// registry here yet to generate it from. Keep in sync by hand until
-    /// there is.
+    /// The command list is generated from `command_registry`
+    /// (`buildCommandHelp`), so a registry entry can never go undocumented —
+    /// the property the deleted REPL's generated `:help` had
+    /// (docs/prds/repl-tui.md). The key bindings stay hand-written here:
+    /// they are wired in the event handler, not the registry.
     fn printHelp(self: *Model) void {
-        const text =
-            \\commands:
-            \\  /help, ?          show this help
-            \\  /model [query]    switch provider/model (fuzzy picker; Enter picks, Esc cancels)
-            \\  /autoresearch ... measurement loop (see /autoresearch --help)
-            \\  /quit, /exit, /q  leave the REPL (bare "exit"/"quit" also work)
+        const commands = buildCommandHelp(self.arena) catch return;
+        var it = std.mem.splitScalar(u8, commands, '\n');
+        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        const keys =
             \\keys:
             \\  Up/Down           recall previous input
             \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
@@ -710,8 +905,8 @@ const Model = struct {
             \\  Ctrl-Shift-C      copy the selection (or the input line)
             \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
         ;
-        var it = std.mem.splitScalar(u8, text, '\n');
-        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        var kit = std.mem.splitScalar(u8, keys, '\n');
+        while (kit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
     }
 
     fn openModelPicker(self: *Model, seed_query: []const u8) void {
@@ -1517,34 +1712,6 @@ fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw
         if (row < n.last.row) try out.append(alloc, '\n');
     }
     return out.toOwnedSlice(alloc);
-}
-
-/// The commands that leave the REPL rather than being submitted to the
-/// agent. `clanker repl` is a shell: /quit, /exit, /q and a bare exit/quit
-/// all end the session; anything else is a task. The legacy REPL handled the
-/// same set in-process; this matches it.
-fn isQuitCommand(task: []const u8) bool {
-    const t = std.mem.trim(u8, task, " \t");
-    return std.mem.eql(u8, t, "/quit") or
-        std.mem.eql(u8, t, "/exit") or
-        std.mem.eql(u8, t, "/q") or
-        std.mem.eql(u8, t, "exit") or
-        std.mem.eql(u8, t, "quit");
-}
-
-test "isQuitCommand recognizes the REPL quit set" {
-    try std.testing.expect(isQuitCommand("/quit"));
-    try std.testing.expect(isQuitCommand("/exit"));
-    try std.testing.expect(isQuitCommand("/q"));
-    try std.testing.expect(isQuitCommand("exit"));
-    try std.testing.expect(isQuitCommand("quit"));
-    try std.testing.expect(isQuitCommand("  /q  "));
-    // A leading slash distinguishes a command from the same word as a task;
-    // a bare word that is not a quit command is a task.
-    try std.testing.expect(!isQuitCommand("/quitnow"));
-    try std.testing.expect(!isQuitCommand("exit handling is next"));
-    try std.testing.expect(!isQuitCommand(""));
-    try std.testing.expect(!isQuitCommand("please exit"));
 }
 
 /// Folds CR/LF runs in clipboard text to single spaces so a multi-line
