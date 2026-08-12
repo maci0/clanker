@@ -166,7 +166,18 @@ pub const Worktree = struct {
             .exited => |c| c == 0,
             else => false,
         };
-        if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+        if (!ok) {
+            log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+            return;
+        }
+        // git reset --hard removes untracked directories (state/, .env
+        // copies) that linkSharedState set up. Without re-establishing
+        // them, subsequent iterations in this worktree find no state/
+        // directory and every sandbox-readable file (learnings, autolearn,
+        // reasoning, plugin config, token stats) silently fails to write.
+        // Re-run the same setup that create() used.
+        linkSharedState(gpa, io, self.path) catch |err|
+            log.log(.warn, "improve-self: could not re-link shared state after resync: {s}", .{@errorName(err)});
     }
 };
 
