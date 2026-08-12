@@ -1827,7 +1827,12 @@ pub const Engine = struct {
     /// model knows not to patch it blind.
     fn contextBudget(self: *const Engine) usize {
         const window: usize = self.provider.activeModel().context_window;
-        return std.math.clamp(window, 64 * 1024, 256 * 1024);
+        // The source budget tracks the model's own window: roughly 3 bytes per
+        // token over about a third of the window comes out at the window
+        // itself in bytes. The ceiling is a cost decision, not a capacity one.
+        // There is deliberately no floor — a floor above the window would make
+        // small-window models overshoot their own capacity on every attempt.
+        return @min(window, 256 * 1024);
     }
 
     /// The source context, split at the cache breakpoint.
@@ -2800,11 +2805,11 @@ test "the context budget follows the model's own window" {
     const arena = arena_state.allocator();
     var cfg = config.Config{};
 
-    // A small window keeps the floor; a large one is still capped rather than
-    // billing the whole repository on every attempt.
+    // A small window follows its own capacity; a large one is still capped
+    // rather than billing the whole repository on every attempt.
     var small = try config.Provider.single(arena, "s", "http://x", .openai_compat, "m", .{ .context_window = 8192 });
     var engine = Engine{ .ctx = undefined, .arena = arena, .provider = &small, .cfg = &cfg, .hist = undefined, .instructions = "" };
-    try std.testing.expectEqual(@as(usize, 64 * 1024), engine.contextBudget());
+    try std.testing.expectEqual(@as(usize, 8192), engine.contextBudget());
 
     var mid = try config.Provider.single(arena, "m", "http://x", .openai_compat, "m", .{ .context_window = 131072 });
     engine.provider = &mid;

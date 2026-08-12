@@ -46,7 +46,7 @@ export function renderGoals(goals) {
 
 /* Whether anything is working this goal right now: a run streaming into this
    page, or one the server registry attributes to another client. */
-function isGoalRunning(gid) {
+export function isGoalRunning(gid) {
   if (Object.prototype.hasOwnProperty.call(runningIds, gid)) return true;
   var run = goalRuns[gid];
   return !!(run && run.status === "running");
