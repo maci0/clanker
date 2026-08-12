@@ -267,6 +267,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
           }catch(_e){}
         }
         b.dataset.graphId = dn.data.id;
+        b.setAttribute("data-iter", String(iter));
         b.addEventListener("mouseenter", function(){ highlightPath(true); });
         b.addEventListener("mouseleave", function(){ highlightPath(false); });
         b.addEventListener("focus", function(){ highlightPath(true); });
