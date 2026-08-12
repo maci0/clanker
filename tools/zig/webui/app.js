@@ -2253,6 +2253,15 @@ function clearLoading(name) {
 var viewSettled = false;
 var currentView = null;
 
+/* The last view the page was on, persisted so a refresh that arrives without a
+   URL fragment — a fresh tab on /webui, a proxy that drops the hash, or the
+   browser itself after certain hard reloads — still opens the same screen
+   instead of defaulting to chat. The URL hash is the primary source of truth
+   when it names a real view; this is the fallback for when it does not. */
+function saveView(name) {
+  try { window.localStorage.setItem("clanker.view", name); } catch (e) {}
+}
+
 function showView(name, focusPanel) {
   if (VIEWS.indexOf(name) === -1) name = "chat";
   // The rooms poll has no idea the view switched away from under it — only
@@ -2261,6 +2270,7 @@ function showView(name, focusPanel) {
   // up where it left off if Rooms is reopened.
   if (currentView === "rooms" && name !== "rooms") stopChatPoll();
   currentView = name;
+  saveView(name);
   VIEWS.forEach(function (v) {
     var tab = document.getElementById("tab-" + v);
     var panel = document.getElementById("view-" + v);
@@ -3894,6 +3904,18 @@ setBusy(false);
 var openingHash = window.location.hash.replace("#", "");
 var needsPluginsNow = !!openingHash && VIEWS.indexOf(openingHash) === -1;
 
+/* The view to open on load: a URL fragment naming a real view wins; otherwise
+   the last view this browser was on (persisted by showView) is reopened so a
+   hard refresh keeps you on the same page instead of dropping to chat. */
+function lastView() {
+  try {
+    var v = window.localStorage.getItem("clanker.view");
+    if (v && VIEWS.indexOf(v) !== -1) return v;
+  } catch (e) {}
+  return "";
+}
+var openingView = openingHash && VIEWS.indexOf(openingHash) !== -1 ? openingHash : lastView() || "chat";
+
 function afterFirstDraw(work) {
   if (window.requestIdleCallback) window.requestIdleCallback(work, { timeout: 2000 });
   else window.setTimeout(work, 0);
@@ -3912,7 +3934,7 @@ afterFirstDraw(function () {
 });
 syncSubmitLabel();
 // Only the opening view's data is fetched now; the rest load when opened.
-showView(window.location.hash.replace("#", ""), false);
+showView(openingView, false);
 /* Reopening the page used to show an empty transcript even when the picker
    said the conversation had nine messages: nothing ever fetched them. The
    conversation you were last in is replayed, so a reload resumes rather

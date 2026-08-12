@@ -4,6 +4,7 @@
 const std = @import("std");
 const json = std.json;
 const types = @import("../llm/types.zig");
+const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 
 pub const Session = struct {
@@ -311,6 +312,37 @@ test "compactMessages counts short content and tool-call arguments" {
     try std.testing.expectEqual(@as(usize, 2), messages.items.len);
     try std.testing.expectEqual(types.Role.system, messages.items[0].role);
     try std.testing.expectEqualStrings("keep", messages.items[1].content.?);
+}
+
+test "compactMessages counts tool-call arguments toward the token estimate" {
+    // An assistant message whose own content is absent but whose tool-call
+    // arguments are long must estimate tokens from those arguments, the way
+    // listSessions counts byte weight. Without it, a session made almost
+    // entirely of tool calls would never compact no matter how long the
+    // arguments got.
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+    try messages.append(std.testing.allocator, .{ .role = .system, .content = "sys" });
+    try messages.append(std.testing.allocator, .{
+        .role = .assistant,
+        .tool_calls = &.{.{
+            .id = "c1",
+            .name = "read_file",
+            .arguments = "aaaaaaaaaaaaaaaa", // 16 bytes → 4 tokens
+        }},
+    });
+    try messages.append(std.testing.allocator, .{ .role = .user, .content = "bbbb" });
+
+    // System (1) + tool call (4) + user (1) = 6 tokens. A budget of 4 evicts
+    // the oldest non-system message — the 4-token tool call — and leaves
+    // system + the 1-token user message. If arguments were not counted the
+    // tool call would be free, the total would be 2 ≤ 4, and nothing would
+    // be dropped.
+    compactMessages(&messages, 4);
+    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+    try std.testing.expectEqual(types.Role.user, messages.items[1].role);
+    try std.testing.expectEqualStrings("bbbb", messages.items[1].content.?);
 }
 
 test "compactMessages preserves system messages even when they exceed the budget" {
@@ -816,4 +848,24 @@ test "listSessions orders by most recently updated" {
     try std.testing.expectEqual(@as(usize, 2), list.len);
     try std.testing.expectEqualStrings("newer", list[0].id);
     try std.testing.expectEqualStrings("older", list[1].id);
+}
+
+test "deleteSession on a missing session returns FileNotFound without touching the repo" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No session exists, so deletion must fail cleanly. Everything stays
+    // inside the temporary dir: nothing in the checkout (e.g. state/) may be
+    // created or modified, which is what keeps this test from interfering
+    // with the git tool's deny checks in the eval suite.
+    try std.testing.expectError(error.FileNotFound, deleteSession(io, arena, tmp.dir, "nope"));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, "state", .{}));
 }
