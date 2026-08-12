@@ -2297,7 +2297,9 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const std_dir = std.fmt.allocPrint(h.sandbox.gpa, "{s}/std", .{zig_lib_dir}) catch return Err.invalid;
     defer h.sandbox.gpa.free(std_dir);
     const argv = [_][]const u8{ "rg", "-n", "-F", "--max-count", "40", sym, std_dir };
-    const res = std.process.run(h.sandbox.gpa, h.sandbox.io, .{ .argv = &argv }) catch return Err.invalid;
+    var child_env = execEnvironment(h.sandbox.gpa, h.sandbox) catch return Err.invalid;
+    defer child_env.deinit();
+    const res = std.process.run(h.sandbox.gpa, h.sandbox.io, .{ .argv = &argv, .environ_map = &child_env }) catch return Err.invalid;
     defer h.sandbox.gpa.free(res.stdout);
     defer h.sandbox.gpa.free(res.stderr);
     if (res.stdout.len == 0) return Err.not_found;
