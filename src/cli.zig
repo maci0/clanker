@@ -16,7 +16,6 @@ const worktree_mod = @import("improve/worktree.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
-const session_export = @import("agent/session_export.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
@@ -123,7 +122,7 @@ pub const Options = struct {
     /// an `after` ts (history) or an on/off token (subscribe).
     chat_sub: []const u8 = "rooms",
     /// `session export <id> [path]`: where the HTML transcript goes. Absent,
-    /// `session_export.defaultPath` picks `state/exports/<id>.html`. The id
+    /// The session_export tool picks `state/exports/<id>.html`. The id
     /// itself rides in `session`, the field every other command already reads
     /// a session id out of.
     session_out: ?[]const u8 = null,
@@ -2944,11 +2943,10 @@ fn cmdSessions(init: std.process.Init) !void {
 /// `clanker session export <id> [path]` — one saved conversation written out
 /// as a self-contained HTML transcript.
 ///
-/// Currently native, but a candidate for a `cmd_*` WASM tool: `ck_fs_write`
-/// lets a guest write files directly (the way write_note and edit_file do),
-/// so the output-buffer-size concern that originally kept this native no
-/// longer applies. The rendering lives in `agent/session_export.zig` and is
-/// unit-tested there; this only resolves the id and the destination.
+/// Rendering and the default state/exports write live in the internal
+/// session_export WASM tool. A custom destination is written here from the
+/// tool's returned HTML because descriptor policy cannot safely grant an
+/// arbitrary caller-selected filesystem prefix.
 fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -2960,16 +2958,22 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "not a session id: '{s}'", .{id});
         return error.InvalidSessionId;
     }
-    const s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), id) catch |err| {
-        log.log(.error_, "cannot read session '{s}': {s} (clanker sessions lists them)", .{ id, @errorName(err) });
-        return err;
-    };
-    const html = try session_export.render(arena, s);
-    const path = opts.session_out orelse try session_export.defaultPath(arena, id);
-    // Atomic, so re-exporting over a file someone already has open leaves
-    // them the previous complete document rather than half of the new one.
-    try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, html);
-    const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, s.messages.len, html.len });
+    const input = try std.fmt.allocPrint(arena, "{{\"id\":{f},\"return_html\":{s}}}", .{
+        std.json.fmt(id, .{}),
+        if (opts.session_out != null) "true" else "false",
+    });
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "session_export", input);
+    const ExportResult = struct { ok: bool = false, path: []const u8 = "", messages: usize = 0, bytes: usize = 0, html: ?[]const u8 = null, @"error": ?[]const u8 = null };
+    const result = std.json.parseFromSliceLeaky(ExportResult, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
+    if (!result.ok) {
+        log.log(.error_, "cannot export session '{s}': {s}", .{ id, result.@"error" orelse "tool failed" });
+        return error.ToolFailed;
+    }
+    const path = opts.session_out orelse result.path;
+    if (opts.session_out != null) {
+        try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, result.html orelse return error.ToolFailed);
+    }
+    const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, result.messages, result.bytes });
     try writeStdOut(io, line);
 }
 
@@ -4616,20 +4620,21 @@ fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Parse room from query string: /api/chat/pins?room=...
-    const room = blk: {
-        if (std.mem.indexOf(u8, target, "?room=")) |idx| {
-            const raw = target[idx + 6 ..];
-            // Trim at next & if present
-            const end = std.mem.indexOf(u8, raw, "&") orelse raw.len;
-            break :blk percentDecode(arena, raw[0..end]) catch {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad room param\"}");
-                return;
-            };
+    var room: []const u8 = "";
+    if (std.mem.findScalar(u8, target, '?')) |q| {
+        var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
+        while (params.next()) |pair| {
+            if (std.mem.findScalar(u8, pair, '=')) |eq| {
+                const k = pair[0..eq];
+                const v = pair[eq + 1 ..];
+                if (std.mem.eql(u8, k, "room")) room = percentDecode(arena, v) catch v;
+            }
         }
+    }
+    if (room.len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
-    };
+    }
 
     const pins = chatrooms.getPins(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, room) catch |err| {
         log.log(.error_, "GET /api/chat/pins: {s}", .{@errorName(err)});
@@ -7964,6 +7969,8 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
     s.objectField("instance") catch return;
     s.beginObject() catch return;
     s.objectField("name") catch return;
