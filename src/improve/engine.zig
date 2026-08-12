@@ -386,33 +386,43 @@ pub const Engine = struct {
         // its whole retry budget failing the same way. Checked before the
         // proposal parser, which would read a request as a malformed patch and
         // send back advice about JSON escaping.
-        if (self.requests_left > 0) {
-            var refused: ?[]const u8 = null;
-            if (proposal_mod.parseFileRequest(self.arena, json_text, opts.max_request_files, &refused) catch null) |want| {
-                self.requests_left -= 1;
-                var missing: std.ArrayList([]const u8) = .empty;
-                const added = try self.grant(want, &missing);
-                if (added > 0) {
-                    log.log(.info, "model asked for {d} file(s); {d} newly granted, {d} request(s) left", .{ want.len, added, self.requests_left });
-                    for (self.granted) |g| log.log(.debug, "granted: {s}", .{g});
-                    // The granted files are the answer; stale feedback about a
-                    // previous failure still stands and must not be cleared.
-                    return .need_context;
-                }
-                // Nothing new to show. Asking again would return the same
-                // question, so say why and make the next call produce a patch.
-                log.log(.warn, "file request added nothing new; asking for a patch instead", .{});
-                self.feedback = try std.fmt.allocPrint(
-                    self.arena,
-                    "You asked for files instead of a patch, but none could be added: {s}{s}{s}Everything else you asked for is already in the context above. Propose the patch now, or answer that no changes are needed.",
-                    .{
-                        if (refused) |bad| bad else "",
-                        if (refused != null) " is outside the readable surface. " else "",
-                        if (missing.items.len > 0) "Some of those paths do not exist in this repository. " else "",
-                    },
-                );
+        //
+        // Detection itself must not be gated on requests_left: that budget is
+        // per *run* (not per iteration), so a long run (e.g. --iters far above
+        // a handful) exhausts it early and every later iteration would
+        // otherwise fall through to parseProposal with a {"need": [...]}
+        // body, failing on the missing "summary"/"changes" fields with advice
+        // about JSON escaping that has nothing to do with the real problem.
+        var refused: ?[]const u8 = null;
+        if (proposal_mod.parseFileRequest(self.arena, json_text, opts.max_request_files, &refused) catch null) |want| {
+            if (self.requests_left == 0) {
+                log.log(.warn, "model asked for {d} file(s) but this run's request budget is spent", .{want.len});
+                self.feedback = "Your file-request budget for this run is used up. Propose a patch with whatever is already in context above, or answer that no changes are needed.";
                 return .failed;
             }
+            self.requests_left -= 1;
+            var missing: std.ArrayList([]const u8) = .empty;
+            const added = try self.grant(want, &missing);
+            if (added > 0) {
+                log.log(.info, "model asked for {d} file(s); {d} newly granted, {d} request(s) left", .{ want.len, added, self.requests_left });
+                for (self.granted) |g| log.log(.debug, "granted: {s}", .{g});
+                // The granted files are the answer; stale feedback about a
+                // previous failure still stands and must not be cleared.
+                return .need_context;
+            }
+            // Nothing new to show. Asking again would return the same
+            // question, so say why and make the next call produce a patch.
+            log.log(.warn, "file request added nothing new; asking for a patch instead", .{});
+            self.feedback = try std.fmt.allocPrint(
+                self.arena,
+                "You asked for files instead of a patch, but none could be added: {s}{s}{s}Everything else you asked for is already in the context above. Propose the patch now, or answer that no changes are needed.",
+                .{
+                    if (refused) |bad| bad else "",
+                    if (refused != null) " is outside the readable surface. " else "",
+                    if (missing.items.len > 0) "Some of those paths do not exist in this repository. " else "",
+                },
+            );
+            return .failed;
         }
 
         var rejected_path: ?[]const u8 = null;
