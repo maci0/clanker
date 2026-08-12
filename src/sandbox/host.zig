@@ -139,7 +139,9 @@ pub const Sandbox = struct {
     io: std.Io,
     /// Absolute path of the directory tool filesystem access is confined to.
     root_dir: []const u8,
-    /// Exact host matches allowed for ck_http (e.g. "api.example.com").
+    /// Hosts allowed for ck_http. Entries are exact hostnames or glob
+    /// patterns (`*.example.com`, `sub?.example.com`); a bare `*` allows every
+    /// host. See networkAllowed.
     network_allow: []const []const u8,
     /// Directory prefixes (relative to root_dir) the tool may read/write.
     /// Empty means filesystem access is denied entirely.
@@ -465,6 +467,32 @@ test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
     const no_web_fetch_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &no_web_cfg, &fetch, null);
     try std.testing.expectEqual(@as(usize, 1), no_web_fetch_sb.network_allow.len);
     try std.testing.expectEqualStrings("api.github.com", no_web_fetch_sb.network_allow[0]);
+}
+
+test "networkAllowed matches exact hosts, glob patterns, and the catch-all" {
+    // Exact hostnames match only themselves.
+    try std.testing.expect(networkAllowed(&.{"github.com"}, "github.com"));
+    try std.testing.expect(!networkAllowed(&.{"github.com"}, "api.github.com"));
+
+    // A wildcard subdomain pattern matches any depth of subdomain but not the
+    // bare domain (mirrors exec_pattern_allow's glob semantics).
+    try std.testing.expect(networkAllowed(&.{"*.github.com"}, "api.github.com"));
+    try std.testing.expect(networkAllowed(&.{"*.github.com"}, "a.b.github.com"));
+    try std.testing.expect(!networkAllowed(&.{"*.github.com"}, "github.com"));
+
+    // `?` matches exactly one character.
+    try std.testing.expect(networkAllowed(&.{"sub?.example.com"}, "sub1.example.com"));
+    try std.testing.expect(!networkAllowed(&.{"sub?.example.com"}, "sub12.example.com"));
+
+    // A bare `*` grants every host.
+    try std.testing.expect(networkAllowed(&.{"*"}, "any.host.anywhere"));
+    try std.testing.expect(networkAllowed(&.{"*"}, "127.0.0.1"));
+
+    // An empty allowlist grants nothing.
+    try std.testing.expect(!networkAllowed(&.{}, "github.com"));
+
+    // The catch-all also grants a host a stricter sibling pattern would not.
+    try std.testing.expect(networkAllowed(&.{ "raw.githubusercontent.com", "*" }, "internal.example"));
 }
 
 /// Per-module execution context; passed to host functions via
@@ -1359,6 +1387,18 @@ fn httpMethodFromCode(method: u32) ?std.http.Method {
     };
 }
 
+/// Whether `hostname` is granted by a network allowlist. Exact hostnames match
+/// only themselves; an entry may be a glob pattern like `*.example.com` or
+/// `sub?.example.com`, mirroring exec_pattern_allow (a bare `*` matches every
+/// host, so `"*"` opens all web access). Exact entries from tool manifests and
+/// configuredHosts carry no glob characters, so globMatch treats them exactly.
+fn networkAllowed(allow: []const []const u8, hostname: []const u8) bool {
+    for (allow) |a| {
+        if (globMatch(a, hostname)) return true;
+    }
+    return false;
+}
+
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
     const uri = std.Uri.parse(url) catch return Err.invalid;
     const hostname = switch (uri.host orelse return Err.invalid) {
@@ -1366,13 +1406,7 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         .percent_encoded => |hh| hh,
     };
 
-    var allowed = false;
-    for (h.sandbox.network_allow) |a| {
-        if (std.mem.eql(u8, hostname, a)) {
-            allowed = true;
-            break;
-        }
-    }
+    const allowed = networkAllowed(h.sandbox.network_allow, hostname);
     if (!allowed) {
         log.log(.warn, "[sandbox] tool denied network access to '{s}'", .{hostname});
         return Err.denied;

@@ -577,7 +577,7 @@ Fields:
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.
 - `web`: research-host allowlist for `fetch_web` and `web_search` only.
-  - `allow`: hostnames only — no scheme, path, or port. These hosts are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
+  - `allow`: hostnames or glob patterns — no scheme, path, or port. Each entry matches the exact hostname or a `*`/`?` glob (e.g. `"*.github.com"` matches any subdomain, and a bare `"*"` allows every host). These are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
