@@ -208,6 +208,3 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
-comptime {
-    _ = @import("agent/graph.zig");
-}
