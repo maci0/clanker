@@ -3302,7 +3302,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        serveConnection(io, gpa, &cfg, init.environ_map, port, stream);
+        serveConnection(io, gpa, &cfg, init.environ_map, port, opts.host, stream);
     }
 }
 
@@ -3314,6 +3314,10 @@ const Connection = struct {
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     port: u16,
+    /// The `--host` bind address. The Host/Origin guards must accept requests
+    /// addressed to it (a wildcard bind reaches the server via any interface's
+    /// numeric IP), not just loopback, or LAN access is refused.
+    bind_host: []const u8,
     stream: std.Io.net.Stream,
 };
 
@@ -3340,7 +3344,7 @@ var http_latency_le_1s = std.atomic.Value(u64).init(0);
 var http_latency_le_10s = std.atomic.Value(u64).init(0);
 var http_latency_total_ms = std.atomic.Value(u64).init(0);
 
-fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, bind_host: []const u8, stream: std.Io.net.Stream) void {
     // A bound, so a flood of slow clients cannot make the process spawn
     // threads without limit. Over it, say so and close rather than queueing:
     // a client that waits behind 64 in-flight agent turns has already lost.
@@ -3354,17 +3358,17 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 
     const conn = gpa.create(Connection) catch {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, bind_host, stream);
         return;
     };
-    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .stream = stream };
+    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .bind_host = bind_host, .stream = stream };
 
     const thread = std.Thread.spawn(.{}, connectionThread, .{conn}) catch {
         // Out of threads: serving it on the accept loop is slower than a
         // dedicated thread but still correct, and beats dropping the client.
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, bind_host, stream);
         return;
     };
     thread.detach();
@@ -3376,18 +3380,18 @@ fn connectionThread(conn: *Connection) void {
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
     }
-    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.stream);
+    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.bind_host, conn.stream);
 }
 
-fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, bind_host: []const u8, stream: std.Io.net.Stream) void {
     // A hot-reload must never fire mid-request (would drop the client
     // mid-response); see HotReload's doc comment.
     if (hot_reload_active) |hr| hr.begin();
     defer if (hot_reload_active) |hr| hr.end();
-    handleConnection(io, gpa, cfg, environ_map, port, stream);
+    handleConnection(io, gpa, cfg, environ_map, port, bind_host, stream);
 }
 
-fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, bind_host: []const u8, stream: std.Io.net.Stream) void {
     defer stream.close(io);
     var request_id_buf: [24]u8 = undefined;
     const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
@@ -3448,23 +3452,26 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // Only a deliberately narrow, single-line value is accepted because
         // this field is reflected into both logs and the response headers.
         if (requestCorrelationId(headers_raw)) |upstream_id| log.setContext(upstream_id);
-        // Binding to loopback prevents direct remote connections, but does not
-        // stop DNS rebinding: a hostile hostname can resolve to 127.0.0.1 and
-        // make the browser treat this control plane as its own origin. Require
-        // the authority the server actually advertises before serving even a
-        // GET, since several read endpoints expose logs and conversations.
-        if (unexpectedHost(headers_raw, port)) {
+        // The bind address prevents connections from interfaces it did not
+        // open, but does not stop DNS rebinding: a hostile hostname can
+        // resolve to the bound address and make the browser treat this control
+        // plane as its own origin. Require an authority the server actually
+        // advertises (loopback names, the specific `--host`, or any numeric IP
+        // on a wildcard bind) before serving even a GET, since several read
+        // endpoints expose logs and conversations.
+        if (unexpectedHost(headers_raw, port, bind_host)) {
             respond(stream, 421, "Misdirected Request", "{\"ok\":false,\"error\":\"invalid host\"}");
             return;
         }
-        // The listen socket is 127.0.0.1-only, but any page open in the
-        // user's browser can still reach it: every non-GET route here either
+        // The listener's reachable surface is what `--host` opened (loopback
+        // by default), but any page the user has open in their browser can
+        // still reach it: every non-GET route here either
         // runs the agent, execs sandboxed tools, or writes state, so a
         // cross-origin POST from an unrelated site the user happens to have
         // open is CSRF, not a hypothetical. A request with no Origin header
         // (curl, or the raw API used directly) is not a browser cross-site
         // request and is let through.
-        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port)) {
+        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port, bind_host)) {
             respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
             return;
         }
@@ -7905,23 +7912,19 @@ test "request correlation ids are safe for logs and response headers" {
 /// fetch/XHR/form submission (and to same-origin ones too, which is why a
 /// same-host origin is accepted alongside the missing-header case rather than
 /// rejected as "not GET/HEAD").
-fn crossOriginRequest(headers_raw: []const u8, port: u16) bool {
+fn crossOriginRequest(headers_raw: []const u8, port: u16, bind_host: []const u8) bool {
     const origin = headerValue(headers_raw, "origin") orelse return false;
-    var buf: [40]u8 = undefined;
-    const want_ip = std.fmt.bufPrint(&buf, "http://127.0.0.1:{d}", .{port}) catch return true;
-    if (std.mem.eql(u8, origin, want_ip)) return false;
-    var buf2: [40]u8 = undefined;
-    const want_host = std.fmt.bufPrint(&buf2, "http://localhost:{d}", .{port}) catch return true;
-    if (std.mem.eql(u8, origin, want_host)) return false;
-    return true;
+    // Strip the scheme; the Origin is `http://host:port` for this server.
+    const scheme = if (std.mem.startsWith(u8, origin, "http://")) "http://" else if (std.mem.startsWith(u8, origin, "https://")) "https://" else return true;
+    return !authorityAllowed(origin[scheme.len..], port, bind_host);
 }
 
-/// Refuse requests addressed through any authority other than the two local
-/// names exposed by `clanker serve`. This closes DNS rebinding for both the
+/// Refuse requests addressed through any authority other than the ones this
+/// listener is reachable at. This closes DNS rebinding for both the
 /// state-changing API and sensitive GET endpoints. HTTP/1.1 requires Host;
 /// treating a missing or duplicate Host as invalid also avoids ambiguity
 /// between intermediaries and this deliberately small parser.
-fn unexpectedHost(headers_raw: []const u8, port: u16) bool {
+fn unexpectedHost(headers_raw: []const u8, port: u16, bind_host: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     var authority: ?[]const u8 = null;
     while (lines.next()) |line| {
@@ -7931,30 +7934,101 @@ fn unexpectedHost(headers_raw: []const u8, port: u16) bool {
         authority = std.mem.trim(u8, line[colon + 1 ..], " \t");
     }
     const value = authority orelse return true;
-    var ip_buf: [32]u8 = undefined;
-    const ip = std.fmt.bufPrint(&ip_buf, "127.0.0.1:{d}", .{port}) catch return true;
-    if (std.mem.eql(u8, value, ip)) return false;
-    var local_buf: [32]u8 = undefined;
-    const local = std.fmt.bufPrint(&local_buf, "localhost:{d}", .{port}) catch return true;
-    return !std.ascii.eqlIgnoreCase(value, local);
+    return !authorityAllowed(value, port, bind_host);
+}
+
+/// Whether a `host:port` authority (from a Host header or an Origin) is one
+/// this listener may legitimately be addressed as.
+///
+/// Always the loopback names. Beyond that, when `--host` names a specific
+/// interface (the default `127.0.0.1`, or a LAN IP like `192.168.1.50`), that
+/// exact authority is accepted; a wildcard bind (`0.0.0.0` or `::`) is reached
+/// via any of the machine's interface IPs, so any *numeric* IP on the right
+/// port is accepted.
+///
+/// Numeric-IP-only for the wildcard case is what keeps DNS rebinding closed: a
+/// hostile hostname resolving to the machine presents itself in Host/Origin as
+/// that *hostname*, never as a numeric IP, so it is still refused.
+fn authorityAllowed(authority: []const u8, port: u16, bind_host: []const u8) bool {
+    var ip_buf: [64]u8 = undefined;
+    const ip = std.fmt.bufPrint(&ip_buf, "127.0.0.1:{d}", .{port}) catch return false;
+    if (std.mem.eql(u8, authority, ip)) return true;
+    var local_buf: [64]u8 = undefined;
+    const local = std.fmt.bufPrint(&local_buf, "localhost:{d}", .{port}) catch return false;
+    if (std.ascii.eqlIgnoreCase(authority, local)) return true;
+
+    const wildcard = std.mem.eql(u8, bind_host, "0.0.0.0") or std.mem.eql(u8, bind_host, "::");
+    if (!wildcard) {
+        // A specific bind: that exact authority is the only other one.
+        var want_buf: [64]u8 = undefined;
+        const want = if (std.mem.indexOfScalar(u8, bind_host, ':') != null)
+            std.fmt.bufPrint(&want_buf, "[{s}]:{d}", .{ bind_host, port }) catch return false
+        else
+            std.fmt.bufPrint(&want_buf, "{s}:{d}", .{ bind_host, port }) catch return false;
+        return std.mem.eql(u8, authority, want);
+    }
+
+    // Wildcard bind: accept any numeric IP on this port, IPv4 or bracketed
+    // IPv6. A hostname is refused (that is the DNS-rebinding defence).
+    const last_colon = std.mem.lastIndexOfScalar(u8, authority, ':') orelse return false;
+    const host_part = authority[0..last_colon];
+    const port_text = authority[last_colon + 1 ..];
+    const got_port = std.fmt.parseInt(u16, port_text, 10) catch return false;
+    if (got_port != port) return false;
+    // Numeric-only: a bracketed IPv6 literal, or a dotted IPv4 literal. A
+    // hostname never parses, so it stays refused on the wildcard bind.
+    if (std.mem.indexOfScalar(u8, host_part, ':') != null) {
+        if (host_part.len < 2 or host_part[0] != '[' or host_part[host_part.len - 1] != ']') return false;
+        return std.Io.net.IpAddress.parseIp6(host_part[1 .. host_part.len - 1], 0) catch null != null;
+    }
+    return std.Io.net.IpAddress.parseIp4(host_part, 0) catch null != null;
+}
+
+test "authorityAllowed accepts loopback and the specific/wildcard binds, refuses hostnames" {
+    // Loopback names, always.
+    try std.testing.expect(authorityAllowed("127.0.0.1:4173", 4173, "127.0.0.1"));
+    try std.testing.expect(authorityAllowed("localhost:4173", 4173, "127.0.0.1"));
+    // Wrong port is refused even for a loopback-ish authority.
+    try std.testing.expect(!authorityAllowed("127.0.0.1:9999", 4173, "127.0.0.1"));
+    // A specific LAN bind accepts exactly that authority.
+    try std.testing.expect(authorityAllowed("192.168.1.50:4173", 4173, "192.168.1.50"));
+    try std.testing.expect(!authorityAllowed("192.168.1.51:4173", 4173, "192.168.1.50"));
+    // Wildcard bind accepts any numeric IP on the right port, IPv4 and IPv6.
+    try std.testing.expect(authorityAllowed("192.168.1.50:4173", 4173, "0.0.0.0"));
+    try std.testing.expect(authorityAllowed("10.0.0.9:4173", 4173, "0.0.0.0"));
+    try std.testing.expect(authorityAllowed("[::1]:4173", 4173, "::"));
+    try std.testing.expect(authorityAllowed("[fd00::1]:4173", 4173, "0.0.0.0"));
+    // A hostname is never a legitimate authority, even on the wildcard bind:
+    // that is the DNS-rebinding defence.
+    try std.testing.expect(!authorityAllowed("attacker.example:4173", 4173, "0.0.0.0"));
+    try std.testing.expect(!authorityAllowed("myhost:4173", 4173, "0.0.0.0"));
+    // Missing port or garbage is refused.
+    try std.testing.expect(!authorityAllowed("192.168.1.50", 4173, "0.0.0.0"));
+    try std.testing.expect(!authorityAllowed("192.168.1.50:abc", 4173, "0.0.0.0"));
 }
 
 test "unexpectedHost only accepts the loopback authorities for this listener" {
-    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\n", 4173));
-    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nhOsT: LOCALHOST:4173\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: attacker.example:4173\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:9999\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nUser-Agent: test\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:4173\r\nHost: attacker.example\r\n", 4173));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nhOsT: LOCALHOST:4173\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: attacker.example:4173\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:9999\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nUser-Agent: test\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:4173\r\nHost: attacker.example\r\n", 4173, "127.0.0.1"));
+    // A wildcard bind lets a LAN client's numeric IP through, but not a name.
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 192.168.1.50:4173\r\n", 4173, "0.0.0.0"));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: evil.example:4173\r\n", 4173, "0.0.0.0"));
 }
 
 test "crossOriginRequest allows same-origin and no-Origin requests, refuses others" {
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: x\r\n", 4173));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:4173\r\n", 4173));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173\r\n", 4173));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:9999\r\n", 4173));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: null\r\n", 4173));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: x\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:4173\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:9999\r\n", 4173, "127.0.0.1"));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: null\r\n", 4173, "127.0.0.1"));
+    // A wildcard bind accepts a LAN client's numeric-origin, refuses a name.
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://192.168.1.50:4173\r\n", 4173, "0.0.0.0"));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173, "0.0.0.0"));
 }
 
 fn acceptsGzip(headers_raw: []const u8) bool {
@@ -8038,7 +8112,7 @@ test "fuzz: header parsing never panics on bytes straight off the socket" {
             const len = smith.slice(&buf);
             const headers_raw = buf[0..len];
             _ = headerValue(headers_raw, "origin");
-            _ = crossOriginRequest(headers_raw, 4173);
+            _ = crossOriginRequest(headers_raw, 4173, "127.0.0.1");
             _ = acceptsGzip(headers_raw);
             _ = ifNoneMatchHits(headers_raw, "\"abc\"");
         }
