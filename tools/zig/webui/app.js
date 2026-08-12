@@ -60,6 +60,7 @@ var el = {
   peers: document.getElementById("peers"),
   peersChip: document.getElementById("peers-chip"),
   sessionChip: document.getElementById("session-chip"),
+  headerModel: document.getElementById("header-model"),
   newChat: document.getElementById("new-chat"),
   themeToggle: document.getElementById("theme-toggle"),
   runsRefresh: document.getElementById("runs-refresh"),
@@ -200,7 +201,26 @@ function loadSession() {
 }
 
 function renderSessionChip() {
-  el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  if (el.sessionChip) el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  if (el.headerModel) {
+    var sel = el.modelSelect ? el.modelSelect.value : "";
+    var label = "";
+    if (sel && sel.indexOf(" ") !== -1) label = sel.slice(sel.indexOf(" ") + 1).trim();
+    else if (sel) label = sel;
+    el.headerModel.textContent = label || "default model";
+    el.headerModel.title = sel ? ("Model: " + sel + " — click to change") : "Model: default (from config) — click to change";
+  }
+}
+if (typeof window !== "undefined") {
+  document.addEventListener("DOMContentLoaded", function(){
+    var hm = document.getElementById("header-model");
+    if (hm) hm.addEventListener("click", function(){
+      var dest = document.getElementById("task");
+      if (dest) { dest.focus(); dest.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      var ms = document.getElementById("model-search");
+      if (ms) { try { ms.focus(); ms.select(); } catch(_){} }
+    });
+  });
 }
 
 var THEMES = THEMESMod;

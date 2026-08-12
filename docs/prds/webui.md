@@ -166,7 +166,7 @@ hidden `<select>`, which stays the one thing `runOptions()`/localStorage/
 `renderContextMeter()` read — selecting an entry sets its value and
 dispatches `change`, so nothing downstream needed to change.
 
-**Theme / chrome (2026-08-12).** Light and dark tokens aligned to ChatGPT/Cursor/Claude — `#ffffff`/`#f7f7f8` and `#212121`/`#171717`, `14px` body with antialiasing, `20px` pill composer (`focus-within` soft shadow), user bubble `16px` right-aligned at `min(42rem,78%)`, pill buttons (`999px`), header sticky with `blur(8px)`, radii `6/10/14/999px`. Lamps and `--warn/--ok` hues preserved, just softened to the new paper.
+**Theme / chrome (2026-08-12).** Light `#ffffff`/`#f7f7f8` and dark `#212121`/`#171717` aligned to ChatGPT/Cursor/Claude — `14px` body with antialiasing, `20→24px` pill composer (subtle focus ring), user bubble `18–20px` right-aligned `min(30–42rem,68–78%)`, pill buttons `999px` and inputs `999px` (`sans 13px`), header `sticky` + `blur(8px)` now ghost `chip-btn` (`transparent`→`surface-2` on hover) with `header-model` `999px` pill, rail `14–14.5rem` on `bg` with collapsed `56px` mode, `turn-events` as `sans 12px` chips, `event-ask` as `14px` card, `code-block` dark-sink via `--code-bg/--code-fg`, `skeleton` shimmer instead of inset slot, `turn-foot` hover-reveal and other ChatGPT-density tweaks (`46rem` chat column, `22px` hero, soft `palette`/`chat-log`).
 
 **Subagent graphs and the Fleet view.** A nested run always recorded its own
 graph, but under the same second-resolution `run-<ts>` id as everything

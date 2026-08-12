@@ -141,9 +141,16 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
         delivery.id = try std.fmt.allocPrint(alloc, "{x}-{x}", .{ now_bits, content_hash });
     }
 
-    // No peer named: fan out to every configured peer instead of one.
+    // No peer named: fan out to every configured peer instead of one. The
+    // same `delivery.id` goes to every peer and is echoed back below, so a
+    // caller that sees a nonzero `failed` count can retry the whole
+    // broadcast with that id: peers already reached dedup the redelivery on
+    // the id, the ones missed the first time receive it for the first time.
     if (req.peer.len == 0) {
-        for (peers) |p| sendNotify(alloc, p, delivery) catch {};
+        var failed: usize = 0;
+        for (peers) |p| sendNotify(alloc, p, delivery) catch {
+            failed += 1;
+        };
         var buf: [128]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
         var s = std.json.Stringify{ .writer = &w, .options = .{} };
@@ -152,6 +159,10 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
         try s.write(true);
         try s.objectField("sent");
         try s.write("all");
+        try s.objectField("failed");
+        try s.write(failed);
+        try s.objectField("id");
+        try s.write(delivery.id);
         try s.endObject();
         return out.writeAll(buf[0..w.end]);
     }
@@ -161,7 +172,7 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
         if (std.mem.eql(u8, p.name, req.peer)) target = p;
     }
     const peer = target orelse return lib.fail(out, "no such peer");
-    sendNotify(alloc, peer, delivery) catch |err| return lib.failErr(out, err, "notifying the peer");
+    sendNotify(alloc, peer, delivery) catch |err| return failWithId(out, err, "notifying the peer", delivery.id);
 
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -171,8 +182,40 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
     try s.write(true);
     try s.objectField("sent");
     try s.write(peer.name);
+    try s.objectField("id");
+    try s.write(delivery.id);
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
+}
+
+/// Like `lib.failErr`, but echoes `id` back to the caller. A failed send is
+/// exactly when a retry matters most, and a retry only dedups correctly on
+/// the receiving end if it reuses this same id — which the caller can only
+/// do if the id it never chose gets handed back to it here.
+fn failWithId(out: *lib.Out, err: anyerror, what: []const u8, id: []const u8) !void {
+    var msg_buf: [512]u8 = undefined;
+    const msg = switch (err) {
+        error.SandboxDenied => std.fmt.bufPrint(&msg_buf, "{s}: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow)", .{what}),
+        error.NotFound => std.fmt.bufPrint(&msg_buf, "{s}: not found", .{what}),
+        error.TooLarge => std.fmt.bufPrint(&msg_buf, "{s}: too large for one call — ask for a smaller range or narrow the query", .{what}),
+        error.NetworkError => std.fmt.bufPrint(&msg_buf, "{s}: the request did not complete", .{what}),
+        error.InvalidArg => std.fmt.bufPrint(&msg_buf, "{s}: the arguments were rejected", .{what}),
+        error.OutOfMemory => std.fmt.bufPrint(&msg_buf, "{s}: out of memory in the sandbox", .{what}),
+        else => std.fmt.bufPrint(&msg_buf, "{s}: {s}", .{ what, @errorName(err) }),
+    } catch what;
+
+    out.reset();
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(false);
+    try s.objectField("error");
+    try s.write(msg);
+    try s.objectField("id");
+    try s.write(id);
+    try s.endObject();
+    lib.commit(out, &w);
 }
 
 fn sendNotify(alloc: std.mem.Allocator, peer: Peer, req: Request) !void {
