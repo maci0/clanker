@@ -138,12 +138,12 @@ pub const Options = struct {
     /// whatever the server can do (tool calls, write confirmations) to anyone
     /// who can reach the port, so prefer a firewall over binding broadly.
     host: []const u8 = "127.0.0.1",
-    /// `serve --allow-host <name>`, repeatable: extra hostnames the Host
-    /// header may carry. IP literals and `localhost` are always accepted, so
+    /// `serve --serve-as <name>`, repeatable: hostnames this server may
+    /// present itself as. IP literals and `localhost` are always accepted, so
     /// this is only needed when clanker is reached by a real name — a reverse
     /// proxy, a `.lan` entry, a tailnet name. Names, unlike IP literals, are
     /// what DNS rebinding needs, which is why each one is opted into by hand.
-    allow_hosts: []const []const u8 = &.{},
+    serve_as_hosts: []const []const u8 = &.{},
     /// Set when `--help` followed a command: print that command's help rather
     /// than the whole list.
     help_for: ?Command = null,
@@ -343,18 +343,18 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--host")) {
                 opts.host = try takeValue(args, &idx, inline_value, a, diag);
                 used = .host;
-            } else if (std.mem.eql(u8, a, "--allow-host")) {
+            } else if (std.mem.eql(u8, a, "--serve-as")) {
                 // Repeatable, and not comma-split, for the same reason `--with`
                 // is not: one flag per name is what makes the whole policy
                 // legible in a shell history or a service file.
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 const gpa = std.heap.page_allocator;
                 var list: std.ArrayList([]const u8) = .empty;
-                for (opts.allow_hosts) |x| try list.append(gpa, x);
+                for (opts.serve_as_hosts) |x| try list.append(gpa, x);
                 const trimmed = std.mem.trim(u8, v, " \t");
                 if (trimmed.len > 0) try list.append(gpa, trimmed);
-                opts.allow_hosts = try list.toOwnedSlice(gpa);
-                used = .allow_host;
+                opts.serve_as_hosts = try list.toOwnedSlice(gpa);
+                used = .serve_as;
             } else if (std.mem.eql(u8, a, "--target")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 const gpa = std.heap.page_allocator;
@@ -946,7 +946,7 @@ const Flag = enum {
     tasks,
     port,
     host,
-    allow_host,
+    serve_as,
     yes,
     research_target,
     research_harness,
@@ -983,7 +983,7 @@ const Flag = enum {
             .tasks => "--tasks",
             .port => "--port",
             .host => "--host",
-            .allow_host => "--allow-host",
+            .serve_as => "--serve-as",
             .yes => "--yes",
             .research_target => "--target",
             .research_harness => "--harness",
@@ -1052,7 +1052,7 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve [--host <addr>] [--allow-host <name>]... [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host, .allow_host }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--allow-host <name>    an extra hostname requests may address this server by.\n                       Repeatable.\n--port <port>          listen port (default 17921).\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--allow-host pass, so a reverse proxy or a tailnet name has to be named:\n--allow-host clanker.lan." },
+    .{ .command = .serve, .usage = "serve [--host <addr>] [--serve-as <name>]... [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host, .serve_as }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--port <port>          listen port (default 17921).\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
@@ -2657,15 +2657,15 @@ var hot_reload_active: ?*HotReload = null;
 /// Every flag that shapes what the listener is and who it answers to has to be
 /// repeated here, or a hot-reload re-exec silently narrows the policy the
 /// operator started the server with.
-fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8, allow_hosts: []const []const u8) ![]const []const u8 {
+fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8, serve_as_hosts: []const []const u8) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
     try argv.append(arena, "--host");
     try argv.append(arena, bind_addr);
     try argv.append(arena, "--port");
     try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
-    for (allow_hosts) |name| {
-        try argv.append(arena, "--allow-host");
+    for (serve_as_hosts) |name| {
+        try argv.append(arena, "--serve-as");
         try argv.append(arena, name);
     }
     return argv.items;
@@ -3355,7 +3355,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
     if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host, opts.allow_hosts));
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host, opts.serve_as_hosts));
     }
 
     while (true) {
@@ -3363,7 +3363,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        serveConnection(io, gpa, &cfg, init.environ_map, port, opts.allow_hosts, stream);
+        serveConnection(io, gpa, &cfg, init.environ_map, port, opts.serve_as_hosts, stream);
     }
 }
 
@@ -3375,10 +3375,10 @@ const Connection = struct {
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     port: u16,
-    /// `serve --allow-host` entries, allocated once at startup and read-only
+    /// `serve --serve-as` entries, allocated once at startup and read-only
     /// for the life of the process, so sharing the slice across threads is
     /// safe on the same terms as `cfg`.
-    allow_hosts: []const []const u8,
+    serve_as_hosts: []const []const u8,
     stream: std.Io.net.Stream,
 };
 
@@ -3405,7 +3405,7 @@ var http_latency_le_1s = std.atomic.Value(u64).init(0);
 var http_latency_le_10s = std.atomic.Value(u64).init(0);
 var http_latency_total_ms = std.atomic.Value(u64).init(0);
 
-fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, allow_hosts: []const []const u8, stream: std.Io.net.Stream) void {
+fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     // A bound, so a flood of slow clients cannot make the process spawn
     // threads without limit. Over it, say so and close rather than queueing:
     // a client that waits behind 64 in-flight agent turns has already lost.
@@ -3419,17 +3419,17 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 
     const conn = gpa.create(Connection) catch {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, allow_hosts, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
         return;
     };
-    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .allow_hosts = allow_hosts, .stream = stream };
+    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .serve_as_hosts = serve_as_hosts, .stream = stream };
 
     const thread = std.Thread.spawn(.{}, connectionThread, .{conn}) catch {
         // Out of threads: serving it on the accept loop is slower than a
         // dedicated thread but still correct, and beats dropping the client.
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, allow_hosts, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
         return;
     };
     thread.detach();
@@ -3441,18 +3441,18 @@ fn connectionThread(conn: *Connection) void {
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
     }
-    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.allow_hosts, conn.stream);
+    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.serve_as_hosts, conn.stream);
 }
 
-fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, allow_hosts: []const []const u8, stream: std.Io.net.Stream) void {
+fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     // A hot-reload must never fire mid-request (would drop the client
     // mid-response); see HotReload's doc comment.
     if (hot_reload_active) |hr| hr.begin();
     defer if (hot_reload_active) |hr| hr.end();
-    handleConnection(io, gpa, cfg, environ_map, port, allow_hosts, stream);
+    handleConnection(io, gpa, cfg, environ_map, port, serve_as_hosts, stream);
 }
 
-fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, allow_hosts: []const []const u8, stream: std.Io.net.Stream) void {
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     defer stream.close(io);
     var request_id_buf: [24]u8 = undefined;
     const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
@@ -3519,8 +3519,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // the authority the server actually advertises before serving even a
         // GET, since several read endpoints expose logs and conversations.
         // An IP literal cannot be rebound, so `--host 0.0.0.0` is reachable by
-        // address; a name needs `--allow-host` (see `allowedAuthority`).
-        if (unexpectedHost(headers_raw, port, allow_hosts)) {
+        // address; a name needs `--serve-as` (see `allowedAuthority`).
+        if (unexpectedHost(headers_raw, port, serve_as_hosts)) {
             respond(stream, 421, "Misdirected Request", "{\"ok\":false,\"error\":\"invalid host\"}");
             return;
         }
@@ -3531,7 +3531,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // open is CSRF, not a hypothetical. A request with no Origin header
         // (curl, or the raw API used directly) is not a browser cross-site
         // request and is let through.
-        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port, allow_hosts)) {
+        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port, serve_as_hosts)) {
             respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
             return;
         }
@@ -7980,15 +7980,16 @@ test "request correlation ids are safe for logs and response headers" {
 /// cannot be rebound, so any IP literal at this listener's port is accepted —
 /// that is what makes `serve --host 0.0.0.0` reachable from the LAN. A name
 /// can be rebound, so only `localhost` and the names an operator listed with
-/// `--allow-host` pass, and `attacker.example:17921` stays refused however the
+/// `--serve-as` pass, and `attacker.example:17921` stays refused however the
 /// socket is bound.
 ///
 /// The port has to be present and has to be this listener's, with one
 /// deliberate exception: a bare name carrying no port is accepted when it is
-/// in `allow_hosts`, because that is exactly what a reverse proxy terminating
-/// on 443 forwards. A portless IP literal or `localhost` means port 80, which
-/// is not this server, and nobody opted into it, so those stay refused.
-fn allowedAuthority(value: []const u8, port: u16, allow_hosts: []const []const u8) bool {
+/// in `serve_as_hosts`, because that is exactly what a reverse proxy
+/// terminating on 443 forwards. A portless IP literal or `localhost` means
+/// port 80, which is not this server, and nobody opted into it, so those stay
+/// refused.
+fn allowedAuthority(value: []const u8, port: u16, serve_as_hosts: []const []const u8) bool {
     var hostname = value;
     var port_text: ?[]const u8 = null;
     var bracketed = false;
@@ -8018,7 +8019,7 @@ fn allowedAuthority(value: []const u8, port: u16, allow_hosts: []const []const u
         if (got != port) return false;
     } else {
         if (bracketed) return false;
-        for (allow_hosts) |allowed| {
+        for (serve_as_hosts) |allowed| {
             if (std.ascii.eqlIgnoreCase(hostname, allowed)) return true;
         }
         return false;
@@ -8034,7 +8035,7 @@ fn allowedAuthority(value: []const u8, port: u16, allow_hosts: []const []const u
         return true;
     } else |_| {}
     if (std.ascii.eqlIgnoreCase(hostname, "localhost")) return true;
-    for (allow_hosts) |allowed| {
+    for (serve_as_hosts) |allowed| {
         if (std.ascii.eqlIgnoreCase(hostname, allowed)) return true;
     }
     return false;
@@ -8049,7 +8050,7 @@ fn allowedAuthority(value: []const u8, port: u16, allow_hosts: []const []const u
 /// Same authority rule as `unexpectedHost`: comparing against the two loopback
 /// origins alone meant a LAN browser reaching a `--host 0.0.0.0` server could
 /// load the page and then have every POST from it refused as cross-origin.
-fn crossOriginRequest(headers_raw: []const u8, port: u16, allow_hosts: []const []const u8) bool {
+fn crossOriginRequest(headers_raw: []const u8, port: u16, serve_as_hosts: []const []const u8) bool {
     const origin = headerValue(headers_raw, "origin") orelse return false;
     const authority = if (std.mem.startsWith(u8, origin, "http://"))
         origin["http://".len..]
@@ -8060,7 +8061,7 @@ fn crossOriginRequest(headers_raw: []const u8, port: u16, allow_hosts: []const [
     // An origin is a scheme and an authority and nothing else, so a path (or
     // "null", handled by the scheme check above) is malformed, not same-site.
     if (std.mem.findScalar(u8, authority, '/') != null) return true;
-    return !allowedAuthority(authority, port, allow_hosts);
+    return !allowedAuthority(authority, port, serve_as_hosts);
 }
 
 /// Refuse requests addressed through any authority this `clanker serve` does
@@ -8069,7 +8070,7 @@ fn crossOriginRequest(headers_raw: []const u8, port: u16, allow_hosts: []const [
 /// HTTP/1.1 requires Host; treating a missing or duplicate Host as invalid
 /// also avoids ambiguity between intermediaries and this deliberately small
 /// parser.
-fn unexpectedHost(headers_raw: []const u8, port: u16, allow_hosts: []const []const u8) bool {
+fn unexpectedHost(headers_raw: []const u8, port: u16, serve_as_hosts: []const []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     var authority: ?[]const u8 = null;
     while (lines.next()) |line| {
@@ -8079,7 +8080,7 @@ fn unexpectedHost(headers_raw: []const u8, port: u16, allow_hosts: []const []con
         authority = std.mem.trim(u8, line[colon + 1 ..], " \t");
     }
     const value = authority orelse return true;
-    return !allowedAuthority(value, port, allow_hosts);
+    return !allowedAuthority(value, port, serve_as_hosts);
 }
 
 test "unexpectedHost accepts IP literals, localhost and allowlisted names only" {
@@ -8124,7 +8125,7 @@ test "unexpectedHost accepts IP literals, localhost and allowlisted names only" 
     try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: :4173\r\n", 4173, none));
 
     // No port at all: refused, as before, unless the operator named it, which
-    // is the reverse-proxy-on-443 case --allow-host exists for.
+    // is the reverse-proxy-on-443 case --serve-as exists for.
     try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost\r\n", 4173, none));
     try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n", 4173, none));
     try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: [::1]\r\n", 4173, none));
@@ -8301,22 +8302,22 @@ test "flags take their value in either form" {
     try std.testing.expectEqualStrings("::", h3.host);
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--host=" }, null));
 
-    // --allow-host: empty by default, repeatable, and takes its value in
+    // --serve-as: empty by default, repeatable, and takes its value in
     // either form. IP literals and localhost never need it, so an empty list
     // is the whole default policy.
-    try std.testing.expectEqual(@as(usize, 0), h1.allow_hosts.len);
-    const ah1 = try parse(&.{ "clanker", "serve", "--allow-host", "clanker.lan" }, null);
-    try std.testing.expectEqual(@as(usize, 1), ah1.allow_hosts.len);
-    try std.testing.expectEqualStrings("clanker.lan", ah1.allow_hosts[0]);
-    const ah2 = try parse(&.{ "clanker", "serve", "--allow-host=clanker.lan" }, null);
-    try std.testing.expectEqual(@as(usize, 1), ah2.allow_hosts.len);
-    try std.testing.expectEqualStrings("clanker.lan", ah2.allow_hosts[0]);
-    const ah3 = try parse(&.{ "clanker", "serve", "--host", "0.0.0.0", "--allow-host", "clanker.lan", "--allow-host=box.tailnet.ts.net" }, null);
-    try std.testing.expectEqual(@as(usize, 2), ah3.allow_hosts.len);
-    try std.testing.expectEqualStrings("clanker.lan", ah3.allow_hosts[0]);
-    try std.testing.expectEqualStrings("box.tailnet.ts.net", ah3.allow_hosts[1]);
-    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--allow-host=" }, null));
-    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--allow-host" }, null));
+    try std.testing.expectEqual(@as(usize, 0), h1.serve_as_hosts.len);
+    const ah1 = try parse(&.{ "clanker", "serve", "--serve-as", "clanker.lan" }, null);
+    try std.testing.expectEqual(@as(usize, 1), ah1.serve_as_hosts.len);
+    try std.testing.expectEqualStrings("clanker.lan", ah1.serve_as_hosts[0]);
+    const ah2 = try parse(&.{ "clanker", "serve", "--serve-as=clanker.lan" }, null);
+    try std.testing.expectEqual(@as(usize, 1), ah2.serve_as_hosts.len);
+    try std.testing.expectEqualStrings("clanker.lan", ah2.serve_as_hosts[0]);
+    const ah3 = try parse(&.{ "clanker", "serve", "--host", "0.0.0.0", "--serve-as", "clanker.lan", "--serve-as=box.tailnet.ts.net" }, null);
+    try std.testing.expectEqual(@as(usize, 2), ah3.serve_as_hosts.len);
+    try std.testing.expectEqualStrings("clanker.lan", ah3.serve_as_hosts[0]);
+    try std.testing.expectEqualStrings("box.tailnet.ts.net", ah3.serve_as_hosts[1]);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--serve-as=" }, null));
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--serve-as" }, null));
 
     // A following option is not the missing value. Consuming it would hide
     // the actual mistake and reinterpret all remaining arguments.
@@ -8329,7 +8330,7 @@ test "flags take their value in either form" {
     try std.testing.expectEqualStrings("-", literal.research_pattern.?);
 }
 
-test "the hot-reload re-exec keeps the bind address and the host allowlist" {
+test "the hot-reload re-exec keeps the bind address and the serve-as names" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -8348,9 +8349,9 @@ test "the hot-reload re-exec keeps the bind address and the host allowlist" {
     try std.testing.expectEqual(@as(usize, 9), wide.len);
     try std.testing.expectEqualStrings("0.0.0.0", wide[2]);
     try std.testing.expectEqualStrings("8080", wide[4]);
-    try std.testing.expectEqualStrings("--allow-host", wide[5]);
+    try std.testing.expectEqualStrings("--serve-as", wide[5]);
     try std.testing.expectEqualStrings("clanker.lan", wide[6]);
-    try std.testing.expectEqualStrings("--allow-host", wide[7]);
+    try std.testing.expectEqualStrings("--serve-as", wide[7]);
     try std.testing.expectEqualStrings("box.tailnet.ts.net", wide[8]);
 
     // And the round trip is what actually matters: re-parsing the tail must
@@ -8362,8 +8363,8 @@ test "the hot-reload re-exec keeps the bind address and the host allowlist" {
     const reparsed = try parse(argv.items, null);
     try std.testing.expectEqualStrings("0.0.0.0", reparsed.host);
     try std.testing.expectEqual(@as(u16, 8080), reparsed.port);
-    try std.testing.expectEqual(@as(usize, 2), reparsed.allow_hosts.len);
-    try std.testing.expectEqualStrings("box.tailnet.ts.net", reparsed.allow_hosts[1]);
+    try std.testing.expectEqual(@as(usize, 2), reparsed.serve_as_hosts.len);
+    try std.testing.expectEqualStrings("box.tailnet.ts.net", reparsed.serve_as_hosts[1]);
 }
 
 test "a flag the command does not take is refused, not ignored" {

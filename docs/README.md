@@ -480,7 +480,7 @@ iter 2
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `stats` | Token usage per provider/model |
-| `serve [--host A] [--allow-host N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
@@ -727,17 +727,17 @@ The authority rule is:
 |-----------|--------|
 | `127.0.0.1:17921`, `192.168.1.5:17921`, `[::1]:17921`, any IP literal at the listen port | yes |
 | `localhost:17921` | yes |
-| a name passed to `--allow-host`, at the listen port or with no port | yes |
+| a name passed to `--serve-as`, at the listen port or with no port | yes |
 | any other name, e.g. `attacker.example:17921` | no |
 | any authority at a different port, or missing/duplicate `Host` | no |
 
 An IP literal is accepted because DNS rebinding needs a *name* whose resolution the attacker controls, and there is no resolution step to subvert in a literal. That is what makes `--host 0.0.0.0` usable on its own: a LAN client browsing to `http://192.168.1.5:17921/` is served. A name is not accepted on the same reasoning, so reaching the server through a real hostname (a reverse proxy, a `.lan` entry, a tailnet name) means naming it:
 
 ```sh
-clanker serve --host 0.0.0.0 --allow-host clanker.lan
+clanker serve --host 0.0.0.0 --serve-as clanker.lan
 ```
 
-`--allow-host` is repeatable, matched case-insensitively, and takes `--allow-host x` or `--allow-host=x`. Hot reload re-execs with the same `--host`, `--port` and `--allow-host` set, so a rebuild does not quietly narrow the policy.
+`--serve-as` is repeatable, matched case-insensitively, and takes `--serve-as x` or `--serve-as=x`. Hot reload re-execs with the same `--host`, `--port` and `--serve-as` set, so a rebuild does not quietly narrow the policy.
 
 ### `POST /api/run`
 
