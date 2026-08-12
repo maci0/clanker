@@ -1172,34 +1172,51 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
     try verifyGates(gpa, io, arena);
 }
 
+/// Logs one gate's verdict and, on failure, replays what the underlying
+/// command actually printed before returning error.GateFailed.
+///
+/// The replay goes straight to stderr rather than through `log.log`: that
+/// path renders into a 4096-byte fixed buffer and rewrites newlines to
+/// spaces to keep one physical line per event, which is exactly wrong for a
+/// compiler diagnostic or a test failure. Without the replay a CI log shows
+/// only `tests: FAIL` and the reason has to be reproduced locally to be read
+/// at all.
+fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !void {
+    log.log(.info, "{s}: {s}", .{ name, if (result.ok) "PASS" else "FAIL" });
+    if (result.ok) return;
+    if (result.detail.len > 0) {
+        try writeStdErr(io, "--- ");
+        try writeStdErr(io, result.label);
+        try writeStdErr(io, " output ---\n");
+        try writeStdErr(io, result.detail);
+        if (!std.mem.endsWith(u8, result.detail, "\n")) try writeStdErr(io, "\n");
+    }
+    return error.GateFailed;
+}
+
 /// Runs all deterministic gates (build, test, tools, fmt, lint) against the
 /// current checkout. Throws error.GateFailed on the first failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
-    log.log(.info, "build: {s}", .{if (build.ok) "PASS" else "FAIL"});
-    if (!build.ok) return error.GateFailed;
+    try reportGate(io, "build", build);
 
     var test_gate = try gate_checks.testGate(gpa, io, std.Io.Dir.cwd());
     defer test_gate.deinit(gpa);
-    log.log(.info, "tests: {s}", .{if (test_gate.ok) "PASS" else "FAIL"});
-    if (!test_gate.ok) return error.GateFailed;
+    try reportGate(io, "tests", test_gate);
 
     var tools = try gate_checks.toolsGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer tools.deinit(gpa);
-    log.log(.info, "tools: {s}", .{if (tools.ok) "PASS" else "FAIL"});
-    if (!tools.ok) return error.GateFailed;
+    try reportGate(io, "tools", tools);
 
     const files = try collectZigFiles(io, arena);
     var fmt = try gate_checks.fmtGate(gpa, io, std.Io.Dir.cwd(), files);
     defer fmt.deinit(gpa);
-    log.log(.info, "fmt: {s}", .{if (fmt.ok) "PASS" else "FAIL"});
-    if (!fmt.ok) return error.GateFailed;
+    try reportGate(io, "fmt", fmt);
 
     var lint = try gate_checks.lintGate(gpa, io, std.Io.Dir.cwd(), files);
     defer lint.deinit(gpa);
-    log.log(.info, "lint: {s}", .{if (lint.ok) "PASS" else "FAIL"});
-    if (!lint.ok) return error.GateFailed;
+    try reportGate(io, "lint", lint);
 
     log.log(.info, "all gates passed", .{});
 }

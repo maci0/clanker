@@ -4414,9 +4414,9 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     // board ignores a failed chat call — so this is pinned per name, not just
     // for the bare "board".
     for ([_][]const u8{
-        "board",          "kanban_add",     "kanban_claim", "kanban_cost",
-        "kanban_delete",  "kanban_depend",  "kanban_list",  "kanban_log",
-        "kanban_move",    "kanban_subtask", "kanban_update",
+        "board",         "kanban_add",     "kanban_claim",  "kanban_cost",
+        "kanban_delete", "kanban_depend",  "kanban_list",   "kanban_log",
+        "kanban_move",   "kanban_subtask", "kanban_update",
     }) |tool| {
         try std.testing.expect(chatAccessAllowed(tool, "send"));
         try std.testing.expect(chatAccessAllowed(tool, "history"));
