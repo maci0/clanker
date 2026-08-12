@@ -196,6 +196,36 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 
     std.Io.Dir.cwd().createDirPath(io, ".clanker-worktrees") catch {};
 
+    // Prune stale worktree registrations whose directories no longer exist
+    // (previous crash/kill left them behind). Without this, a reused id
+    // fails with "path already registered as a worktree" permanently.
+    {
+        const prune_argv = [_][]const u8{ "git", "worktree", "prune" };
+        const prune_res = std.process.run(gpa, io, .{ .argv = &prune_argv }) catch null;
+        if (prune_res) |pr| {
+            gpa.free(pr.stdout);
+            gpa.free(pr.stderr);
+        }
+    }
+
+    // If a branch with our name survived a previous crash (the worktree was
+    // pruned above but the branch ref stayed), delete it so the create below
+    // can use -b without "branch already exists". -D (force) because the
+    // branch is unmerged by definition: its cleanup never ran.
+    {
+        const del_argv = [_][]const u8{ "git", "branch", "-D", branch };
+        const del_res = std.process.run(gpa, io, .{ .argv = &del_argv }) catch null;
+        if (del_res) |dr| {
+            gpa.free(dr.stdout);
+            gpa.free(dr.stderr);
+        }
+    }
+
+    // Remove a leftover worktree directory from a previous crash. git
+    // worktree add refuses to write into an existing path even after
+    // prune cleared the registration.
+    std.Io.Dir.cwd().deleteTree(io, path) catch {};
+
     const argv = [_][]const u8{ "git", "worktree", "add", "-b", branch, path, base_branch };
     const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return error.WorktreeCreateFailed;
     defer gpa.free(res.stdout);
@@ -251,7 +281,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh worktree). The worktree builds its own zig-out once at run start;
     // staging already reuses the build cache via --cache-dir, so the link
     // bought nothing there anyway.
-    for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
+    for ([_][]const u8{ ".env", "config.local.toml", "config.local.json" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
