@@ -35,12 +35,18 @@
 #                             docs/ROADMAP.md and have clanker build it
 #
 # improve-self is a single-shot patch loop, not the agent tool loop: the model
-# is shown source files and answers with a patch, with no tools and no way to
-# look anything up. What it sees is chosen per instruction and bounded by a
-# byte budget, so it is a selection of src/, tools/, tests/, evals/,
-# tools/manifests/, build.zig* and config.toml/config.json, not all of them; whatever did
-# not fit is listed by name in the prompt so nothing is patched blind. Files
-# the instruction names by path are always included whole.
+# is shown source files and answers with a patch, with no tools. What it sees is
+# chosen per instruction and bounded by a byte budget, so it is a selection of
+# src/, tools/, tests/, evals/, tools/manifests/, build.zig* and
+# config.toml/config.json, not all of them; whatever did not fit is listed by
+# name in the prompt so nothing is patched blind. Files the instruction names by
+# path are always included whole.
+#
+# The one lookup it has is to ask: a response of {"need": [...paths]} with no
+# "changes" gets the run asked again with those files pinned in, up to
+# improve.max_context_requests (config, default 3) times per run. That is how it
+# reaches docs/ROADMAP.md, which is otherwise never in context and is why the
+# planned items below are pasted into the instruction by hand.
 #
 # API keys are resolved automatically when the provider is known:
 #   deepseek    -> DEEPSEEK_API_KEY  <- env | ~/.secrets/deepseek.txt

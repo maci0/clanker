@@ -40,6 +40,14 @@ pub const Options = struct {
     max_changes: usize = 40,
     max_change_bytes: usize = 32 * 1024,
     response_tokens: u32 = 16384,
+    /// How many times in a run the model may answer with a file request
+    /// instead of a patch. Each one costs a call that produces no patch, so
+    /// the budget is small; it is also the only way this loop can look
+    /// anything up. 0 disables the mechanism.
+    max_context_requests: u32 = 3,
+    /// Paths honoured per request. The whole file is read, and every granted
+    /// file is billed again on every later call of the run.
+    max_request_files: usize = 6,
 };
 
 /// Directories/files copied into staging for the compile gate. Must be enough
@@ -205,10 +213,25 @@ pub const Engine = struct {
     /// container-level `var`, or concurrent Engine instances would share and
     /// corrupt each other's feedback.
     feedback: ?[]const u8 = null,
+    /// Files the model asked to be shown, granted for the rest of the run and
+    /// pinned into every prompt after the request. Per-instance for the same
+    /// reason `feedback` is.
+    granted: []const []const u8 = &.{},
+    /// File requests left in this run. Set from Options at the top of `run`;
+    /// the only thing that makes the request round terminate.
+    requests_left: u32 = 0,
+
+    /// Score bands for the focus block, highest first. A file the instruction
+    /// names is the file being patched and goes in whatever its size; a file
+    /// the model asked for is bounded, because the model chooses it and
+    /// src/cli.zig alone is 310 KB.
+    const pin_score: usize = 1_000_000;
+    const request_score: usize = 500_000;
 
     pub fn run(self: *Engine, opts: Options) !void {
         log.log(.info, "improve-self: {s}", .{opts.instructions});
         for (gate_evals) |g| log.log(.info, "gate: {s}", .{g});
+        self.requests_left = opts.max_context_requests;
 
         self.hist = history_mod.History.init(self.ctx.gpa, self.ctx.io, std.Io.Dir.cwd(), "state");
         self.instructions = opts.instructions;
@@ -230,8 +253,14 @@ pub const Engine = struct {
             var attempted = false;
             var last_outcome: Outcome = .failed;
             var attempt: u32 = 0;
-            while (attempt < opts.max_attempts_per_iter) : (attempt += 1) {
+            while (attempt < opts.max_attempts_per_iter) {
                 const outcome = try self.improveOnce(opts, attempt + 1, if (attempt == 0) null else self.feedback);
+                // A file request is not an attempt: it produced no patch to
+                // judge, and charging it against the retry budget would leave
+                // a run that asked one question with nothing left to answer it
+                // with. `requests_left` is what bounds this, not the loop.
+                if (outcome == .need_context) continue;
+                attempt += 1;
                 last_outcome = outcome;
                 switch (outcome) {
                     .accepted => {
@@ -247,6 +276,10 @@ pub const Engine = struct {
                     .failed => {
                         // loop: next attempt gets the fresh error tail in context
                     },
+                    // Taken by the `continue` above; listed so that adding an
+                    // outcome later is a compile error here rather than a
+                    // silently mishandled one.
+                    .need_context => {},
                 }
             }
             if (!attempted) log.log(.warn, "iteration {d}: all attempts failed", .{iter + 1});
@@ -263,7 +296,7 @@ pub const Engine = struct {
         if (!promoted_any) log.log(.info, "no changes were promoted", .{});
     }
 
-    const Outcome = enum { accepted, no_change, failed };
+    const Outcome = enum { accepted, no_change, failed, need_context };
 
     fn improveOnce(self: *Engine, opts: Options, attempt: u32, last_error: ?[]const u8) !Outcome {
         // ---- 1. context ----
@@ -335,6 +368,41 @@ pub const Engine = struct {
             if (resp.raw) |raw| log.log(.debug, "raw response length: {d} chars", .{raw.len});
             self.feedback = "Your previous response had an empty content field. Output the JSON object in the content field.";
             return .failed;
+        }
+
+        // ---- 2a. a request for files, instead of a patch ----
+        // The alternative to asking is guessing: an exact-match patch against
+        // a file the model was never shown cannot match, and the run spends
+        // its whole retry budget failing the same way. Checked before the
+        // proposal parser, which would read a request as a malformed patch and
+        // send back advice about JSON escaping.
+        if (self.requests_left > 0) {
+            var refused: ?[]const u8 = null;
+            if (proposal_mod.parseFileRequest(self.arena, json_text, opts.max_request_files, &refused) catch null) |want| {
+                self.requests_left -= 1;
+                var missing: std.ArrayList([]const u8) = .empty;
+                const added = try self.grant(want, &missing);
+                if (added > 0) {
+                    log.log(.info, "model asked for {d} file(s); {d} newly granted, {d} request(s) left", .{ want.len, added, self.requests_left });
+                    for (self.granted) |g| log.log(.debug, "granted: {s}", .{g});
+                    // The granted files are the answer; stale feedback about a
+                    // previous failure still stands and must not be cleared.
+                    return .need_context;
+                }
+                // Nothing new to show. Asking again would return the same
+                // question, so say why and make the next call produce a patch.
+                log.log(.warn, "file request added nothing new; asking for a patch instead", .{});
+                self.feedback = try std.fmt.allocPrint(
+                    self.arena,
+                    "You asked for files instead of a patch, but none could be added: {s}{s}{s}Everything else you asked for is already in the context above. Propose the patch now, or answer that no changes are needed.",
+                    .{
+                        if (refused) |bad| bad else "",
+                        if (refused != null) " is outside the readable surface. " else "",
+                        if (missing.items.len > 0) "Some of those paths do not exist in this repository. " else "",
+                    },
+                );
+                return .failed;
+            }
         }
 
         var rejected_path: ?[]const u8 = null;
@@ -640,6 +708,33 @@ pub const Engine = struct {
         // Clean up the staging directory now that promotion is done.
         self.removeTree(staging);
         return .accepted;
+    }
+
+    /// Adds `paths` to the granted set for the rest of the run, skipping ones
+    /// already there. Returns how many were new; paths that do not exist are
+    /// appended to `missing` instead.
+    ///
+    /// The existence check is what keeps a hallucinated path from being
+    /// granted: `collectFile` drops a file it cannot read with only a debug
+    /// line, so an invented path would look, from the next prompt, exactly
+    /// like a granted file that happened to be empty — and the model would
+    /// spend the rest of the run patching against nothing.
+    fn grant(self: *Engine, paths: []const []const u8, missing: *std.ArrayList([]const u8)) !usize {
+        var list: std.ArrayList([]const u8) = .empty;
+        try list.appendSlice(self.arena, self.granted);
+        var added: usize = 0;
+        for (paths) |p| {
+            if (pathIn(list.items, p)) continue;
+            std.Io.Dir.cwd().access(self.ctx.io, p, .{}) catch {
+                log.log(.warn, "file request: '{s}' does not exist", .{p});
+                try missing.append(self.arena, p);
+                continue;
+            };
+            try list.append(self.arena, try self.arena.dupe(u8, p));
+            added += 1;
+        }
+        self.granted = try list.toOwnedSlice(self.arena);
+        return added;
     }
 
     /// Applies the proposal's changes under `staging` through the sandboxed
@@ -1062,6 +1157,11 @@ pub const Engine = struct {
             try self.pinNamedFiles("tools/zig/lib.zig tools/zig/learnings.zig", keywords.items, &cands);
         }
 
+        // Files an earlier round of this run asked for. Their own band, below
+        // an instruction-named pin and above everything else: they belong in
+        // the focus block, but under a budget, because the model chooses them.
+        for (self.granted) |p| try self.pinPath(p, keywords.items, &cands, request_score);
+
         std.mem.sort(Candidate, cands.items, {}, struct {
             fn lt(_: void, a: Candidate, b: Candidate) bool {
                 return a.score > b.score;
@@ -1091,12 +1191,22 @@ pub const Engine = struct {
         // is 133 KB on its own, and the fix for that was once to quadruple the
         // whole context, which quadrupled the bill for every unrelated run too.
         for (cands.items) |c| {
-            if (c.score < 1_000_000) continue;
+            if (c.score < pin_score) continue;
             included_any = true;
             try self.appendWholeFile(&focus, &omitted, c, std.math.maxInt(usize));
         }
+        // Then what the model asked for, on a quota of its own on top of
+        // whatever the pins took. Unbounded, one request for src/cli.zig would
+        // swallow the run; sharing the churn budget, a request would silently
+        // push out the files recent promotions actually touched.
+        const request_limit = focus.items.len + max_bytes / 4;
         for (cands.items) |c| {
-            if (c.score >= 1_000_000 or !pathIn(churn, c.path)) continue;
+            if (c.score < request_score or c.score >= pin_score) continue;
+            included_any = true;
+            try self.appendWholeFile(&focus, &omitted, c, request_limit);
+        }
+        for (cands.items) |c| {
+            if (c.score >= request_score or !pathIn(churn, c.path)) continue;
             if (focus.items.len >= focus_budget) break;
             included_any = true;
             try self.appendWholeFile(&focus, &omitted, c, focus_budget);
@@ -1121,6 +1231,11 @@ pub const Engine = struct {
         const bulk_budget = max_bytes - focus_budget;
         for (bulk_order) |c| {
             if (pathIn(churn, c.path)) continue;
+            // Anything the focus block already carries. A pinned or granted
+            // file that recent runs had not touched used to be emitted twice —
+            // once in the focus and again here — which for an instruction
+            // naming src/cli.zig meant paying for 310 KB of it a second time.
+            if (c.score >= request_score) continue;
             included_any = true;
             try self.appendWholeFile(&buf, &omitted, c, bulk_budget);
         }
@@ -1133,7 +1248,7 @@ pub const Engine = struct {
         // at the end of the cached block invalidates the whole thing. This is
         // what kept the hit rate at zero even after the split.
         if (omitted.items.len > 0) {
-            try focus.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; do not patch these blind) =====\n");
+            try focus.appendSlice(self.arena, "\n===== NOT INCLUDED (too large for this context; ask for one with \"need\" rather than patching it blind) =====\n");
             for (omitted.items) |path| {
                 try focus.appendSlice(self.arena, path);
                 try focus.appendSlice(self.arena, "\n");
@@ -1173,7 +1288,6 @@ pub const Engine = struct {
     /// Boosts (and if necessary reads) every repository path mentioned in the
     /// instruction, so "fix X in src/agent/loop.zig" always ships loop.zig.
     fn pinNamedFiles(self: *Engine, instructions: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate)) !void {
-        const pin_score: usize = 1_000_000;
         var it = std.mem.tokenizeAny(u8, instructions, " \n\r\t,;:'\"()[]{}`*");
         while (it.next()) |tok| {
             const path = std.mem.trim(u8, tok, ".");
@@ -1187,20 +1301,23 @@ pub const Engine = struct {
                 !std.mem.endsWith(u8, path, ".md") and !std.mem.endsWith(u8, path, ".zon") and
                 !std.mem.endsWith(u8, path, ".html")) continue;
             if (!proposal_mod.validatePath(path)) continue;
-
-            var found = false;
-            for (cands.items) |*c| {
-                if (std.mem.eql(u8, c.path, path)) {
-                    c.score += pin_score;
-                    found = true;
-                    break;
-                }
-            }
-            if (found) continue;
-            const before = cands.items.len;
-            try self.collectFile(path, keywords, cands);
-            if (cands.items.len > before) cands.items[cands.items.len - 1].score += pin_score;
+            try self.pinPath(path, keywords, cands, pin_score);
         }
+    }
+
+    /// Boosts one path into the given score band, reading it in if keyword
+    /// scoring never gathered it. Shared by instruction-named pins and by the
+    /// files the model asked for, so both land in context the same way.
+    fn pinPath(self: *Engine, path: []const u8, keywords: []const []const u8, cands: *std.ArrayList(Candidate), score: usize) !void {
+        for (cands.items) |*c| {
+            if (std.mem.eql(u8, c.path, path)) {
+                c.score += score;
+                return;
+            }
+        }
+        const before = cands.items.len;
+        try self.collectFile(path, keywords, cands);
+        if (cands.items.len > before) cands.items[cands.items.len - 1].score += score;
     }
 
     /// Big enough for this project's own largest source file. At 96 KiB
@@ -1560,6 +1677,17 @@ const improve_system =
     \\    }
     \\  ]
     \\}
+    \\
+    \\The context below is a byte-budgeted selection of a much larger tree, not
+    \\all of it. When the file you need to read is not there — including anything
+    \\listed as NOT INCLUDED — do not guess at its contents. Ask for it instead,
+    \\with no "changes" key:
+    \\{"need": ["src/cli.zig", "docs/ROADMAP.md"], "reason": "why you need them"}
+    \\You will be asked again with those files added, and they stay for the rest
+    \\of the run. Ask once for everything you need: the budget is a few requests
+    \\per run, and a request that names a file you were already shown wastes one.
+    \\Readable (wider than what you may write): src/, evals/, tools/, skills/,
+    \\tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
     \\
     \\Rules:
     \\- "old" MUST match the current file content byte-for-byte. Keep it short but

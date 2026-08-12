@@ -2183,6 +2183,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
         .iters = opts.iters,
         .dry_run = opts.dry_run,
         .max_context_bytes = cfg.improve.max_context_bytes,
+        .max_context_requests = cfg.improve.max_context_requests,
     });
 
     // Back to the shared tree (and the worktree dropped) before verifying

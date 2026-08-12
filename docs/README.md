@@ -88,6 +88,13 @@ The tool target is `wasm32-freestanding` (not `wasip1`).
 
 1. Collect relevant source files as context.
 2. Ask the model for a patch proposal (JSON with `summary`, `rationale`, `changes`).
+   The context is a byte-budgeted slice of a much larger tree, so the model may
+   instead answer `{"need": ["src/cli.zig", "docs/ROADMAP.md"], "reason": "..."}`
+   and be asked again with those files pinned in for the rest of the run. That
+   round does not consume a retry; `improve.max_context_requests` (default 3,
+   0 disables) caps how many a run gets. The readable surface is wider than the
+   writable one — the gate machinery, `docs/`, and `AGENTS.md` can be read but
+   not patched — and excludes `state/`, `.env` and `config.local.*` entirely.
 3. Validate and apply the proposal to `state/staging/<id>` inside an isolated
    Git worktree (or the current checkout if worktree creation fails).
 4. Run gates: `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint.
