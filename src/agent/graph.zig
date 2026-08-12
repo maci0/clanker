@@ -45,8 +45,16 @@ pub const Node = struct {
 pub const output_preview_cap = 4000;
 
 /// Bounds a node's recorded output to `output_preview_cap` bytes.
+/// When the cap cuts through a UTF-8 codepoint, backs up to the start of
+/// that codepoint so the preview never ends with a dangling continuation byte
+/// (which would corrupt the JSON or UI rendering).
 pub fn truncatedPreview(s: []const u8) []const u8 {
-    return if (s.len > output_preview_cap) s[0..output_preview_cap] else s;
+    if (s.len <= output_preview_cap) return s;
+    var end: usize = output_preview_cap;
+    // A continuation byte is 0b10xxxxxx. Back up while the byte at `end` is
+    // one, stepping out of the middle of a multi-byte character.
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
 }
 
 pub const Graph = struct {
@@ -125,6 +133,23 @@ test "truncatedPreview caps output at output_preview_cap bytes" {
     const got = truncatedPreview(big);
     try std.testing.expectEqual(output_preview_cap, got.len);
     try std.testing.expectEqual(big.ptr, got.ptr);
+}
+
+test "truncatedPreview does not split a UTF-8 codepoint" {
+    // "é" is two bytes (0xC3 0xA9). Build a string whose 4000th byte lands
+    // in the middle of an "é" at offset 3999, so a naive byte cut would
+    // emit a dangling continuation byte.
+    var big: [4003]u8 = undefined;
+    @memset(big[0..3999], 'a');
+    big[3999] = 0xC3;
+    big[4000] = 0xA9;
+    big[4001] = 'b';
+    const got = truncatedPreview(&big);
+    try std.testing.expectEqual(@as(usize, 3999), got.len);
+    // The returned slice must end on a codepoint boundary (no 0x80..0xBF tail).
+    try std.testing.expect(got.len == 0 or (got[got.len - 1] & 0xC0) != 0x80);
+    // And it must not contain the split continuation byte.
+    try std.testing.expect(std.mem.indexOf(u8, got, &.{0xA9}) == null);
 }
 
 test "repeated steps collapse, and a step revisited later marks the loop" {
