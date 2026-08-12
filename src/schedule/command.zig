@@ -202,7 +202,7 @@ fn add(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.I
 
     var buf: [32]u8 = undefined;
     var line: [512]u8 = undefined;
-    const msg = std.fmt.bufPrint(&line, "added {s}: {s} — first run {s}{s}\n", .{
+    const msg = std.fmt.bufPrint(&line, "added {s}: {s}, first run {s}{s}\n", .{
         id,
         spec_text,
         cron.formatStamp(&buf, first, offset),
@@ -294,7 +294,7 @@ fn runNow(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: st
 
 fn requireId(opts: Options, verb: []const u8) Error![]const u8 {
     const id = opts.arg1 orelse {
-        log.log(.error_, "schedule {s} needs an entry id — `clanker schedule list` shows them", .{verb});
+        log.log(.error_, "schedule {s} needs an entry id; `clanker schedule list` shows them", .{verb});
         return Error.MissingArg;
     };
     if (id.len == 0) return Error.MissingArg;
@@ -302,7 +302,7 @@ fn requireId(opts: Options, verb: []const u8) Error![]const u8 {
 }
 
 fn noSuchEntry(id: []const u8) store.Error {
-    log.log(.error_, "no scheduled entry '{s}' — `clanker schedule list` shows them", .{id});
+    log.log(.error_, "no scheduled entry '{s}'; `clanker schedule list` shows them", .{id});
     return store.Error.NoSuchEntry;
 }
 

@@ -607,7 +607,7 @@ pub const Engine = struct {
 
         // ---- 3. dry run ----
         if (opts.dry_run) {
-            log.log(.info, "DRY RUN — not applying", .{});
+            log.log(.info, "DRY RUN: not applying", .{});
             for (proposal.changes) |c| {
                 log.log(.info, "  would change {s} ({d} bytes)", .{ c.file, c.new.len });
             }
@@ -902,7 +902,7 @@ pub const Engine = struct {
         }
 
         // ---- 6. promote ----
-        log.log(.info, "gates green — promoting {d} file(s)", .{proposal.changes.len});
+        log.log(.info, "gates green, promoting {d} file(s)", .{proposal.changes.len});
         const files = proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{};
         try self.hist.snapshot(id, files);
         for (proposal.changes) |c| {

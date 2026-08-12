@@ -563,6 +563,44 @@ fn looksLikeSlashCommand(task: []const u8) bool {
     return input.len > 0 and input[0] == '/';
 }
 
+fn editDistance(a: []const u8, b: []const u8) usize {
+    if (a.len > 32 or b.len > 32) return 99;
+    var previous: [33]usize = undefined;
+    var current: [33]usize = undefined;
+    for (0..b.len + 1) |i| previous[i] = i;
+    for (a, 0..) |ac, ai| {
+        current[0] = ai + 1;
+        for (b, 0..) |bc, bi| {
+            const substitution = previous[bi] + @intFromBool(ac != bc);
+            current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
+        }
+        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
+    }
+    return previous[b.len];
+}
+
+fn suggestSlashCommand(input: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, input, " \t");
+    if (trimmed.len == 0) return null;
+    var best: ?[]const u8 = null;
+    var best_distance: usize = 3;
+    for (&command_registry) |*spec| {
+        const d = editDistance(trimmed, spec.name);
+        if (d < best_distance) {
+            best = spec.name;
+            best_distance = d;
+        }
+        for (spec.aliases) |alias| {
+            const da = editDistance(trimmed, alias);
+            if (da < best_distance) {
+                best = alias;
+                best_distance = da;
+            }
+        }
+    }
+    return best;
+}
+
 /// One registry spelling that matched a Tab-complete prefix, paired with
 /// the spec it belongs to (needed to know `takes_args` when a single match
 /// completes the line).
@@ -797,6 +835,13 @@ test "looksLikeSlashCommand separates typo'd commands from tasks" {
     try std.testing.expect(looksLikeSlashCommand("  /nope  "));
     try std.testing.expect(!looksLikeSlashCommand("hello /world"));
     try std.testing.expect(!looksLikeSlashCommand(""));
+}
+
+test "suggestSlashCommand offers did-you-mean for close misspellings" {
+    try std.testing.expectEqualStrings("/help", suggestSlashCommand("/halp").?);
+    try std.testing.expectEqualStrings("/model", suggestSlashCommand("/modle").?);
+    try std.testing.expectEqualStrings("/quit", suggestSlashCommand("/qit").?);
+    try std.testing.expect(suggestSlashCommand("/xyzzy") == null);
 }
 
 test "matchingSpellings finds a unique prefix and every ambiguous one" {
@@ -1153,8 +1198,13 @@ const Model = struct {
             return;
         }
         if (looksLikeSlashCommand(task)) {
+            const typed = std.mem.trim(u8, task, " \t");
+            const text = if (suggestSlashCommand(typed)) |suggestion|
+                std.fmt.allocPrint(self.arena, "[unknown command: {s}; did you mean {s}?]", .{ typed, suggestion }) catch "[unknown command, try /help]"
+            else
+                std.fmt.allocPrint(self.arena, "[unknown command: {s}, try /help]", .{typed}) catch "[unknown command, try /help]";
             self.lines.append(self.arena, .{
-                .text = std.fmt.allocPrint(self.arena, "[unknown command: {s}, try /help]", .{std.mem.trim(u8, task, " \t")}) catch "[unknown command, try /help]",
+                .text = text,
                 .dim = true,
             }) catch {};
             return;
@@ -1175,12 +1225,12 @@ const Model = struct {
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
         if (!bridge_streaming) {
-            self.lines.append(self.arena, .{ .text = "[no run to steer — the turn already ended]", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "[no run to steer; the turn already ended]", .dim = true }) catch {};
             return;
         }
         // Same framing POST /api/steer applies server-side, so the model reads
         // a TUI steer as the same mid-run course correction it reads a web one.
-        const framed = std.fmt.allocPrint(bridge_gpa, "[The user interjected while this run was in progress — take the message into account and adjust course.]\n\n{s}", .{task}) catch {
+        const framed = std.fmt.allocPrint(bridge_gpa, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{task}) catch {
             self.lines.append(self.arena, .{ .text = "[steer failed: out of memory]", .dim = true }) catch {};
             return;
         };
@@ -1253,7 +1303,7 @@ const Model = struct {
                         "--against-provider -> \"provider_against\", --judge-provider -> \"judge_provider\"), " ++
                         "with the quoted text before the first flag as \"question\". Then print the tool's " ++
                         "\"text\" field verbatim as your whole answer. Do not summarize it, re-score the " ++
-                        "match, or add commentary — the transcript and verdict are the result.",
+                        "match, or add commentary; the transcript and verdict are the result.",
                     .{pc.args},
                 ) catch {
                     self.lines.append(self.arena, .{ .text = "[arena: out of memory]", .dim = true }) catch {};
@@ -1278,7 +1328,7 @@ const Model = struct {
             },
             .workflow => {
                 if (pc.args.len == 0) {
-                    self.lines.append(self.arena, .{ .text = "usage: /workflow <name> [args]  — try /workflows to list", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "usage: /workflow <name> [args]: try /workflows to list", .dim = true }) catch {};
                     return;
                 }
                 const space = std.mem.findScalar(u8, pc.args, ' ');
@@ -1288,7 +1338,7 @@ const Model = struct {
                     self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[workflow '{s}': {s}]", .{ wf_name, @errorName(err) }) catch "[workflow failed]", .dim = true }) catch {};
                     return;
                 } orelse {
-                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[no workflow named '{s}' — try /workflows]", .{wf_name}) catch "[unknown workflow]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[no workflow named '{s}', try /workflows]", .{wf_name}) catch "[unknown workflow]", .dim = true }) catch {};
                     return;
                 };
                 defer self.gpa.free(prompt);
@@ -1398,7 +1448,7 @@ const Model = struct {
         const allow = self.escapeExecAllow();
 
         if (line.len == 0) {
-            self.lines.append(self.arena, .{ .text = "usage: !<command> [args]  — runs here under the ck_exec policy, not in a shell", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "usage: !<command> [args]: runs here under the ck_exec policy, not in a shell", .dim = true }) catch {};
             if (allow.len == 0) {
                 self.lines.append(self.arena, .{ .text = "  nothing is allowed: no registered tool declares exec_allow, and agent.repl_exec_allow is empty", .dim = true }) catch {};
                 return;
@@ -1429,7 +1479,7 @@ const Model = struct {
         var argv_buf: [max_escape_args][]const u8 = undefined;
         const argv = splitShellArgs(line, &argv_buf) catch |err| {
             self.lines.append(self.arena, .{ .text = switch (err) {
-                error.UnterminatedQuote => "[! unterminated quote — quote a whole argument, e.g. !rg \"foo bar\"]",
+                error.UnterminatedQuote => "[! unterminated quote: quote a whole argument, e.g. !rg \"foo bar\"]",
                 error.TooManyArgs => "[! too many arguments]",
             }, .dim = true }) catch {};
             return;
@@ -1458,7 +1508,7 @@ const Model = struct {
             .not_allowed => self.lines.append(self.arena, .{
                 .text = std.fmt.allocPrint(
                     self.arena,
-                    "[! '{s}' is not on the exec allowlist — type ! on its own to see what is, or add it to agent.repl_exec_allow]",
+                    "[! '{s}' is not on the exec allowlist; type ! on its own to see what is, or add it to agent.repl_exec_allow]",
                     .{argv[0]},
                 ) catch "[! not allowed]",
                 .dim = true,
@@ -1467,8 +1517,8 @@ const Model = struct {
                 const msg = switch (d) {
                     .git_verb => std.fmt.allocPrint(self.arena, "[! git: only the local verbs are allowed (status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree)]", .{}),
                     .no_pattern_match => std.fmt.allocPrint(self.arena, "[! '{s}': agent.exec_pattern_allow makes this command strict and no pattern matches]", .{argv[0]}),
-                    .deny_token => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied — '{s}' in '{s}' is on the sandbox deny list]", .{ argv[0], x.token, x.arg }),
-                    .shell_operator => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied — shell operator '{s}' in '{s}'; ! does not run a shell]", .{ argv[0], x.token, x.arg }),
+                    .deny_token => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied, '{s}' in '{s}' is on the sandbox deny list]", .{ argv[0], x.token, x.arg }),
+                    .shell_operator => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied, shell operator '{s}' in '{s}'; ! does not run a shell]", .{ argv[0], x.token, x.arg }),
                 };
                 self.lines.append(self.arena, .{ .text = msg catch "[! denied]", .dim = true }) catch {};
             },
@@ -1525,14 +1575,14 @@ const Model = struct {
         };
         if (name.len == 0) {
             if (wfs.len == 0) {
-                self.lines.append(self.arena, .{ .text = "[no workflows found — add markdown files to workflows/]", .dim = true }) catch {};
+                self.lines.append(self.arena, .{ .text = "[no workflows found, add markdown files to workflows/]", .dim = true }) catch {};
                 return true;
             }
             for (wfs) |wf| {
                 const line = if (wf.arg_hint.len > 0)
-                    std.fmt.allocPrint(self.arena, "  {s} {s} — {s}", .{ wf.name, wf.arg_hint, wf.description }) catch continue
+                    std.fmt.allocPrint(self.arena, "  {s} {s}: {s}", .{ wf.name, wf.arg_hint, wf.description }) catch continue
                 else
-                    std.fmt.allocPrint(self.arena, "  {s} — {s}", .{ wf.name, wf.description }) catch continue;
+                    std.fmt.allocPrint(self.arena, "  {s}: {s}", .{ wf.name, wf.description }) catch continue;
                 self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
             }
             self.lines.append(self.arena, .{ .text = "  (run one with /workflow <name> [args])", .dim = true }) catch {};
@@ -3258,7 +3308,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // regardless of this setting. Said once, before the alt-screen takes
     // over stderr, so the operator is not left believing they are protected.
     if (cfg.agent.confirm_writes == .always) {
-        std.debug.print("warning: agent.confirm_writes=\"always\" does not gate this REPL yet — write-capable tool calls run without confirmation here. Only `clanker serve` honors it today.\n", .{});
+        std.debug.print("warning: agent.confirm_writes=\"always\" does not gate this REPL yet; write-capable tool calls run without confirmation here. Only `clanker serve` honors it today.\n", .{});
     }
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch {};
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);

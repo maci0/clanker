@@ -1383,7 +1383,7 @@ pub const Config = struct {
             for (known) |name| {
                 if (std.mem.eql(u8, key, name)) break;
             } else {
-                log.log(.warn, "config: unknown key '{s}' in {s} (ignored — check spelling)", .{ key, context });
+                log.log(.warn, "config: unknown key '{s}' in {s} (ignored, check spelling)", .{ key, context });
             }
         }
     }

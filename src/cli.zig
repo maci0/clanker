@@ -1110,7 +1110,7 @@ const Flag = enum {
             .research_target => "file the agent may edit; repeatable, comma-separated",
             .research_harness => "shell command whose output contains the metric",
             .research_metric => "metric key to read (default: score)",
-            .research_direction => "min or max — whether lower or higher is better",
+            .research_direction => "min or max: whether lower or higher is better",
             .research_pattern => "substring before the number to extract",
             .research_budget => "per-experiment wall seconds (default 300)",
             .arena_for => "the position the first combatant defends",
@@ -1118,7 +1118,7 @@ const Flag = enum {
             .arena_for_provider => "which provider argues 'for'",
             .arena_against_provider => "which provider argues 'against'",
             .arena_rounds => "round cap (tool default 4, clamped to 12)",
-            .arena_judge => "self or third — who scores the moves",
+            .arena_judge => "self or third: who scores the moves",
             .arena_judge_provider => "who judges; must not be a combatant",
             .arena_match => "print a stored match instead of running one",
             .arena_position => "a stance for a battle royale; repeat 3-8 times",
@@ -1199,7 +1199,7 @@ const specs = [_]Spec{
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
     .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
-    .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own — the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields — minute hour day-of-month month day-of-week — each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
+    .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
 };
 
@@ -5509,7 +5509,7 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
     }
     // Framed so the model reads it as a mid-run course correction from the
     // user, not as a fresh task replacing the one it is working.
-    const framed = std.fmt.allocPrint(arena, "[The user interjected while this run was in progress — take the message into account and adjust course.]\n\n{s}", .{msg}) catch {
+    const framed = std.fmt.allocPrint(arena, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{msg}) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
@@ -8084,7 +8084,7 @@ fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_image
     }
     return std.fmt.allocPrint(
         arena,
-        "{s}: {s} — with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled",
+        "{s}: {s}; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled",
         .{ provider_name, detail },
     ) catch detail;
 }
@@ -10012,7 +10012,7 @@ fn cmdArena(init: std.process.Init, opts: Options) !void {
     try s.endObject();
 
     if (opts.arena_match == null)
-        log.log(.info, "arena: running a match — each round is one model call per side", .{});
+        log.log(.info, "arena: running a match; each round is one model call per side", .{});
 
     const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "arena", w.written());
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
@@ -10206,16 +10206,16 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
         for (wfs) |wf| {
             var buf: [1024]u8 = undefined;
             const line = if (wf.arg_hint.len > 0)
-                std.fmt.bufPrint(&buf, "{s} {s} — {s}\n", .{ wf.name, wf.arg_hint, wf.description }) catch continue
+                std.fmt.bufPrint(&buf, "{s} {s}: {s}\n", .{ wf.name, wf.arg_hint, wf.description }) catch continue
             else
-                std.fmt.bufPrint(&buf, "{s} — {s}\n", .{ wf.name, wf.description }) catch continue;
+                std.fmt.bufPrint(&buf, "{s}: {s}\n", .{ wf.name, wf.description }) catch continue;
             try writeStdOut(io, line);
         }
         return;
     }
     if (std.mem.eql(u8, sub, "show")) {
         const name = opts.workflow_name orelse {
-            log.log(.error_, "workflow show needs a name — try `clanker workflow list`", .{});
+            log.log(.error_, "workflow show needs a name; try `clanker workflow list`", .{});
             return error.MissingArg;
         };
         const wf = workflows_mod.findByName(wfs, name) orelse {

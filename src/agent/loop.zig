@@ -34,7 +34,7 @@ const plan_mode_suffix = "\n\nPLAN MODE: This run is a proposal, not an executio
 /// not a gate: web_search/fetch_web are ordinary enabled tools the model
 /// could already call; this tells it the operator wants web-backed answers
 /// and when to reach for them.
-const research_mode_suffix = "\n\nRESEARCH MODE: The operator turned on web research for this run. Prefer current, sourced information over stale knowledge: consult web_search (or fetch_web for a specific page) when the answer depends on facts that change — versions, prices, events, APIs, today's news — and cite what you found. Do not fetch for the sake of fetching; a question answerable from context needs no network call.";
+const research_mode_suffix = "\n\nRESEARCH MODE: The operator turned on web research for this run. Prefer current, sourced information over stale knowledge: consult web_search (or fetch_web for a specific page) when the answer depends on facts that change (versions, prices, events, APIs, today's news) and cite what you found. Do not fetch for the sake of fetching; a question answerable from context needs no network call.";
 
 /// A fork resolved by the human: what was asked, and what they chose.
 pub const Decision = struct {
@@ -681,7 +681,7 @@ pub const Agent = struct {
                 var ri: usize = 0;
                 for (skipped, 0..) |skip, i| {
                     if (skip) {
-                        results[i] = "{\"ok\":false,\"error\":\"identical tool call already executed twice with the same arguments; do not repeat it — answer with the information you already have\"}";
+                        results[i] = "{\"ok\":false,\"error\":\"identical tool call already executed twice with the same arguments; do not repeat it; answer with the information you already have\"}";
                     } else {
                         results[i] = run_results[ri];
                         ri += 1;
@@ -1072,7 +1072,7 @@ pub const Agent = struct {
             log.log(.warn, "compaction summary failed ({s}), trying local extractive summary", .{@errorName(err)});
             break :blk self.localSummary(messages.items[1..keep_start]);
         };
-        const placeholder = summary_text orelse "[earlier conversation compacted — the context is summarized above in learnings and skills]";
+        const placeholder = summary_text orelse "[earlier conversation compacted; the context is summarized above in learnings and skills]";
         try compactMiddle(messages, self.arena, keep_start, placeholder);
         return estimateMessageTokens(messages.items);
     }
@@ -1142,11 +1142,9 @@ pub const Agent = struct {
         if (msgs.len == 0) return null;
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.ctx.gpa);
-        buf.appendSlice(self.ctx.gpa, "[conversation summary — ") catch return null;
-        const count_str = std.fmt.allocPrint(self.ctx.gpa, "{d}", .{msgs.len}) catch return null;
-        defer self.ctx.gpa.free(count_str);
-        buf.appendSlice(self.ctx.gpa, count_str) catch return null;
-        buf.appendSlice(self.ctx.gpa, " earlier messages compacted (extractive)]\n") catch return null;
+        var hdr_buf: [96]u8 = undefined;
+        const hdr = std.fmt.bufPrint(&hdr_buf, "[conversation summary: {d} earlier messages compacted (extractive)]\n", .{msgs.len}) catch return null;
+        buf.appendSlice(self.ctx.gpa, hdr) catch return null;
 
         // Cap the total summary size so it does not itself blow the context.
         const max_summary: usize = 4000;
@@ -1280,7 +1278,7 @@ pub const Agent = struct {
             self.arena,
             "Summarize the following conversation excerpt in 3-5 concise bullet points. " ++
                 "Focus on: decisions made, facts established, tool results, and any pending tasks. " ++
-                "Be specific — include names, numbers, and key values. Do NOT add commentary.\n\n{s}",
+                "Be specific: include names, numbers, and key values. Do NOT add commentary.\n\n{s}",
             .{buf.items},
         );
 
@@ -1298,7 +1296,7 @@ pub const Agent = struct {
         log.log(.info, "compaction summary: {d} messages -> {d} byte summary", .{ msgs.len, content.len });
         return try std.fmt.allocPrint(
             self.arena,
-            "[conversation summary — {d} earlier messages compacted]\n{s}",
+            "[conversation summary: {d} earlier messages compacted]\n{s}",
             .{ msgs.len, content },
         );
     }
@@ -2287,7 +2285,7 @@ fn parentAnswerPrompt(
         try buf.appendSlice(arena, o);
         try buf.appendSlice(arena, "\n");
     }
-    try buf.appendSlice(arena, "\nAnswer with exactly one of the options, verbatim, and nothing else — the one most consistent with your task and what you already know.");
+    try buf.appendSlice(arena, "\nAnswer with exactly one of the options, verbatim, and nothing else: the one most consistent with your task and what you already know.");
     return buf.toOwnedSlice(arena);
 }
 
