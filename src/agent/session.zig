@@ -713,3 +713,37 @@ test "renameSession retitles in place and deleteSession removes the file" {
     try deleteSession(io, arena, tmp.dir, "s1");
     try std.testing.expectError(error.FileNotFound, loadSession(io, gpa, arena, tmp.dir, "s1"));
 }
+test "setWorkspace moves a session into a workspace and back" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "ws-move",
+        .title = "Move me",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+    });
+
+    // Move into a workspace.
+    try setWorkspace(io, gpa, arena, tmp.dir, "ws-move", "research");
+    const moved = try loadSession(io, gpa, arena, tmp.dir, "ws-move");
+    try std.testing.expectEqualStrings("research", moved.workspace);
+
+    // Moving back to "" is the default workspace.
+    try setWorkspace(io, gpa, arena, tmp.dir, "ws-move", "");
+    const loose = try loadSession(io, gpa, arena, tmp.dir, "ws-move");
+    try std.testing.expectEqualStrings("", loose.workspace);
+}
