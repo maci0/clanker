@@ -345,6 +345,24 @@ pub const Engine = struct {
             } else {
                 self.stuck_hint = "";
             }
+
+            // The file-request budget is per RUN, but ideas are per
+            // iteration: once the early iterations spend it, every later
+            // idea needing a file outside the default context slice dies in
+            // a request-then-refusal loop (observed live: iterations 9-11
+            // each burning two full model calls on "budget is spent" and
+            // producing nothing, indefinitely, in a long run). Two earned
+            // refills, both capped at the configured maximum: a promotion
+            // resets the budget (the tree materially changed; fresh looks
+            // are justified), and a dry stretch of stuck_hint_threshold
+            // failed iterations grants one more look (the model plainly
+            // needs something it cannot see).
+            if (last_outcome == .accepted) {
+                self.requests_left = opts.max_context_requests;
+            } else if (consecutive_failed >= stuck_hint_threshold and self.requests_left == 0) {
+                self.requests_left = 1;
+                log.log(.info, "granting one file request after {d} failed iterations", .{consecutive_failed});
+            }
         }
 
         const after = try self.gateScore();
