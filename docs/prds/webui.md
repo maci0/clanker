@@ -2,9 +2,12 @@
 
 ## Status
 
-Shipped — all roadmap phases have a minimal browser surface (pixel floor as
-decorative canvas, board filters for 3.3, progress streaming for 5, per-turn
-Branch/citation/model-pill/collapsed rail for 6). Source of truth: `tools/zig/webui/*`
+Shipped — Board (Trello) and Rooms (Slack) polished + callgraph navigation (Codex/Kimi/Qwen): search/kind filters with dim, `↗` sub-run jump + `↑ Parent`, deep-link `#runs/<id>?node=<label>` with pinned selection, minimap with dots+edges+viewport drag, path highlight on hover/focus, `/`→search/`n`/`F`/`j`/`k`/arrows/`+/-` keyboard, breadcrumb sync, `Copy link` pins node, inline `+` quick-add per lane,
+Archive toggle for done, `Drop here — or Add card` empty slots, card cover strip +
+member avatar + `✔ 50%` progress bar, priority `filled` due labels, Slack grouped
+messages / day `— YYYY-MM-DD —` / hover gutter + `#` composer / `/me` `/shrug`
++ link unfurl + hover action bar + room `· 3 new` badges. ChatGPT/Cursor/Claude
+theme also live. Source of truth: `tools/zig/webui/*`
 (`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
 comptime-embedded via `tools/zig/webui.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
@@ -166,7 +169,7 @@ hidden `<select>`, which stays the one thing `runOptions()`/localStorage/
 `renderContextMeter()` read — selecting an entry sets its value and
 dispatches `change`, so nothing downstream needed to change.
 
-**Theme / chrome (2026-08-12).** Light and dark tokens aligned to ChatGPT/Cursor/Claude — `#ffffff`/`#f7f7f8` and `#212121`/`#171717`, `14px` body with antialiasing, `20px` pill composer (`focus-within` soft shadow), user bubble `16px` right-aligned at `min(42rem,78%)`, pill buttons (`999px`), header sticky with `blur(8px)`, radii `6/10/14/999px`. Lamps and `--warn/--ok` hues preserved, just softened to the new paper.
+**Theme / chrome (2026-08-12).** Light `#ffffff`/`#f7f7f8` and dark `#212121`/`#171717` aligned to ChatGPT/Cursor/Claude — `14px` antialiased body, pill composer `24px→20px` (focus `accent 22%`), user bubble `18–20px` right-aligned `min(30–42rem,68–78%)`, pill buttons/inputs `999px` (`sans 13px`), header `sticky ghost` (`92% surface`, `blur 10px`, `rule 70%`), `session-title` `14px/500 muted`, `session-actions` `30px/12px`, ghost `chip-btn`, `header-model` `999px` clickable → composer, rail `14–15rem` on `surface` (collapsed `56px`), `turn-events` `sans 12px` chips, `event-ask` `14px` card, `code-block` dark-sink `--code-bg/--code-fg`, `skeleton` shimmer, `turn-foot` hover-reveal, composer placeholder `13px/0.65`, toolbar `11px` meta, plus ChatGPT-density tweaks (`46rem` column, centered `6vh` hero `clamp(20–26px)`, `2× 18rem` suggestion grid `44px 10px` cards, `d3`/`hljs` vendor blurs preserved).
 
 **Subagent graphs and the Fleet view.** A nested run always recorded its own
 graph, but under the same second-resolution `run-<ts>` id as everything

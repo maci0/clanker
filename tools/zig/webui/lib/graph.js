@@ -75,6 +75,7 @@ export function buildNodeBox(d, slowest, nodeW) {
   box.className = "run-node";
   box.dataset.kind = kind;
   if (node.ok === false) box.dataset.ok = "false";
+  if (/\[subagent run:\s*sub-\d+\]/.test(node.output || node.detail || "")) box.dataset.jump = "true";
   box.style.width = nodeW + "px";
   var kindEl = document.createElement("span");
   kindEl.className = "run-node-kind";
@@ -82,12 +83,33 @@ export function buildNodeBox(d, slowest, nodeW) {
   box.appendChild(kindEl);
   var label = document.createElement("span");
   label.className = "run-node-label";
-  label.textContent = node.label || node.detail || kind;
-  label.title = label.textContent;
+  // Trello/Slack-style: surface file refs + parent→child link inline on the card
+  var jumpRe = /\[subagent run:\s*(sub-\d+)\]/;
+  var jm = (node.output || node.detail || "").match(jumpRe);
+  if (jm) {
+    label.textContent = (node.label || node.detail || kind) + "  ↗ " + jm[1].slice(0, 10);
+    label.title = (node.label || "") + (node.detail ? " · " + node.detail : "") + " — has sub-run " + jm[1] + " (open from detail)";
+  } else {
+    label.textContent = node.label || node.detail || kind;
+    label.title = label.textContent;
+  }
+  // Kimi/Codex: if tool output names a source file, hint it under the metrics line
+  var fileHint = null;
+  var fm = (node.detail || node.label || "").match(/([a-zA-Z0-9_\-]+\.(?:zig|ts|js|py|rs|go|md))/);
+  if (!fm && node.output) fm = node.output.slice(0, 600).match(/([a-zA-Z0-9_\-]+\.(?:zig|ts|js|py|rs|go|md))/);
+  if (fm) fileHint = fm[1];
   box.appendChild(label);
+  // Codex-like: show truncated duration on the card itself (Qwen's badge style)
+  if (node.duration_ms) {
+    var dur = document.createElement("span");
+    dur.className = "run-node-duration";
+    dur.textContent = (node.duration_ms < 1000 ? node.duration_ms + "ms" : (node.duration_ms/1000).toFixed(1) + "s");
+    dur.setAttribute("aria-hidden", "true");
+    box.appendChild(dur);
+  }
   var metrics = document.createElement("span");
   metrics.className = "run-node-metrics";
-  metrics.textContent = metricsFor(node);
+  metrics.textContent = metricsFor(node) + (fileHint ? " · " + fileHint : "");
   box.appendChild(metrics);
   if (kind !== "final") {
     var bar = document.createElement("span");
@@ -97,14 +119,25 @@ export function buildNodeBox(d, slowest, nodeW) {
     bar.appendChild(barFill);
     box.appendChild(bar);
   }
+  box.setAttribute("data-label", node.label || node.detail || kind);
   box.setAttribute("aria-label", (node.ok === false ? "failed " : "") + kind + " " + (node.label || "") + ", " + metricsFor(node) + ". Activate to read its recorded output.");
   return box;
+}
+
+export function extendSubagentRefs(built) {
+  // Slack / Trello habit: where node detail carries "[subagent run: sub-…]", make it clickable
+  // by normalizing the text — graph's detail/output already contains the literal; the panel
+  // below links it. No DOM here; app.js does the linking after layout.
+  return built;
 }
 
 export function layoutGraph(canvas, built, slowest, opts) {
   opts = opts || {};
   var onSelect = opts.onSelect || function () {};
   var statusEl = opts.statusEl || null;
+  var minimap = opts.minimap || null;
+  var searchQuery = (opts.searchQuery || "").trim().toLowerCase();
+  var kindFilter = (opts.kindFilter || "").trim().toLowerCase();
   var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
   var tagPad = 42;
   var containerW = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 320;
@@ -141,12 +174,34 @@ export function layoutGraph(canvas, built, slowest, opts) {
     var totalW = Math.max(containerW, graphW + pad * 2 + tagPad);
     var totalH = graphH + pad * 2;
     canvas.style.height = totalH + "px";
+    canvas.style.minHeight = totalH + "px";
     var svgNS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "run-edges");
     svg.setAttribute("width", totalW);
     svg.setAttribute("height", totalH);
     svg.setAttribute("aria-hidden", "true");
+    var activeQuery = searchQuery || "";
+    var hasKind = !!kindFilter;
+    if (activeQuery || hasKind) {
+      data.forEach(function(d){
+        var hay = ((d.node && d.node.label) || "") + " " + ((d.node && d.node.detail) || "") + " " + d.kind;
+        var hitsText = !activeQuery || hay.toLowerCase().indexOf(activeQuery) !== -1;
+        var hitsKind = !hasKind || d.kind === kindFilter || (kindFilter === "failed" && d.node && d.node.ok === false);
+        d._matches = hitsText && hitsKind;
+        if (d._matches) { d.el.setAttribute("data-match", "true"); d.el.style.opacity = ""; }
+        else { d.el.removeAttribute("data-match"); d.el.style.opacity = "0.28"; }
+      });
+      svg.style.opacity = "0.35";
+      if (statusEl) {
+        var n = data.filter(function(x){ return x._matches; }).length;
+        statusEl.textContent = n + " of " + data.length + " nodes match" + (n ? "" : " — try Clear");
+      }
+    } else {
+      data.forEach(function(d){ d.el.removeAttribute("data-match"); d.el.style.opacity = ""; });
+      svg.style.opacity = "";
+      if (statusEl) statusEl.textContent = "";
+    }
     var defs = document.createElementNS(svgNS, "defs");
     var marker = document.createElementNS(svgNS, "marker");
     marker.setAttribute("id", "run-arrow");
@@ -186,13 +241,59 @@ export function layoutGraph(canvas, built, slowest, opts) {
         tag.setAttribute("aria-hidden", "true");
         canvas.appendChild(tag);
       }
-      (function (k, n, b) {
+      (function (k, n, b, iter) {
+        function highlightPath(active){
+          var id = b.dataset.graphId || "";
+          canvas.querySelectorAll(".run-node[data-highlight]").forEach(function(x){ x.removeAttribute("data-highlight"); });
+          canvas.querySelectorAll(".run-edges path[data-highlight]").forEach(function(x){ x.removeAttribute("data-highlight"); });
+          if (!active || !id) return;
+          try{
+            var me = null;
+            for (var ff of dag.idescendants()) if (ff.data.id === id) { me = ff; break; }
+            if (!me) return;
+            var upSeen = {}, downSeen = {};
+            function markUp(dn2){ if (upSeen[dn2.data.id]) return; upSeen[dn2.data.id]=true; var el2 = dn2.data.el; if(el2) el2.setAttribute("data-highlight","true"); for (var p of dn2.iparents()) markUp(p); }
+            function markDown(dn2){ if (downSeen[dn2.data.id]) return; downSeen[dn2.data.id]=true; var el2b = dn2.data.el; if(el2b) el2b.setAttribute("data-highlight","true"); for (var ch of dn2.ichildren()) markDown(ch); }
+            markUp(me); markDown(me);
+            var ps = canvas.querySelectorAll(".run-edges path");
+            var idx=0;
+            for (var lk of dag.ilinks()) {
+              var pth = ps[idx++];
+              if (!pth) continue;
+              var sH = lk.source.data.el && lk.source.data.el.hasAttribute("data-highlight");
+              var tH = lk.target.data.el && lk.target.data.el.hasAttribute("data-highlight");
+              if (sH && tH) pth.setAttribute("data-highlight","true");
+            }
+          }catch(_e){}
+        }
+        b.dataset.graphId = dn.data.id;
+        b.setAttribute("data-iter", String(iter));
+        b.addEventListener("mouseenter", function(){ highlightPath(true); });
+        b.addEventListener("mouseleave", function(){ highlightPath(false); });
+        b.addEventListener("focus", function(){ highlightPath(true); });
+        b.addEventListener("blur", function(){ highlightPath(false); });
         b.addEventListener("click", function () {
           canvas.querySelectorAll(".run-node.selected").forEach(function (x) { x.classList.remove("selected"); });
           b.classList.add("selected");
           onSelect(k, n);
+          highlightPath(true);
+          // keep URL in sync so Copy link after a click pins this node
+          try {
+            var cur = location.hash || "";
+            var base = cur.split("?")[0];
+            if (base.indexOf("#runs/") === 0) {
+              var lbl = b.getAttribute("data-label") || "";
+              var nextHash = base + (lbl ? "?node=" + encodeURIComponent(lbl) : "");
+              if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
+            }
+          } catch(_) {}
+          try{
+            document.querySelectorAll(".run-crumbs button").forEach(function(ch){
+              if (ch.textContent.trim() === "iter " + iter) ch.setAttribute("aria-current","true"); else ch.removeAttribute("aria-current");
+            });
+          }catch(_){}
         });
-      })(kind, dn.data.node, box2);
+      })(kind, dn.data.node, box2, dn.data.iteration);
     }
   }).catch(function (err) {
     var errEl2 = document.createElement("p");

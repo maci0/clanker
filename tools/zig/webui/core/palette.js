@@ -31,7 +31,14 @@ export function paletteEntries() {
     out.push({ kind: "chat", label: _refs.sessionLabel(s), run: function () { _showView("chat", false); _switchSession(s.id); } });
   });
   _refs.allRunsHolder.list.forEach(function (r) {
-    out.push({ kind: "run", label: _refs.runLabel(r), run: function () { _openRun(r.run_id); } });
+    var taskPart = r.task ? " " + r.task.slice(0, 80) : "";
+    out.push({ kind: "run", label: _refs.runLabel(r) + taskPart, run: function () { _openRun(r.run_id); } });
+    // OpenWebUI-style: also index node labels so palette search can hit inside a run
+    if (r.nodes && r.nodes.length) {
+      for (var ni=0; ni<Math.min(r.nodes.length, 6); ni++) {
+        (function(rr, nd){ var lbl = nd.label || nd.detail || ""; if(!lbl) return; out.push({ kind: "node", label: lbl.slice(0,64) + " · " + rr.run_id.slice(0,8), run: function(){ _openRun(rr.run_id); } }); })(r, r.nodes[ni]);
+      }
+    }
   });
   _refs.board.cards.forEach(function (c) {
     out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {

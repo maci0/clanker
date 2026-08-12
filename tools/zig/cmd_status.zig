@@ -1,5 +1,6 @@
 //! cmd_status: show the instance identity and configured peers by reading
-//! config.json (and config.local.json, which overrides it).
+//! config.toml/config.json (and config.local.toml/config.local.json, which
+//! overrides it).
 //! Input:  {"args": "..."}
 //! Output: {"ok": true, "text": "<instance + peers>"}
 
@@ -31,11 +32,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var base = StatusInfo{};
     var local = StatusInfo{};
-    if (lib.fsRead("config.json") catch null) |content| {
-        base = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch base;
+    if (lib.readConfigFile("config")) |f| {
+        base = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, f.text, .{ .ignore_unknown_fields = true }) catch base;
     }
-    if (lib.fsRead("config.local.json") catch null) |content| {
-        local = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, content, .{ .ignore_unknown_fields = true }) catch local;
+    if (lib.readConfigFile("config.local")) |f| {
+        local = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, f.text, .{ .ignore_unknown_fields = true }) catch local;
     }
 
     const inst = if (local.instance) |i| i else if (base.instance) |i| i else InstanceInfo{};

@@ -60,6 +60,7 @@ var el = {
   peers: document.getElementById("peers"),
   peersChip: document.getElementById("peers-chip"),
   sessionChip: document.getElementById("session-chip"),
+  headerModel: document.getElementById("header-model"),
   newChat: document.getElementById("new-chat"),
   themeToggle: document.getElementById("theme-toggle"),
   runsRefresh: document.getElementById("runs-refresh"),
@@ -116,6 +117,7 @@ var el = {
   cardColumn: document.getElementById("card-column"),
   cardAdd: document.getElementById("card-add"),
   cardDetail: document.getElementById("card-detail"),
+  cardDetailBox: document.querySelector("#card-detail .overlay-box"),
   boardMine: document.getElementById("board-mine"),
   boardRefresh: document.getElementById("board-refresh"),
   boardStatus: document.getElementById("board-status"),
@@ -200,7 +202,26 @@ function loadSession() {
 }
 
 function renderSessionChip() {
-  el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  if (el.sessionChip) el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
+  if (el.headerModel) {
+    var sel = el.modelSelect ? el.modelSelect.value : "";
+    var label = "";
+    if (sel && sel.indexOf(" ") !== -1) label = sel.slice(sel.indexOf(" ") + 1).trim();
+    else if (sel) label = sel;
+    el.headerModel.textContent = label || "default model";
+    el.headerModel.title = sel ? ("Model: " + sel + " — click to change") : "Model: default (from config) — click to change";
+  }
+}
+if (typeof window !== "undefined") {
+  document.addEventListener("DOMContentLoaded", function(){
+    var hm = document.getElementById("header-model");
+    if (hm) hm.addEventListener("click", function(){
+      var dest = document.getElementById("task");
+      if (dest) { dest.focus(); dest.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      var ms = document.getElementById("model-search");
+      if (ms) { try { ms.focus(); ms.select(); } catch(_){} }
+    });
+  });
 }
 
 var THEMES = THEMESMod;
@@ -839,6 +860,19 @@ var renderMarkdown = mdRenderMarkdown;
 var highlightInto = mdHighlightInto;
 var buildCodeBlock = mdBuildCodeBlock;
 var finalizeAnswer = mdFinalizeAnswer;
+window.clankerOpenCitation = function(ref){
+  try{
+    var stem = ref.split(":")[0].split("/").pop().split(".")[0];
+    var runsTab = document.getElementById("tab-runs");
+    if (runsTab) runsTab.click();
+    setTimeout(function(){
+      var inp = document.querySelector(".run-graph-search input");
+      if (inp) { inp.value = stem; inp.dispatchEvent(new Event("input", {bubbles:true})); inp.focus(); }
+      var rf = document.getElementById("run-filter");
+      if (rf) { rf.value = ref.split(":")[0]; rf.dispatchEvent(new Event("input", {bubbles:true})); }
+    }, 80);
+  }catch(_){}
+};
 
 function addToolEvent(turn, names) {
   var row = document.createElement("div");
@@ -903,6 +937,19 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   // Announce question via per-turn live region and fleet-status fallback
   var fleetSt = document.getElementById("fleet-status");
   if (fleetSt) fleetSt.textContent = ariaLabel;
+  // Desktop notification when tab is hidden — otherwise ask/confirm dies silently
+  try{
+    if (document.hidden && "Notification" in window) {
+      if (Notification.permission === "granted") {
+        var n = new Notification(ariaLabel, { body: (evt.question || ariaLabel).slice(0,120), tag: "clanker-ask-" + evt.id });
+        n.onclick = function(){ try{ window.focus(); first && first.focus(); }catch(_){} n.close(); };
+        // tiny beep via Web Audio if available
+        try{ var ac = new (window.AudioContext||window.webkitAudioContext)(); var o=ac.createOscillator(); o.frequency.value=880; o.connect(ac.destination); o.start(); setTimeout(function(){ try{o.stop(); ac.close();}catch(_){} }, 180); }catch(_){}
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().catch(function(){});
+      }
+    }
+  }catch(_){}
   var first = group.querySelector("button");
   if (first) first.focus();
 }
@@ -1009,8 +1056,9 @@ function renderStats(turn, stats, task) {
 
   /* Did this layer hold? A turn that produced an answer held; one that was
      stopped, errored or ended early did not. */
+  var stopped = turn.answer.textContent.indexOf("[stopped]") !== -1;
   var failed = turn.answer.querySelector(".failed") !== null ||
-    turn.answer.textContent.indexOf("[stopped]") !== -1 ||
+    stopped ||
     turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
   var held = document.createElement("span");
   held.className = "turn-held";
@@ -1073,6 +1121,46 @@ function renderStats(turn, stats, task) {
     });
     actions.appendChild(regenBtn);
 
+    var branchBtn = document.createElement("button");
+    branchBtn.type = "button";
+    branchBtn.className = "secondary";
+    branchBtn.textContent = "Branch";
+    branchBtn.title = "Fork this conversation at this turn into a new session";
+    branchBtn.addEventListener("click", function () {
+      var forkBtn = document.getElementById("session-fork");
+      if (forkBtn) forkBtn.click();
+    });
+    actions.appendChild(branchBtn);
+
+    // Branch timeline: which forks came from here (like ChatGPT/Cursor)
+    (function(){
+      if (!knownSessions || !knownSessions.length) return;
+      var title = ((turn.root.querySelector(".turn-you") || {}).textContent || "").trim();
+      var forks = knownSessions.filter(function(s){
+        return s.title && s.title.indexOf("fork of") !== -1 && s.id !== sessionId;
+      });
+      // Heuristic: server titles forks as "fork of <original title>" — show any fork when on its parent
+      var meta = currentSessionMeta();
+      var parentTitle = meta ? (meta.title || "") : "";
+      var relevant = forks.filter(function(s){ return parentTitle && s.title.indexOf(parentTitle.slice(0, 24)) !== -1; });
+      if (!relevant.length) relevant = forks.slice(0, 3);
+      if (!relevant.length) return;
+      var bar = document.createElement("div");
+      bar.className = "turn-branches";
+      bar.setAttribute("role", "navigation");
+      bar.setAttribute("aria-label", "Branches from this turn");
+      relevant.forEach(function(s){
+        var chip = document.createElement("button");
+        chip.type = "button"; chip.className = "branch-chip";
+        chip.textContent = (s.title || s.id.slice(0,8)) + " · " + (s.messages || 0) + " msgs";
+        chip.title = "Switch to " + (s.title || s.id);
+        if (s.id === sessionId) chip.setAttribute("data-current", "true");
+        chip.addEventListener("click", function(){ switchSession(s.id); });
+        bar.appendChild(chip);
+      });
+      turn.root.appendChild(bar);
+    })();
+
     var editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.className = "secondary";
@@ -1086,6 +1174,19 @@ function renderStats(turn, stats, task) {
       scrollTo(el.task, "center");
     });
     actions.appendChild(editBtn);
+    if (stopped) {
+      var contBtn = document.createElement("button");
+      contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue";
+      contBtn.title = "Continue this run from where it stopped";
+      contBtn.addEventListener("click", function(){ if(busy) return; el.task.value = "Continue where you left off."; el.form.requestSubmit(); });
+      actions.appendChild(contBtn);
+      var regenEditBtn = document.createElement("button");
+      regenEditBtn.type = "button"; regenEditBtn.className = "secondary"; regenEditBtn.textContent = "Regenerate";
+      regenEditBtn.title = "Run this task again from scratch";
+      regenEditBtn.addEventListener("click", function(){ if(busy) return; el.task.value = task; el.form.requestSubmit(); });
+      actions.appendChild(regenEditBtn);
+      // Edit is already there as Edit & resend — covers the edit leg of the trio
+    }
   }
   turn.foot.appendChild(actions);
 }
@@ -1140,6 +1241,43 @@ el.form.addEventListener("drop", function (e) {
 });
 
 el.task.addEventListener("input", syncControls);
+
+// Voice input — Web Speech API (ChatGPT/OpenWebUI parity)
+(function(){
+  var btn = document.getElementById("voice-btn");
+  if (!btn) return;
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { btn.hidden = true; return; }
+  var rec = null, listening = false;
+  function setListening(on){
+    listening = on;
+    btn.textContent = on ? "●" : "🎙";
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? "Listening — click to stop" : "Voice input (click to start)";
+    el.task.placeholder = on ? "Listening…" : "Ask anything — type / for prompts";
+  }
+  btn.addEventListener("click", function(){
+    if (listening && rec) { try{ rec.stop(); }catch(_){ } return; }
+    rec = new SR();
+    rec.lang = (navigator.language || "en-US");
+    rec.interimResults = true;
+    rec.continuous = false;
+    var base = el.task.value;
+    rec.onstart = function(){ setListening(true); };
+    rec.onend = function(){ setListening(false); };
+    rec.onerror = function(){ setListening(false); el.sessionStatus.textContent = "Voice input failed — check microphone permission."; };
+    rec.onresult = function(e){
+      var transcript = "";
+      for(var i=e.resultIndex;i<e.results.length;i++) transcript += e.results[i][0].transcript;
+      el.task.value = base ? (base + " " + transcript) : transcript;
+      syncControls(); autoGrow();
+      if (e.results[e.results.length-1].isFinal) {
+        el.task.focus();
+      }
+    };
+    try{ rec.start(); }catch(_){ setListening(false); }
+  });
+})();
 
 el.task.addEventListener("keydown", function (e) {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -1402,7 +1540,10 @@ function loadRuns() {
         el.runFilter.value = "";
         renderRunOptions("");
         el.runSelect.value = want;
-        return loadRun(want);
+        var p = loadRun(want);
+        var pn = window._pendingRunNode; window._pendingRunNode = null;
+        if (pn) p.then(function(){ setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(pn) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); });
+        return p;
       }
       var wanted = renderRunOptions(el.runFilter.value);
       if (wanted) return loadRun(wanted);
@@ -1428,6 +1569,7 @@ function showRunsError(message) {
 
 /* One way to open a named run, whether the view has loaded yet or not. */
 function openRun(id) {
+  try { history.replaceState(null, "", "#runs/" + encodeURIComponent(id)); } catch (_) {}
   if (viewLoaded.runs) {
     showView("runs", true);
     el.runFilter.value = "";
@@ -1489,10 +1631,46 @@ function drawRun(g) {
   el.runGraph.textContent = "";
   var nodes = g.nodes || [];
 
-  var head = document.createElement("p");
+  var head = document.createElement("div");
   head.className = "run-head";
-  head.textContent = g.run_id + " · " + (g.provider || "?") + " · " + g.duration_ms + "ms · " +
-    g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion tok\n" + (g.task || "");
+  head.style.display = "flex"; head.style.flexWrap = "wrap"; head.style.gap = "0.4rem"; head.style.alignItems = "center";
+  var headId = document.createElement("span"); headId.textContent = g.run_id; headId.style.fontWeight = "600"; head.appendChild(headId);
+  if (g.provider) { var hp = document.createElement("span"); hp.className = "tool-tag"; hp.textContent = g.provider; head.appendChild(hp); }
+  var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
+  if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
+  var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
+  copyHead.addEventListener("click", function(){ try{ navigator.clipboard.writeText(g.run_id); copyHead.textContent="Copied"; setTimeout(function(){ copyHead.textContent="Copy id"; }, 1200);}catch(_){} });
+  head.appendChild(copyHead);
+  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link";
+  copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
+  copyLink.addEventListener("click", function(){
+    var sel = el.runGraph.querySelector(".run-node.selected");
+    var nodePart = sel && sel.getAttribute("data-label") ? "?node=" + encodeURIComponent(sel.getAttribute("data-label")) : "";
+    var u = location.origin + location.pathname + "#runs/" + encodeURIComponent(g.run_id) + nodePart;
+    try{ navigator.clipboard.writeText(u); copyLink.textContent="Copied"; setTimeout(function(){ copyLink.textContent="Copy link"; }, 1200);}catch(_){ copyText(u, copyLink, "Copy link", head); }
+  });
+  head.appendChild(copyLink);
+  var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html";
+  exportBtn.title = "Download this run as a self-contained HTML file";
+  exportBtn.addEventListener("click", function(){
+    try{
+      var svg = el.runGraph.querySelector("svg.run-edges");
+      var svgHtml = svg ? new XMLSerializer().serializeToString(svg) : "";
+      var detailHtml = el.runDetail.hidden ? "" : el.runDetail.innerHTML;
+      var html = "<!doctype html><meta charset=utf-8><title>" + g.run_id + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + g.run_id + "</h1><p>" + (g.task||"") + " · " + g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + JSON.stringify(g, null, 2).replace(/</g,"&lt;") + "</pre>";
+      var blob = new Blob([html], {type:"text/html"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = url; a.download = g.run_id + ".html";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    }catch(_){ el.runStatus.textContent = "Export failed"; }
+  });
+  head.appendChild(exportBtn);
+  if (g.parent_run_id) {
+    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8);
+    par.title = "Open parent run " + g.parent_run_id;
+    par.addEventListener("click", function(){ openRun(g.parent_run_id); });
+    head.appendChild(par);
+  }
   el.runGraph.appendChild(head);
 
   if (!nodes.length) {
@@ -1521,28 +1699,353 @@ function drawRun(g) {
   summary.textContent = graphSummaryText(built);
   el.runGraph.appendChild(summary);
 
+  var graphSearch = document.createElement("div");
+  graphSearch.className = "run-graph-search";
+  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
+  var graphSearchInput = document.createElement("input");
+  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…  —  / to focus";
+  graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
+  graphSearchInput.title = "Filter nodes — / focuses, n/N next match, F failed, j/k next iteration";
+  graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
+  var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
+  graphNextBtn.title = "Next match (n)";
+  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear";
+  graphClearBtn.title = "Clear filter";
+  var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit";
+  graphFitBtn.title = "Fit graph to view (0)";
+  graphSearch.appendChild(graphSearchInput); graphSearch.appendChild(graphNextBtn); graphSearch.appendChild(graphClearBtn); graphSearch.appendChild(graphFitBtn);
+  var graphHint = document.createElement("span"); graphHint.className = "meta"; graphHint.textContent = "/ filter · n next · F failed · j/k iter · arrows walk · +/− zoom · click node to pin link";
+  graphHint.style.fontSize = "11px"; graphHint.style.opacity = "0.75"; graphHint.style.flexBasis = "100%";
+  graphSearch.appendChild(graphHint);
+  el.runGraph.appendChild(graphSearch);
+  // Trello/Slack-style focus filters — dim non-matches so dense graphs stay scannable
+  var _kindFilter = (function(){ try{ return localStorage.getItem("clanker.graphKind") || ""; }catch(_){ return ""; } })();
+  var _initSearch = (function(){ try{ return localStorage.getItem("clanker.graphSearch") || ""; }catch(_){ return ""; } })();
+  var graphKindBar = document.createElement("div");
+  graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "0.35rem"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "0.5rem";
+  graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
+  [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
+    var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label;
+    b.dataset.kind = opt.k; b.setAttribute("aria-pressed", String(opt.k === _kindFilter));
+    if (opt.k === "failed") b.title = "Only failed nodes";
+    b.addEventListener("click", function(){
+      _kindFilter = opt.k;
+      try{ localStorage.setItem("clanker.graphKind", _kindFilter); }catch(_){}
+      graphKindBar.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", String(x.dataset.kind === _kindFilter)); });
+      _matchIdx = -1; doLayout(_searchQ);
+    });
+    graphKindBar.appendChild(b);
+  });
+  if (_initSearch) graphSearchInput.value = _initSearch;
+  el.runGraph.appendChild(graphKindBar);
+  // Codex-style breadcrumb: iteration / step chips + keyboard tour
+  var crumb = document.createElement("div");
+  crumb.className = "run-crumbs"; crumb.style.display = "flex"; crumb.style.gap = "0.35rem"; crumb.style.flexWrap = "wrap"; crumb.style.marginBottom = "0.5rem";
+  crumb.setAttribute("role", "navigation"); crumb.setAttribute("aria-label", "Iterations");
+  built.stages.forEach(function(st, idx){
+    var chip = document.createElement("button");
+    chip.type = "button"; chip.className = "secondary"; chip.textContent = "iter " + st.iteration;
+    chip.title = st.iteration + " · " + (st.llm.label || "llm") + (st.tools.length ? " · " + st.tools.map(function(t){ return t.label; }).join(", ") : "");
+    chip.addEventListener("click", function(){
+      // focus first node of this stage (llm)
+      var target = canvas.querySelector('.run-node[data-kind="llm"]');
+      // find by iteration tag neighbour
+      var tags = canvas.querySelectorAll(".run-iter-tag");
+      for (var ti=0; ti<tags.length; ti++) if (tags[ti].textContent.trim() === String(st.iteration)) {
+        var sib = tags[ti].nextElementSibling;
+        // walk to next llm node near tag
+        var x = parseFloat(tags[ti].style.left) + 20;
+        var y = parseFloat(tags[ti].style.top) + 11;
+        // fallback: focus canvas center near tag
+        canvas.scrollLeft = Math.max(0, x - canvas.clientWidth/2);
+        canvas.scrollTop = Math.max(0, y - canvas.clientHeight/2);
+        break;
+      }
+    });
+    crumb.appendChild(chip);
+  });
+  if (built.stages.length) el.runGraph.appendChild(crumb);
+  // Time scrubber / playback — iteration stepper (Codex/Kimi parity)
+  if (built.stages.length > 1) {
+    var maxIter = Math.max.apply(null, built.stages.map(function(s){ return s.iteration; }));
+    var minIter = Math.min.apply(null, built.stages.map(function(s){ return s.iteration; }));
+    var scrubWrap = document.createElement("div");
+    scrubWrap.style.display = "flex"; scrubWrap.style.alignItems = "center"; scrubWrap.style.gap = "0.5rem"; scrubWrap.style.marginBottom = "0.5rem";
+    var scrubLabel = document.createElement("span"); scrubLabel.className = "meta"; scrubLabel.textContent = "Scrub:"; scrubWrap.appendChild(scrubLabel);
+    var scrub = document.createElement("input"); scrub.type = "range"; scrub.min = String(minIter); scrub.max = String(maxIter); scrub.value = String(maxIter); scrub.step = "1";
+    scrub.setAttribute("aria-label", "Scrub iterations"); scrub.style.flex = "1";
+    var scrubOut = document.createElement("span"); scrubOut.className = "meta"; scrubOut.textContent = "iter " + maxIter + " / " + maxIter;
+    scrubWrap.appendChild(scrub); scrubWrap.appendChild(scrubOut);
+    scrub.addEventListener("input", function(){
+      var v = parseInt(scrub.value, 10);
+      scrubOut.textContent = "iter " + v + " / " + maxIter;
+      // dim nodes past scrub point so you can see how the run grew
+      canvas.querySelectorAll(".run-node").forEach(function(n){
+        var iterTag = n.previousElementSibling;
+        // find iter via crumb mapping: nearest llm tag — simpler: use data highlight path via iter
+        var nodeIter = parseInt(n.getAttribute("data-iter") || "0", 10);
+        if (isNaN(nodeIter)) return;
+        n.style.opacity = (nodeIter > v) ? "0.2" : "";
+      });
+      // keep selected detail in sync: if its iter is now hidden, auto-select nearest visible iter
+    });
+    el.runGraph.appendChild(scrubWrap);
+  }
+
   var canvas = document.createElement("div");
   canvas.className = "run-canvas";
-  // Focusable so a graph wider than the viewport can be scrolled with arrow
-  // keys even when it holds nothing focusable (a run that recorded only the
-  // "did not finish" marker); node boxes are buttons and reachable on their
-  // own.
   canvas.tabIndex = 0;
-  canvas.setAttribute("aria-label", "Scrollable execution graph diagram");
+  canvas.setAttribute("aria-label", "Scrollable execution graph — drag to pan, Ctrl+wheel to zoom, +/- keys, search to highlight");
+  (function(){
+    var isPanning = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
+    canvas.addEventListener("mousedown", function(e){
+      if (e.target.closest && e.target.closest(".run-node")) return;
+      isPanning = true; startX = e.clientX; startY = e.clientY; startScrollLeft = canvas.scrollLeft; startScrollTop = canvas.scrollTop;
+      canvas.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+    window.addEventListener("mouseup", function(){ if(isPanning){ isPanning = false; canvas.style.cursor = ""; } });
+    window.addEventListener("mousemove", function(e){
+      if (!isPanning) return;
+      canvas.scrollLeft = startScrollLeft - (e.clientX - startX);
+      canvas.scrollTop = startScrollTop - (e.clientY - startY);
+    });
+    canvas.addEventListener("wheel", function(e){
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        if (e.deltaY < 0) zoomInBtn.click(); else if (e.deltaY > 0) zoomOutBtn.click();
+      }
+    }, { passive: false });
+  })();
+  var zoomWrap = document.createElement("div");
+  zoomWrap.style.display = "flex"; zoomWrap.style.gap = "0.4rem"; zoomWrap.style.marginTop = "0.4rem";
+  var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom";
+  var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom";
+  var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset";
+  var zoomLevel = 1;
+  function applyZoom(){ canvas.style.transform = zoomLevel === 1 ? "" : "scale(" + zoomLevel + ")"; canvas.style.transformOrigin = "top left"; }
+  zoomInBtn.addEventListener("click", function(){ zoomLevel = Math.min(1.8, zoomLevel + 0.15); applyZoom(); });
+  zoomOutBtn.addEventListener("click", function(){ zoomLevel = Math.max(0.5, zoomLevel - 0.15); applyZoom(); });
+  zoomResetBtn.addEventListener("click", function(){ zoomLevel = 1; applyZoom(); });
+  zoomWrap.appendChild(zoomInBtn); zoomWrap.appendChild(zoomOutBtn); zoomWrap.appendChild(zoomResetBtn);
   el.runGraph.appendChild(canvas);
+  el.runGraph.appendChild(zoomWrap);
 
-  // d3-dag is fetched on demand, so the first graph of a session draws one
-  // network round-trip later than the rest of the page.
-  loadD3().then(function () {
-    // A newer run may have been requested while the library was in flight.
-    if (canvas.isConnected) layoutGraph(canvas, built, slowest);
-  }).catch(function (err) {
-    var errEl = document.createElement("p");
-    errEl.className = "run-empty";
-    errEl.textContent = "Could not load the graph layout library: " + err.message;
-    canvas.appendChild(errEl);
-    el.runStatus.textContent = errEl.textContent;
+  var minimap = document.createElement("div");
+  minimap.className = "run-minimap"; minimap.hidden = true;
+  minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap — click to jump, drag viewport to pan");
+  minimap.title = "Click to jump · drag viewport to pan";
+  var mmLabel = document.createElement("span"); mmLabel.className = "run-minimap-label"; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
+  var mmCanvas = document.createElement("canvas"); mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
+  var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
+  minimap.appendChild(mmViewport);
+  canvas.appendChild(minimap);
+  function paintMinimap(){
+    try{
+      var ctx = mmCanvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
+      var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
+      // light line for edges (Slack/Qwen-style overview)
+      try{
+        var svg = canvas.querySelector("svg.run-edges");
+        if (svg) {
+          var paths = svg.querySelectorAll("path");
+          ctx.strokeStyle = "rgba(140,140,140,0.35)";
+          ctx.lineWidth = 0.7;
+          paths.forEach(function(p){
+            var d = p.getAttribute("d") || "";
+            var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
+            if (!m) return;
+            var x1 = (parseFloat(m[1]) / sw) * mmCanvas.width;
+            var y1 = (parseFloat(m[2]) / sh) * mmCanvas.height;
+            var x2 = (parseFloat(m[3]) / sw) * mmCanvas.width;
+            var y2 = (parseFloat(m[4]) / sh) * mmCanvas.height;
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          });
+        }
+      }catch(_){}
+      var nodes = canvas.querySelectorAll(".run-node");
+      nodes.forEach(function(n){
+        var x = (n.offsetLeft / sw) * mmCanvas.width;
+        var y = (n.offsetTop / sh) * mmCanvas.height;
+        var w = 6, h = 4;
+        var kind = n.getAttribute("data-kind") || "";
+        if (kind === "llm") ctx.fillStyle = "rgba(11,87,208,0.75)";
+        else if (kind === "tool") ctx.fillStyle = "rgba(5,150,105,0.75)";
+        else if (kind === "final") ctx.fillStyle = "rgba(0,0,0,0.75)";
+        else ctx.fillStyle = "rgba(120,120,120,0.75)";
+        if (n.getAttribute("data-ok") === "false") ctx.fillStyle = "rgba(220,38,38,0.9)";
+        if (n.classList.contains("selected")) { ctx.fillStyle = "rgba(11,87,208,1)"; w = 7; h = 5; }
+        else if (n.hasAttribute("data-highlight")) ctx.fillStyle = "rgba(11,87,208,0.45)";
+        ctx.fillRect(x, y, w, h);
+      });
+    }catch(_){}
+  }
+  function updateMinimap(){
+    var needsMap = canvas.scrollWidth > canvas.clientWidth + 8 || canvas.scrollHeight > canvas.clientHeight + 8;
+    minimap.hidden = !needsMap;
+    if (minimap.hidden) return;
+    paintMinimap();
+    var sx = canvas.scrollLeft / Math.max(1, canvas.scrollWidth - canvas.clientWidth);
+    var sy = canvas.scrollTop / Math.max(1, canvas.scrollHeight - canvas.clientHeight);
+    var vw = canvas.clientWidth / Math.max(1, canvas.scrollWidth) * 100;
+    var vh = canvas.clientHeight / Math.max(1, canvas.scrollHeight) * 100;
+    mmViewport.style.left = (sx * (100 - vw)) + "%";
+    mmViewport.style.top = (sy * (100 - vh)) + "%";
+    mmViewport.style.width = Math.max(12, vw) + "%";
+    mmViewport.style.height = Math.max(12, vh) + "%";
+  }
+  canvas.addEventListener("scroll", updateMinimap);
+  // click-to-jump: nearest node under cursor focuses & opens its detail (fallback to viewport jump)
+  minimap.addEventListener("click", function(e){
+    if (e.target === mmViewport) return;
+    var rect = minimap.getBoundingClientRect();
+    var px = (e.clientX - rect.left) / rect.width;
+    var py = (e.clientY - rect.top) / rect.height;
+    var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
+    var cx = px * sw, cy = py * sh;
+    var best = null, bestD = Infinity;
+    canvas.querySelectorAll(".run-node").forEach(function(n){
+      var nx = n.offsetLeft + n.offsetWidth/2, ny = n.offsetTop + n.offsetHeight/2;
+      var d = Math.hypot(nx - cx, ny - cy);
+      if (d < bestD) { bestD = d; best = n; }
+    });
+    // within ~60px of a node, treat the minimap click as a node pick
+    if (best && bestD < 60) { best.focus(); best.click(); best.scrollIntoView({block:"center", inline:"center"}); return; }
+    canvas.scrollLeft = px * (canvas.scrollWidth - canvas.clientWidth);
+    canvas.scrollTop = py * (canvas.scrollHeight - canvas.clientHeight);
   });
+  // drag viewport to pan
+  (function(){
+    var dragging = false, startX = 0, startY = 0, startSL = 0, startST = 0;
+    mmViewport.addEventListener("mousedown", function(e){
+      dragging = true; startX = e.clientX; startY = e.clientY; startSL = canvas.scrollLeft; startST = canvas.scrollTop;
+      e.preventDefault(); e.stopPropagation();
+    });
+    window.addEventListener("mousemove", function(e){
+      if (!dragging) return;
+      var rect = minimap.getBoundingClientRect();
+      var dxRatio = (e.clientX - startX) / rect.width;
+      var dyRatio = (e.clientY - startY) / rect.height;
+      canvas.scrollLeft = startSL + dxRatio * canvas.scrollWidth;
+      canvas.scrollTop = startST + dyRatio * canvas.scrollHeight;
+    });
+    window.addEventListener("mouseup", function(){ dragging = false; });
+  })();
+  // keep in sync after layout / resize
+  window.addEventListener("resize", updateMinimap);
+  // Fit button
+  graphFitBtn.addEventListener("click", function(){
+    canvas.scrollLeft = 0; canvas.scrollTop = 0;
+    // also reset zoom if api exposed
+    try{ var ev = new KeyboardEvent("keydown", { key: "0" }); canvas.dispatchEvent(ev); }catch(_){}
+    updateMinimap();
+  });
+
+  function syncGraphUrl(){
+    try{
+      var rawHash = location.hash || "";
+      var parsed = parseRunsHash(rawHash) || { id: (lastGraph ? lastGraph.run_id : ""), search:"", kind:"", node:"" };
+      var base = "#runs/" + encodeURIComponent(lastGraph ? lastGraph.run_id : parsed.id);
+      if (!lastGraph || !lastGraph.run_id) base = rawHash.split("?")[0] || base;
+      var params = [];
+      if (_searchQ) params.push("search=" + encodeURIComponent(_searchQ));
+      else if (parsed.search && !canvas.querySelector(".run-node")) params.push("search=" + encodeURIComponent(parsed.search));
+      if (_kindFilter) params.push("kind=" + encodeURIComponent(_kindFilter));
+      else if (parsed.kind && !canvas.querySelector(".run-node")) params.push("kind=" + encodeURIComponent(parsed.kind));
+      var sel = canvas.querySelector(".run-node.selected");
+      var lbl = sel ? sel.getAttribute("data-label") : (parsed.node || window._pendingRunNode || null);
+      if (lbl) params.push("node=" + encodeURIComponent(lbl));
+      var hash = base + (params.length ? "?" + params.join("&") : "");
+      if (location.hash !== hash) history.replaceState(null, "", hash);
+    }catch(_){}
+  }
+  function doLayout(q){
+    loadD3().then(function () {
+      if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap: minimap, onSelect: function(k,n){ showNodeDetail(k,n); syncGraphUrl(); } });
+      try{ updateMinimap(); paintMinimap(); }catch(_){}
+      syncGraphUrl();
+    }).catch(function (err) {
+      var errEl = document.createElement("p");
+      errEl.className = "run-empty";
+      errEl.textContent = "Could not load the graph layout library: " + err.message;
+      canvas.appendChild(errEl);
+      el.runStatus.textContent = errEl.textContent;
+    });
+  }
+  var _searchQ = "";
+  var _matchIdx = -1;
+  function focusNextMatch(){
+    var matches = canvas.querySelectorAll('.run-node[data-match="true"]');
+    if (!matches.length) return;
+    _matchIdx = (_matchIdx + 1) % matches.length;
+    matches[_matchIdx].focus();
+    matches[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
+  }
+  // Qwen-like: link to OpenWebUI's error lens — one button jumps to failed nodes
+  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed";
+  graphFailedBtn.title = "Next failed node";
+  graphSearch.appendChild(graphFailedBtn);
+  function focusNextFailed(){
+    var fails = canvas.querySelectorAll('.run-node[data-ok="false"]');
+    if (!fails.length) return;
+    _matchIdx = (_matchIdx + 1) % fails.length;
+    fails[_matchIdx].focus(); fails[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
+    fails[_matchIdx].click();
+  }
+  graphFailedBtn.addEventListener("click", focusNextFailed);
+  _searchQ = _initSearch || "";
+  graphSearchInput.addEventListener("input", function(){
+    _searchQ = graphSearchInput.value.trim();
+    try{ localStorage.setItem("clanker.graphSearch", graphSearchInput.value); }catch(_){}
+    _matchIdx = -1;
+    doLayout(_searchQ);
+  });
+  graphNextBtn.addEventListener("click", focusNextMatch);
+  graphClearBtn.addEventListener("click", function(){ graphSearchInput.value = ""; _searchQ = ""; _matchIdx = -1; try{ localStorage.removeItem("clanker.graphSearch"); }catch(_){} doLayout(""); graphSearchInput.focus(); });
+  // Codex-like j/k step tour between iterations
+  var _iterIdx = 0;
+  function focusIter(dir){
+    var chips = crumb.querySelectorAll("button");
+    if (!chips.length) return;
+    _iterIdx = (_iterIdx + dir + chips.length) % chips.length;
+    chips[_iterIdx].focus();
+    chips[_iterIdx].click();
+  }
+  canvas.addEventListener("keydown", function(e){
+    if (document.activeElement === graphSearchInput) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      e.preventDefault();
+      var nodes = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      if (!nodes.length) return;
+      var at = nodes.indexOf(document.activeElement);
+      var nxt = at === -1 ? 0 : Math.min(nodes.length - 1, at + 1);
+      nodes[nxt].focus();
+      return;
+    }
+    if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      var nodes2 = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      if (!nodes2.length) return;
+      var at2 = nodes2.indexOf(document.activeElement);
+      var prv = at2 <= 0 ? 0 : at2 - 1;
+      nodes2[prv].focus();
+      return;
+    }
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomInBtn.click(); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomOutBtn.click(); }
+    else if (e.key === "0") { e.preventDefault(); zoomResetBtn.click(); }
+    else if (e.key === "n" || e.key === "N") { if (_searchQ) { e.preventDefault(); focusNextMatch(); } else if (e.shiftKey || e.key === "N") { e.preventDefault(); focusNextFailed(); } }
+    else if (e.key === "F" || e.key === "f") { if (e.shiftKey) { e.preventDefault(); focusNextFailed(); } }
+    else if (e.key === "j") { e.preventDefault(); focusIter(1); }
+    else if (e.key === "k") { e.preventDefault(); focusIter(-1); }
+    else if (e.key === "Escape") { graphSearchInput.blur(); canvas.focus(); }
+    else if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault(); graphSearchInput.focus(); graphSearchInput.select();
+    }
+  });
+  doLayout(_searchQ);
 }
 
 var graphSummaryText = graphSummaryTextMod;
@@ -1642,6 +2145,24 @@ function showNodeDetail(kind, node) {
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
 
+  // Trello/Slack-style quick-jump: if output mentions another run, surface a Jump button in the header too
+  (function(){
+    var m = (node.output || "").match(/\[subagent run:\s*(sub-\d+)\]/);
+    if (m) {
+      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1];
+      j.title = "Open sub-run " + m[1];
+      j.addEventListener("click", function(){ openRun(m[1]); });
+      head.appendChild(j);
+    }
+  })();
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.title = "Copy this node's output";
+  copyBtn.addEventListener("click", function(){
+    var t = node.output || "";
+    try{ navigator.clipboard.writeText(t); copyBtn.textContent = "Copied"; setTimeout(function(){ copyBtn.textContent="Copy"; }, 1200); }catch(_){ copyText(t, copyBtn, "Copy", out); }
+  });
+  head.appendChild(copyBtn);
   var closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "secondary run-detail-close";
@@ -1675,22 +2196,73 @@ function showNodeDetail(kind, node) {
   // <details> elements, and <pre> implies preformatted text content, not a
   // widget tree. .run-detail-output already sets white-space: pre-wrap
   // itself, so nothing about the flat-text case depends on the tag.
+  // Qwen / Codex idea: clickable trace refs inside the detail (file:line, run ids) jump to source / graph
+  var traceBar = document.createElement("div");
+  traceBar.style.display = "flex"; traceBar.style.gap = "0.4rem"; traceBar.style.flexWrap = "wrap"; traceBar.style.marginBottom = "0.5rem";
+  var rawOut = node.output || "";
+  var traceRe = /(?:^|\s)([a-zA-Z0-9_\-\.\/]+\.(?:zig|ts|js|py|rs|go|md):\d+(?::\d+)?)/g;
+  var m, seen = {}, cnt = 0;
+  while ((m = traceRe.exec(rawOut)) && cnt < 6) {
+    var ref = m[1];
+    if (seen[ref]) continue; seen[ref] = true; cnt++;
+    (function(r){
+      var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = r; b.title = "Search for " + r;
+      b.addEventListener("click", function(){
+        // cross-link to graph search and file search where available
+        var s = document.querySelector("#run-filter"); if (s) { s.value = r.split(":")[0]; s.dispatchEvent(new Event("input",{bubbles:true})); }
+        var gf = document.querySelector(".run-graph-search input");
+        if (gf) { gf.value = r.split(":")[0].split("/").pop().split(".")[0]; gf.dispatchEvent(new Event("input",{bubbles:true})); }
+      });
+      traceBar.appendChild(b);
+    })(ref);
+  }
+  if (traceBar.childNodes.length) el.runDetail.appendChild(traceBar);
+  var subRe = /\[subagent run:\s*(sub-\d+)\]/g, sm;
+  while ((sm = subRe.exec(rawOut)) !== null) {
+    var sid = sm[1];
+    var sb = document.createElement("button"); sb.type = "button"; sb.className = "secondary"; sb.textContent = "↗ " + sid;
+    sb.title = "Open sub-run " + sid;
+    (function(id){ sb.addEventListener("click", function(){ if(typeof openRun==="function") openRun(id); }); })(sid);
+    traceBar.appendChild(sb);
+    if (!traceBar.parentNode) el.runDetail.appendChild(traceBar);
+  }
+
   var out = document.createElement("div");
   out.className = "run-detail-output";
-  // Left truly empty (no child) when there's nothing recorded, so the
-  // :empty CSS placeholder still fires.
   if (node.output) {
     var parsed;
-    // Not attempted on a truncated preview: it cannot parse, and the note
-    // above has already explained why the tree is missing.
     if (!truncated) {
       try { parsed = JSON.parse(node.output); } catch (e) { parsed = undefined; }
     }
-    if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
+    // Unified diff heuristic: has hunk headers + +/- lines — render as Codex-style diff instead of plain text
+    var looksDiff = !truncated && typeof node.output === "string" && /^@@ /m.test(node.output) && /(^\+[^+]|\n\+[^+]|^-[^-]|\n-[^-])/m.test(node.output);
+    if (looksDiff) {
+      var diffWrap = document.createElement("div"); diffWrap.className = "diff-view";
+      var diffHead = document.createElement("div"); diffHead.className = "diff-header"; diffHead.textContent = "Patch"; diffWrap.appendChild(diffHead);
+      node.output.split("\n").forEach(function(line){
+        var row = document.createElement("div"); row.className = "diff-line";
+        var sign = document.createElement("span"); sign.className = "diff-sign";
+        if (line.indexOf("@@")===0) { row.setAttribute("data-kind","hunk"); sign.textContent = "●"; }
+        else if (line.charAt(0)==="+") { row.setAttribute("data-kind","add"); sign.textContent = "+"; }
+        else if (line.charAt(0)==="-") { row.setAttribute("data-kind","del"); sign.textContent = "−"; }
+        else sign.textContent = " ";
+        row.appendChild(sign);
+        var txt = document.createElement("span"); txt.textContent = line; txt.style.flex="1"; txt.style.minWidth="0";
+        row.appendChild(txt); diffWrap.appendChild(row);
+      });
+      out.appendChild(diffWrap);
+    } else if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
       var tree = document.createElement("div");
       tree.className = "json-tree";
       tree.appendChild(buildJsonTree(parsed, null, 0));
-      out.appendChild(tree);
+      var treeBar = document.createElement("div");
+      treeBar.style.display = "flex"; treeBar.style.gap = "0.4rem"; treeBar.style.marginBottom = "0.4rem";
+      var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all";
+      expandAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=true; }); });
+      var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all";
+      collapseAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=false; }); var first = tree.querySelector("details"); if(first) first.open = true; });
+      treeBar.appendChild(expandAll); treeBar.appendChild(collapseAll);
+      out.appendChild(treeBar); out.appendChild(tree);
     } else {
       var outCode = document.createElement("code");
       highlightInto(outCode, null, node.output);
@@ -1699,11 +2271,9 @@ function showNodeDetail(kind, node) {
   }
   el.runDetail.appendChild(out);
 
+  el.runDetail.style.maxHeight = "42vh";
+  el.runDetail.style.overflow = "auto";
   scrollTo(el.runDetail, "nearest");
-  // Without this, focus stays on the node button that was just activated;
-  // a keyboard user tabbing onward would walk through every remaining
-  // node in the graph before ever reaching this panel's Close button,
-  // instead of landing on the thing that just appeared.
   closeBtn.focus();
 }
 
@@ -1786,8 +2356,13 @@ function renderChatRooms(rooms) {
     .filter(function (pair) { return pair[1].length; })
     .map(function (pair) {
       return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
-        return T.option({ value: r.room },
-          chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : ""));
+        var label = chatRoomLabel(r);
+        if (r.messages) label += "  ·  " + r.messages;
+        // count only peers that are "up" — green dot like Slack presence
+        var peerUp = knownPeers.some(function(p){ return p.name === r.room || p.name === dmPartner(r.room); });
+        if (r.unread) label += " · " + r.unread + " new";
+        else if (peerUp && r.room.indexOf("dm:") === 0) label += " · online";
+        return T.option({ value: r.room }, label);
       }));
     }));
 
@@ -1886,10 +2461,14 @@ function pollChat(room) {
       // Measured before anything is appended: whether to follow the
       // conversation depends on where the reader was, not where they end up.
       var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
+      // reset grouping when loading fresh batch (rooms switch already clears, but keep day key fresh)
+      if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = ""; }
       fresh.forEach(function (m) {
         rememberChatId(m.id);
         if (m.ts > chatLastTs) chatLastTs = m.ts;
-        el.chatLog.appendChild(buildChatMessage(m));
+        var node = buildChatMessage(m);
+        if (node._daySep) el.chatLog.appendChild(node._daySep);
+        el.chatLog.appendChild(node);
       });
       // Only chase the bottom for someone already at it. Scrolling a reader
       // away from the message they are part-way through is worse than making
@@ -1922,27 +2501,59 @@ function rememberChatId(id) {
 
 
 
+var _lastChatFrom = null;
+var _lastChatTs = 0;
+function _chatDayKey(ts){ try{ var d=new Date(ts*1000); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }catch(_){ return ""; } }
+var _lastChatDay = "";
 function buildChatMessage(m) {
+  var grouped = (m.from === _lastChatFrom) && (m.ts - _lastChatTs < 300) && (_chatDayKey(m.ts) === _lastChatDay);
   var wrap = document.createElement("div");
   wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
+  if (grouped) wrap.setAttribute("data-grouped", "true");
+
+  // day separator (Slack-style)
+  var dayKey = _chatDayKey(m.ts);
+  if (dayKey && dayKey !== _lastChatDay) {
+    _lastChatDay = dayKey;
+    var sep = document.createElement("div");
+    sep.className = "chat-day";
+    sep.textContent = dayKey;
+    // attach as sibling marker stored on wrap for the caller to insert
+    wrap._daySep = sep;
+  } else if (!grouped) {
+    // keep _lastChatDay current even when grouped
+  }
 
   var meta = document.createElement("div");
   meta.className = "chat-meta";
   var mark = document.createElement("span");
   mark.className = "chat-mark";
   mark.textContent = clankerMark(m.from || "");
-  // Decorative: the name follows it and says the same thing.
   mark.setAttribute("aria-hidden", "true");
   meta.appendChild(mark);
   var from = document.createElement("span");
   from.className = "chat-from";
   from.textContent = m.from;
+  from.setAttribute("data-color", String((function(h){ var v=0; for(var i=0;i<m.from.length;i++) v=(v*31 + m.from.charCodeAt(i))>>>0; return v%8; })(m.from)));
+  // hue per name so different clankers read as different people at a glance (Slack-like)
+  var hues = ["#0b57d0","#7c3aed","#059669","#d97706","#dc2626","#0891b2","#9333ea","#65a30d"];
+  var hue = hues[parseInt(from.getAttribute("data-color"),10)%hues.length];
+  from.style.color = hue;
+  from.style.borderBottom = "2px solid " + hue;
   meta.appendChild(from);
   var time = document.createElement("span");
   time.className = "chat-time";
   time.textContent = formatChatTime(m.ts);
   meta.appendChild(time);
   wrap.appendChild(meta);
+  // Slack-like hover timestamp gutter for grouped messages
+  if (grouped) {
+    var gutter = document.createElement("span");
+    gutter.className = "chat-gutter-time";
+    gutter.textContent = formatChatTime(m.ts);
+    gutter.setAttribute("aria-hidden", "true");
+    wrap.appendChild(gutter);
+  }
 
   var text = document.createElement("div");
   text.className = "chat-text";
@@ -1951,9 +2562,43 @@ function buildChatMessage(m) {
     text.classList.add("chat-action");
     text.textContent = said;
   } else {
+    // Slack-style unfurl: bare URL preview affordance (no fetch, just link styling already does it,
+    // but we add a subtle link card when the message is exactly a URL)
+    var trimmed = m.text.trim();
+    var isBareUrl = /^https?:\/\/\S+$/.test(trimmed);
     text.textContent = m.text;
+    if (isBareUrl) {
+      var linkCard = document.createElement("a");
+      linkCard.href = trimmed;
+      linkCard.target = "_blank";
+      linkCard.rel = "noopener noreferrer";
+      linkCard.className = "chat-unfurl";
+      linkCard.textContent = trimmed;
+      // keep original text too for copy, but add card beneath
+      var unfurl = document.createElement("div");
+      unfurl.style.marginTop = "0.3rem";
+      unfurl.appendChild(linkCard);
+      wrap._unfurl = unfurl;
+    }
   }
   wrap.appendChild(text);
+  if (wrap._unfurl) wrap.appendChild(wrap._unfurl);
+  // Slack-like hover quick actions (copy / emoji) — decorative for now, no wire yet
+  var actions = document.createElement("div");
+  actions.className = "chat-actions";
+  actions.setAttribute("aria-hidden", "true");
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
+  actions.appendChild(copyBtn);
+  var reactBtn = document.createElement("button");
+  reactBtn.type = "button"; reactBtn.className = "secondary"; reactBtn.textContent = "♡";
+  reactBtn.title = "React";
+  actions.appendChild(reactBtn);
+  wrap.appendChild(actions);
+  // update grouping state for next message
+  _lastChatFrom = m.from;
+  _lastChatTs = m.ts;
   return wrap;
 }
 
@@ -2005,11 +2650,28 @@ el.chatRefresh.addEventListener("click", function () {
   loadChatRooms().finally(function () { el.chatRefresh.disabled = false; });
 });
 
+el.chatText.addEventListener("keydown", function(e){
+  if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {
+    // Slack-style @ mention hint — lightweight: show available peers/instance in status
+    var peers = (knownPeers || []).map(function(p){ return p.name || p; }).join(", ");
+    if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " — also: " + peers.split(",").slice(1,2).join("") + "…" : "");
+  }
+});
 el.chatForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var text = el.chatText.value.trim();
   var room = el.chatRoom.value;
   if (!text || !room) return;
+  // Slack-like /slash command affordance (client-side hint); server handles plain text
+  if (text.charAt(0) === "/") {
+    var cmd = text.slice(1).split(/\s+/)[0].toLowerCase();
+    if (cmd === "me" || cmd === "shrug") {
+      text = text.slice(cmd.length + 2);
+      if (!text) { el.chatStatus.textContent = "Usage: /" + cmd + " <message>"; return; }
+      if (cmd === "shrug") text = text + " ¯\\_(ツ)_/¯";
+      text = "_" + text + "_";
+    }
+  }
   // maxlength on the input counts UTF-16 units while the server counts
   // bytes, so multi-byte text passes the browser's check and comes back as a
   // bare HTTP 400. Checked here in the same units the server uses.
@@ -2070,9 +2732,30 @@ function loadUsage() {
 
 var goalState = van.state([]);
 
+/* Goals whose board mirror has already been requested, so a goal created
+   from within a run (the agent's `goal` tool appends it to state/goals.json,
+   which the next loadGoals picks up) gets a board card once rather than on
+   every refresh. Form-created goals and board->goal cards set goalCardLinks
+   themselves, so this only ever adds the ones that arrived without a card. */
+var goalBoardMirrored = {};
+
 /* Newest first: the goal most recently set is the one steering runs now. */
 function renderGoals(goals) {
   goalState.val = (goals || []).slice().sort(goalSortKey);
+}
+
+/* Goals that reach the web UI from state/goals.json are mirrored onto the
+   board in the section matching their state (backlog for a fresh active goal),
+   so a goal created from within a goal run is not invisible on the board.
+   ensureGoalBoardCard is idempotent (it finds an existing card by title or
+   creates one) and the goalBoardMirrored guard keeps a goal from being
+   re-created across refreshes. */
+function mirrorGoalsToBoard(goals) {
+  (goals || []).forEach(function (g) {
+    if (!g || !g.id || !g.objective || goalBoardMirrored[g.id]) return;
+    goalBoardMirrored[g.id] = true;
+    ensureGoalBoardCard(g.objective, g.completion_criterion);
+  });
 }
 
 function goalCard(g) {
@@ -2138,7 +2821,10 @@ bind(el.goals, goalState, function (goals) {
 function loadGoals() {
   return fetch("/api/goals")
     .then(readJson)
-    .then(function (data) { renderGoals(data.goals || []); })
+    .then(function (data) {
+      renderGoals(data.goals || []);
+      mirrorGoalsToBoard(data.goals || []);
+    })
     .catch(function (err) {
       el.goals.textContent = "";
       var p = document.createElement("p");
@@ -2233,7 +2919,38 @@ function clearLoading(name) {
 var viewSettled = false;
 var currentView = null;
 
+/* The last view the page was on, persisted so a refresh that arrives without a
+   URL fragment — a fresh tab on /webui, a proxy that drops the hash, or the
+   browser itself after certain hard reloads — still opens the same screen
+   instead of defaulting to chat. The URL hash is the primary source of truth
+   when it names a real view; this is the fallback for when it does not. */
+function saveView(name) {
+  try { window.localStorage.setItem("clanker.view", name); } catch (e) {}
+}
+
+function parseRunsHash(hash){
+  // accepts #runs/<id>?search=foo&kind=tool&node=label — order-agnostic
+  if (hash.indexOf("#runs/") !== 0) return null;
+  var rest = hash.slice(6);
+  var qAt = rest.indexOf("?");
+  var idPart = qAt===-1 ? rest : rest.slice(0, qAt);
+  var qs = qAt===-1 ? "" : rest.slice(qAt+1);
+  var params = {};
+  qs.split("&").forEach(function(p){ if(!p) return; var kv=p.split("="); try{ params[decodeURIComponent(kv[0])]=kv[1]?decodeURIComponent(kv[1]):"";}catch(_){ params[kv[0]]=kv[1]||""; } });
+  var id=""; try{ id=decodeURIComponent(idPart);}catch(_){ id=idPart; }
+  return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
+}
 function showView(name, focusPanel) {
+  var parsed = parseRunsHash("#" + name);
+  var deepRun = null, deepNode = null, deepSearch=null, deepKind=null;
+  if (parsed) { deepRun = parsed.id; deepNode = parsed.node || null; deepSearch = parsed.search; deepKind = parsed.kind; name = "runs"; }
+  else if (name.indexOf("runs/") === 0) {
+    var rest2 = name.slice(5);
+    var qA2 = rest2.indexOf("?node=");
+    if (qA2 !== -1) { deepRun = decodeURIComponent(rest2.slice(0, qA2)); deepNode = decodeURIComponent(rest2.slice(qA2 + 6)); }
+    else { deepRun = decodeURIComponent(rest2); }
+    name = "runs";
+  }
   if (VIEWS.indexOf(name) === -1) name = "chat";
   // The rooms poll has no idea the view switched away from under it — only
   // document.hidden stopped it before, so leaving Rooms for Chat or Board
@@ -2241,6 +2958,7 @@ function showView(name, focusPanel) {
   // up where it left off if Rooms is reopened.
   if (currentView === "rooms" && name !== "rooms") stopChatPoll();
   currentView = name;
+  saveView(name);
   VIEWS.forEach(function (v) {
     var tab = document.getElementById("tab-" + v);
     var panel = document.getElementById("view-" + v);
@@ -2250,14 +2968,17 @@ function showView(name, focusPanel) {
     // Roving tabindex: the tablist is one stop, arrows move within it.
     tab.tabIndex = on ? 0 : -1;
   });
-  if (window.location.hash !== "#" + name) {
-    // Pushed for a switch someone made, replaced for the initial normalisation
-    // of whatever the URL arrived with. Writing a fragment into the address bar
-    // is a promise that Back returns to where you were, and it did not.
+  // Preserve callgraph filter state in the URL (shareable/bookmarkable) — search/kind from either deep link or active graph
+  var _qs = []; try{ if(deepSearch) _qs.push("search="+encodeURIComponent(deepSearch)); if(deepKind) _qs.push("kind="+encodeURIComponent(deepKind)); }catch(_){}
+  var desiredHash = deepRun ? "#runs/" + encodeURIComponent(deepRun) + ((deepNode||_qs.length) ? "?" + (_qs.join("&") + (deepNode ? (_qs.length?"&":"")+"node="+encodeURIComponent(deepNode) : "")) : "") : "#" + name;
+  if (window.location.hash !== desiredHash) {
     try {
-      if (viewSettled) window.history.pushState(null, "", "#" + name);
-      else window.history.replaceState(null, "", "#" + name);
+      if (viewSettled) window.history.pushState(null, "", desiredHash);
+      else window.history.replaceState(null, "", desiredHash);
     } catch (e) {}
+  }
+  if (deepRun) {
+    if (deepSearch || deepKind) { try{ localStorage.setItem("clanker.graphSearch", deepSearch||""); localStorage.setItem("clanker.graphKind", deepKind||""); }catch(_){} }
   }
   viewSettled = true;
   el.railContext.hidden = name !== "chat";
@@ -2278,6 +2999,12 @@ function showView(name, focusPanel) {
     }
   } else if (name === "rooms" && el.chatRoom.value) {
     startChatPoll(el.chatRoom.value);
+  }
+  if (deepRun) {
+    // preserve ?node= across the async Runs load
+    window._pendingRunNode = deepNode || null;
+    if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
+    else pendingRunId = deepRun;
   }
 }
 
@@ -2549,6 +3276,14 @@ function runGoal(g, opts) {
   showView("goals", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
+  // A goal mirrored onto the board follows the run's lifecycle: its card moves
+  // to doing when the run starts, review when it finishes, and back to ready if
+  // it is stopped or fails. workCardAsGoal also moves its card explicitly, so
+  // this only applies where a goal->card link exists (form-created goals).
+  if (goalCardLinks[g.id]) {
+    moveGoalCardToColumn(g.id, "doing");
+    logGoalRunState(g.id, "running");
+  }
   if (opts.onStart) opts.onStart();
 
   var splitter = makeLineSplitter(function (line) {
@@ -2593,6 +3328,10 @@ function runGoal(g, opts) {
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
       el.goalsStatus.textContent = "Goal run finished.";
+      if (goalCardLinks[g.id]) {
+        moveGoalCardToColumn(g.id, "review");
+        logGoalRunState(g.id, "finished");
+      }
       if (opts.onDone) opts.onDone("finished");
     }
   }).catch(function (err) {
@@ -2601,11 +3340,19 @@ function runGoal(g, opts) {
     if (err && err.name === "AbortError") {
       setGoalStatus(g.id, "stopped");
       el.goalsStatus.textContent = "Goal run stopped.";
+      if (goalCardLinks[g.id]) {
+        moveGoalCardToColumn(g.id, "ready");
+        logGoalRunState(g.id, "stopped");
+      }
       if (opts.onDone) opts.onDone("stopped");
     } else {
       appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
       setGoalStatus(g.id, "failed");
       el.goalsStatus.textContent = "Goal run failed: " + err.message;
+      if (goalCardLinks[g.id]) {
+        moveGoalCardToColumn(g.id, "ready");
+        logGoalRunState(g.id, "failed");
+      }
       if (opts.onDone) opts.onDone("failed");
     }
   });
@@ -2694,6 +3441,17 @@ function postGoal(payload, status) {
       // browser (see goalCardLinks), not in state/goals.json.
       if (payload && payload.status === "done" && payload.id) {
         moveGoalCardToColumn(payload.id, "done");
+        logGoalRunState(payload.id, "done");
+      }
+      // A goal created from the Goals view (objective present, no id) is also
+      // mirrored onto the board: it gets a card in the column that matches the
+      // goal's state (backlog for a fresh active goal). The card is the board's
+      // equivalent of the goal, so working on / finishing / closing the goal
+      // later moves it through doing -> review -> done (see runGoal and the
+      // mark-done branch above). Goals created from an existing board card are
+      // skipped here — workCardAsGoal already owns that card and links it.
+      if (payload && payload.objective && payload.id === undefined && payload.column === undefined) {
+        ensureGoalBoardCard(payload.objective, payload.completion_criterion);
       }
       return d;
     })
@@ -2703,6 +3461,47 @@ function postGoal(payload, status) {
     });
 }
 
+/* Mirrors a freshly-created goal onto the board: finds the card whose title is
+   the goal's objective (the board mirror created by workCardAsGoal, or an
+   earlier auto-add), or creates one in the backlog column if none exists, then
+   records the goal -> card link so the card follows the goal's lifecycle.
+   Idempotent: a goal whose objective already matches a card is only linked;
+   a goal with no matching card creates one. */
+function ensureGoalBoardCard(objective, criterion) {
+  if (!objective) return;
+  var existing = null;
+  for (var i = 0; i < board.cards.length; i++) {
+    if (board.cards[i].title === objective) { existing = board.cards[i]; break; }
+  }
+  var goalId = bestGoalIdFor(objective);
+  if (existing) {
+    if (goalId) goalCardLinks[goalId] = existing.id;
+    return;
+  }
+  var done = function (d) {
+    if (!d || !d.board) return;
+    var created = null;
+    for (var j = 0; j < d.board.cards.length; j++) {
+      if (d.board.cards[j].title === objective) { created = d.board.cards[j]; break; }
+    }
+    if (created && goalId) goalCardLinks[goalId] = created.id;
+  };
+  postBoard({ op: "create", title: objective, body: criterion, column: "backlog" }, null).then(done);
+}
+
+/* The id of the newest goal carrying `objective`, or null. */
+function bestGoalIdFor(objective) {
+  var goalId = null, best = -1;
+  var goals = goalState.val || [];
+  for (var i = 0; i < goals.length; i++) {
+    if (goals[i].objective === objective && (goals[i].created || 0) > best) {
+      goalId = goals[i].id;
+      best = goals[i].created || 0;
+    }
+  }
+  return goalId;
+}
+
 /* Moves the board card linked to a goal (if any) into `column`. The link is
    recorded when the card is started as a goal; without one this is a no-op, so
    marking a hand-typed goal done never disturbs the board. */
@@ -2710,6 +3509,27 @@ function moveGoalCardToColumn(goalId, column) {
   var cardId = goalCardLinks[goalId];
   if (!cardId) return;
   postBoard({ op: "move", id: cardId, column: column }, null);
+}
+
+/* Records a goal run's state on its board card so the card's activity log
+   reflects the run lifecycle, not just which column it sits in. The column
+   move already encodes where the work stands (doing / review / ready); the
+   log entry says what the run actually did, so a board reader can tell a run
+   that finished from one that was stopped or failed without opening the goal
+   panel. No-op when the goal has no linked card. */
+function logGoalRunState(goalId, state) {
+  var cardId = goalCardLinks[goalId];
+  if (!cardId) return;
+  postBoard({ op: "log", id: cardId, what: "goal run " + state }, null);
+}
+
+/* The goal a board card is the mirror of, or null. Reverse of goalCardLinks:
+   iterate the goal->card map and return the goal that points at this card. */
+function goalIdForCard(cardId) {
+  for (var gid in goalCardLinks) {
+    if (goalCardLinks[gid] === cardId) return gid;
+  }
+  return null;
 }
 
 el.goalForm.addEventListener("submit", function (e) {
@@ -2815,6 +3635,53 @@ function hidePromptList() {
   el.task.removeAttribute("aria-activedescendant");
 }
 
+var SLASH_CMDS = [
+  { cmd: "/compact", desc: "Drop oldest exchanges to fit context", run: function(){ document.getElementById("session-compact").click(); } },
+  { cmd: "/fork", desc: "Fork this conversation", run: function(){ document.getElementById("session-fork").click(); } },
+  { cmd: "/branch", desc: "Branch from last turn", run: function(){ var b=document.querySelector(".turn:last-child .turn-foot-actions button"); if(b) b.click(); } },
+  { cmd: "/clear", desc: "Start a new conversation", run: function(){ document.getElementById("new-chat").click(); } },
+  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4.1", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
+  { cmd: "/help", desc: "Show keyboard shortcuts", run: function(){ document.getElementById("help-open").click(); } },
+];
+function slashQuery(){
+  var v = el.task.value;
+  if (v.charAt(0) !== "/") return null;
+  var sp = v.indexOf(" ");
+  var head = sp===-1 ? v : v.slice(0, sp);
+  var rest = sp===-1 ? "" : v.slice(sp+1);
+  return { head: head.toLowerCase(), rest: rest, raw: v };
+}
+function renderSlashList(){
+  var q = slashQuery();
+  if (!q) { hideSlashList(); return; }
+  var matches = SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q.head) === 0; });
+  // also match /model sub-query against provider list for hint
+  el.promptList.textContent = "";
+  if (!matches.length) { hideSlashList(); return; }
+  promptIndex = Math.min(promptIndex, matches.length - 1);
+  matches.forEach(function(c, i){
+    var li = document.createElement("li");
+    li.className = "palette-item"; li.id = "prompt-item-" + i;
+    li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===promptIndex));
+    var k = document.createElement("span"); k.className="palette-kind"; k.textContent=c.cmd; li.appendChild(k);
+    var label = document.createElement("span"); label.className="palette-label"; label.textContent=c.desc; li.appendChild(label);
+    li.addEventListener("mousedown", function(e){ e.preventDefault(); useSlash(c, q.rest); });
+    el.promptList.appendChild(li);
+  });
+  el.promptList.hidden = false;
+  el.task.setAttribute("aria-expanded","true");
+  el.task.setAttribute("aria-activedescendant","prompt-item-"+promptIndex);
+}
+function hideSlashList(){ hidePromptList(); }
+function useSlash(entry, arg){
+  hideSlashList();
+  // keep the slash text out of the composer for pure-command entries
+  if (entry.cmd === "/model" && arg) { entry.run(arg); el.task.value=""; }
+  else if (entry.cmd === "/model") { el.task.value=""; entry.run(""); }
+  else { el.task.value=""; entry.run(arg); }
+  syncControls();
+  el.task.focus();
+}
 function usePrompt(text) {
   el.task.value = text;
   hidePromptList();
@@ -2822,16 +3689,18 @@ function usePrompt(text) {
   syncControls();
 }
 
-el.task.addEventListener("input", renderPromptList);
+function taskInputHandler(){ var q=slashQuery(); if(q) renderSlashList(); else renderPromptList(); }
+el.task.addEventListener("input", taskInputHandler);
 el.task.addEventListener("blur", function () { window.setTimeout(hidePromptList, 120); });
 el.task.addEventListener("keydown", function (e) {
+  var isSlash = slashQuery() !== null;
   if (el.promptList.hidden) return;
   var items = el.promptList.querySelectorAll(".palette-item");
   if (!items.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
     promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-    renderPromptList();
+    if(isSlash) renderSlashList(); else renderPromptList();
     return;
   }
   if (e.key === "Escape") {
@@ -2839,9 +3708,7 @@ el.task.addEventListener("keydown", function (e) {
     hidePromptList();
     return;
   }
-  // Delete removes the highlighted prompt, which was otherwise only possible
-  // with a pointer on a 32px glyph inside an option.
-  if (e.key === "Delete") {
+  if (!isSlash && e.key === "Delete") {
     e.preventDefault();
     var doomed = items[promptIndex].querySelector(".palette-label").textContent;
     prompts.splice(prompts.indexOf(doomed), 1);
@@ -2850,10 +3717,14 @@ el.task.addEventListener("keydown", function (e) {
     renderPromptList();
     return;
   }
-  // Shift+Tab belongs to the page, not to this list.
   if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
     e.preventDefault();
-    usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+    if(isSlash){
+      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[promptIndex];
+      if(m) useSlash(m, q2.rest);
+    } else {
+      usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+    }
   }
 });
 
@@ -2979,6 +3850,25 @@ function postBoard(payload, status) {
     .then(readJson)
     .then(function (d) {
       renderBoard(d.board || board);
+      // A card moved into the board's done column is the board saying the
+      // work is finished. When that card is the mirror of a goal, close the
+      // goal too so the two stay in step: the user dragged the card to done,
+      // and the Goals panel should agree rather than still show it active.
+      if (payload.op === "move" && payload.column === doneColumn()) {
+        var gid = goalIdForCard(payload.id);
+        if (gid) {
+          var goal = null;
+          var gl = goalState.val || [];
+          for (var gi = 0; gi < gl.length; gi++) {
+            if (gl[gi].id === gid) { goal = gl[gi]; break; }
+          }
+          // Skip when the goal is already done (or gone): avoids re-posting
+          // when a goal->done card move bounces back through here.
+          if (goal && (goal.status || "active") !== "done") {
+            postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
+          }
+        }
+      }
       if (status) el.boardStatus.textContent = status;
       return d;
     })
@@ -3000,13 +3890,14 @@ function cardById(id) {
    filter. It used to clear #board and rebuild it, which is what forced the
    focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
    everything. */
-var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "" });
+var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "", assignee: "" });
 
 function boardFilterState() {
   return {
     text: (document.getElementById("board-filter-input") || {}).value || "",
     blockedOnly: !!(document.getElementById("board-filter-blocked") || {}).checked,
-    priority: (document.getElementById("board-filter-priority") || {}).value || ""
+    priority: (document.getElementById("board-filter-priority") || {}).value || "",
+    assignee: (document.getElementById("board-filter-assignee") || {}).value || ""
   };
 }
 
@@ -3021,8 +3912,27 @@ function renderBoard(next) {
     open: openCardId,
     text: bf.text.trim().toLowerCase(),
     blockedOnly: bf.blockedOnly,
-    priority: bf.priority
+    priority: bf.priority,
+    assignee: bf.assignee
   };
+  // Trello-like assignee filter options: derive from cards present
+  (function(){
+    var sel = document.getElementById("board-filter-assignee");
+    if (!sel) return;
+    var keep = sel.value;
+    var seen = {};
+    var opts = [""];
+    board.cards.forEach(function(c){ if(c.assignee && !seen[c.assignee]){ seen[c.assignee]=true; opts.push(c.assignee); } });
+    // keep "unassigned" sentinel as well
+    if (board.cards.some(function(c){ return !c.assignee; })) opts.push("(unassigned)");
+    sel.textContent = "";
+    opts.forEach(function(n){
+      var o=document.createElement("option");
+      o.value=n; o.textContent=n==="" ? "All" : n;
+      sel.appendChild(o);
+    });
+    if (opts.indexOf(keep) !== -1) sel.value = keep;
+  })();
 
   // The "new card" column choice follows the board rather than a fixed list.
   var keepCol = el.cardColumn.value;
@@ -3037,7 +3947,7 @@ function boardColumn(col, s) {
   var shown = s.cards
     .filter(function (c) { return c.column === col.id; })
     .filter(function (c) { return !s.mine || c.assignee === s.me; })
-    .filter(function (c) { if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
+    .filter(function (c) { if (s.assignee) { if (s.assignee === "(unassigned)") { if (c.assignee) return false; } else if (c.assignee !== s.assignee) return false; } if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
     .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
   var over = col.wip && shown.length > col.wip;
@@ -3049,11 +3959,57 @@ function boardColumn(col, s) {
     title: over ? shown.length + " of " + col.wip + ", over the limit" : null
   }, shown.length + (col.wip ? " / " + col.wip : ""));
 
+  // Trello-style empty lane placeholder — with quick-add affordance
+  var items = shown.map(function (c) { return T.li(cardNode(c)); });
+  if (!shown.length) {
+    var emptySlot = document.createElement("li");
+    emptySlot.className = "board-empty-slot";
+    emptySlot.setAttribute("aria-hidden", "true");
+    emptySlot.textContent = "Drop here — or ";
+    var addLink = document.createElement("button");
+    addLink.type = "button"; addLink.className = "secondary";
+    addLink.textContent = "Add card";
+    addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
+    emptySlot.appendChild(addLink);
+    items.push(emptySlot);
+  }
   var list = T.ul({
     class: "board-cards",
     "aria-label": col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards")
-  }, shown.map(function (c) { return T.li(cardNode(c)); }));
+  }, items);
 
+  var quickAdd = T.div({ class: "board-quick-add", hidden: true });
+  var qaInput = document.createElement("input");
+  qaInput.type = "text"; qaInput.placeholder = "Card title…"; qaInput.maxLength = 500;
+  var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Add";
+  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "secondary"; qaCancel.textContent = "✕";
+  quickAdd.appendChild(qaInput); quickAdd.appendChild(qaSave); quickAdd.appendChild(qaCancel);
+  function openQuickAdd(){ quickAdd.hidden = false; qaInput.focus(); }
+  function closeQuickAdd(){ quickAdd.hidden = true; qaInput.value = ""; }
+  qaCancel.addEventListener("click", function(e){ e.stopPropagation(); closeQuickAdd(); });
+  qaInput.addEventListener("keydown", function(e){
+    if (e.key === "Enter" && qaInput.value.trim()) { e.preventDefault(); doCreate(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeQuickAdd(); }
+    else if (e.key === "Tab" && !e.shiftKey && qaInput.value.trim() === "") { /* Slack-like: Tab out closes empty quick-add */ }
+  });
+  // Slack-like: typing @ in quick-add shows available assignees as placeholder hint
+  qaInput.addEventListener("input", function(){
+    var v = qaInput.value;
+    var atIdx = v.lastIndexOf("@");
+    if (atIdx !== -1) {
+      var q = v.slice(atIdx + 1).toLowerCase();
+      var peers = (knownPeers || []).map(function(p){ return p.name || p; });
+      var hit = peers.find(function(n){ return n.toLowerCase().indexOf(q) === 0; });
+      if (hit) qaInput.title = "Assign to @" + hit + " — press Tab to accept";
+      else qaInput.title = "";
+    } else qaInput.title = "";
+  });
+  function doCreate(){
+    var t = qaInput.value.trim(); if (!t) return;
+    qaSave.disabled = true;
+    postBoard({ op: "create", title: t, column: col.id }, "Card added to " + col.title + ".").finally(function(){ qaSave.disabled = false; closeQuickAdd(); });
+  }
+  qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
   var colEl = T.section({
     class: "board-col",
     "data-column": col.id,
@@ -3068,9 +4024,70 @@ function boardColumn(col, s) {
     }
   },
     T.div({ class: "board-col-head" },
+      (function(){
+        var collapse = document.createElement("button");
+        collapse.type = "button"; collapse.className = "secondary"; collapse.textContent = "‹";
+        collapse.title = "Collapse lane";
+        collapse.style.minHeight = "22px"; collapse.style.padding = "0 0.35rem"; collapse.style.fontSize = "12px"; collapse.style.borderRadius = "999px";
+        collapse.addEventListener("click", function(e){
+          e.stopPropagation();
+          var isCol = colEl.getAttribute("data-collapsed") === "true";
+          colEl.setAttribute("data-collapsed", String(!isCol));
+          collapse.textContent = isCol ? "‹" : "›";
+          collapse.title = isCol ? "Collapse lane" : "Expand lane";
+        });
+        return collapse;
+      })(),
       T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
+      T.span({ style: "display:flex; gap:0.25rem; align-items:center;" },
+        (function(){
+          var add = document.createElement("button");
+          add.type = "button"; add.className = "secondary"; add.textContent = "+";
+          add.title = "Add card to " + col.title;
+          add.style.minHeight = "24px"; add.style.padding = "0 0.45rem"; add.style.fontSize = "12px"; add.style.borderRadius = "999px";
+          add.addEventListener("click", function(e){
+            e.stopPropagation();
+            // Trello now does inline quick-add, not prompt — open the row input
+            if (quickAdd.hidden) openQuickAdd(); else closeQuickAdd();
+          });
+          var wrap = document.createElement("span");
+          wrap.appendChild(add);
+          var isDone = (col.id === "done" || col.title.toLowerCase() === "done");
+          var isArchived = false;
+          try{ isArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
+          if (isDone) {
+            var arch = document.createElement("button");
+            var archived = isArchived && document.querySelector('[data-column="done"]') && document.querySelector('[data-column="done"]').hidden;
+            // reflect actual hidden state if already applied
+            try{ if (window.clankerBoardArchive) archived = true; }catch(_){}
+            arch.type = "button"; arch.className = "secondary"; arch.textContent = archived ? "Unarchive" : "Archive";
+            arch.title = archived ? "Show done cards again" : "Archive done cards (hide from this view)";
+            arch.style.minHeight = "24px"; arch.style.padding = "0 0.45rem"; arch.style.fontSize = "11px"; arch.style.borderRadius = "999px";
+            arch.addEventListener("click", function(e){
+              e.stopPropagation();
+              var currentlyArchived = false;
+              try{ currentlyArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
+              try{ if (window.clankerBoardArchive) currentlyArchived = true; }catch(_){}
+              var nextArchived = !currentlyArchived;
+              try{
+                if (nextArchived) window.localStorage.setItem("clanker.boardArchive", "1");
+                else window.localStorage.removeItem("clanker.boardArchive");
+                window.clankerBoardArchive = nextArchived;
+              }catch(_){}
+              var doneCol2 = document.querySelector('[data-column="done"]');
+              if (doneCol2) doneCol2.hidden = nextArchived;
+              try{ renderBoard(null); }catch(_){}
+              arch.textContent = nextArchived ? "Unarchive" : "Archive";
+              arch.title = nextArchived ? "Show done cards again" : "Archive done cards (hide from this view)";
+            });
+            wrap.appendChild(arch);
+          }
+          return wrap;
+        })()
+      ),
       count),
-    list);
+    list,
+    quickAdd);
   return colEl;
 }
 
@@ -3101,9 +4118,17 @@ function cardNode(c) {
   var b = document.createElement("button");
   b.type = "button";
   b.className = "card";
+  if (c.priority && c.priority !== "normal") b.setAttribute("data-priority", c.priority);
   b.draggable = true;
   b.setAttribute("data-card", c.id);
   if (c.id === openCardId) b.setAttribute("aria-current", "true");
+  // Trello cover strip — priority tint at top edge
+  if (c.priority && c.priority !== "normal") {
+    var cover = document.createElement("div");
+    cover.className = "card-cover";
+    cover.setAttribute("data-priority", c.priority);
+    b.appendChild(cover);
+  }
   // The only way to move a card without a pointer, so it says so rather than
   // living in a source comment.
   b.setAttribute("aria-keyshortcuts", "Control+ArrowLeft Control+ArrowRight");
@@ -3144,14 +4169,58 @@ function cardNode(c) {
   }
   if ((c.subtasks || []).length) {
     var doneN = c.subtasks.filter(function (s) { return s.done; }).length;
+    var totalN = c.subtasks.length;
+    var pct = totalN ? Math.round(doneN / totalN * 100) : 0;
     var prog = document.createElement("span");
     prog.className = "card-progress";
-    prog.textContent = doneN + "/" + c.subtasks.length;
+    prog.textContent = doneN + "/" + totalN + " · " + pct + "%";
     meta.appendChild(prog);
+    var bar = document.createElement("div");
+    bar.className = "card-progress-bar";
+    bar.setAttribute("data-done", String(doneN === totalN && totalN > 0));
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-valuenow", String(pct));
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    var fill = document.createElement("span");
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+    // attach bar outside meta so it spans card width
+    b._progressBar = bar;
   }
+  // Trello-style member avatar (initials) when assigned, Slack-style mention
+  var membersWrap = null;
   if (c.assignee) {
+    membersWrap = document.createElement("span");
+    membersWrap.className = "card-members";
+    var av = document.createElement("span");
+    av.className = "card-member";
+    av.textContent = (c.assignee.trim().charAt(0) || "?").toUpperCase();
+    av.title = c.assignee + " — click to reassign";
+    av.setAttribute("role", "button");
+    av.setAttribute("tabindex", "0");
+    av.addEventListener("click", function(e){
+      e.stopPropagation();
+      var next2 = prompt("Assign to (empty to unassign):", c.assignee || "");
+      if (next2 === null) return;
+      postBoard({ op: "update", id: c.id, assignee: next2.trim() }, next2.trim() ? "Assigned to " + next2.trim() + "." : "Unassigned.");
+    });
+    av.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); av.click(); } });
+    membersWrap.appendChild(av);
+  } else {
     var who = document.createElement("span");
-    who.textContent = c.assignee;
+    who.textContent = "unassigned";
+    who.title = "Unassigned — click to assign";
+    who.style.cursor = "pointer";
+    who.setAttribute("role", "button");
+    who.setAttribute("tabindex", "0");
+    who.addEventListener("click", function(e){
+      e.stopPropagation();
+      var next = prompt("Assign to (empty to unassign):", c.assignee || "");
+      if (next === null) return;
+      postBoard({ op: "update", id: c.id, assignee: next.trim() }, next.trim() ? "Assigned to " + next.trim() + "." : "Unassigned.");
+    });
+    who.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); who.click(); } });
     meta.appendChild(who);
   }
   if (c.usage && c.usage.cost) {
@@ -3159,7 +4228,9 @@ function cardNode(c) {
     cost.textContent = fmtCost(c.usage.cost);
     meta.appendChild(cost);
   }
+  if (membersWrap) meta.appendChild(membersWrap);
   if (meta.childNodes.length) b.appendChild(meta);
+  if (b._progressBar) b.appendChild(b._progressBar);
 
   b.addEventListener("click", function () {
     openCardId = openCardId === c.id ? null : c.id;
@@ -3187,9 +4258,12 @@ function cardNode(c) {
   return b;
 }
 
+function cardDetailInner() { return el.cardDetailBox || el.cardDetail; }
 function closeCardDetail() {
-  el.cardDetail.hidden = true;
-  el.cardDetail.textContent = "";
+  if (!el.cardDetail.hidden) closeOverlay(el.cardDetail);
+  else { el.cardDetail.hidden = true; cardDetailInner().textContent = ""; return; }
+  // overlay helper clears hidden after focus restore; also clear inner content
+  cardDetailInner().textContent = "";
 }
 
 /* Unsaved edits to a card's fields, keyed by card id.
@@ -3275,13 +4349,23 @@ function input(id, type, value, placeholder) {
 function showCardDetail(id) {
   var c = cardById(id);
   if (!c) return closeCardDetail();
-  el.cardDetail.textContent = "";
-  el.cardDetail.hidden = false;
+  var box = cardDetailInner();
+  // reopen as modal overlay (Trello-like card modal, Slack-like overlay); board stays put
+  var wasHidden = el.cardDetail.hidden;
+  box.textContent = "";
+  if (wasHidden) {
+    // preserve card id for trap handlers; don't clear content on close until next open
+    openOverlay(el.cardDetail, null);
+    el.cardDetail.setAttribute("aria-labelledby", "card-detail-title");
+  }
+  // scrim click closes
+  el.cardDetail.onclick = function(e){ if (e.target === el.cardDetail) { delete cardDrafts[c.id]; openCardId = null; closeCardDetail(); renderBoard(board); } };
 
   var head = document.createElement("div");
   head.className = "run-detail-head";
   var title = document.createElement("span");
   title.className = "run-detail-title";
+  title.id = "card-detail-title";
   title.textContent = c.title;
   var close = document.createElement("button");
   close.type = "button";
@@ -3290,14 +4374,15 @@ function showCardDetail(id) {
   close.addEventListener("click", function () {
     delete cardDrafts[c.id];
     openCardId = null;
+    closeCardDetail();
     renderBoard(board);
   });
   head.appendChild(title);
   head.appendChild(close);
-  el.cardDetail.appendChild(head);
+  box.appendChild(head);
 
   // ---- fields ----
-  var fields = detailSection(el.cardDetail, "Card");
+  var fields = detailSection(box, "Card");
   var titleIn = input("card-f-title", "text", "");
   titleIn.maxLength = 500;
   bindDraft(titleIn, c.id, "title", c.title);
@@ -3354,6 +4439,19 @@ function showCardDetail(id) {
   });
   fields.appendChild(save);
 
+  var moveRow = document.createElement("div");
+  moveRow.className = "detail-row";
+  var moveSel = document.createElement("select");
+  moveSel.id = "card-f-column";
+  (board.columns || []).forEach(function(col){ var o=document.createElement("option"); o.value=col.id; o.textContent=col.title; moveSel.appendChild(o); });
+  moveSel.value = c.column;
+  var moveBtn = document.createElement("button"); moveBtn.type="button"; moveBtn.className="secondary"; moveBtn.textContent="Move";
+  moveBtn.addEventListener("click", function(){ if(moveSel.value !== c.column) postBoard({op:"move", id:c.id, column: moveSel.value}, "Moved to " + moveSel.value + "."); });
+  moveSel.addEventListener("change", function(){ moveBtn.disabled = moveSel.value === c.column; });
+  moveBtn.disabled = true;
+  moveRow.appendChild(moveSel); moveRow.appendChild(moveBtn);
+  fields.appendChild(moveRow);
+
   var takeIt = document.createElement("button");
   takeIt.type = "button";
   takeIt.className = "secondary";
@@ -3387,7 +4485,7 @@ function showCardDetail(id) {
   fields.appendChild(del);
 
   // ---- subtasks ----
-  var subs = detailSection(el.cardDetail, "Subtasks");
+  var subs = detailSection(box, "Subtasks");
   (c.subtasks || []).forEach(function (s) {
     var row = document.createElement("div");
     row.className = "detail-row";
@@ -3422,6 +4520,32 @@ function showCardDetail(id) {
     row.appendChild(drop);
     subs.appendChild(row);
   });
+  // Trello-style checklist progress bar (also on card face)
+  if ((c.subtasks || []).length) {
+    var dN = c.subtasks.filter(function(ss){ return ss.done; }).length;
+    var tN = c.subtasks.length;
+    var pct2 = tN ? Math.round(dN / tN * 100) : 0;
+    var track = document.createElement("div");
+    track.className = "card-progress-bar";
+    track.setAttribute("data-done", String(dN === tN && tN>0));
+    track.setAttribute("role", "progressbar");
+    track.setAttribute("aria-valuenow", String(pct2));
+    track.setAttribute("aria-valuemin", "0");
+    track.setAttribute("aria-valuemax", "100");
+    track.setAttribute("aria-label", "Checklist " + dN + " of " + tN);
+    var fill2 = document.createElement("span");
+    fill2.style.width = pct2 + "%";
+    track.appendChild(fill2);
+    var pctLabel = document.createElement("span");
+    pctLabel.className = "card-progress"; pctLabel.textContent = dN + "/" + tN + " · " + pct2 + "%";
+    pctLabel.style.marginLeft = "0.5rem";
+    var progRow = document.createElement("div");
+    progRow.className = "detail-row";
+    progRow.style.alignItems = "center";
+    progRow.appendChild(track); track.style.flex = "1";
+    progRow.appendChild(pctLabel);
+    subs.appendChild(progRow);
+  }
   var subIn = input("card-f-subtask", "text", "", "Add a subtask…");
   subIn.maxLength = 500;
   subIn.addEventListener("keydown", function (e) {
@@ -3432,7 +4556,7 @@ function showCardDetail(id) {
   subs.appendChild(subIn);
 
   // ---- dependencies ----
-  var deps = detailSection(el.cardDetail, "Waiting on");
+  var deps = detailSection(box, "Waiting on");
   (c.depends_on || []).forEach(function (depId) {
     var dep = cardById(depId);
     var row = document.createElement("div");
@@ -3474,7 +4598,7 @@ function showCardDetail(id) {
   // ---- usage ----
   var usage = c.usage || {};
   if (usage.prompt_tokens || usage.completion_tokens || usage.cost) {
-    var u = detailSection(el.cardDetail, "Cost so far");
+    var u = detailSection(box, "Cost so far");
     var line = document.createElement("p");
     line.className = "meta";
     line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
@@ -3493,7 +4617,7 @@ function showCardDetail(id) {
   }
 
   // ---- log ----
-  var logBox = detailSection(el.cardDetail, "Activity");
+  var logBox = detailSection(box, "Activity");
   var entries = (c.log || []).slice().reverse();
   if (!entries.length) {
     var empty = document.createElement("p");
@@ -3525,6 +4649,8 @@ function showCardDetail(id) {
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
   });
   logBox.appendChild(noteIn);
+  // focus first editable field in the modal (Slack/Trello: opening a card puts you on Title)
+  try { var first = box.querySelector("#card-f-title"); if (first) setTimeout(function(){ first.focus(); first.select(); }, 0); } catch(_){}
 }
 
 el.cardForm.addEventListener("submit", function (e) {
@@ -3554,7 +4680,7 @@ function wireRefresh(button, load) {
 
 wireRefresh(el.boardRefresh, loadBoard);
 el.boardRoom.addEventListener("change", function () { loadBoard(); });
-["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority"].forEach(function(id){
+["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee"].forEach(function(id){
   var n=document.getElementById(id);
   if(!n) return;
   n.addEventListener(id==="board-filter-input" ? "input" : "change", function(){ renderBoard(null); });
@@ -3579,6 +4705,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
     var rows=[].concat(s.cards||[]);
     // reuse same filters as columns
     rows=rows.filter(function(c){
+      if(s.assignee) { if(s.assignee==="(unassigned)"){ if(c.assignee) return false; } else if(c.assignee!==s.assignee) return false; }
       if(s.mine && c.assignee!==s.me) return false;
       if(s.blockedOnly && blockers(c).length===0) return false;
       if(s.priority && (c.priority||"normal")!==s.priority) return false;
@@ -3630,7 +4757,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
       var prTd=document.createElement("td"); prTd.textContent=c.priority||"normal"; tr.appendChild(prTd);
       var costTd=document.createElement("td"); costTd.className="num"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
       var actTd=document.createElement("td");
-      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); document.getElementById("card-detail").scrollIntoView({behavior:"smooth", block:"start"}); }); actTd.appendChild(openBtn);
+      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); }); actTd.appendChild(openBtn);
       if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){
         var claimBtn=document.createElement("button"); claimBtn.type="button"; claimBtn.className="secondary"; claimBtn.textContent="Claim"; claimBtn.style.marginLeft="0.4rem"; claimBtn.addEventListener("click", function(){ postBoard({op:"update", id:c.id, assignee: ((document.getElementById("instance-chip")||{}).textContent||"").trim()}, "Claimed."); }); actTd.appendChild(claimBtn);
       }
@@ -3649,7 +4776,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
     var _lastCards="";
     setInterval(function(){
       try{
-        var cur=JSON.stringify(boardState.val.cards||[])+boardState.val.text+boardState.val.mine+boardState.val.blockedOnly+boardState.val.priority;
+        var cur=JSON.stringify(boardState.val.cards||[])+boardState.val.text+boardState.val.mine+boardState.val.blockedOnly+boardState.val.priority+boardState.val.assignee;
         if(cur!==_lastCards){ _lastCards=cur; renderList(); }
       }catch(_){}
     }, 600);
@@ -3791,6 +4918,11 @@ paletteBind({
   setOpenCardId: function (id) { openCardId = id; }
 });
 document.addEventListener("keydown", function (e) {
+  // Trello/Slack-style card modal owns focus while open — Esc closes, Tab traps
+  if (el.cardDetail && !el.cardDetail.hidden) {
+    if (e.key === "Escape") { e.preventDefault(); delete cardDrafts[openCardId || ""]; openCardId = null; closeCardDetail(); renderBoard(board); return; }
+    if (e.key === "Tab") { trapOverlayTab(e, el.cardDetail); return; }
+  }
   if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
 
@@ -3813,6 +4945,18 @@ setBusy(false);
 var openingHash = window.location.hash.replace("#", "");
 var needsPluginsNow = !!openingHash && VIEWS.indexOf(openingHash) === -1;
 
+/* The view to open on load: a URL fragment naming a real view wins; otherwise
+   the last view this browser was on (persisted by showView) is reopened so a
+   hard refresh keeps you on the same page instead of dropping to chat. */
+function lastView() {
+  try {
+    var v = window.localStorage.getItem("clanker.view");
+    if (v && VIEWS.indexOf(v) !== -1) return v;
+  } catch (e) {}
+  return "";
+}
+var openingView = openingHash && VIEWS.indexOf(openingHash) !== -1 ? openingHash : lastView() || "chat";
+
 function afterFirstDraw(work) {
   if (window.requestIdleCallback) window.requestIdleCallback(work, { timeout: 2000 });
   else window.setTimeout(work, 0);
@@ -3831,7 +4975,7 @@ afterFirstDraw(function () {
 });
 syncSubmitLabel();
 // Only the opening view's data is fetched now; the rest load when opened.
-showView(window.location.hash.replace("#", ""), false);
+showView(openingView, false);
 /* Reopening the page used to show an empty transcript even when the picker
    said the conversation had nine messages: nothing ever fetched them. The
    conversation you were last in is replayed, so a reload resumes rather

@@ -799,10 +799,14 @@ fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8
                 // Only this project's own sources are gated. Dot-directories
                 // cover .git and .zig-cache (whose generated options.zig and
                 // dependencies.zig are not formatted, and are not ours to
-                // format); zig-pkg is 1800 files of fetched dependencies.
+                // format); zig-pkg is 1800 files of fetched dependencies;
+                // vendor is a vendored dependency (see vendor/toml/README.md)
+                // kept as close to upstream as possible, not ours to format
+                // or lint either.
                 if (entry.name.len > 0 and entry.name[0] == '.') continue;
                 if (std.mem.eql(u8, entry.name, "zig-out") or
                     std.mem.eql(u8, entry.name, "zig-pkg") or
+                    std.mem.eql(u8, entry.name, "vendor") or
                     std.mem.eql(u8, entry.name, "state")) continue;
                 try walkZig(io, arena, list, sub);
             },
