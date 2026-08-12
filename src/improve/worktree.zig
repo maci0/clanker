@@ -87,7 +87,10 @@ pub const Worktree = struct {
             };
             defer gpa.free(branch_sha);
 
-            if (std.mem.eql(u8, base_sha, branch_sha)) return; // already even
+            if (std.mem.eql(u8, base_sha, branch_sha)) {
+                self.merged = true;
+                return; // already even
+            }
 
             const merge_base = mergeBaseOf(gpa, io, base_sha, branch_sha) catch {
                 log.log(.warn, "improve-self: could not find a merge base for {s} and {s}", .{ self.base_branch, self.branch });
