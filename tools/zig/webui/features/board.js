@@ -9,7 +9,7 @@ import { T, bind, state, add } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState } from "../lib/board.js";
-import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals, loadGoals } from "./goals.js";
+import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals, loadGoals, isGoalRunning } from "./goals.js";
 
 var el = null;
 var _setTabCount = null;
@@ -492,11 +492,17 @@ function cardNode(c) {
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
     // The same rocket that the "Start work" button shows on the open card,
-    // surfaced on the closed card so goal runs are visible at a glance.
+    // surfaced on the closed card so goal runs are visible at a glance. While
+    // a run for this goal is in flight (streaming here or on another client)
+    // the rocket lights up, so the closed card shows the live run state.
     var sw = document.createElement("span");
     sw.className = "card-badge";
     sw.textContent = "\uD83D\uDE80"; // 🚀
     sw.title = "Goal — Start work (opens a run)";
+    if (isGoalRunning(c.goal)) {
+      sw.dataset.goalRun = "true";
+      sw.title = "Goal run in progress";
+    }
     badges.appendChild(sw);
     hasBadges = true;
   }
