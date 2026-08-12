@@ -254,6 +254,13 @@ pub const Improve = struct {
     /// that promotes nothing else has stopped improving the program and is
     /// only improving its own acceptance rate. 0 disables the check.
     max_consecutive_test_only: u32 = 3,
+    /// Plan before patching: one model call per batch lists candidate
+    /// improvements, the engine dedups them against history, picks the first
+    /// novel one, pins its files into the context and asks the patch call to
+    /// implement exactly that. Off, the patch call picks its own idea and
+    /// writes an exact-match patch blind in the same breath — the shape every
+    /// stuck-idea loop this repo has seen grew out of.
+    plan_phase: bool = true,
     /// Provider the capability gate runs the staged eval suite on. The evals
     /// are mechanical capability checks (call a tool, read a field of its
     /// result), not reasoning work, so a fast cheap model grades them the
@@ -1058,7 +1065,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider" }, "improve");
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
@@ -1081,6 +1088,10 @@ pub const Config = struct {
             im.max_consecutive_test_only = if (n <= 0) 0 else @intCast(n);
         }
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
+        if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
+            .bool => |b| b,
+            else => im.plan_phase,
+        };
         return im;
     }
 

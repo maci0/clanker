@@ -116,6 +116,13 @@ the engine refuses two shapes:
 The class is recorded in `state/improvements.jsonl` and rendered in the history
 block of the next prompt, so the loop can see what it has been producing.
 
+Each iteration plans before it patches: one model call lists candidate ideas
+(`src/improve/plan.zig` parses them), the engine skips any whose words history
+already records as accepted or rejected, pins the chosen idea's files into the
+context, and asks the patch call to implement exactly that idea. Planning
+failing or running dry falls back to the single-shot behaviour. Disable with
+`improve.plan_phase = false`.
+
 ## Local operator rules (optional)
 
 Checkout-private additions (gitignored). Missing file is a soft skip for tools

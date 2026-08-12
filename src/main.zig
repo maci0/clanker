@@ -52,6 +52,7 @@ comptime {
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
+    _ = @import("improve/plan.zig");
     _ = @import("improve/history.zig");
     _ = @import("improve/inert.zig");
     _ = @import("improve/engine.zig");

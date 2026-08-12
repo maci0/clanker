@@ -19,6 +19,7 @@ const scorers = @import("../evals/scorers.zig");
 const runner_mod = @import("../evals/runner.zig");
 const builder = @import("../tools/builder.zig");
 const proposal_mod = @import("proposal.zig");
+const plan_mod = @import("plan.zig");
 const history_mod = @import("history.zig");
 const inert = @import("inert.zig");
 const gate_checks = @import("../gate/checks.zig");
@@ -254,6 +255,16 @@ pub const Engine = struct {
     /// pulling it toward the same idea. Empty until the streak crosses
     /// stuck_hint_threshold; reset on the next accepted or no_change outcome.
     stuck_hint: []const u8 = "",
+    /// Candidate ideas from the last planning call, consumed one per
+    /// iteration. Refilled with a fresh call when spent; ideas that history
+    /// says were already tried are skipped without costing an iteration.
+    plan_ideas: []const plan_mod.Idea = &.{},
+    plan_next: usize = 0,
+    /// The idea the current iteration implements, rendered as a prompt block
+    /// (header included, like mixHint). Empty when planning is off, failed,
+    /// or ran dry — which leaves the iteration exactly as it was before the
+    /// plan phase existed.
+    plan_current: []const u8 = "",
 
     /// Score bands for the focus block, highest first. A file the instruction
     /// names is the file being patched and goes in whatever its size; a file
@@ -295,6 +306,7 @@ pub const Engine = struct {
         var consecutive_failed: usize = 0;
         for (0..opts.iters) |iter| {
             log.log(.info, "--- improve iteration {d}/{d} ---", .{ iter + 1, opts.iters });
+            self.planNext(opts);
             var attempted = false;
             var last_outcome: Outcome = .failed;
             var attempt: u32 = 0;
@@ -394,6 +406,7 @@ pub const Engine = struct {
         const history_block = self.hist.recentSummary(self.arena, 12) catch "";
         const user_prompt = try std.fmt.allocPrint(self.arena, improve_user_fmt, .{
             opts.instructions,
+            self.plan_current,
             gate_tail,
             if (history_block.len > 0) history_block else "(no earlier attempts)",
             try self.mixHint(),
@@ -851,6 +864,134 @@ pub const Engine = struct {
         // Clean up the staging directory now that promotion is done.
         self.removeTree(staging);
         return .accepted;
+    }
+
+    /// Chooses the idea the coming iteration will implement, planning a fresh
+    /// batch when the previous one is spent. Ideas history already records —
+    /// accepted or rejected — are skipped mechanically, which is what the
+    /// "do not repeat that mistake" prose never managed. Never fails the
+    /// run: planning off, erroring, or running dry leaves plan_current empty,
+    /// and an empty plan block is exactly the pre-plan prompt.
+    fn planNext(self: *Engine, opts: Options) void {
+        self.plan_current = "";
+        if (!self.cfg.improve.plan_phase) return;
+        const summaries = self.hist.recentSummaries(self.arena, 40) catch &.{};
+        var planned_fresh = false;
+        while (true) {
+            while (self.plan_next < self.plan_ideas.len) {
+                const idea = self.plan_ideas[self.plan_next];
+                self.plan_next += 1;
+                if (plan_mod.tried(self.arena, idea.text, summaries) catch false) {
+                    log.log(.info, "plan: skipping an idea history already records: {s}", .{idea.text});
+                    continue;
+                }
+                self.adoptIdea(idea) catch |err| {
+                    log.log(.warn, "plan: adopting the idea failed ({s}); continuing without one", .{@errorName(err)});
+                    return;
+                };
+                return;
+            }
+            // One planning call per iteration: a batch whose every idea was
+            // a dupe means the model has nothing new right now, and asking
+            // again in the same breath returns the same batch.
+            if (planned_fresh) {
+                log.log(.info, "plan: no novel idea in this batch; iteration runs unplanned", .{});
+                return;
+            }
+            self.plan_ideas = self.planOnce(opts) catch |err| blk: {
+                log.log(.warn, "plan: planning call failed ({s}); iteration runs unplanned", .{@errorName(err)});
+                break :blk &.{};
+            };
+            self.plan_next = 0;
+            planned_fresh = true;
+            if (self.plan_ideas.len == 0) return;
+        }
+    }
+
+    /// Pins the idea's files into the context and renders the prompt block
+    /// that narrows this iteration to it. Granting is what makes the plan
+    /// more than a hint: the patch call sees the exact bytes of the files
+    /// the idea names, instead of exact-match patching them blind.
+    fn adoptIdea(self: *Engine, idea: plan_mod.Idea) !void {
+        if (idea.files.len > 0) {
+            var missing: std.ArrayList([]const u8) = .empty;
+            _ = try self.grant(idea.files, &missing);
+        }
+        self.plan_current = try std.fmt.allocPrint(
+            self.arena,
+            \\
+            \\# The idea chosen for this iteration
+            \\Your own planning call proposed this and it was selected as novel.
+            \\Implement exactly this idea, nothing else:
+            \\{s}
+            \\The files it names are in the context above. If the idea turns out
+            \\to be wrong once you see the code, say no changes are needed rather
+            \\than substituting a different idea.
+            \\
+        ,
+            .{idea.text},
+        );
+        log.log(.info, "plan: this iteration implements: {s}", .{idea.text});
+    }
+
+    /// One model call that returns candidate ideas instead of a patch. The
+    /// system blocks are byte-identical to the ones improveOnce sends, so
+    /// the provider's prefix cache pays for the source context once per run,
+    /// not once more for the plan phase. A response that is not an idea list
+    /// (some models patch anyway) parses to null and costs nothing further.
+    fn planOnce(self: *Engine, opts: Options) ![]const plan_mod.Idea {
+        const context = try self.collectContext(opts.max_context_bytes orelse self.contextBudget());
+        const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context.bulk });
+        const focus_prompt = if (context.focus.len > 0)
+            try std.fmt.allocPrint(self.arena, improve_focus_fmt, .{context.focus})
+        else
+            "";
+        const history_block = self.hist.recentSummary(self.arena, 20) catch "";
+        const user_prompt = try std.fmt.allocPrint(self.arena, plan_user_fmt, .{
+            opts.instructions,
+            if (history_block.len > 0) history_block else "(no earlier attempts)",
+            try self.mixHint(),
+            surface_rules,
+        });
+
+        log.log(.info, "plan: asking for candidate ideas ({d} bytes context)", .{context.bytes});
+        var msg_buf: [3]types.Message = undefined;
+        var msg_n: usize = 0;
+        msg_buf[msg_n] = .{ .role = .system, .content = system_prompt };
+        msg_n += 1;
+        if (focus_prompt.len > 0) {
+            msg_buf[msg_n] = .{ .role = .system, .content = focus_prompt };
+            msg_n += 1;
+        }
+        msg_buf[msg_n] = .{ .role = .user, .content = user_prompt };
+        msg_n += 1;
+
+        var err_detail: ?[]const u8 = null;
+        const resp = client.chat(self.ctx, self.arena, .{
+            .provider = self.provider,
+            .messages = msg_buf[0..msg_n],
+            // An idea list is a few hundred tokens; the full patch budget
+            // only invites the model to write the patches here too.
+            .max_tokens = @min(opts.response_tokens, 4096),
+        }, &err_detail) catch |err| {
+            log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
+            return error.PlanRequestFailed;
+        };
+
+        const content = resp.message.content orelse "";
+        var json_text = stripFences(self.arena, content);
+        if (json_text.len == 0) {
+            if (resp.reasoning) |rc| {
+                if (lastProposalJson(self.arena, rc)) |js| json_text = js;
+            }
+        }
+        const ideas = (plan_mod.parsePlan(self.arena, json_text, 6, opts.max_request_files) catch null) orelse {
+            log.log(.warn, "plan: response was not a usable idea list", .{});
+            log.log(.debug, "plan text (first 1500): {s}", .{json_text[0..@min(json_text.len, 1500)]});
+            return &.{};
+        };
+        log.log(.info, "plan: {d} candidate idea(s)", .{ideas.len});
+        return ideas;
     }
 
     /// What the loop has actually been producing lately, stated before it is
@@ -2029,7 +2170,7 @@ const improve_focus_fmt =
 const improve_user_fmt =
     \\# Improvement instruction
     \\{s}
-    \\
+    \\{s}
     \\# Current gate status
     \\{s}
     \\
@@ -2050,6 +2191,34 @@ const improve_user_fmt =
     \\
     \\Produce the patch proposal JSON now. Your response must be ONLY the JSON
     \\object — no markdown fences, no prose.
+;
+
+/// The planning call's user half. The system half is the same rules-and-source
+/// block improveOnce sends (byte-identical, for the prefix cache); this is
+/// what redirects the reply from a patch to an idea list.
+const plan_user_fmt =
+    \\# Improvement instruction
+    \\{s}
+    \\
+    \\# Earlier runs on this repository
+    \\Everything listed as accepted is already done; everything listed as
+    \\rejected was tried and refused for the stated reason. Neither may
+    \\appear in your plan.
+    \\{s}
+    \\{s}
+    \\# Plan first — do NOT send a patch in this reply
+    \\Before any patch is written, name the best small improvements you can
+    \\see in the source above. Instead of the patch-proposal object, respond
+    \\with ONLY this JSON object (no markdown fences, no prose):
+    \\{{"ideas": [{{"idea": "one sentence: the concrete change and where it goes", "files": ["every file the patch would edit, plus any it must read first"]}}]}}
+    \\Rules for the list:
+    \\- 3 to 5 ideas, best first, each small enough for a single patch.
+    \\- Each idea must change what the program does when it runs. Ideas that
+    \\  only add tests, or add code nothing calls, will be refused later at
+    \\  the gate — do not spend a slot on one.
+    \\- "files" must be real paths: taken from the context above, or from the
+    \\  NOT INCLUDED list. Never invent a path.
+    \\- Every idea must respect the writable surface. {s}
 ;
 
 test "parseFailedEvalNames extracts names from FAIL lines" {
