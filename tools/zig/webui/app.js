@@ -898,9 +898,13 @@ window.clankerOpenCitation = function(ref){
   }catch(_){}
 };
 
-function addToolEvent(turn, names) {
-  var row = document.createElement("div");
+function addToolEvent(turn, names, calls) {
+  // A <details> per call batch: the summary is the same one-line "what ran"
+  // as before, the body shows the arguments each call was made with. Closed
+  // by default so a chatty run stays scannable.
+  var row = document.createElement("details");
   row.className = "event-tool";
+  var head = document.createElement("summary");
   var spin = document.createElement("span");
   spin.className = "spin";
   spin.setAttribute("aria-hidden", "true");
@@ -912,9 +916,25 @@ function addToolEvent(turn, names) {
   var state = document.createElement("span");
   state.className = "run-state";
   state.textContent = "running…";
-  row.appendChild(spin);
-  row.appendChild(label);
-  row.appendChild(state);
+  head.appendChild(spin);
+  head.appendChild(label);
+  head.appendChild(state);
+  row.appendChild(head);
+  var has_body = false;
+  if (Array.isArray(calls)) {
+    calls.forEach(function (c) {
+      if (!c || typeof c.name !== "string") return;
+      var line = document.createElement("pre");
+      line.className = "tool-args";
+      var args = typeof c.args === "string" ? c.args.trim() : "";
+      line.textContent = c.name + (args && args !== "{}" ? " " + args : " (no arguments)");
+      row.appendChild(line);
+      has_body = true;
+    });
+  }
+  // Nothing to unfold (an old server that only sends names): stay a plain
+  // row rather than a <details> that opens onto nothing.
+  if (!has_body) row.classList.add("no-detail");
   turn.events.appendChild(row);
   return row;
 }
@@ -1072,7 +1092,9 @@ function settleLastToolEvent(turn, ms) {
   var dur = document.createElement("span");
   dur.className = "dur";
   dur.textContent = ms + "ms";
-  row.appendChild(dur);
+  // The duration belongs on the always-visible summary line, not in the
+  // fold-out body under it.
+  (row.querySelector("summary") || row).appendChild(dur);
 }
 
 function renderStats(turn, stats, task) {
@@ -1434,7 +1456,7 @@ el.form.addEventListener("submit", function (e) {
     if (line.charCodeAt(0) === 1) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "tool_call") { addToolEvent(turn, evt.names); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); }
+      if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if(evt.names) pushLiveNode("tool", evt.names, evt.names, 0); }
       else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}

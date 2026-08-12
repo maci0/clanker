@@ -4129,7 +4129,43 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
         if (i > 0) names_w.writeAll(", ") catch break;
         names_w.writeAll(tc.name) catch break;
     }
-    writeStreamEvent(fd, "tool_call", .{ .names = names_buf[0..names_w.end] });
+    // `calls` carries each call's arguments (truncated) alongside the joined
+    // `names` line, so the web UI can render a collapsible row per batch: the
+    // summary stays the one-line "what ran", the body shows what it ran WITH.
+    var buf: [8192]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.writeAll(stream_event_prefix) catch return;
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("type") catch return;
+    s.write("tool_call") catch return;
+    s.objectField("names") catch return;
+    s.write(names_buf[0..names_w.end]) catch return;
+    s.objectField("calls") catch return;
+    s.beginArray() catch return;
+    for (calls) |tc| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(tc.name) catch return;
+        s.objectField("args") catch return;
+        const cap: usize = 400;
+        if (tc.arguments.len > cap) {
+            var cut: usize = cap;
+            // Do not split a UTF-8 sequence at the cut.
+            while (cut > 0 and (tc.arguments[cut] & 0xC0) == 0x80) cut -= 1;
+            var arg_buf: [cap + 3]u8 = undefined;
+            @memcpy(arg_buf[0..cut], tc.arguments[0..cut]);
+            @memcpy(arg_buf[cut..][0..3], "...");
+            s.write(arg_buf[0 .. cut + 3]) catch return;
+        } else {
+            s.write(tc.arguments) catch return;
+        }
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    w.writeAll("\n") catch return;
+    rawhttp.writeAllFd(fd, buf[0..w.end]);
 }
 
 fn runStreamToolResult(ms: u64) void {
