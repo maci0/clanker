@@ -120,6 +120,12 @@ pub const Options = struct {
     apply: bool = false,
     verbose: bool = false,
     port: u16 = 17921,
+    /// `serve --host <addr>`: the interface to bind the HTTP server to.
+    /// Defaults to 127.0.0.1 (loopback only). `0.0.0.0` (or `::`) makes the
+    /// web UI and HTTP API reachable from the LAN — which also exposes
+    /// whatever the server can do (tool calls, write confirmations) to anyone
+    /// who can reach the port, so prefer a firewall over binding broadly.
+    host: []const u8 = "127.0.0.1",
     /// Set when `--help` followed a command: print that command's help rather
     /// than the whole list.
     help_for: ?Command = null,
@@ -316,6 +322,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                     return error.BadPort;
                 };
                 used = .port;
+            } else if (std.mem.eql(u8, a, "--host")) {
+                opts.host = try takeValue(args, &idx, inline_value, a, diag);
+                used = .host;
             } else if (std.mem.eql(u8, a, "--target")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 const gpa = std.heap.page_allocator;
@@ -891,6 +900,7 @@ const Flag = enum {
     dry_run,
     tasks,
     port,
+    host,
     yes,
     research_target,
     research_harness,
@@ -926,6 +936,7 @@ const Flag = enum {
             .dry_run => "--dry-run",
             .tasks => "--tasks",
             .port => "--port",
+            .host => "--host",
             .yes => "--yes",
             .research_target => "--target",
             .research_harness => "--harness",
@@ -994,7 +1005,7 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
+    .{ .command = .serve, .usage = "serve [--host <addr>] [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host }, .detail = "Binds 127.0.0.1 (loopback) by default.\\n\\n--host <addr>    interface to bind. Default 127.0.0.1; use 0.0.0.0 (or ::)\\n                  to reach the web UI and HTTP API from the LAN. Binding\\n                  broadly exposes whatever the server can do (tool calls,\\n                  write confirmations) to anyone who can reach the port,\\n                  so pair it with a firewall.\\n--port <port>    listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
@@ -2518,9 +2529,11 @@ const HotReload = struct {
 /// already used for other REPL cross-cutting state.
 var hot_reload_active: ?*HotReload = null;
 
-fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
+fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
+    try argv.append(arena, "--host");
+    try argv.append(arena, bind_addr);
     try argv.append(arena, "--port");
     try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
     return argv.items;
@@ -3125,6 +3138,16 @@ fn cmdRevert(init: std.process.Init, opts: Options) !void {
 
 // ------------------------------------------------------------ serve ------
 
+/// Bind address for `serve`: IPv6 if the host string contains a colon (e.g.
+/// `::` or `::1`), IPv4 otherwise (the default `127.0.0.1`, or `0.0.0.0` for
+/// all interfaces).
+fn parseBindAddr(bind_addr: []const u8, port: u16) !std.Io.net.IpAddress {
+    if (std.mem.indexOfScalar(u8, bind_addr, ':')) |_| {
+        return std.Io.net.IpAddress.parseIp6(bind_addr, port);
+    }
+    return std.Io.net.IpAddress.parseIp4(bind_addr, port);
+}
+
 fn cmdServe(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -3132,7 +3155,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
-    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
+    const addr = try parseBindAddr(opts.host, port);
     // reuse_address lets a restarted `clanker serve` rebind immediately even
     // if a stale socket from a previous instance lingers (AddressInUse).
     var server = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
@@ -3147,18 +3170,27 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // request race to rewrite the same global.
     serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
 
-    log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
+    // host:port for the log line and the clickable URL; IPv6 hosts get
+    // brackets so the URL parses (`http://[::1]:17921/webui`).
+    var hostbuf: [512]u8 = undefined;
+    const needs_bracket = std.mem.indexOfScalar(u8, opts.host, ':') != null;
+    const disp = if (needs_bracket)
+        std.fmt.bufPrint(&hostbuf, "[{s}]:{d}", .{ opts.host, port }) catch "host:port"
+    else
+        std.fmt.bufPrint(&hostbuf, "{s}:{d}", .{ opts.host, port }) catch "host:port";
+
+    log.log(.info, "serve listening on {s}", .{disp});
     // Bare clickable URL (no log prefix) so terminals render it as a link.
-    std.debug.print("http://127.0.0.1:{d}/webui\n", .{port});
+    std.debug.print("http://{s}/webui\n", .{disp});
 
     // Hot-reload: a background thread watches the binary and re-execs into
-    // `serve --port <port>` once a rebuild lands and no request is in
-    // flight (see HotReload doc comment). `reuse_address` on the listen
+    // `serve --host <host> --port <port>` once a rebuild lands and no request
+    // is in flight (see HotReload doc comment). `reuse_address` on the listen
     // socket above lets the new process rebind immediately.
     const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
     if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port));
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host));
     }
 
     while (true) {
@@ -7763,6 +7795,15 @@ test "flags take their value in either form" {
     try std.testing.expectEqual(@as(u16, 9099), b.port);
     // An empty value is missing, not empty.
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--port=" }, null));
+
+    // --host: default is loopback; both = and space forms bind the given addr.
+    const h1 = try parse(&.{ "clanker", "serve" }, null);
+    try std.testing.expectEqualStrings("127.0.0.1", h1.host);
+    const h2 = try parse(&.{ "clanker", "serve", "--host", "0.0.0.0" }, null);
+    try std.testing.expectEqualStrings("0.0.0.0", h2.host);
+    const h3 = try parse(&.{ "clanker", "serve", "--host=::" }, null);
+    try std.testing.expectEqualStrings("::", h3.host);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--host=" }, null));
 
     // A following option is not the missing value. Consuming it would hide
     // the actual mistake and reinterpret all remaining arguments.
