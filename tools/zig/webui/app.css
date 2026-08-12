@@ -2317,7 +2317,7 @@ h2#session-title {
 .card-detail-panel {
   background: var(--surface); border-radius: 8px;
   max-width: 48rem; width: 100%; margin: 2rem auto;
-  max-height: calc(100vh - 4rem); overflow-y: auto;
+  max-height: calc(100vh - 4rem); overflow-y: auto; overflow-x: hidden;
   box-shadow: 0 12px 40px rgba(0,0,0,0.2);
   animation: card-detail-enter 200ms ease;
 }
@@ -2416,6 +2416,11 @@ h2#session-title {
 .detail-head:first-of-type { margin-top: var(--space-3); }
 .detail-body { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; }
 .detail-row { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex: 1 1 100%; min-width: 0; }
+/* The goal "start work" row sits in the narrow 11rem sidebar column, so it
+   stacks its iterations box above the button instead of overflowing sideways. */
+.goal-row { display: flex; flex-direction: column; gap: var(--space-2); align-items: stretch; min-width: 0; }
+.goal-row input[type="number"] { width: 100%; min-width: 0; box-sizing: border-box; }
+.goal-row .secondary { width: 100%; }
 .detail-row label { flex: 0 0 5.5rem; color: var(--fg-muted); font-family: var(--sans); font-size: 12px; font-weight: 500; }
 .detail-row input[type="text"], .detail-row input[type="date"], .detail-row textarea, .detail-row select { flex: 1; min-width: 0; }
 .detail-row input[type="checkbox"] { flex: none; }

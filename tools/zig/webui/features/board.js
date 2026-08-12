@@ -1050,7 +1050,7 @@ function showCardDetail(id) {
   // goal's stored default (or the global agent.max_iterations). Prefill the
   // placeholder with the mirrored goal's stored default, like the Goals view.
   var goalRow = document.createElement("div");
-  goalRow.className = "detail-row";
+  goalRow.className = "goal-row";
   var goalIters = input("card-f-goal-iters", "number", "", "max iters (default)");
   goalIters.min = "1"; goalIters.step = "1";
   goalIters.title = "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations.";
