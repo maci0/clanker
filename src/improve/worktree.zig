@@ -53,10 +53,6 @@ pub const Worktree = struct {
             gpa.free(res.stdout);
             gpa.free(res.stderr);
         }
-        // Best-effort: remove the parent .clanker-worktrees directory if it
-        // is now empty. Fails harmlessly when other worktrees still exist
-        // (deleteDir on a non-empty directory returns an error we ignore).
-        std.Io.Dir.cwd().deleteDir(io, ".clanker-worktrees") catch {};
     }
 
     /// Folds the branch's current tip into `base_branch` without checking
@@ -183,31 +179,6 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 
     std.Io.Dir.cwd().createDirPath(io, ".clanker-worktrees") catch {};
 
-    // Prune stale worktree bookkeeping left by a crashed prior run (OOM,
-    // SIGKILL, power loss): without this `git worktree add` fails with
-    // "already exists" and the whole improve-self run is refused.
-    {
-        const prune_argv = [_][]const u8{ "git", "worktree", "prune" };
-        const prune_res = std.process.run(gpa, io, .{ .argv = &prune_argv }) catch null;
-        if (prune_res) |pr| {
-            gpa.free(pr.stdout);
-            gpa.free(pr.stderr);
-        }
-    }
-
-    // If the branch already exists from a prior crashed run, delete it so
-    // the fresh `git worktree add -b` below does not fail with "already
-    // exists". The prune above detached it from any worktree entry; this
-    // removes the dangling ref itself.
-    {
-        const del_argv = [_][]const u8{ "git", "branch", "-D", branch };
-        const del_res = std.process.run(gpa, io, .{ .argv = &del_argv }) catch null;
-        if (del_res) |dr| {
-            gpa.free(dr.stdout);
-            gpa.free(dr.stderr);
-        }
-    }
-
     const argv = [_][]const u8{ "git", "worktree", "add", "-b", branch, path, base_branch };
     const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return error.WorktreeCreateFailed;
     defer gpa.free(res.stdout);
@@ -263,20 +234,6 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh worktree). The worktree builds its own zig-out once at run start;
     // staging already reuses the build cache via --cache-dir, so the link
     // bought nothing there anyway.
-    // chains/ and workflows/ are gitignored directories read by the HOST
-    // (chain loader, workflow catalog), never traversed by sandboxed tools,
-    // so symlinks are safe here — same reasoning as .env / config.local.toml.
-    for ([_][]const u8{ "chains", "workflows" }) |name| {
-        var src_dir = std.Io.Dir.cwd().openDir(io, name, .{}) catch continue;
-        src_dir.close(io);
-        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
-        defer gpa.free(target);
-        const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
-        defer gpa.free(link_path);
-        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = true }) catch |err|
-            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
-    }
-
     for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
@@ -321,7 +278,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // reasoning traces, plugin toggles) is deliberately neither linked nor
     // copied: a fresh worktree legitimately starts empty and every tool
     // already answers "(nothing yet)" for that case.
-    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json" }) |name| {
+    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl" }) |name| {
         // 16 MiB: autolearn's own log cap is 8 MiB (max_log_bytes,
         // src/agent/autolearn.zig) and the trim triggers only past it, so a
         // 4 MiB read limit here didn't truncate -- readFileAlloc errors on
