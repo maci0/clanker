@@ -289,11 +289,7 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
     var enc: std.Io.Writer.Allocating = .init(alloc);
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.write(g);
-    try writeText(out, enc.written());
-}
-
-fn writeText(out: *lib.Out, text: []const u8) !void {
-    return lib.okText(out, text);
+    try lib.okText(out, enc.written());
 }
 
 /// `{"write": {run_id, task, provider, started_at, duration_ms, ...,

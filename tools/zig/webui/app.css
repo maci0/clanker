@@ -1629,7 +1629,7 @@ h2#session-title {
   transition: border-color 160ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 .card:hover { border-color: var(--border); transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15); }
-.card:hover .card-title { color: var(--accent-text); }
+.card:hover .card-title, .card:focus-visible .card-title { color: var(--accent-text); }
 .card:active { transform: translateY(0); }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.1); }
