@@ -141,6 +141,9 @@ export function layoutGraph(canvas, built, slowest, opts) {
   var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
   var tagPad = 42;
   var containerW = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 320;
+  // Re-layouts (search/filter redraws) must not stack on the previous render:
+  // drop prior nodes, iter tags, edges and error text; leave the minimap alone.
+  canvas.querySelectorAll(".run-node, .run-node-incomplete, .run-iter-tag, svg.run-edges, .run-empty").forEach(function (el) { el.remove(); });
   var data = toDagInput(built);
   if (!data.length) return Promise.resolve();
   data.forEach(function (d) {

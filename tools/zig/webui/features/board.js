@@ -124,7 +124,7 @@ export function postBoard(payload, status) {
     });
 }
 
-function cardById(id) {
+export function cardById(id) {
   for (var i = 0; i < board.cards.length; i++) {
     if (board.cards[i].id === id) return board.cards[i];
   }
@@ -209,7 +209,6 @@ function boardColumn(col, s) {
   if (!shown.length) {
     var emptySlot = document.createElement("li");
     emptySlot.className = "board-empty-slot";
-    emptySlot.setAttribute("aria-hidden", "true");
     emptySlot.textContent = "Drop here — or ";
     var addLink = document.createElement("button");
     addLink.type = "button"; addLink.className = "secondary";
@@ -430,30 +429,28 @@ function cardNode(c) {
     av.className = "card-member";
     av.textContent = (c.assignee.trim().charAt(0) || "?").toUpperCase();
     av.title = c.assignee + " — click to reassign";
-    av.setAttribute("role", "button");
-    av.setAttribute("tabindex", "0");
+    // Pointer-only shortcut: no role/tabindex, because interactive content
+    // must not nest inside the card <button>. Keyboard and screen reader
+    // users reassign via the Assignee field in the card detail.
     av.addEventListener("click", function(e){
       e.stopPropagation();
       var next2 = prompt("Assign to (empty to unassign):", c.assignee || "");
       if (next2 === null) return;
       postBoard({ op: "update", id: c.id, assignee: next2.trim() }, next2.trim() ? "Assigned to " + next2.trim() + "." : "Unassigned.");
     });
-    av.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); av.click(); } });
     membersWrap.appendChild(av);
   } else {
     var who = document.createElement("span");
     who.textContent = "unassigned";
     who.title = "Unassigned — click to assign";
     who.style.cursor = "pointer";
-    who.setAttribute("role", "button");
-    who.setAttribute("tabindex", "0");
+    // Pointer-only shortcut, same reasoning as the avatar above.
     who.addEventListener("click", function(e){
       e.stopPropagation();
       var next = prompt("Assign to (empty to unassign):", c.assignee || "");
       if (next === null) return;
       postBoard({ op: "update", id: c.id, assignee: next.trim() }, next.trim() ? "Assigned to " + next.trim() + "." : "Unassigned.");
     });
-    who.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); who.click(); } });
     meta.appendChild(who);
   }
   if (c.usage && c.usage.cost) {

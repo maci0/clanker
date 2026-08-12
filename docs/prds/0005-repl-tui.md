@@ -32,8 +32,8 @@ raised and weighed before the user chose to adopt anyway.
 1. A persistent, resizable REPL session running a real `Agent.run` without
    blocking the UI thread.
 2. Live status while the LLM streams or a tool executes.
-3. Session persistence: resume a saved conversation with model visibility
-   in the status bar; token/cost visibility is tracked as open work below.
+3. Session persistence: resume a saved conversation with model, token/cost
+   and context-budget visibility in the status bar.
 4. Themed output consistent with `clanker run`'s ANSI theme.
 5. Untrusted text (LLM output, tool results) never reaches the terminal as
    raw control bytes.
@@ -96,7 +96,7 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Real markdown outside fences | `transcript.zig`'s `MdStream` already does this for `clanker run`; wire its output into a `RichText`/`Text` widget instead of a raw `Io.Writer` |
 | Multi-line input | `vxfw.TextField` has no multi-line mode; needs either a custom widget or accepting Shift+Enter has no vaxis primitive to hook |
 | Plan mode | `Agent.plan_mode` and the `needsConfirm` gate already exist (web UI drives both); needs a REPL-side toggle key and system-prompt block, no new backend |
-| Visible stats/compaction | Status bar already renders model/session/spinner; extend it the way `clanker run`'s footer or the web UI's context meter does |
+| Visible stats/compaction | **Shipped.** `src/tui/stats.zig` is the one formatter; the status bar gained the web UI's context meter and the transcript gained a per-turn line and two compaction notices |
 
 ## Failure modes
 
@@ -146,6 +146,13 @@ Shipped:
       phase, the user's `clanker>` line in bold prompt-green)
 - [x] Multi-line transcript output renders one row per line (was collapsing
       onto one row: `/help` and completed replies; `row += 1` per Line)
+- [x] Per-turn stats line and visible compaction (`src/tui/stats.zig`,
+      shared with `clanker run`'s stderr footer): tokens in/out, wall time,
+      tok/s, cache hit rate, cost (omitted for an unpriced model rather than
+      shown as `$0.00`), and a `ctx used/window (%)` meter in both the turn
+      line and the status bar. `session.compactMessages` reports what it
+      dropped; `Agent.maybeCompactMessages` is reported from the summary
+      message it leaves behind
 
 Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
@@ -155,11 +162,6 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       write runs ungated (`repl_vaxis.zig` startup warning says so). The
       `/model` picker's modal (`picker_open`/`handlePickerKey`) is the shape to
       reuse, not a new mechanism.
-- [ ] **Visible per-turn stats + compaction.** No analog of `clanker run`'s
-      footer (prompt/completion tokens, wall time, tok/s, cache hit, cost) and
-      no cue when `compact_threshold_bytes` compacts mid-session. grok/kimi/
-      opencode all show a running token/context meter; the web UI has one
-      (webui 2.3), this does not.
 - [ ] **Graceful iteration-limit landing.** Hitting `agent.max_iterations`
       returns `error.MaxIterationsExceeded` and the turn renders `[error: ...]`,
       discarding every tool round's work with no partial answer. Default raised
@@ -190,9 +192,28 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       when `CLANKER_THEME` is set; the default 16-colour theme is bold-only. A
       `/theme` command or truecolor autodetection would surface it.
 
+## Failure modes (stats)
+
+| Condition | Behaviour |
+|---|---|
+| Model has no pricing in the catalogue | Cost segment omitted from the turn line and no session cost in the status bar. `$0.0000` would read as "this model is free", which is a different claim from "nobody wrote down what it charges" |
+| Provider reported no cache accounting | `cache` segment omitted rather than shown as 0% |
+| `context_window` unset for the active model | Context meter omitted from both the turn line and the status bar |
+| Turn failed before reaching the provider | No turn line at all, rather than a row of zeroes |
+| Turn hit `max_iterations` / the token budget | Turn line still printed: the run spent real tokens and real money whether or not it answered |
+
 ## Open questions / future work
 
 - Order of the open items: the ask-bridge/confirm-write gap is the most
   surprising one to a user coming from the web UI, since `agent.confirm_writes
   = "always"` is documented as covering interactive REPL sessions but has no
   render path here yet.
+- **`Agent.on_compact` hook.** Mid-turn compaction is currently *detected*
+  rather than reported: `Agent.maybeCompactMessages` logs and moves on, so
+  `stats.summaryState` recognises the summary message it left behind by its
+  two placeholder prefixes and diffs that against a baseline taken at submit.
+  It works and is unit-tested, but it couples the REPL to loop.zig's wording,
+  and a user message opening with the same prefix would be miscounted. A
+  one-field `on_compact` hook on `Agent`, fired next to the existing
+  `on_tool_call`/`on_todos` hooks, would retire the scan and let the web UI
+  surface the same event on `/api/run`'s `\x01` channel.

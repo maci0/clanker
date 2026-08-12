@@ -7,11 +7,17 @@
 //!    "providers": ["deepseek", "kimi-k3"],
 //!    "judge": "<provider>"|"none"|"auto", "max_tokens": 600,
 //!    "synthesize": false, "reveal": false}
-//! Input (read one): {"id": "<id>"}
+//! Input (read one): {"id": "<id>", "reveal": true}
 //! Input (pick one): {"id": "<id>", "pick": "B"}
-//! Input (list):     {}
-//! Output: {"ok": true, "id": "...", "answers": [...], "verdict": {...},
+//! Input (list):     {"reveal": true}
+//! Output: {"ok": true, "id": "...", "prompt": "...", "answers": [...],
+//!          "verdict": {...}, "pick": {...}, "revealed": bool,
 //!          "text": "<rendered>"}
+//!
+//! `"reveal": false` on a read or a listing is how a caller that has not
+//! already seen the blind view — the web UI's side-by-side is the blind view —
+//! asks to be kept blind. It withholds the key from the payload, not just from
+//! the render, and a recorded pick overrides it.
 //!
 //! The rules live in compare_blind.zig, which imports nothing from the guest
 //! ABI and is therefore unit-tested on the host. This file is the shell: it
@@ -92,12 +98,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else => return lib.fail(out, "input must be a JSON object"),
     };
 
+    // Reads and listings reveal by default, because the caller that asks for a
+    // comparison by id on the command line already saw the blind view that
+    // minted it. `"reveal": false` is how a caller that has not — the web UI's
+    // side-by-side, which is itself the blind view — says so.
+    const asked_reveal = boolField(obj, "reveal", true);
     if (strField(obj, "id")) |id| {
         if (strField(obj, "pick")) |pick| return recordPick(out, id, pick);
-        return readComparison(out, id);
+        return readComparison(out, id, asked_reveal);
     }
     if (strField(obj, "prompt")) |prompt| return startComparison(out, obj, prompt);
-    return listComparisons(out);
+    return listComparisons(out, asked_reveal);
 }
 
 // ------------------------------------------------------------ input helpers
@@ -549,7 +560,12 @@ fn render(doc: Doc, reveal: bool) ![]const u8 {
     }
     if (doc.verdict) |v| {
         try o.print("\nverdict: {s}", .{b.labelAt(v.pos)});
-        if (doc.judge_provider.len > 0) try o.print(" (judged by {s})", .{doc.judge_provider});
+        // Who judged is withheld while the comparison is blind. Naming the
+        // judge names a provider, and the caveat on the next line says that
+        // provider may also be an entrant — between them, a two-way comparison
+        // is half un-blinded by a line that was only meant to attribute the
+        // verdict. The caveat itself carries no name and stays either way.
+        if (reveal and doc.judge_provider.len > 0) try o.print(" (judged by {s})", .{doc.judge_provider});
         try o.writeAll("\n");
         if (v.reason.len > 0) try o.print("  {s}\n", .{v.reason});
         if (doc.judge_downgrade.len > 0) try o.print("  caveat: {s}\n", .{doc.judge_downgrade});
@@ -583,6 +599,11 @@ fn emit(out: *lib.Out, doc: Doc, text: []const u8, reveal: bool) !void {
     try s.write(true);
     try s.objectField("id");
     try s.write(doc.id);
+    // The question, structured rather than only inside `text`. A renderer that
+    // has to scrape the prompt back out of a rendered block is a renderer that
+    // will one day scrape something else out of it too.
+    try s.objectField("prompt");
+    try s.write(doc.prompt);
     try s.objectField("text");
     try s.write(text);
     try s.objectField("revealed");
@@ -627,6 +648,22 @@ fn emit(out: *lib.Out, doc: Doc, text: []const u8, reveal: bool) !void {
             try s.write(doc.entrants[v.pos].provider);
             try s.objectField("model");
             try s.write(doc.entrants[v.pos].model);
+        }
+        try s.endObject();
+    }
+    // What the human already chose, if anything — the field a picker needs to
+    // tell "not decided yet" from "decided, and here is what it turned out to
+    // be". Structured for the same reason the prompt is.
+    if (doc.pick) |p| {
+        try s.objectField("pick");
+        try s.beginObject();
+        try s.objectField("label");
+        try s.write(b.labelAt(p));
+        if (reveal) {
+            try s.objectField("provider");
+            try s.write(doc.entrants[p].provider);
+            try s.objectField("model");
+            try s.write(doc.entrants[p].model);
         }
         try s.endObject();
     }
@@ -694,12 +731,15 @@ fn loadDoc(id: []const u8) !?Doc {
     return doc;
 }
 
-fn readComparison(out: *lib.Out, id: []const u8) !void {
+fn readComparison(out: *lib.Out, id: []const u8, asked_reveal: bool) !void {
     const doc = (try loadDoc(id)) orelse return lib.fail(out, "no such comparison");
-    // Reading one back is always revealed: whoever asked for it by id has
-    // already seen the blind view that produced the id.
-    const text = try render(doc, true);
-    try emit(out, doc, text, true);
+    // Whether the key travels at all, not merely whether it is printed: an
+    // un-revealed read carries no provider and no model anywhere in its reply,
+    // so a caller that renders the structured `answers` array has nothing to
+    // leak even by accident. See `b.mayReveal` for why a pick overrides.
+    const reveal = b.mayReveal(asked_reveal, doc.pick != null);
+    const text = try render(doc, reveal);
+    try emit(out, doc, text, reveal);
 }
 
 fn recordPick(out: *lib.Out, id: []const u8, pick: []const u8) !void {
@@ -729,7 +769,13 @@ fn jsonInt(obj: std.json.ObjectMap, name: []const u8) i64 {
 /// Past comparisons, newest first, as both a text table and a structured array
 /// — off the ledger rather than by walking every comparison file, which is the
 /// reason the ledger exists.
-fn listComparisons(out: *lib.Out) !void {
+///
+/// The ledger row names the winning *provider*, which is a listing that
+/// un-blinds every comparison in it before one is even opened: with two
+/// entrants, "deepseek won" plus the verdict letter the blind view does show is
+/// the whole key. So an un-revealed listing reports only whether a judge
+/// reached a verdict, never whose it was.
+fn listComparisons(out: *lib.Out, reveal: bool) !void {
     var entries: std.ArrayList(std.json.ObjectMap) = .empty;
     defer entries.deinit(alloc);
     if (lib.fsRead(ledger_path)) |ledger| {
@@ -752,8 +798,11 @@ fn listComparisons(out: *lib.Out) !void {
     if (entries.items.len == 0) {
         try t.writer.writeAll("(no comparisons yet; start one with a \"prompt\")");
     } else {
-        for (entries.items) |doc|
-            try t.writer.print("{s}\t{s}\t{s}\n", .{ jsonStr(doc, "id"), jsonStr(doc, "winner"), jsonStr(doc, "prompt") });
+        for (entries.items) |doc| {
+            const winner = jsonStr(doc, "winner");
+            const middle = if (reveal) winner else (if (winner.len > 0) "judged" else "unjudged");
+            try t.writer.print("{s}\t{s}\t{s}\n", .{ jsonStr(doc, "id"), middle, jsonStr(doc, "prompt") });
+        }
     }
 
     var w = out.writer();
@@ -766,13 +815,20 @@ fn listComparisons(out: *lib.Out) !void {
     try s.objectField("comparisons");
     try s.beginArray();
     for (entries.items) |doc| {
+        const winner = jsonStr(doc, "winner");
         try s.beginObject();
         try s.objectField("id");
         try s.write(jsonStr(doc, "id"));
         try s.objectField("prompt");
         try s.write(jsonStr(doc, "prompt"));
-        try s.objectField("winner");
-        try s.write(jsonStr(doc, "winner"));
+        // Always present, and safe either way: that a judge reached a verdict
+        // says nothing about which answer it named or who wrote it.
+        try s.objectField("judged");
+        try s.write(winner.len > 0);
+        if (reveal) {
+            try s.objectField("winner");
+            try s.write(winner);
+        }
         try s.endObject();
     }
     try s.endArray();

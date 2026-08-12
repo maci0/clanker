@@ -1,6 +1,6 @@
 // Vanilla, no bundler. Pure theme logic extracted from app.js 370-391.
 
-export var THEMES = ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day"];
+export var THEMES = ["system", "light", "dark", "mocha", "latte", "frappe", "macchiato", "tokyonight", "tokyonight-storm", "tokyonight-day", "hackerman"];
 
 export function loadTheme() {
   var t = null;
