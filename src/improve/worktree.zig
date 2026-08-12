@@ -248,20 +248,20 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    // chains/ is a top-level directory (configurable via agent.chains_dir)
-    // that holds named chain pipeline definitions; without the link an
-    // isolated run's `chain` tool cannot find any saved pipelines.
-    for ([_][]const u8{"chains"}) |name| {
-        const src_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
-        defer gpa.free(src_path);
-        std.Io.Dir.cwd().access(io, name, .{}) catch continue;
-        const link_path2 = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
-        defer gpa.free(link_path2);
-        std.Io.Dir.cwd().symLink(io, src_path, link_path2, .{ .is_directory = true }) catch |err|
-            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
-    }
-
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json", "state/sessions" }) |name| {
+    // The dividing line for everything under state/ is WHO reads the path.
+    //
+    // Symlinks work only for paths read by the HOST (native I/O follows
+    // links): improvements.jsonl and history/ are read/written by the
+    // engine's History, never by a sandboxed tool. Every path a sandboxed
+    // tool traverses is off-limits as a link, because safeJoinSecure's
+    // no-follow walk (correctly) refuses symlinked components: linked
+    // state/runs broke cmd_graph's write test in every worktree (baseline
+    // gate 2/3, observed live), linked state/sessions breaks cmd_sessions
+    // the same way, and a linked learnings.md/reasoning.jsonl leaf denies
+    // the learnings/reasoning tools. Staged capability evals never catch
+    // any of this because staging COPIES (dereferencing links); only the
+    // worktree, where baseline/final gates run, has the links.
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
@@ -269,6 +269,22 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
         defer gpa.free(link_path);
         std.Io.Dir.cwd().symLink(io, target, link_path, .{}) catch |err|
             log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+    }
+
+    // Sandbox-readable cross-run memory is COPIED instead: real files, so
+    // the no-follow walk sees nothing to refuse. One-way by design -- a
+    // run's own learnings stay isolated until promoted, the same isolation
+    // rule as every other write. Runtime state (runs, sessions, stats,
+    // reasoning traces, plugin toggles) is deliberately neither linked nor
+    // copied: a fresh worktree legitimately starts empty and every tool
+    // already answers "(nothing yet)" for that case.
+    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl" }) |name| {
+        const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 22)) catch continue;
+        defer gpa.free(data);
+        const dst = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(dst);
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err|
+            log.log(.warn, "improve-self: could not copy {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
 }
 
