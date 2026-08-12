@@ -1209,6 +1209,24 @@ el.form.addEventListener("submit", function (e) {
     }
     var stick = nearBottom();
     appendText(turn, line + "\n", false);
+    // live markdown: throttled incremental render while streaming
+    if (!turn._mdThrottle) { turn._mdThrottle = 0; turn._lastMD = ""; }
+    var now2 = Date.now();
+    if (now2 - turn._mdThrottle > 160) {
+      turn._mdThrottle = now2;
+      var pend = turn.root.markdownSource || "";
+      if (pend !== turn._lastMD && pend.length > 80) {
+        turn._lastMD = pend;
+        var hadCaret2 = !!turn.answer.querySelector(".caret");
+        try {
+          var fragMd2 = renderMarkdown(pend);
+          turn.answer.textContent = "";
+          turn.answer.className = "turn-answer md";
+          turn.answer.appendChild(fragMd2);
+          if (hadCaret2) showCaret(turn, true);
+        } catch(_e2) {}
+      }
+    }
     setTurnPhase(turn, "llm");
     if (stick) window.scrollTo(0, document.body.scrollHeight);
     else syncScrollButton();
@@ -3545,6 +3563,101 @@ var boardMine=document.getElementById("board-filter-mine");
 if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; renderBoard(null); });
 var topMine=document.getElementById("board-mine");
 if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; renderBoard(null); });
+// board list view (full-fledged todo list)
+(function(){
+  var listView=document.getElementById("board-list-view");
+  var sortSel=document.getElementById("board-sort");
+  if(!listView) return;
+  function fmtBoardDate(ts){
+    if(!ts) return "";
+    var d=new Date(ts*1000);
+    var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+    return y+"-"+m+"-"+da;
+  }
+  function boardListRows(){
+    var s=boardState.val;
+    var rows=[].concat(s.cards||[]);
+    // reuse same filters as columns
+    rows=rows.filter(function(c){
+      if(s.mine && c.assignee!==s.me) return false;
+      if(s.blockedOnly && blockers(c).length===0) return false;
+      if(s.priority && (c.priority||"normal")!==s.priority) return false;
+      if(s.text && (c.title+" "+(c.body||"")+" "+(c.assignee||"")).toLowerCase().indexOf(s.text)===-1) return false;
+      return true;
+    });
+    var how=(sortSel && sortSel.value) || "updated";
+    rows.sort(function(a,b){
+      if(how==="priority"){
+        var rank={high:0, normal:1, low:2};
+        var ra=rank[a.priority||"normal"]||1, rb=rank[b.priority||"normal"]||1;
+        if(ra!==rb) return ra-rb;
+      } else if(how==="due"){
+        var da=a.deadline||Infinity, db=b.deadline||Infinity;
+        if(da!==db) return da-db;
+      } else if(how==="cost"){
+        var ca=(a.usage&&a.usage.cost)||0, cb=(b.usage&&b.usage.cost)||0;
+        if(ca!==cb) return cb-ca;
+      }
+      return (b.created||0)-(a.created||0);
+    });
+    return rows;
+  }
+  function renderList(){
+    var rows=boardListRows();
+    listView.textContent="";
+    if(!rows.length){
+      var empty=document.createElement("p");
+      empty.className="run-empty";
+      empty.textContent="No cards match the current filters.";
+      listView.appendChild(empty);
+      return;
+    }
+    var table=document.createElement("table");
+    table.className="usage board-list-table";
+    var thead=document.createElement("thead");
+    var hr=document.createElement("tr");
+    ["Title","Column","Assignee","Due","Priority","Cost",""].forEach(function(h){
+      var th=document.createElement("th"); th.textContent=h; hr.appendChild(th);
+    });
+    thead.appendChild(hr); table.appendChild(thead);
+    var tbody=document.createElement("tbody");
+    rows.forEach(function(c){
+      var tr=document.createElement("tr");
+      var titleTd=document.createElement("td"); titleTd.textContent=c.title; titleTd.style.maxWidth="18rem"; titleTd.style.overflow="hidden"; titleTd.style.textOverflow="ellipsis"; titleTd.style.whiteSpace="nowrap"; tr.appendChild(titleTd);
+      var colTd=document.createElement("td"); colTd.textContent=c.column; tr.appendChild(colTd);
+      var whoTd=document.createElement("td"); whoTd.textContent=c.assignee||"—"; tr.appendChild(whoTd);
+      var dueTd=document.createElement("td"); dueTd.textContent=c.deadline?fmtBoardDate(c.deadline):"—"; if(c.deadline){ var ds=dueState(c); if(ds==="late") dueTd.style.color="var(--danger)"; else if(ds==="soon") dueTd.style.color="var(--warn-text)"; } tr.appendChild(dueTd);
+      var prTd=document.createElement("td"); prTd.textContent=c.priority||"normal"; tr.appendChild(prTd);
+      var costTd=document.createElement("td"); costTd.className="num"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
+      var actTd=document.createElement("td");
+      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); document.getElementById("card-detail").scrollIntoView({behavior:"smooth", block:"start"}); }); actTd.appendChild(openBtn);
+      if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){
+        var claimBtn=document.createElement("button"); claimBtn.type="button"; claimBtn.className="secondary"; claimBtn.textContent="Claim"; claimBtn.style.marginLeft="0.4rem"; claimBtn.addEventListener("click", function(){ postBoard({op:"update", id:c.id, assignee: ((document.getElementById("instance-chip")||{}).textContent||"").trim()}, "Claimed."); }); actTd.appendChild(claimBtn);
+      }
+      tr.appendChild(actTd);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); listView.appendChild(table);
+  }
+  // bind on boardState changes
+  var _origRenderBoard = renderBoard;
+  // wrap to also refresh list
+  window.renderBoard = function(next){ var r=_origRenderBoard(next); try{ renderList(); }catch(_){} return r; };
+  // also directly bind to state
+  try{
+    // VanJS bind doesn't expose subscribe; poll via mutation: boardState.val setter triggers list
+    var _lastCards="";
+    setInterval(function(){
+      try{
+        var cur=JSON.stringify(boardState.val.cards||[])+boardState.val.text+boardState.val.mine+boardState.val.blockedOnly+boardState.val.priority;
+        if(cur!==_lastCards){ _lastCards=cur; renderList(); }
+      }catch(_){}
+    }, 600);
+  }catch(_){}
+  if(sortSel) sortSel.addEventListener("change", renderList);
+  // initial
+  try{ renderList(); }catch(_){}
+})();
 
 
 /* ---------- web UI plugins ----------
@@ -3571,10 +3684,37 @@ el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value
 el.logsRefresh.addEventListener("click", function () { loadLogList(); });
 
 // Phase 5 progress streaming — reuses /api/run event channel shape via fetch + reader.
+// History + revert are read from state/history and improve loop artifacts where available.
 (function(){
-  var progCtrl=null, progEl=document.getElementById("progress-log"), progStatus=document.getElementById("progress-status");
+  var progCtrl=null, progEl=document.getElementById("progress-log"), progStatus=document.getElementById("progress-status"), progHist=document.getElementById("progress-history");
   var stopBtn=document.getElementById("progress-stop");
   function append(t){ if(!progEl) return; progEl.textContent += t; progEl.scrollTop=progEl.scrollHeight; }
+  function renderHistory(){
+    if(!progHist) return;
+    Promise.all([
+      fetch("/api/runs").then(function(r){ return r.json().then(function(d){ var txt=d.text||""; try{ return txt?JSON.parse(txt): (Array.isArray(d)?d:(d.runs||[])); }catch(_){ return []; } }); }).catch(function(){ return []; }),
+      fetch("/api/providers").then(function(r){ return r.json(); }).catch(function(){ return null; })
+    ]).then(function(vals){
+      var runs=vals[0]||[]; progHist.textContent="";
+      if(!runs.length){ var p=document.createElement("p"); p.className="run-empty"; p.textContent="No runs yet — start a task in Chat and it appears here and in the gate history."; progHist.appendChild(p); return; }
+      var recent=runs.slice(0, 8);
+      var ul=document.createElement("ul"); ul.className="fleet-roster-list";
+      recent.forEach(function(r){
+        var li=document.createElement("li"); li.className="fleet-meta";
+        var a=document.createElement("a"); a.href="#"; a.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
+        a.addEventListener("click", function(e){ e.preventDefault(); if(typeof openRun==="function") openRun(r.run_id); });
+        li.appendChild(a);
+        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; rev.style.marginLeft="0.5rem";
+        rev.addEventListener("click", function(){
+          if(!confirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.")) return;
+          append("Revert requested for "+r.run_id+" — use CLI `clanker revert "+r.run_id+"` if server-side revert is not enabled.\n");
+        });
+        li.appendChild(rev);
+        ul.appendChild(li);
+      });
+      progHist.appendChild(ul);
+    }).catch(function(){});
+  }
   function wire(id, body){
     var b=document.getElementById(id); if(!b) return;
     b.addEventListener("click", function(){
@@ -3587,21 +3727,25 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
         .then(function(r){
           if(!r.ok) return r.text().then(function(t){ throw new Error(t || ("HTTP "+r.status)); });
           if(!r.body) throw new Error("No stream");
-          var reader=r.body.getReader(), dec=new TextDecoder(), buf="";
+          var reader=r.body.getReader(), dec=new TextDecoder(), buf="", lastSummary="";
           function pump(){ return reader.read().then(function(ch){
             if(ch.done){
-              // flush any buffered non-event line
               if(buf) append(buf+"\n");
+              // try to parse trailing summary line as structured gate/eval output
+              try{
+                var maybe=JSON.parse(lastSummary);
+                if(maybe && typeof maybe==="object") append("\n[structured]\n"+JSON.stringify(maybe, null, 2)+"\n");
+              }catch(_){}
               if(progStatus) progStatus.textContent="Done.";
               if(stopBtn) stopBtn.hidden=true;
-              progCtrl=null; return;
+              progCtrl=null; renderHistory(); return;
             }
             buf += dec.decode(ch.value, {stream:true});
             var lines=buf.split("\n"); buf=lines.pop();
             lines.forEach(function(line){
               if(!line) return;
-              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"tool")+"\n"); else if(e.type==="tool_result") append("  done "+(e.ms||0)+"ms\n"); else if(e.type==="done") append("done\n"); else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line+"\n"); } }
-              else append(line+"\n");
+              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"")+"\n"); else if(e.type==="tool_result") { var out=""; try{ out=JSON.parse(e.output||""); }catch(_){ out=e.output||""; } if(out && typeof out==="object") append(JSON.stringify(out, null, 2)+"\n"); else if(out) append(String(out).slice(0, 1200)+"\n"); else append("  done "+(e.ms||0)+"ms\n"); if(e.type==="done" && e.output) lastSummary=e.output; } else if(e.type==="done"){ lastSummary=e.output||""; if(lastSummary) append(lastSummary.slice(0, 2000)+"\n"); else append("done\n"); } else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line.slice(1)+"\n"); } }
+              else { lastSummary=line; append(line+"\n"); }
             });
             return pump();
           }); }
@@ -3609,14 +3753,17 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
         }).catch(function(e){
           if(e && e.name==="AbortError") { if(progStatus) progStatus.textContent="[stopped]"; }
           else { append("[failed] "+(e.message||e)+"\n"); if(progStatus) progStatus.textContent=e.message||"Failed"; }
-          if(stopBtn) stopBtn.hidden=true; progCtrl=null;
+          if(stopBtn) stopBtn.hidden=true; progCtrl=null; renderHistory();
         });
     });
   }
-  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
-  wire("progress-eval", { task:"run evals and report results", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
-  wire("progress-providers", { task:"check providers and report which are reachable", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check, and summarize pass/fail per check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  wire("progress-eval", { task:"run evals: list tasks with criteria, run each, and summarize scores", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  wire("progress-providers", { task:"check providers: for each configured provider/model report reachable/missing auth/rate-limited", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
   if(stopBtn) stopBtn.addEventListener("click", function(){ if(progCtrl) try{progCtrl.abort();}catch(_){} });
+  var histBtn=document.getElementById("progress-history-refresh");
+  if(histBtn) histBtn.addEventListener("click", renderHistory);
+  renderHistory();
 })();
 
 /* ---------- overlays: command palette and shortcut sheet ---------- */

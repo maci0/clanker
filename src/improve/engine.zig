@@ -198,6 +198,11 @@ pub const Engine = struct {
     /// branch through this at the ref level; null runs promote straight
     /// into whatever tree the process is already in, unisolated.
     worktree: ?*const worktree_mod.Worktree = null,
+    /// Feedback text from the previous failed attempt, fed to the next one so
+    /// the model sees what went wrong. Per-instance: this must not be a
+    /// container-level `var`, or concurrent Engine instances would share and
+    /// corrupt each other's feedback.
+    feedback: ?[]const u8 = null,
 
     pub fn run(self: *Engine, opts: Options) !void {
         log.log(.info, "improve-self: {s}", .{opts.instructions});
@@ -224,7 +229,7 @@ pub const Engine = struct {
             var last_outcome: Outcome = .failed;
             var attempt: u32 = 0;
             while (attempt < opts.max_attempts_per_iter) : (attempt += 1) {
-                const outcome = try self.improveOnce(opts, attempt + 1, if (attempt == 0) null else feedback);
+                const outcome = try self.improveOnce(opts, attempt + 1, if (attempt == 0) null else self.feedback);
                 last_outcome = outcome;
                 switch (outcome) {
                     .accepted => {
@@ -257,7 +262,6 @@ pub const Engine = struct {
     }
 
     const Outcome = enum { accepted, no_change, failed };
-    var feedback: ?[]const u8 = null;
 
     fn improveOnce(self: *Engine, opts: Options, attempt: u32, last_error: ?[]const u8) !Outcome {
         // ---- 1. context ----
@@ -327,7 +331,7 @@ pub const Engine = struct {
             // Log the length only, not the content: the raw model response can
             // contain user PII echoed back from the conversation context.
             if (resp.raw) |raw| log.log(.debug, "raw response length: {d} chars", .{raw.len});
-            feedback = "Your previous response had an empty content field. Output the JSON object in the content field.";
+            self.feedback = "Your previous response had an empty content field. Output the JSON object in the content field.";
             return .failed;
         }
 
@@ -338,7 +342,7 @@ pub const Engine = struct {
             // generic advice below sent the model straight back to the same
             // path on every retry.
             if (rejected_path) |bad| {
-                feedback = try std.fmt.allocPrint(
+                self.feedback = try std.fmt.allocPrint(
                     self.arena,
                     "You proposed a change to \"{s}\", which you are not allowed to write.\n" ++
                         "{s}\n" ++
@@ -354,7 +358,7 @@ pub const Engine = struct {
             // proposal, so say that and show what actually arrived.
             const head = json_text[0..@min(json_text.len, 400)];
             const tail = if (json_text.len > 400) json_text[json_text.len - @min(json_text.len - 400, 200) ..] else "";
-            feedback = try std.fmt.allocPrint(
+            self.feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your previous response was not a valid patch proposal: {s}.\n" ++
                     "Respond with ONLY the JSON object described above.\n" ++
@@ -387,7 +391,7 @@ pub const Engine = struct {
             };
             if (exists or c.old.len != 0) {
                 log.log(.warn, "proposal rejected: '{s}' already exists and may only be added to, not rewritten", .{c.file});
-                feedback = try std.fmt.allocPrint(
+                self.feedback = try std.fmt.allocPrint(
                     self.arena,
                     "You tried to rewrite \"{s}\". Files under evals/ are the gate your own work is measured against: you may create a new one, never change or remove an existing one.\n{s}",
                     .{ c.file, surface_rules },
@@ -431,7 +435,7 @@ pub const Engine = struct {
         self.applyPatch(staging, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, @errorName(err), fingerprints);
-            feedback = try std.fmt.allocPrint(
+            self.feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your previous patch failed to apply: {s}. The \"old\" text of every change must match the current file byte for byte, including whitespace. Re-read the file content shown above and match it exactly, or propose a different change.",
                 .{@errorName(err)},
@@ -454,7 +458,7 @@ pub const Engine = struct {
         if (try self.brokenInvariant(staged_dir, proposal.changes)) |bad| {
             log.log(.warn, "proposal rejected: it removes '{s}' from {s}", .{ bad.needle, bad.file });
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, bad.needle, fingerprints);
-            feedback = try std.fmt.allocPrint(
+            self.feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your patch removed \"{s}\" from {s}. That call is part of the gate every improvement has to pass, including this one. Keep it and re-propose.",
                 .{ bad.needle, bad.file },
@@ -472,7 +476,7 @@ pub const Engine = struct {
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tree did not compile", tail, self.stdSymbolHelp(tail) });
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tree did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
         }
@@ -488,7 +492,7 @@ pub const Engine = struct {
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tools did not compile", tail, self.stdSymbolHelp(tail) });
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tools did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
         }
@@ -500,7 +504,7 @@ pub const Engine = struct {
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
             self.removeTree(staging);
             return .failed;
         }
@@ -514,7 +518,7 @@ pub const Engine = struct {
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
             self.removeTree(staging);
             return .failed;
         }
@@ -525,7 +529,7 @@ pub const Engine = struct {
             const tail = try errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-            feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
             self.removeTree(staging);
             return .failed;
         }
@@ -555,7 +559,7 @@ pub const Engine = struct {
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
                         try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-                        feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                         self.removeTree(staging);
                         return .failed;
                     }
@@ -572,7 +576,7 @@ pub const Engine = struct {
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
                         try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
-                        feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
+                        self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                         self.removeTree(staging);
                         return .failed;
                     }

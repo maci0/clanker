@@ -164,7 +164,9 @@ fn criterionSatisfied(answer: []const u8, c: Criterion) bool {
             break :blk true;
         },
         .json_key => |jk| blk: {
-            const v = json.parseFromSliceLeaky(json.Value, std.heap.page_allocator, answer, .{}) catch break :blk false;
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            const v = json.parseFromSliceLeaky(json.Value, arena.allocator(), answer, .{}) catch break :blk false;
             switch (v) {
                 .object => |o| {
                     if (o.get(jk.key)) |val| {

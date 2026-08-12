@@ -320,6 +320,10 @@ lamps carry further). The seven named palettes ride the same tokens.
         <select id="board-filter-priority"><option value="">All</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select>
       </div>
       <div class="board" id="board"></div>
+      <div class="toolbar-actions" style="margin-top: var(--space-3);">
+        <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
+      </div>
+      <div id="board-list-view" style="margin-top: var(--space-3); overflow-x:auto;"></div>
       <!-- A sibling, not a child: inside .board it became a flex item after the
            last column and needed sideways scrolling to find, which is the
            opposite of what a first-run message is for. -->
@@ -359,6 +363,11 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div class="run-detail" id="progress-log" role="log" aria-live="polite" aria-label="Progress log" style="max-height: 18rem; overflow:auto; white-space:pre-wrap; font-family: var(--mono); font-size: var(--step--1);"></div>
       <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
+      <div style="display:flex; gap: 0.5rem; align-items:center; margin-top: 0.5rem;">
+        <h3 class="detail-head" style="margin:0;">History</h3>
+        <button type="button" class="secondary" id="progress-history-refresh">Refresh history</button>
+      </div>
+      <div id="progress-history" style="margin-top: 0.5rem;"></div>
     </section>
     <section>
       <div class="section-head">

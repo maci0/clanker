@@ -457,36 +457,94 @@ export function refreshFleet() {
   return Promise.resolve(null);
 }
 
-function renderFloor(runs, roster) {
-  var floor = byId("fleet-floor");
-  var cv = byId("fleet-canvas");
-  var lab = byId("fleet-floor-status");
-  if (!floor || !cv) return;
-  floor.hidden = false;
-  var ctx = cv.getContext("2d");
-  if (!ctx) { if (lab) lab.textContent = "Canvas unavailable."; return; }
-  ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.fillStyle = "#272d31";
-  ctx.fillRect(0, 0, cv.width, cv.height);
-  // desks row
-  var peers = (roster && roster.peers) || [];
-  var names = ["self"].concat(peers.map(function(p){return p.name;}));
-  var cols = Math.max(1, names.length);
-  var cw = cv.width / cols;
-  for (var i = 0; i < names.length; i++) {
-    var x = Math.floor(i * cw);
-    var lamp = (runs && runs.length && i % 2 === 0) ? "#2fae4d" : "#77827b";
-    ctx.fillStyle = "#343b3f"; ctx.fillRect(x + 8, 110, Math.floor(cw) - 16, 40);
-    ctx.fillStyle = "#d3d7cf"; ctx.fillRect(x + 16, 70, Math.floor(cw) - 32, 40);
-    ctx.fillStyle = lamp; ctx.beginPath(); ctx.arc(x + Math.floor(cw/2), 58, 6, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = "#dfe5df"; ctx.font = "10px monospace"; ctx.textAlign = "center";
-    var label = names[i].slice(0, 12); ctx.fillText(label, x + Math.floor(cw/2), 168);
+var _floorRAF = null;
+var _floorState = { runs: [], names: ["self"], t: 0, phase: {}, idle: {} };
+function _hash(s){ var h=0; for(var i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i))|0; return h>>>0; }
+function _colorFor(name){ var v=_hash(name); return "hsl(" + (v%360) + " 35% 62%)"; }
+function _toolBucket(label){
+  var l=(label||"").toLowerCase();
+  if(l.indexOf("read")!==-1||l.indexOf("grep")!==-1||l.indexOf("glob")!==-1) return "read";
+  if(l.indexOf("edit")!==-1||l.indexOf("write")!==-1||l.indexOf("patch")!==-1) return "edit";
+  if(l.indexOf("exec")!==-1||l.indexOf("git")!==-1||l.indexOf("zig")!==-1||l.indexOf("test")!==-1) return "exec";
+  if(l.indexOf("subagent")!==-1||l.indexOf("rlm")!==-1) return "sub";
+  if(l.indexOf("ask")!==-1) return "ask";
+  return "tool";
+}
+function _floorFrame(ts){
+  var cv=byId("fleet-canvas"); var lab=byId("fleet-floor-status");
+  if(!cv || cv.closest && cv.closest("#fleet-floor[hidden]")) { _floorRAF=null; return; }
+  var ctx=cv.getContext("2d"); if(!ctx){ if(lab) lab.textContent="Canvas unavailable."; return; }
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var t = reduced ? _floorState.t : (ts||0);
+  ctx.imageSmoothingEnabled=false;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.fillStyle="#1d2225"; ctx.fillRect(0,0,cv.width,cv.height);
+  // brushed backplane lines
+  ctx.fillStyle="rgba(255,255,255,0.04)";
+  for(var gx=0; gx<cv.width; gx+=8) ctx.fillRect(gx, 0, 1, cv.height);
+  var names=_floorState.names; var cols=Math.max(1,names.length); var cw=cv.width/cols;
+  for(var i=0;i<names.length;i++){
+    var x=Math.floor(i*cw);
+    var name=names[i];
+    var bucket=_floorState.phase[name] || "idle";
+    var idleFor = Date.now() - (_floorState.idle[name]||Date.now());
+    var dozing = idleFor > 5*60*1000;
+    var glow = dozing ? "#77827b" : (bucket==="ask" ? "#3f97dd" : bucket==="tool" ? "#4cc468" : bucket==="exec" ? "#e5b54a" : "#2fae4d");
+    var breathe = reduced || dozing ? 1 : 0.75 + 0.25*Math.sin(t/900 + i);
+    // floor tile
+    ctx.fillStyle="#343b3f"; ctx.fillRect(x+6, 110, Math.floor(cw)-12, 40);
+    // desk
+    ctx.fillStyle="#3a4146"; ctx.fillRect(x+12, 86, Math.floor(cw)-24, 10);
+    ctx.fillStyle="#4a5358"; ctx.fillRect(x+10, 96, Math.floor(cw)-20, 14);
+    // agent body (simple pill)
+    var bob = reduced||dozing ? 0 : Math.sin(t/420 + i*1.1)*2;
+    ctx.fillStyle=_colorFor(name);
+    var bx=x+Math.floor(cw/2)-10, by=62+bob;
+    // head
+    ctx.fillRect(bx+6, by-8, 8, 8);
+    // torso
+    ctx.fillRect(bx+2, by, 16, 18);
+    // arms by bucket
+    if(bucket==="read") { ctx.fillRect(bx-4, by+4, 6, 3); ctx.fillRect(bx+18, by+4, 6, 3); }
+    else if(bucket==="exec"||bucket==="tool") { ctx.fillRect(bx+4, by+4, 10, 3); }
+    else if(bucket==="edit") { ctx.fillRect(bx+6, by+6, 8, 2); }
+    // lamp
+    ctx.globalAlpha=breathe; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(x+Math.floor(cw/2), 48, 6, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+    if(dozing){ ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.font="9px monospace"; ctx.textAlign="center"; ctx.fillText("zZ", x+Math.floor(cw/2), 44); }
+    // label
+    ctx.fillStyle="#dfe5df"; ctx.font="10px monospace"; ctx.textAlign="center"; ctx.fillText(name.slice(0,12), x+Math.floor(cw/2), 168);
+    // helper sprite
+    if(bucket==="sub"){ ctx.fillStyle="#c9f2d3"; ctx.fillRect(x+Math.floor(cw/2)+12, by+6, 6, 10); }
   }
-  if (lab) {
-    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) lab.textContent = "Fleet floor — still frame (" + names.length + " desks). Data already shown in the roster and run list.";
-    else lab.textContent = names.length + " desk(s) · data is decorative; roster and runs below are the source of truth.";
+  if(lab){
+    if(reduced) lab.textContent="Fleet floor — still frame ("+names.length+" desks). Respecting reduced motion.";
+    else lab.textContent=names.length+" desk(s) · animated by tool events; roster and runs below are source of truth.";
   }
+  if(!reduced) _floorRAF=requestAnimationFrame(_floorFrame);
+  else _floorRAF=null;
+}
+function renderFloor(runs, roster){
+  var floor=byId("fleet-floor"); var cv=byId("fleet-canvas"); var lab=byId("fleet-floor-status");
+  if(!floor || !cv) return;
+  floor.hidden=false;
+  var peers=(roster && roster.peers)||[];
+  _floorState.names=["self"].concat(peers.map(function(p){return p.name;}));
+  // seed phases from recent tool activity in runs (best-effort: last tool label per parent)
+  _floorState.runs=runs||[];
+  var now=Date.now();
+  // map run provider/model activity to bucket by last seen tool kind
+  // (no run-stream here yet, so seed from available metadata; live SSE below keeps it current)
+  (runs||[]).forEach(function(r){
+    var n=(r.task||"")+" "+(r.provider||"");
+    var b=_toolBucket(n);
+    var target = r.parent_run_id ? "self" : (_floorState.names[1]||"self");
+    _floorState.phase[target]=b; _floorState.idle[target]=now;
+  });
+  // ensure every desk has an idle stamp
+  _floorState.names.forEach(function(n){ if(!_floorState.idle[n]) _floorState.idle[n]=now; });
+  if(_floorRAF) cancelAnimationFrame(_floorRAF);
+  _floorRAF=requestAnimationFrame(_floorFrame);
+  // live tick from /api/run stream is attached by fleet live listener below
 }
 
 export function initFleet() {

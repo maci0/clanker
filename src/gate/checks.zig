@@ -386,16 +386,18 @@ fn bracketsBalanced(src: []const u8) bool {
     var squares: i64 = 0;
     var in_line_comment = false;
     var in_string = false;
+    var in_char = false;
     var i: usize = 0;
     while (i < src.len) : (i += 1) {
         const c = src[i];
         if (c == '\n') {
             in_line_comment = false;
             in_string = false;
+            in_char = false;
             continue;
         }
         if (in_line_comment) continue;
-        if (c == '"' and !in_string) {
+        if (c == '"' and !in_string and !in_char) {
             in_string = true;
             continue;
         }
@@ -405,6 +407,20 @@ fn bracketsBalanced(src: []const u8) bool {
         }
         if (in_string) {
             if (c == '\\' and i + 1 < src.len) i += 1;
+            continue;
+        }
+        // A Zig char literal ('{', '\'', ...) can hold a bracket byte, which
+        // must not be counted: it never opens or closes anything.
+        if (c == '\'' and !in_char) {
+            in_char = true;
+            continue;
+        }
+        if (in_char) {
+            if (c == '\\' and i + 1 < src.len) {
+                i += 1;
+                continue;
+            }
+            if (c == '\'') in_char = false;
             continue;
         }
         if (c == '/' and i + 1 < src.len and src[i + 1] == '/') {
@@ -455,6 +471,13 @@ test "bracketsBalanced handles strings and comments" {
     try std.testing.expect(bracketsBalanced("// }\nconst x = 1;"));
     try std.testing.expect(!bracketsBalanced("const x = {;"));
     try std.testing.expect(bracketsBalanced("fn f() void {}\n"));
+}
+
+test "bracketsBalanced handles char literals" {
+    try std.testing.expect(bracketsBalanced("const c: u8 = '{';"));
+    try std.testing.expect(bracketsBalanced("const c: u8 = '\\'';"));
+    try std.testing.expect(bracketsBalanced("if (c == '(') n += 1;"));
+    try std.testing.expect(!bracketsBalanced("const x = {'a';"));
 }
 
 test "whitespaceOnlyGate rejects whitespace-only diffs" {
