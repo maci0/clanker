@@ -163,7 +163,7 @@ pub fn runDue(
 
 /// Fires one entry by id right now, whatever its schedule says. What `schedule
 /// run <id>` is for: proving an entry works without waiting for its window.
-/// It counts as a real run, it updates `last_run` and lands in the ledger ,
+/// It counts as a real run, it updates `last_run` and lands in the ledger;
 /// because pretending it did not would leave the next window computed from a
 /// run that visibly happened.
 pub fn runOne(

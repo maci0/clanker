@@ -280,7 +280,7 @@ test "every shipped eval definition parses and is complete" {
 
 test "every eval requires_tool names a shipped tool" {
     // requires_tool is matched against transcript tool-call names at score
-    // time, so a tool rename strands the eval at a permanent score of 0 ,
+    // time, so a tool rename strands the eval at a permanent score of 0;
     // which the improve loop reads as its own regression. Cross-check the
     // name against the manifests the registry actually loads.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

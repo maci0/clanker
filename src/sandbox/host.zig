@@ -1695,7 +1695,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.startsWith(u8, op, "todo_")) {
         // A room todo was a second, thinner copy of a board card: a title, a
         // claim, a closed flag, folded out of the same room log the board now
-        // folds. One concept, so one implementation, and it is the board tool ,
+        // folds. One concept, so one implementation, and it is the board tool;
         // folding a log is application logic, while this host's job is the
         // append, the fan-out and the subscription filter. The branch near the
         // top of this function still handles a todo_* op with no room, which is
@@ -1896,7 +1896,7 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         .response_writer = &w,
         // network_allow only checks `hostname` above, once, against the
         // requested URL. std.http.Client auto-follows redirects by default,
-        // and a redirect target is never re-checked against that allowlist ,
+        // and a redirect target is never re-checked against that allowlist;
         // an allowed host could 302 the sandboxed tool to an internal address
         // (e.g. a cloud metadata IP) the allowlist exists to block. Refusing
         // redirects outright keeps every request confined to the host that
@@ -3539,7 +3539,7 @@ pub const ExecAttempt = union(enum) {
 /// `clanker repl`'s `!` shell escape is the caller. It exists so that escape
 /// is *not* a raw shell: it runs a fixed argv through the same policy a tool
 /// goes through, with no shell interposed to expand globs, variables, pipes or
-/// redirections. There is deliberately no `cwd`, no stdin and no shell here ,
+/// redirections. There is deliberately no `cwd`, no stdin and no shell here;
 /// the process cwd is the sandbox root the REPL was started in.
 pub fn execUnderPolicy(
     sb: *const Sandbox,

@@ -957,8 +957,8 @@ pub const Engine = struct {
     }
 
     /// Chooses the idea the coming iteration will implement, planning a fresh
-    /// batch when the previous one is spent. Ideas history already records ,
-    /// accepted or rejected, are skipped mechanically, which is what the
+    /// batch when the previous one is spent. Ideas history already records
+    /// (accepted or rejected) are skipped mechanically, which is what the
     /// "do not repeat that mistake" prose never managed. Never fails the
     /// run: planning off, erroring, or running dry leaves plan_current empty,
     /// and an empty plan block is exactly the pre-plan prompt.
@@ -1968,7 +1968,7 @@ pub const Engine = struct {
         for (bulk_order) |c| {
             if (pathIn(churn, c.path)) continue;
             // Anything the focus block already carries. A pinned or granted
-            // file that recent runs had not touched used to be emitted twice ,
+            // file that recent runs had not touched used to be emitted twice:
             // once in the focus and again here, which for an instruction
             // naming src/cli.zig meant paying for 310 KB of it a second time.
             if (c.score >= request_score) continue;
@@ -2521,7 +2521,7 @@ const improve_user_fmt =
     \\the source above and extend it -- reconstructing it from memory has
     \\silently reverted an accepted improvement before. Work listed as
     \\rejected failed for the stated reason; do not repeat that mistake.
-    \\Work listed as reverted was merged and then undone by a human review ,
+    \\Work listed as reverted was merged and then undone by a human review:
     \\a stronger no than rejected. Never propose it again in any wording,
     \\and never rebuild what it did under a different summary. The
     \\tag after the status is what the change turned out to do, decided from

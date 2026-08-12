@@ -2,7 +2,7 @@
 //! retry/backoff, streaming accumulation and token accounting.
 //!
 //! Deliberately one module, not one per provider. Everything that differs
-//! between providers, the wire codec, the auth headers, the endpoint URL ,
+//! between providers (the wire codec, the auth headers, the endpoint URL)
 //! is reached through the `providers.Provider` vtable resolved once per call,
 //! so this file contains no `switch (provider.kind)` at all. See
 //! [ADR 0004](../../docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md).

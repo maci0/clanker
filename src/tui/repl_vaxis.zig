@@ -1727,7 +1727,7 @@ const Model = struct {
     }
 
     /// The command list is generated from `command_registry`
-    /// (`buildCommandHelp`), so a registry entry can never go undocumented ,
+    /// (`buildCommandHelp`), so a registry entry can never go undocumented:
     /// the property the deleted REPL's generated `:help` had
     /// (docs/prds/0005-repl-tui.md). The `!` escape and the key bindings stay
     /// hand-written here for the same reason as each other: neither is
@@ -2355,7 +2355,7 @@ const Model = struct {
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        // "-N" is how many transcript lines sit below the frozen window ,
+        // "-N" is how many transcript lines sit below the frozen window:
         // the reader's distance from the tail, and the cue that the view is
         // not following new output right now.
         const scroll_hint: []const u8 = if (self.view_end != null)
@@ -2721,7 +2721,7 @@ fn clampViewEnd(view_end: usize, line_count: usize, avail_rows: u16) usize {
     return @max(min_end, @min(view_end, line_count));
 }
 
-/// PgUp: one page up from `cur` (null = following the tail). Returns null ,
+/// PgUp: one page up from `cur` (null = following the tail). Returns null:
 /// stay at the tail, when the whole transcript already fits on screen, so
 /// PgUp in a short session is a no-op rather than a stuck anchor.
 fn scrollUpEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
@@ -2781,7 +2781,7 @@ test "scrollHomeEnd jumps to the top only when there is history above" {
 
 test "an anchored view end holds its lines while the transcript grows" {
     // Frozen view: the anchor is an absolute index, so appended lines (a
-    // growing line_count) leave the visible window exactly where it was ,
+    // growing line_count) leave the visible window exactly where it was;
     // the stick-to-tail behaviour lives entirely in the null anchor.
     try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 200, 24));
     try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 500, 24));

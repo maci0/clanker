@@ -3,7 +3,7 @@
 //! A merge is not the end of a change's review: maintainers revert
 //! improvement commits after the fact, and until that signal lands back in
 //! improvements.jsonl the loop's memory says "accepted" about work that is
-//! no longer in the tree. That mismatch is worse than no memory at all ,
+//! no longer in the tree. That mismatch is worse than no memory at all:
 //! the prompt tells the model the work is already in the source while the
 //! source shows it undone, which is how one improvement got merged,
 //! reverted, re-proposed, re-merged and reverted again. This module reads
@@ -20,7 +20,7 @@
 //! reverted elsewhere) is simply not matched rather than mismatched.
 //!
 //! Message shapes are not enough, though: humans word reverts freely. Both
-//! real reverts of promoted improvements on this repository were prose ,
+//! real reverts of promoted improvements on this repository were prose:
 //! "Reverted in the working tree before this commit, not by me", naming no
 //! sha and matching neither shape, so the loop's history kept saying
 //! accepted and it re-proposed and re-merged the exact same work. The
