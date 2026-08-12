@@ -4598,19 +4598,51 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     // read. Granting one op per tool broke replication silently, because the
     // board ignores a failed chat call — so this is pinned per name, not just
     // for the bare "board".
-    for ([_][]const u8{
-        "board",         "kanban_add",     "kanban_claim",  "kanban_cost",
-        "kanban_delete", "kanban_depend",  "kanban_list",   "kanban_log",
-        "kanban_move",   "kanban_subtask", "kanban_update",
-    }) |tool| {
-        try std.testing.expect(chatAccessAllowed(tool, "send"));
-        try std.testing.expect(chatAccessAllowed(tool, "history"));
+    //
+    // The names are read off the shipped manifests rather than written out
+    // here, because a hard-coded copy is what let this break in the first
+    // place: commit 4fadb86 renamed the tools board_* -> kanban_* and this
+    // test kept asserting the old names against the old matching, so it stayed
+    // green while every renamed tool silently lost chat access. A rename edits
+    // a manifest's "name" and never its "wasm", so keying off the module is
+    // what makes the next one fail here instead of in production.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer man_dir.close(io);
+
+    var board_names: usize = 0;
+    var man_it = man_dir.iterate();
+    while (man_it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+        const raw = try man_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const v = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+        if (v != .object) continue;
+        const wasm = v.object.get("wasm") orelse continue;
+        if (wasm != .string) continue;
+        if (!std.mem.endsWith(u8, wasm.string, "board.wasm")) continue;
+        const name = v.object.get("name") orelse continue;
+        if (name != .string) continue;
+
+        board_names += 1;
+        try std.testing.expect(chatAccessAllowed(name.string, "send"));
+        try std.testing.expect(chatAccessAllowed(name.string, "history"));
         // Not a blanket grant: the board has no business subscribing or
         // enumerating rooms.
-        try std.testing.expect(!chatAccessAllowed(tool, "rooms"));
-        try std.testing.expect(!chatAccessAllowed(tool, "subscribe"));
-        try std.testing.expect(!chatAccessAllowed(tool, "todo_add"));
+        try std.testing.expect(!chatAccessAllowed(name.string, "rooms"));
+        try std.testing.expect(!chatAccessAllowed(name.string, "subscribe"));
+        try std.testing.expect(!chatAccessAllowed(name.string, "todo_add"));
     }
+    // An empty or unreadable manifests directory would otherwise let the loop
+    // above assert nothing at all and still pass.
+    try std.testing.expect(board_names >= 11);
 
     // The janitor announces what it pruned, and only that.
     try std.testing.expect(chatAccessAllowed("cmd_janitor", "send"));
