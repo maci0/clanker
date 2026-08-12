@@ -27,7 +27,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     var max_chars: usize = 4000;
     if (obj.get("max_chars")) |m| {
-        if (m == .integer) max_chars = @intCast(m.integer);
+        if (m == .integer and m.integer > 0) max_chars = @intCast(m.integer);
     }
 
     const url = if (topic.len > 0)

@@ -29,7 +29,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.failErr(out, err, "writing the skill file");
     };
 
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"path\":\"{s}\"}}", .{path});
-    try out.writeAll(body);
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("path");
+    try s.write(path);
+    try s.endObject();
+    lib.commit(out, &w);
 }
