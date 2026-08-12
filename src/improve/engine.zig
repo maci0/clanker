@@ -1830,7 +1830,7 @@ pub const Engine = struct {
         // The source budget tracks the model's own window: roughly 3 bytes per
         // token over about a third of the window comes out at the window
         // itself in bytes. The ceiling is a cost decision, not a capacity one.
-        // There is deliberately no floor, a floor above the window would make
+        // There is deliberately no floor — a floor above the window would make
         // small-window models overshoot their own capacity on every attempt.
         return @min(window, 256 * 1024);
     }
