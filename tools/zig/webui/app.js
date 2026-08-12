@@ -304,11 +304,30 @@ function togglePin(id) {
   renderSessionOptions(null);
 }
 
+/* Which day-groups the rail folds away. Like pins this lives in the browser:
+   which "Yesterday" you have stopped looking at is a property of how you are
+   browsing right now, not of the conversation. Keyed by the group label
+   ("Pinned", "Today", "Yesterday", …) so one choice covers the same day in
+   every workspace. */
+function loadCollapsedGroups() {
+  try { return JSON.parse(window.localStorage.getItem("clanker.collapsedGroups") || "[]"); } catch (e) { return []; }
+}
+var collapsedGroups = loadCollapsedGroups();
+
+function isCollapsedGroup(g) { return collapsedGroups.indexOf(g) !== -1; }
+
+function toggleCollapsedGroup(g) {
+  var at = collapsedGroups.indexOf(g);
+  if (at === -1) collapsedGroups.push(g); else collapsedGroups.splice(at, 1);
+  try { window.localStorage.setItem("clanker.collapsedGroups", JSON.stringify(collapsedGroups)); } catch (e) {}
+  renderSessionOptions(null);
+}
+
 /* The conversation list derives from three things: what the server knows,
    what is pinned here, and what is typed in the filter. Nothing else can put
    a row on screen, which is what stops the rail and the transcript
    disagreeing about which conversation is open. */
-var railState = uiState({ sessions: [], filter: "", pins: [], current: "" });
+var railState = uiState({ sessions: [], filter: "", pins: [], current: "", collapsed: collapsedGroups.slice() });
 
 function isArchived(s){ return !!s.archived; }
 function showArchived(){ var cb=document.getElementById("archived-toggle"); return !!(cb && cb.checked); }
@@ -318,7 +337,8 @@ function renderSessionOptions(sessions) {
     sessions: knownSessions,
     filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
     pins: pins.slice(),
-    current: sessionId
+    current: sessionId,
+    collapsed: collapsedGroups.slice()
   };
   renderSessionTitle();
 }
@@ -373,7 +393,7 @@ bind(el.railList, railState, function (s) {
     return pa === pb ? 0 : pb - pa;
   });
   var seen = ordered.some(function (item) { return item.id === s.current; });
-  var shown = 0;
+  var matched = 0;
 
   var wsList = workspacesOf(ordered);
   wsList.forEach(function (ws) {
@@ -393,17 +413,35 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-workspace-count" }, String(inWorkspace.length))));
     }
 
+    // Bucket the folder's conversations into day-groups (in order), then
+    // render each group as a collapsible header plus its rows.
+    var groups = [];
     var lastGroup = "";
     inWorkspace.forEach(function (item) {
       var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
-      if (group !== lastGroup) {
-        out.push(T.li({ class: "rail-group", role: "presentation" }, group));
-        lastGroup = group;
-      }
-      var row = railRowFor(item, s.current);
-      if (!onlyDefault) row.classList.add("rail-folder");
-      out.push(row);
-      shown += 1;
+      if (group !== lastGroup) { groups.push({ name: group, items: [] }); lastGroup = group; }
+      groups[groups.length - 1].items.push(item);
+    });
+    groups.forEach(function (g) {
+      var collapsed = isCollapsedGroup(g.name);
+      var head = T.button({
+        type: "button",
+        class: "rail-group",
+        "aria-expanded": String(!collapsed),
+        "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
+        title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
+        onclick: function () { toggleCollapsedGroup(g.name); }
+      }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
+        T.span({ class: "rail-group-name" }, g.name),
+        T.span({ class: "rail-group-count" }, String(g.items.length)));
+      out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
+      if (collapsed) { matched += g.items.length; return; }
+      g.items.forEach(function (item) {
+        var row = railRowFor(item, s.current);
+        if (!onlyDefault) row.classList.add("rail-folder");
+        out.push(row);
+      });
+      matched += g.items.length;
     });
   });
 
@@ -416,7 +454,7 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-item-title" }, "New conversation"),
         T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!shown && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
+  if (!matched && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
   return out;
 });
 
