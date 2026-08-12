@@ -485,7 +485,7 @@ fn sameLines(a: []const []const u8, b: []const []const u8) bool {
 /// worktree, in a staging directory, and in a unit test.
 fn reverseApply(gpa: std.mem.Allocator, after: []const u8, c: Change) ![]u8 {
     if (c.new.len == 0) return gpa.dupe(u8, after);
-    const at = std.mem.lastIndexOf(u8, after, c.new) orelse {
+    const at = std.mem.find(u8, after, c.new) orelse {
         // `zig fmt` runs over the staged tree before this, so a proposal whose
         // `new` text was reformatted is no longer findable verbatim. Treat the
         // before-state as unknown rather than guessing: the caller reads that
