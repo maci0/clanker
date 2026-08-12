@@ -117,24 +117,9 @@ fn tokens(arena: std.mem.Allocator, text: []const u8) ![]const []const u8 {
     var it = std.mem.tokenizeAny(u8, text, " \t\r\n,.;:'\"`()[]{}<>/\\|!?-_=+*");
     while (it.next()) |w| {
         if (w.len < 4) continue;
-        const lower: []u8 = try arena.dupe(u8, w);
+        const lower = try arena.dupe(u8, w);
         for (lower) |*c| c.* = std.ascii.toLower(c.*);
-        // Lightweight plural stemming: strip a trailing 's' so
-        // "registries"/"registry" and "providers"/"provider" converge.
-        // Handle -ies -> -y (e.g. registries -> registry) and plain -s.
-        var word: []const u8 = lower;
-        if (word.len > 4) {
-            if (std.mem.endsWith(u8, word, "ies")) {
-                lower[word.len - 3] = 'y';
-                word = word[0 .. word.len - 2];
-            } else if (std.mem.endsWith(u8, word, "ses") or std.mem.endsWith(u8, word, "xes") or std.mem.endsWith(u8, word, "zes")) {
-                word = word[0 .. word.len - 2];
-            } else if (word[word.len - 1] == 's' and word[word.len - 2] != 's') {
-                word = word[0 .. word.len - 1];
-            }
-        }
-        if (word.len < 4) continue;
-        try out.append(arena, word);
+        try out.append(arena, lower);
     }
     return try out.toOwnedSlice(arena);
 }

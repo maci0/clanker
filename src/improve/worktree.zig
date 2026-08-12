@@ -24,6 +24,15 @@ pub const Worktree = struct {
     path: []const u8,
     branch: []const u8,
     base_branch: []const u8,
+    /// The commit this branch's un-merged work starts from: the base tip at
+    /// creation, advanced to each landed merge commit afterwards. mergeBack
+    /// pins `git merge-tree --merge-base` to it so only the branch's OWN
+    /// commits count as its delta. Letting git compute the merge base
+    /// instead resurrects history: when a human rewrites the base branch to
+    /// drop promoted commits (observed three times in one afternoon), the
+    /// computed base predates the rewrite and the next merge-back re-lands
+    /// everything the human just removed.
+    created_from: []const u8,
     /// Set to true by mergeBack when it successfully lands the branch's
     /// tip onto the base branch. cleanup uses this to decide whether to
     /// force-remove the worktree: an unmerged worktree is kept so the
@@ -35,6 +44,7 @@ pub const Worktree = struct {
         gpa.free(self.path);
         gpa.free(self.branch);
         gpa.free(self.base_branch);
+        gpa.free(self.created_from);
     }
 
     /// Removes the worktree and its branch. Must be called after chdir-ing
@@ -58,18 +68,6 @@ pub const Worktree = struct {
             };
             if (!ok) log.log(.warn, "git worktree remove {s} failed: {s}", .{ self.path, res.stderr });
         }
-        // git worktree remove cleans git metadata but may leave the empty
-        // directory entry behind; remove it so .clanker-worktrees/ does not
-        // accumulate stale subdirectories across runs.
-        std.Io.Dir.cwd().deleteDir(io, self.path) catch |err| switch (err) {
-            error.FileNotFound => {}, // already gone — fine
-            else => log.log(.debug, "could not remove leftover dir {s}: {s}", .{ self.path, @errorName(err) }),
-        };
-        // If .clanker-worktrees is now empty, remove it so the repo does
-        // not accumulate a stale empty directory across runs. deleteDir
-        // fails on a non-empty directory, which is the desired behaviour
-        // when other worktrees are still active.
-        std.Io.Dir.cwd().deleteDir(io, ".clanker-worktrees") catch {};
         // The branch was successfully merged, so -d (which refuses to
         // delete unmerged branches) is safe and will succeed.
         {
@@ -110,16 +108,16 @@ pub const Worktree = struct {
             if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
-                    log.log(.info, "improve-self: fast-forwarded {s} to {s} (merge-base: {s})", .{ self.base_branch, branch_sha, merge_base });
+                    log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
+                    self.advanceCreatedFrom(gpa, branch_sha);
                     self.resyncLocalBranch(gpa, io, branch_sha);
                     self.merged = true;
-                    copyBackLearnings(gpa, io, self.path);
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
             }
 
-            const tree = mergeTree(gpa, io, base_sha, branch_sha) catch {
+            const tree = mergeTree(gpa, io, self.created_from, base_sha, branch_sha) catch {
                 log.log(.warn, "improve-self: merging {s} into {s} conflicts; leaving it on the branch for manual merge", .{ self.branch, self.base_branch });
                 return;
             };
@@ -130,16 +128,27 @@ pub const Worktree = struct {
             };
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
-                log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s}, merge-base: {s})", .{ commit, self.base_branch, self.branch, merge_base });
+                log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
+                self.advanceCreatedFrom(gpa, commit);
                 self.resyncLocalBranch(gpa, io, commit);
                 self.merged = true;
-                copyBackLearnings(gpa, io, self.path);
                 return;
             }
             // Someone else moved base_branch between the read and the write;
             // loop and retry against its new tip.
         }
         log.log(.warn, "improve-self: {s} kept losing the race to merge into {s}; leaving it on the branch", .{ self.branch, self.base_branch });
+    }
+
+    /// After a successful merge-back the branch ref is fast-forwarded to the
+    /// landed commit (resyncLocalBranch below), so the branch's next delta
+    /// starts there too: advance the pinned merge base with it, or the next
+    /// merge would re-count (and re-land) work that is already on the base
+    /// branch — including work a human removed from it in the meantime.
+    fn advanceCreatedFrom(self: *Worktree, gpa: std.mem.Allocator, landed: []const u8) void {
+        const next = gpa.dupe(u8, landed) catch return; // keep the old pin on OOM
+        gpa.free(self.created_from);
+        self.created_from = next;
     }
 
     /// After a successful merge-back, fast-forwards this worktree's own
@@ -178,43 +187,8 @@ pub const Worktree = struct {
             else => false,
         };
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
-        // Untracked build artifacts (zig-out/) survive reset --hard: a
-        // previous iteration's `zig build` / `zig build tools` leaves
-        // .wasm and binaries that the next baseline gate would pick up
-        // stale. Remove them so the next iteration rebuilds from scratch.
-        const clean_argv = [_][]const u8{ "git", "-C", self.path, "clean", "-fdx", "zig-out" };
-        const clean_res = std.process.run(gpa, io, .{ .argv = &clean_argv }) catch |err| {
-            log.log(.debug, "improve-self: git clean zig-out after merge-back failed: {s}", .{@errorName(err)});
-            return;
-        };
-        defer gpa.free(clean_res.stdout);
-        defer gpa.free(clean_res.stderr);
-        const clean_ok = switch (clean_res.term) {
-            .exited => |c| c == 0,
-            else => false,
-        };
-        if (!clean_ok) log.log(.debug, "improve-self: git clean zig-out returned non-zero: {s}", .{clean_res.stderr});
     }
 };
-
-/// After a successful merge-back, copies state/learnings.md from the
-/// worktree back to the main tree so learnings written during the isolated
-/// improve-self run survive promotion. The worktree's copy was seeded by
-/// linkSharedState at creation; any write_note calls during the run append
-/// to that copy, and without this step they vanish when the worktree is
-/// cleaned up. Best-effort: a missing or unreadable file is not an error.
-fn copyBackLearnings(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) void {
-    const src = std.fmt.allocPrint(gpa, "{s}/state/learnings.md", .{worktree_path}) catch return;
-    defer gpa.free(src);
-    const data = std.Io.Dir.cwd().readFileAlloc(io, src, gpa, .limited(1 << 24)) catch |err| {
-        log.log(.debug, "improve-self: no learnings to copy back: {s}", .{@errorName(err)});
-        return;
-    };
-    defer gpa.free(data);
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/learnings.md", .data = data }) catch |err|
-        log.log(.warn, "improve-self: could not copy learnings back from the worktree: {s}", .{@errorName(err)});
-}
 
 /// Creates a worktree on a fresh branch cut from `base_branch`'s current
 /// tip. Must be called before any chdir into the result: `git worktree add`
@@ -261,7 +235,12 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     linkSharedState(gpa, io, path) catch |err|
         log.log(.warn, "improve-self: could not link state/.env/config.local.toml into the worktree: {s}", .{@errorName(err)});
 
-    return .{ .path = path, .branch = branch, .base_branch = base_branch };
+    // The fresh branch's tip IS the base commit the branch was cut at;
+    // record it as the pinned merge base (see `created_from`).
+    const created_from = revParse(gpa, io, branch) catch return error.WorktreeCreateFailed;
+    errdefer gpa.free(created_from);
+
+    return .{ .path = path, .branch = branch, .base_branch = base_branch, .created_from = created_from };
 }
 
 /// Symlinks the runtime paths a fresh worktree checkout doesn't get on its
@@ -332,31 +311,14 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
-    // state/runs/ is where the execution graph tool writes run-<id>.json.
-    // It cannot be symlinked (sandboxed tools refuse symlinked components),
-    // so create it as a real directory so graph writes do not fail silently.
-    const runs_dir = try std.fmt.allocPrint(gpa, "{s}/state/runs", .{worktree_path});
-    defer gpa.free(runs_dir);
-    std.Io.Dir.cwd().createDirPath(io, runs_dir) catch {};
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
         const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(link_path);
-        const is_dir = std.mem.endsWith(u8, name, "history");
-        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| {
-            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}; falling back to copy", .{ name, @errorName(err) });
-            // Symlinks can fail on filesystems that don't support them.
-            // Fall back to copying so the worktree still has cross-run
-            // memory even when linking is impossible.
-            if (std.mem.eql(u8, name, "state/improvements.jsonl")) {
-                const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
-                defer gpa.free(data);
-                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = link_path, .data = data }) catch |werr|
-                    log.log(.warn, "improve-self: copy fallback for {s} also failed: {s}", .{ name, @errorName(werr) });
-            }
-        };
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{}) catch |err|
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
 
     // Sandbox-readable cross-run memory is COPIED instead: real files, so
@@ -428,8 +390,13 @@ fn mergeBaseOf(gpa: std.mem.Allocator, io: std.Io, a: []const u8, b: []const u8)
 /// Computes the merge without touching any working tree or the index; the
 /// returned tree sha is `null` semantically on conflict (surfaced as
 /// error.CommandFailed by run1, which the caller treats as "can't merge").
-fn mergeTree(gpa: std.mem.Allocator, io: std.Io, ours: []const u8, theirs: []const u8) ![]u8 {
-    return run1(gpa, io, &.{ "git", "merge-tree", "--write-tree", "--no-messages", ours, theirs });
+fn mergeTree(gpa: std.mem.Allocator, io: std.Io, base: []const u8, ours: []const u8, theirs: []const u8) ![]u8 {
+    // Explicit --merge-base: the branch's delta is measured from the commit
+    // it was actually cut at (Worktree.created_from), not from whatever
+    // ancestor git can still find after a history rewrite of the base branch.
+    const base_arg = try std.fmt.allocPrint(gpa, "--merge-base={s}", .{base});
+    defer gpa.free(base_arg);
+    return run1(gpa, io, &.{ "git", "merge-tree", "--write-tree", "--no-messages", base_arg, ours, theirs });
 }
 
 fn commitTree(gpa: std.mem.Allocator, io: std.Io, tree: []const u8, parent1: []const u8, parent2: []const u8, message: []const u8) ![]u8 {
