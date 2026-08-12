@@ -1,6 +1,7 @@
 {
   "name": "history",
   "description": "review the improve history (successes/failures/summaries)",
+  "llm_description": "Review improve history (successes/failures/summaries). {\"last\":N} limits to the N most recent entries.",
   "wasm": "zig-out/tools/history.wasm",
   "input_schema": {
     "type": "object",

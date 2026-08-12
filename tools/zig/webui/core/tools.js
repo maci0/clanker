@@ -199,6 +199,17 @@ export function showToolDetail(t) {
   desc.className = "tool-detail-desc";
   desc.textContent = t.description || "(no description)";
   _el.toolDetail.appendChild(desc);
+  // Shown only when it actually differs: an unmigrated tool's llm_description
+  // is a duplicate of description, and repeating it teaches nothing.
+  if (t.llm_description && t.llm_description !== t.description) {
+    var llmDesc = document.createElement("p");
+    llmDesc.className = "tool-detail-llm-desc";
+    var llmLabel = document.createElement("strong");
+    llmLabel.textContent = "For the model: ";
+    llmDesc.appendChild(llmLabel);
+    llmDesc.appendChild(document.createTextNode(t.llm_description));
+    _el.toolDetail.appendChild(llmDesc);
+  }
   var schema = t.input_schema;
   var props = schema && schema.properties ? Object.keys(schema.properties) : [];
   if (props.length) {

@@ -31,12 +31,21 @@ pub const max_text_len = 4096;
 /// Newest messages injected into the agent inbox per run.
 pub const inbox_limit = 5;
 
+pub const Reaction = struct {
+    emoji: []const u8,
+    from: []const u8,
+};
+
 pub const Message = struct {
     room: []const u8,
     from: []const u8,
     text: []const u8,
     ts: i64,
     id: []const u8,
+    thread_ts: ?[]const u8 = null,
+    reactions: ?[]const Reaction = null,
+    edited: ?i64 = null,
+    deleted: ?bool = null,
 };
 
 pub const RoomInfo = struct {
@@ -331,11 +340,243 @@ pub fn receive(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     return true;
 }
 
+// --------------------------------------------------------------- mutations --
+// These ops modify an existing message in-place by rewriting the single
+// shared JSONL log (all rooms share one file).
+
+/// Serialise a Message into the JSONL buffer.
+fn serialiseMessage(m: Message, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
+    var line_buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&line_buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return error.TooLarge;
+    inline for (std.meta.fields(Message)) |f| {
+        s.objectField(f.name) catch return error.TooLarge;
+        s.write(@field(m, f.name)) catch return error.TooLarge;
+    }
+    s.endObject() catch return error.TooLarge;
+    try out.appendSlice(gpa, line_buf[0..w.end]);
+    try out.append(gpa, '\n');
+}
+
+/// Rewrite the entire log after mutations have been applied in-place.
+fn rewriteLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, messages: []const Message) !void {
+    const path = try subPath(arena, state_dir, log_path);
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(gpa);
+    for (messages) |m| try serialiseMessage(m, &out, gpa);
+    try atomic_write.writeFile(io, base, path, out.items);
+}
+
+/// Toggle a reaction on a message. Returns true if the reaction was added,
+/// false if it was removed (toggle behaviour, like Slack).
+pub fn toggleReaction(
+    base: std.Io.Dir,
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    state_dir: []const u8,
+    cfg: *const config_mod.Config,
+    msg_id: []const u8,
+    emoji: []const u8,
+    from: []const u8,
+) !bool {
+    _ = cfg;
+    const path = try subPath(arena, state_dir, log_path);
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
+    var messages: std.ArrayList(Message) = .empty;
+    try parseLog(arena, raw, &messages);
+
+    var found = false;
+    var was_added = false;
+    for (messages.items) |*m| {
+        if (!std.mem.eql(u8, m.id, msg_id)) continue;
+        found = true;
+        var new_reactions: std.ArrayList(Reaction) = .empty;
+        var removed = false;
+        if (m.reactions) |existing| {
+            for (existing) |r| {
+                if (std.mem.eql(u8, r.emoji, emoji) and std.mem.eql(u8, r.from, from)) {
+                    removed = true;
+                    continue;
+                }
+                try new_reactions.append(arena, r);
+            }
+        }
+        if (!removed) {
+            try new_reactions.append(arena, .{ .emoji = emoji, .from = from });
+            was_added = true;
+        }
+        m.reactions = if (new_reactions.items.len > 0) new_reactions.items else null;
+        break;
+    }
+    if (!found) return false;
+    try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
+    return was_added;
+}
+
+/// Edit a message's text. Only the original sender can edit.
+/// Returns the updated message or null if not found / not authorised.
+pub fn editMessage(
+    base: std.Io.Dir,
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    state_dir: []const u8,
+    cfg: *const config_mod.Config,
+    msg_id: []const u8,
+    new_text: []const u8,
+    from: []const u8,
+) !?Message {
+    _ = cfg;
+    const path = try subPath(arena, state_dir, log_path);
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
+    var messages: std.ArrayList(Message) = .empty;
+    try parseLog(arena, raw, &messages);
+
+    var result: ?Message = null;
+    for (messages.items) |*m| {
+        if (!std.mem.eql(u8, m.id, msg_id)) continue;
+        if (!std.mem.eql(u8, m.from, from)) return null;
+        const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        m.text = new_text;
+        m.edited = now;
+        result = m.*;
+        break;
+    }
+    if (result == null) return null;
+    try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
+    return result;
+}
+
+/// Mark a message as deleted. Only the original sender can delete.
+/// Returns true if the message was found and deleted.
+pub fn deleteMessage(
+    base: std.Io.Dir,
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    state_dir: []const u8,
+    cfg: *const config_mod.Config,
+    msg_id: []const u8,
+    from: []const u8,
+) !bool {
+    _ = cfg;
+    const path = try subPath(arena, state_dir, log_path);
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 * 1024 * 1024)) catch return false;
+    var messages: std.ArrayList(Message) = .empty;
+    try parseLog(arena, raw, &messages);
+
+    var found = false;
+    for (messages.items) |*m| {
+        if (!std.mem.eql(u8, m.id, msg_id)) continue;
+        if (!std.mem.eql(u8, m.from, from)) return false;
+        m.deleted = true;
+        m.text = "[deleted]";
+        found = true;
+        break;
+    }
+    if (!found) return false;
+    try rewriteLog(base, io, gpa, arena, state_dir, messages.items);
+    return true;
+}
+
+// ----------------------------------------------------------- room metadata --
+// Topics, pins, and per-room metadata are stored in state/<state_dir>/room_meta.json.
+
+pub const RoomMeta = struct {
+    topic: ?[]const u8 = null,
+    pins: ?[]const []const u8 = null, // array of message ids
+};
+
+fn metaPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}/room_meta.json", .{state_dir});
+}
+
+pub fn loadMeta(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8) !std.json.ArrayHashMap(RoomMeta) {
+    const path = try metaPath(arena, state_dir);
+    const raw = base.readFileAlloc(io, path, arena, .limited(1024 * 1024)) catch
+        return std.json.ArrayHashMap(RoomMeta){};
+    const parsed = std.json.parseFromSliceLeaky(
+        std.json.ArrayHashMap(RoomMeta),
+        arena,
+        raw,
+        .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+    ) catch return std.json.ArrayHashMap(RoomMeta){};
+    return parsed;
+}
+
+fn saveMeta(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, meta: std.json.ArrayHashMap(RoomMeta)) !void {
+    const path = try metaPath(arena, state_dir);
+    var buf: [64 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.write(meta) catch return error.TooLarge;
+    try atomic_write.writeFile(io, base, path, buf[0..w.end]);
+    _ = gpa;
+}
+
+pub fn setTopic(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, topic: []const u8) !void {
+    var meta = try loadMeta(base, io, arena, state_dir);
+    const gop = try meta.map.getOrPut(arena, room);
+    if (!gop.found_existing) gop.value_ptr.* = .{};
+    gop.value_ptr.topic = topic;
+    try saveMeta(base, io, gpa, arena, state_dir, meta);
+}
+
+pub fn getTopic(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8) !?[]const u8 {
+    const meta = try loadMeta(base, io, arena, state_dir);
+    const entry = meta.map.get(room) orelse return null;
+    return entry.topic;
+}
+
+pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, msg_id: []const u8) !bool {
+    var meta = try loadMeta(base, io, arena, state_dir);
+    const gop = try meta.map.getOrPut(arena, room);
+    if (!gop.found_existing) gop.value_ptr.* = .{};
+
+    if (gop.value_ptr.pins) |existing| {
+        // Check if already pinned — if so, remove
+        var new_pins: std.ArrayList([]const u8) = .empty;
+        var was_pinned = false;
+        for (existing) |p| {
+            if (std.mem.eql(u8, p, msg_id)) {
+                was_pinned = true;
+                continue;
+            }
+            try new_pins.append(arena, p);
+        }
+        if (was_pinned) {
+            gop.value_ptr.pins = if (new_pins.items.len > 0) new_pins.items else null;
+            try saveMeta(base, io, gpa, arena, state_dir, meta);
+            return false; // unpinned
+        }
+        try new_pins.append(arena, msg_id);
+        gop.value_ptr.pins = new_pins.items;
+    } else {
+        var new_pins: std.ArrayList([]const u8) = .empty;
+        try new_pins.append(arena, msg_id);
+        gop.value_ptr.pins = new_pins.items;
+    }
+    try saveMeta(base, io, gpa, arena, state_dir, meta);
+    return true; // pinned
+}
+
+pub fn getPins(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8) !?[]const []const u8 {
+    const meta = try loadMeta(base, io, arena, state_dir);
+    const entry = meta.map.get(room) orelse return null;
+    return entry.pins;
+}
+
 // ------------------------------------------------------------------ sending --
 
 /// Appends the message locally and fans it out to every configured peer's
 /// POST /api/chat/message. Returns the message (with ts + id filled in).
 pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, text: []const u8) !Message {
+    return sendMessageOpts(base, io, gpa, arena, state_dir, cfg, room, text, null);
+}
+
+pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, text: []const u8, thread_ts: ?[]const u8) !Message {
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const msg = Message{
         .room = room,
@@ -343,6 +584,7 @@ pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: 
         .text = text,
         .ts = ts,
         .id = try makeId(arena, ts),
+        .thread_ts = thread_ts,
     };
     try append(base, io, gpa, arena, state_dir, cfg, msg);
     fanOut(io, gpa, cfg, msg);
@@ -377,6 +619,10 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, cfg: *const config_mod.Config, msg
         s.print("{d}", .{msg.ts}) catch continue;
         s.objectField("id") catch continue;
         s.write(msg.id) catch continue;
+        if (msg.thread_ts) |tts| {
+            s.objectField("thread_ts") catch continue;
+            s.write(tts) catch continue;
+        }
         s.endObject() catch continue;
         const body = body_buf[0..w.end];
 

@@ -1,6 +1,7 @@
 {
   "name": "hexdump",
   "description": "Hex + ASCII dump of text, 16 bytes per row, the way `xxd`/`hexdump -C` render one (C). WHEN TO USE: inspecting opaque or partly-binary tool output (a hash, a compressed blob, an unclear encoding) that would otherwise print as unreadable or invisible bytes. Input: {\"text\": \"...\", \"max_bytes\": 4096} (bare text may be passed unwrapped; max_bytes caps how much is dumped, default and ceiling 4096).",
+  "llm_description": "Hex+ASCII dump of text, 16 bytes/row (like xxd/hexdump -C), for inspecting opaque or partly-binary output. {\"text\":\"...\",\"max_bytes\":4096} (default and ceiling 4096); text may be passed bare, unwrapped.",
   "wasm": "zig-out/tools/hexdump.wasm",
   "input_schema": {
     "type": "object",

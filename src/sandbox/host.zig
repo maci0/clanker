@@ -1299,6 +1299,11 @@ const ChatOp = struct {
     on: ?bool = null,
     title: ?[]const u8 = null,
     todo: ?[]const u8 = null,
+    // Slack-style extensions
+    msg_id: ?[]const u8 = null,
+    emoji: ?[]const u8 = null,
+    topic: ?[]const u8 = null,
+    thread_ts: ?[]const u8 = null,
 };
 
 /// A direct message remains an ordinary chatroom so history, persistence and
@@ -1397,7 +1402,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             return Err.invalid;
         const text = parsed.text orelse return Err.invalid;
         if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
-        const msg = chatrooms_mod.sendMessage(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text) catch |err| {
+        const msg = chatrooms_mod.sendMessageOpts(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, room, text, parsed.thread_ts) catch |err| {
             log.log(.warn, "[chat] send failed: {s}", .{@errorName(err)});
             return Err.invalid;
         };
@@ -1408,6 +1413,10 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.print("{d}", .{msg.ts}) catch return Err.too_large;
         s.objectField("id") catch return Err.too_large;
         s.write(msg.id) catch return Err.too_large;
+        if (msg.thread_ts) |tts| {
+            s.objectField("thread_ts") catch return Err.too_large;
+            s.write(tts) catch return Err.too_large;
+        }
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "history")) {
@@ -1445,6 +1454,22 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.print("{d}", .{m.ts}) catch return Err.too_large;
             s.objectField("id") catch return Err.too_large;
             s.write(m.id) catch return Err.too_large;
+            if (m.thread_ts) |tts| {
+                s.objectField("thread_ts") catch return Err.too_large;
+                s.write(tts) catch return Err.too_large;
+            }
+            if (m.reactions) |reactions| {
+                s.objectField("reactions") catch return Err.too_large;
+                s.write(reactions) catch return Err.too_large;
+            }
+            if (m.edited) |ed| {
+                s.objectField("edited") catch return Err.too_large;
+                s.print("{d}", .{ed}) catch return Err.too_large;
+            }
+            if (m.deleted orelse false) {
+                s.objectField("deleted") catch return Err.too_large;
+                s.write(true) catch return Err.too_large;
+            }
             s.endObject() catch return Err.too_large;
         }
         s.endArray() catch return Err.too_large;
@@ -1455,6 +1480,8 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.eql(u8, op, "rooms")) {
         const rooms = chatrooms_mod.listRooms(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir) catch return Err.invalid;
         const subs = chatrooms_mod.subscribedRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
+        // Load room metadata for topics
+        const meta = chatrooms_mod.loadMeta(base, h.sandbox.io, arena, state_dir) catch std.json.ArrayHashMap(chatrooms_mod.RoomMeta){};
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
         s.write(true) catch return Err.too_large;
@@ -1472,6 +1499,12 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.write(r.last_from) catch return Err.too_large;
             s.objectField("last_text") catch return Err.too_large;
             s.write(r.last_text) catch return Err.too_large;
+            if (meta.map.get(r.room)) |rm| {
+                if (rm.topic) |t| {
+                    s.objectField("topic") catch return Err.too_large;
+                    s.write(t) catch return Err.too_large;
+                }
+            }
             s.endObject() catch return Err.too_large;
         }
         s.endArray() catch return Err.too_large;
@@ -1492,6 +1525,143 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.objectField("rooms") catch return Err.too_large;
         s.beginArray() catch return Err.too_large;
         for (subs) |sub| s.write(sub) catch return Err.too_large;
+        s.endArray() catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "react")) {
+        const msg_id = parsed.msg_id orelse return Err.invalid;
+        const emoji = parsed.emoji orelse return Err.invalid;
+        if (emoji.len == 0 or emoji.len > 64) return Err.invalid;
+        const was_added = chatrooms_mod.toggleReaction(
+            base,
+            h.sandbox.io,
+            h.sandbox.gpa,
+            arena,
+            state_dir,
+            cfg,
+            msg_id,
+            emoji,
+            cfg.instance.name,
+        ) catch |err| {
+            log.log(.warn, "[chat] react failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("action") catch return Err.too_large;
+        s.write(if (was_added) "added" else "removed") catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "edit")) {
+        const msg_id = parsed.msg_id orelse return Err.invalid;
+        const new_text = parsed.text orelse return Err.invalid;
+        if (new_text.len == 0 or new_text.len > chatrooms_mod.max_text_len) return Err.invalid;
+        const result = chatrooms_mod.editMessage(
+            base,
+            h.sandbox.io,
+            h.sandbox.gpa,
+            arena,
+            state_dir,
+            cfg,
+            msg_id,
+            new_text,
+            cfg.instance.name,
+        ) catch |err| {
+            log.log(.warn, "[chat] edit failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        if (result) |msg| {
+            s.beginObject() catch return Err.too_large;
+            s.objectField("ok") catch return Err.too_large;
+            s.write(true) catch return Err.too_large;
+            s.objectField("id") catch return Err.too_large;
+            s.write(msg.id) catch return Err.too_large;
+            s.objectField("edited") catch return Err.too_large;
+            s.print("{d}", .{msg.edited.?}) catch return Err.too_large;
+            s.endObject() catch return Err.too_large;
+            return h.writeResult(bytes, out_buf[0..w.end]);
+        } else {
+            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not found or not authorised\"}");
+        }
+    } else if (std.mem.eql(u8, op, "delete")) {
+        const msg_id = parsed.msg_id orelse return Err.invalid;
+        const ok = chatrooms_mod.deleteMessage(
+            base,
+            h.sandbox.io,
+            h.sandbox.gpa,
+            arena,
+            state_dir,
+            cfg,
+            msg_id,
+            cfg.instance.name,
+        ) catch |err| {
+            log.log(.warn, "[chat] delete failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        if (ok) {
+            s.beginObject() catch return Err.too_large;
+            s.objectField("ok") catch return Err.too_large;
+            s.write(true) catch return Err.too_large;
+            s.endObject() catch return Err.too_large;
+            return h.writeResult(bytes, out_buf[0..w.end]);
+        } else {
+            return h.writeResult(bytes, "{\"ok\":false,\"error\":\"not found or not authorised\"}");
+        }
+    } else if (std.mem.eql(u8, op, "set_topic")) {
+        const room = parsed.room orelse return Err.invalid;
+        const new_topic = parsed.topic orelse return Err.invalid;
+        if (new_topic.len > 1024) return Err.invalid;
+        chatrooms_mod.setTopic(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, new_topic) catch |err| {
+            log.log(.warn, "[chat] set_topic failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "get_topic")) {
+        const room = parsed.room orelse return Err.invalid;
+        const topic_val = chatrooms_mod.getTopic(base, h.sandbox.io, arena, state_dir, room) catch |err| {
+            log.log(.warn, "[chat] get_topic failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("topic") catch return Err.too_large;
+        s.write(topic_val orelse "") catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "pin")) {
+        const msg_id = parsed.msg_id orelse return Err.invalid;
+        const room = parsed.room orelse return Err.invalid;
+        const was_pinned = chatrooms_mod.togglePin(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, room, msg_id) catch |err| {
+            log.log(.warn, "[chat] pin failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("action") catch return Err.too_large;
+        s.write(if (was_pinned) "pinned" else "unpinned") catch return Err.too_large;
+        s.endObject() catch return Err.too_large;
+        return h.writeResult(bytes, out_buf[0..w.end]);
+    } else if (std.mem.eql(u8, op, "get_pins")) {
+        const room = parsed.room orelse return Err.invalid;
+        const pins = chatrooms_mod.getPins(base, h.sandbox.io, arena, state_dir, room) catch |err| {
+            log.log(.warn, "[chat] get_pins failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
+        s.beginObject() catch return Err.too_large;
+        s.objectField("ok") catch return Err.too_large;
+        s.write(true) catch return Err.too_large;
+        s.objectField("pins") catch return Err.too_large;
+        s.beginArray() catch return Err.too_large;
+        if (pins) |pin_list| {
+            for (pin_list) |p| s.write(p) catch return Err.too_large;
+        }
         s.endArray() catch return Err.too_large;
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
@@ -1524,25 +1694,40 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // announcements silently rather than failing the prune.
     if (std.mem.eql(u8, tool_name, "cmd_janitor")) return std.mem.eql(u8, op, "send");
 
-    const allowed_op: ?[]const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
-        "send"
+    const allowed_ops: ?[]const []const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
+        &.{"send"}
     else if (std.mem.eql(u8, tool_name, "chat_history"))
-        "history"
+        &.{"history"}
     else if (std.mem.eql(u8, tool_name, "chat_rooms"))
-        "rooms"
+        &.{"rooms"}
     else if (std.mem.eql(u8, tool_name, "chat_subscribe"))
-        "subscribe"
+        &.{"subscribe"}
+    else if (std.mem.eql(u8, tool_name, "chat_react"))
+        &.{"react"}
+    else if (std.mem.eql(u8, tool_name, "chat_edit"))
+        &.{"edit"}
+    else if (std.mem.eql(u8, tool_name, "chat_delete"))
+        &.{"delete"}
+    else if (std.mem.eql(u8, tool_name, "chat_topic"))
+        &.{ "set_topic", "get_topic" }
+    else if (std.mem.eql(u8, tool_name, "chat_pin"))
+        &.{ "pin", "get_pins" }
     else if (std.mem.eql(u8, tool_name, "todo_add"))
-        "todo_add"
+        &.{"todo_add"}
     else if (std.mem.eql(u8, tool_name, "todo_claim"))
-        "todo_claim"
+        &.{"todo_claim"}
     else if (std.mem.eql(u8, tool_name, "todo_close"))
-        "todo_close"
+        &.{"todo_close"}
     else if (std.mem.eql(u8, tool_name, "todo_list"))
-        "todo_list"
+        &.{"todo_list"}
     else
         null;
-    return if (allowed_op) |allowed| std.mem.eql(u8, allowed, op) else false;
+    if (allowed_ops) |ops| {
+        for (ops) |allowed| {
+            if (std.mem.eql(u8, allowed, op)) return true;
+        }
+    }
+    return false;
 }
 
 /// ck_stats() exposes the authorized global token-usage records to the

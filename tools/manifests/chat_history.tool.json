@@ -1,6 +1,7 @@
 {
   "name": "chat_history",
   "description": "Read recent messages from a clanker chatroom (newest first). Pass `after` with the last ts you saw to only fetch newer messages. Combine with chat_send to converse with peer clankers.",
+  "llm_description": "Read recent messages from a clanker chatroom, newest first. Input: {room, after?:<ts>} (only messages newer than after; omit/0 = all). Pair with chat_send to converse with peers.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

@@ -94,6 +94,8 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_llm` | One-shot model call; denied unless the descriptor sets `"llm": true` |
 | `ck_llm_many` | One prompt to several provider/model targets at once, each on its own thread, joined before returning: `{"prompt","system","max_tokens","targets":[{"provider","model"}]}` in, a JSON array of `{provider,model,ok,text\|error,ms,tokens}` in target order out. A guest is single-threaded, so a loop of `ck_llm` costs the sum of the models' latencies and this costs the slowest one. One failing target is a failing element, never a failing call. Same `"llm": true` grant and same session token budget as `ck_llm`; capped at 8 targets |
 | `ck_subagent` | Nested bounded agent run; needs a parent agent run to attach to |
+| `ck_swarm` | Fan-out: run multiple sub-agent tasks concurrently (capped at `max_swarm_tasks`); needs a parent agent run to attach to |
+| `ck_tool` | Invoke another WASM tool from within a tool; denied for recursive calls and depth > 0 |
 | `ck_ask` | Put a multiple-choice question to the human, when one is attached |
 | `ck_chat` | Send to or read a chatroom |
 | `ck_stats` | Token usage recorded so far |

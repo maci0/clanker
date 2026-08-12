@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_subtask",
   "description": "Add, tick or remove a subtask on a card. Use op subtask_add with text, or subtask_toggle / subtask_remove with subtask_id.",
+  "llm_description": "Add/toggle/remove a card subtask. op: subtask_add (with text), subtask_toggle or subtask_remove (with subtask_id); done sets explicit state for subtask_toggle.",
   "input_schema": {
     "type": "object",
     "properties": {

@@ -2753,12 +2753,11 @@ fn cmdSessions(init: std.process.Init) !void {
 /// `clanker session export <id> [path]` — one saved conversation written out
 /// as a self-contained HTML transcript.
 ///
-/// Native rather than a `cmd_*` WASM tool, unlike its `sessions` neighbour: a
-/// tool's output is a `text` field the CLI prints, and this produces a file
-/// on disk, at a path the caller may name, whose whole point is that it is
-/// larger than the guest's shared output buffer. The rendering itself lives
-/// in `agent/session_export.zig` and is unit-tested there; this only resolves
-/// the id and the destination.
+/// Currently native, but a candidate for a `cmd_*` WASM tool: `ck_fs_write`
+/// lets a guest write files directly (the way write_note and edit_file do),
+/// so the output-buffer-size concern that originally kept this native no
+/// longer applies. The rendering lives in `agent/session_export.zig` and is
+/// unit-tested there; this only resolves the id and the destination.
 fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();

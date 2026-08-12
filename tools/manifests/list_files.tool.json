@@ -1,6 +1,7 @@
 {
   "name": "list_files",
   "description": "Lists what is in a directory, so you can find out what exists instead of guessing at paths. Set recursive to walk subdirectories, suffix to keep only matching names (e.g. \".zig\"), and max to bound the result. Directories come back with a trailing slash. Use this before read_file when you do not already know the path; use search_code when you know what the content looks like but not where it is.",
+  "llm_description": "List a directory (path, default \".\"). recursive to descend, suffix to filter by name ending (e.g. \".zig\"), max to cap results (default 500; result says if cut short). Dirs have trailing slash. Prefer over search_code when path is unknown but content isn't.",
   "wasm": "zig-out/tools/list_files.wasm",
   "enabled": true,
   "category": "code",

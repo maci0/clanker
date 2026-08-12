@@ -1,6 +1,7 @@
 {
   "name": "levenshtein",
   "description": "Edit distance between two strings (single-character insert/delete/substitute) (C++). WHEN TO USE: fuzzy \"did you mean\" matching — comparing a possibly-mistyped tool name, file path, or identifier against known candidates. Input: {\"a\": \"...\", \"b\": \"...\"}. Capped at 2000 characters per side.",
+  "llm_description": "Edit distance (insert/delete/substitute) between strings a and b. For fuzzy \"did you mean\" matching. Capped at 2000 chars per side.",
   "wasm": "zig-out/tools/levenshtein.wasm",
   "input_schema": {
     "type": "object",

@@ -3187,7 +3187,7 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
@@ -3225,7 +3225,6 @@ var viewLoaders = {
     return loadCompareModule().then(function (compare) { compare.bindCompare(); return compare.loadCompareView(); });
   },
   rooms: function () { return loadStatus().then(loadChatRooms); },
-  goals: loadGoals,
   // Goals ride along with the board: the board->goal sync (moving a card
   // marks its goal) needs the goal list, and the goal->board mirror needs to
   // run even when the Goals view was never opened.
@@ -3245,7 +3244,6 @@ var VIEW_CONTAINERS = {
   arena: "arena-list",
   compare: "compare-list",
   rooms: "chat-log",
-  goals: "goals",
   board: "board",
   tools: "tools",
   system: "usage"
@@ -3291,6 +3289,9 @@ function parseRunsHash(hash){
   return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
 }
 function showView(name, focusPanel) {
+  // Goals and board are one workflow now. Keep old bookmarks working while
+  // making Board the only visible navigation destination.
+  if (name === "goals") name = "board";
   var parsed = parseRunsHash("#" + name);
   var deepRun = null, deepNode = null, deepSearch=null, deepKind=null;
   if (parsed) { deepRun = parsed.id; deepNode = parsed.node || null; deepSearch = parsed.search; deepKind = parsed.kind; name = "runs"; }

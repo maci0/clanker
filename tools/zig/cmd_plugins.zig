@@ -22,6 +22,10 @@ const Transform = struct {
 const Descriptor = struct {
     name: []const u8 = "",
     description: []const u8 = "",
+    /// The compressed, model-facing description (falls back to `description`
+    /// when a manifest has none). Surfaced alongside `description` in the
+    /// webui detail view so the two can be compared while authoring.
+    llm_description: []const u8 = "",
     internal: bool = false,
     /// Descriptor default; state/plugins.json overrides it either way.
     enabled: bool = true,
@@ -252,6 +256,8 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
         try s.write(p.name);
         try s.objectField("description");
         try s.write(p.description);
+        try s.objectField("llm_description");
+        try s.write(if (p.d.llm_description.len > 0) p.d.llm_description else p.description);
         try s.objectField("core");
         try s.write(p.core);
         try s.objectField("enabled");

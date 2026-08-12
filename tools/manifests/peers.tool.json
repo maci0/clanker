@@ -1,6 +1,7 @@
 {
   "name": "peers",
   "description": "Talk to other clanker instances. The action defaults to phonebook, which scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer, or omit \"peer\" to broadcast to every configured peer.",
+  "llm_description": "Talk to other clanker instances. action: phonebook (default, scans peers, reports up/down) | notify{peer?,message} (omit peer to broadcast to all).",
   "wasm": "zig-out/tools/peers.wasm",
   "input_schema": {
     "type": "object",
