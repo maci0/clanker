@@ -368,6 +368,16 @@ pub const History = struct {
         const start = if (entries.len > max_entries) entries.len - max_entries else 0;
 
         var buf: std.ArrayList(u8) = .empty;
+
+        // Prepend a steering note when recent acceptances are skewed toward
+        // one low-value class: the loop needs to hear this before the list,
+        // not after, because the list itself looks like a reward signal.
+        const hint = try self.classDistributionHint(arena, max_entries);
+        if (hint.len > 0) {
+            try buf.appendSlice(arena, hint);
+            try buf.appendSlice(arena, "\n");
+        }
+
         for (entries[start..]) |e| {
             if (e.summary.len == 0) continue;
             try buf.appendSlice(arena, "- ");
@@ -414,6 +424,60 @@ pub const History = struct {
         }
         std.mem.reverse(inert.Class, out.items);
         return out.toOwnedSlice(arena);
+    }
+
+    /// Renders a one-line steering note when the recent acceptance pattern is
+    /// skewed: too many test_only, docs_only, or inert changes in a row mean
+    /// the loop found a low-cost reward and is exploiting it. The note names
+    /// the pattern so the improve prompt can steer away.
+    pub fn classDistributionHint(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const u8 {
+        const classes = try self.recentAcceptedClasses(arena, max_entries);
+        if (classes.len < 3) return "";
+
+        var test_only: usize = 0;
+        var docs_only: usize = 0;
+        var inert_count: usize = 0;
+        var behavior: usize = 0;
+        for (classes) |c| switch (c) {
+            .test_only => test_only += 1,
+            .docs_only => docs_only += 1,
+            .inert => inert_count += 1,
+            .behavior => behavior += 1,
+        };
+
+        // A trailing streak of 3+ low-value acceptances is the clearest sign.
+        const test_streak = try self.trailingClassStreak(arena, .test_only, max_entries);
+        if (test_streak >= 3) {
+            return std.fmt.allocPrint(
+                arena,
+                "[STEERING] The last {d} accepted improvements were test-only (no behavioral change). " ++
+                    "Propose a change that modifies how the program works: fix a bug, add a feature with a caller, " ++
+                    "improve error handling, or optimize a hot path. Do NOT add standalone tests or unreachable helpers.",
+                .{test_streak},
+            );
+        }
+        const inert_streak = try self.trailingClassStreak(arena, .inert, max_entries);
+        if (inert_streak >= 2) {
+            return std.fmt.allocPrint(
+                arena,
+                "[STEERING] The last {d} accepted improvements added code with no caller (inert). " ++
+                    "Every new function must be wired into existing code that calls it in the same patch.",
+                .{inert_streak},
+            );
+        }
+
+        // Overall skew: more than 60% of recent acceptances are non-behavioral.
+        const non_behavior = test_only + docs_only + inert_count;
+        if (classes.len >= 5 and non_behavior * 100 / classes.len > 60) {
+            return std.fmt.allocPrint(
+                arena,
+                "[STEERING] {d}/{d} recent accepted improvements were non-behavioral ({d} test-only, {d} docs, {d} inert). " ++
+                    "Focus on changes that alter program behavior.",
+                .{ non_behavior, classes.len, test_only, docs_only, inert_count },
+            );
+        }
+
+        return "";
     }
 
     /// How many of the most recent accepted improvements were `want`, counting
@@ -677,6 +741,68 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
         try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
     }
+}
+
+test "classDistributionHint warns on a test-only streak" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // One behavior change then three test-only: should trigger the steering hint.
+    try hist.append("b1", .accepted, "i", "real", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+    try hist.append("t1", .accepted, "i", "t1", &.{"src/a.zig"}, 0, 1, "", &.{}, .test_only);
+    try hist.append("t2", .accepted, "i", "t2", &.{"src/a.zig"}, 0, 1, "", &.{}, .test_only);
+    try hist.append("t3", .accepted, "i", "t3", &.{"src/a.zig"}, 0, 1, "", &.{}, .test_only);
+
+    const hint = try hist.classDistributionHint(arena, 10);
+    try std.testing.expect(std.mem.indexOf(u8, hint, "[STEERING]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hint, "3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hint, "test-only") != null);
+
+    // The hint is included in recentSummary.
+    const summary = try hist.recentSummary(arena, 10);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "[STEERING]") != null);
+}
+
+test "classDistributionHint is empty when changes are behavioral" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try hist.append("b1", .accepted, "i", "s", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+    try hist.append("b2", .accepted, "i", "s", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+    try hist.append("b3", .accepted, "i", "s", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+
+    const hint = try hist.classDistributionHint(arena, 10);
+    try std.testing.expectEqualStrings("", hint);
 }
 
 test "the class of an accepted change is recorded, rendered, and counted as a streak" {
