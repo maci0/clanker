@@ -1770,6 +1770,10 @@ function loadRun(id) {
       el.runGraph.removeAttribute("aria-busy");
       populateCompareSelects();
       drawRun(g);
+      // The graph itself makes completion visible, but this live region is
+      // also the small floating status shown while a run loads. Leaving the
+      // loading copy behind makes a finished graph still look in flight.
+      el.runStatus.textContent = "";
     })
     .catch(function (err) {
       showRunsError("Could not load that run: " + err.message);
@@ -3574,19 +3578,26 @@ SUGGESTIONS.forEach(function (text) {
    or Export or Save prompt produced no sign anything had happened unless you
    were using a screen reader. Rather than change fifty call sites and leave
    the two able to drift, the regions are observed and mirrored here. */
-function showToast(text) { uiToast(text); }
+function showToast(text) { return uiToast(text); }
 
 if (window.MutationObserver) {
+  var statusToasts = new WeakMap();
   var statusObserver = new MutationObserver(function (records) {
     var seen = {};
     records.forEach(function (r) {
       var el0 = r.target.nodeType === 3 ? r.target.parentNode : r.target;
-      if (!el0 || !el0.textContent) return;
+      if (!el0) return;
+      var previous = statusToasts.get(el0);
+      if (previous) {
+        previous.remove();
+        statusToasts.delete(el0);
+      }
       var text = el0.textContent.trim();
       // The same message written twice in one tick is one event.
       if (!text || seen[text]) return;
       seen[text] = true;
-      showToast(text);
+      var shown = showToast(text);
+      if (shown) statusToasts.set(el0, shown);
     });
   });
   ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {

@@ -3,8 +3,8 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_add",
+  "category": "kanban",
+  "name": "kanban_add",
   "description": "Add a card to the board. Returns the whole board, so the new card's id is in the response. Announces itself in the board's chatroom so other clankers can decide whether to act.",
   "input_schema": {
     "type": "object",

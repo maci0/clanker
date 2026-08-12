@@ -62,8 +62,8 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
 /// deny message names the right verb when the value would otherwise be read
 /// as the subcommand (e.g. `git -C <worktree> status`).
 const git_value_options = [_][]const u8{
-    "-C",         "--git-dir",      "--work-tree",      "--git-common-dir",
-    "-c",         "--namespace",    "--exec-path",      "--config-env",
+    "-C", "--git-dir",   "--work-tree", "--git-common-dir",
+    "-c", "--namespace", "--exec-path", "--config-env",
 };
 
 /// The first argument of the given args, i.e. the git verb. Args that start

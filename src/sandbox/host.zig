@@ -2454,8 +2454,8 @@ fn isGitRemoteOpToken(t: []const u8) bool {
 /// denied, which blocked the operator's per-worktree workflow (`git -C "$WT"
 /// ...`) through the sandboxed git tool.
 const git_value_options = [_][]const u8{
-    "-C",         "--git-dir",      "--work-tree",      "--git-common-dir",
-    "-c",         "--namespace",    "--exec-path",      "--config-env",
+    "-C", "--git-dir",   "--work-tree", "--git-common-dir",
+    "-c", "--namespace", "--exec-path", "--config-env",
 };
 
 /// Git has network-capable plumbing verbs such as ls-remote and archive that

@@ -1507,6 +1507,17 @@ fn writeCheckSummary(w: *std.Io.Writer, rows: []const CheckRow) !void {
     }
 }
 
+/// A full provider sweep is primarily a recovery command. If the provider
+/// selected for unqualified runs cannot answer, finish with the exact next
+/// action instead of making the operator infer it from the table's `*` row.
+fn writeDefaultProviderRecovery(w: *std.Io.Writer, rows: []const CheckRow) !void {
+    for (rows) |r| {
+        if (!r.is_default or r.status == .ok) continue;
+        try w.print("\nDefault provider '{s}' is {s}. Fix its config or choose another with `default_provider` in config.local.toml.\n", .{ r.name, r.status.label() });
+        return;
+    }
+}
+
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "models")) {
         return cmdProvidersModels(init, opts);
@@ -1605,6 +1616,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         var out: std.Io.Writer.Allocating = .init(arena);
         try out.writer.writeAll("\n");
         try writeCheckSummary(&out.writer, rows.items);
+        try writeDefaultProviderRecovery(&out.writer, rows.items);
         try std.Io.File.stdout().writeStreamingAll(io, out.written());
     }
 }
@@ -8695,6 +8707,20 @@ test "the sweep summary is one row per provider, with the default marked in the 
         \\openai      not configured  gpt-4o-mini        -
         \\
     , out.written());
+}
+
+test "provider sweep ends with recovery when the default cannot answer" {
+    const rows = [_]CheckRow{
+        .{ .name = "openai", .status = .not_configured, .model = "gpt-4o-mini", .ms = null, .is_default = true },
+        .{ .name = "ollama", .status = .ok, .model = "qwen3.5", .ms = 81, .is_default = false },
+    };
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try writeDefaultProviderRecovery(&out.writer, &rows);
+    try std.testing.expectEqualStrings(
+        "\nDefault provider 'openai' is not configured. Fix its config or choose another with `default_provider` in config.local.toml.\n",
+        out.written(),
+    );
 }
 
 test "a canceled or refused socket is unreachable, an HTTP error status is a failure" {

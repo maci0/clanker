@@ -518,6 +518,11 @@ pub const Agent = struct {
                     });
                 }
             }
+            // Prune stale tool outputs before compaction: large results the
+            // model already processed are shortened in place so the estimated
+            // token count that drives compaction reflects the reduced payload,
+            // and subsequent LLM calls carry less redundant context.
+            pruneOldToolResults(messages.items, self.arena, 6);
             // Log estimated prompt tokens before each LLM call for visibility
             // into context usage and to aid compaction tuning. maybeCompactMessages
             // already computes this while deciding whether to compact, so reuse
@@ -1053,6 +1058,10 @@ pub const Agent = struct {
                 threshold = @min(threshold, budget_tokens / 2);
             }
         }
+        // Honor the dedicated per-history token cap when configured: this is
+        // a tighter knob than the session-level max_total_tokens (which
+        // counts completions too) and the byte-based compact_threshold_bytes.
+        threshold = @min(threshold, self.cfg.agent.max_history_tokens);
         // Threshold floors: compaction must never race the per-turn cap,
         // which would otherwise terminate the run before compaction runs.
         threshold = @max(threshold, max_per_turn_tokens);
@@ -1094,6 +1103,35 @@ pub const Agent = struct {
     fn compactMiddle(messages: *std.ArrayList(types.Message), arena: std.mem.Allocator, keep_start: usize, placeholder: []const u8) !void {
         const new_mid = [_]types.Message{.{ .role = .user, .content = placeholder }};
         try messages.replaceRange(arena, 1, keep_start - 1, &new_mid);
+    }
+
+    /// Maximum bytes of tool-result content to keep for messages outside the
+    /// recent tail when pruning stale tool outputs.
+    const prune_preview_bytes: usize = 200;
+
+    /// Shrinks tool-result content in older messages (outside the most recent
+    /// `keep_tail` messages) so that large outputs the model has already
+    /// processed do not keep inflating every subsequent LLM call. Each pruned
+    /// tool message retains only a short preview of its content. This is a
+    /// complement to `maybeCompactMessages` (which drops whole messages): it
+    /// reduces per-message token cost without losing the message structure
+    /// that providers require (tool results stay paired with their
+    /// tool_calls).
+    fn pruneOldToolResults(messages: []types.Message, arena: std.mem.Allocator, keep_tail: usize) void {
+        if (messages.len <= keep_tail + 1) return; // +1 for system prompt
+        // Everything between the system prompt (index 0) and the kept tail is
+        // eligible for pruning.
+        const prune_end = messages.len - keep_tail;
+        for (messages[1..prune_end]) |*m| {
+            if (m.role != .tool) continue;
+            const content = m.content orelse continue;
+            if (content.len <= prune_preview_bytes) continue;
+            m.content = std.fmt.allocPrint(
+                arena,
+                "{s}... [pruned: {d} bytes total]",
+                .{ content[0..prune_preview_bytes], content.len },
+            ) catch continue;
+        }
     }
 
     /// Builds a best-effort extractive summary from the messages themselves,
@@ -2864,6 +2902,110 @@ test "compactionKeepStart returns null when the history is too short to compact"
     // Over the token threshold but fewer than 8 messages: compaction would
     // have to delete context it is supposed to preserve, so it must decline.
     try std.testing.expect(Agent.compactionKeepStart(&msgs, 10_000, 1) == null);
+}
+
+test "pruneOldToolResults shortens stale tool results outside the recent tail" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const big = try arena.alloc(u8, 2000);
+    @memset(big, 'x');
+    // 10 messages: sys + 4 user/tool pairs + a recent user message.
+    // The last 6 messages (indices 4..9) are the kept tail; the tool at
+    // index 2 is outside and should be pruned.
+    var msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" }, // 0
+        .{ .role = .user, .content = "u1" }, // 1
+        .{ .role = .tool, .content = big }, // 2 — large, stale
+        .{ .role = .user, .content = "u2" }, // 3
+        .{ .role = .tool, .content = big }, // 4 — inside tail (len - 6 = 4)
+        .{ .role = .user, .content = "u3" }, // 5
+        .{ .role = .assistant, .content = "a1" }, // 6
+        .{ .role = .user, .content = "u4" }, // 7
+        .{ .role = .assistant, .content = "a2" }, // 8
+        .{ .role = .user, .content = "u5" }, // 9
+    };
+
+    Agent.pruneOldToolResults(&msgs, arena, 6);
+
+    // The tool at index 2 (outside the tail) was pruned.
+    try std.testing.expect(msgs[2].content.?.len < big.len);
+    try std.testing.expect(std.mem.find(u8, msgs[2].content.?, "pruned") != null);
+    // The tool at index 4 (inside the tail) is preserved verbatim.
+    try std.testing.expectEqual(big.len, msgs[4].content.?.len);
+}
+
+test "pruneOldToolResults leaves short results untouched" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A short tool result (< prune_preview_bytes) outside the tail survives.
+    var msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" }, // 0
+        .{ .role = .tool, .content = "ok" }, // 1 — short, outside tail
+        .{ .role = .user, .content = "u1" }, // 2
+        .{ .role = .assistant, .content = "a1" }, // 3
+        .{ .role = .user, .content = "u2" }, // 4
+        .{ .role = .assistant, .content = "a2" }, // 5
+        .{ .role = .user, .content = "u3" }, // 6
+        .{ .role = .assistant, .content = "a3" }, // 7
+    };
+
+    Agent.pruneOldToolResults(&msgs, arena, 6);
+
+    // Still "ok" — untouched.
+    try std.testing.expectEqualStrings("ok", msgs[1].content.?);
+}
+
+test "pruneOldToolResults is a no-op when history is shorter than the tail" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const big = try arena.alloc(u8, 2000);
+    @memset(big, 'x');
+    // Only 5 messages: below the keep_tail + 1 threshold, nothing pruned.
+    var msgs = [_]types.Message{
+        .{ .role = .system, .content = "sys" },
+        .{ .role = .tool, .content = big },
+        .{ .role = .user, .content = "u1" },
+        .{ .role = .assistant, .content = "a1" },
+        .{ .role = .user, .content = "u2" },
+    };
+
+    Agent.pruneOldToolResults(&msgs, arena, 6);
+
+    // Everything untouched — the history is too short to prune.
+    try std.testing.expectEqual(big.len, msgs[1].content.?.len);
+}
+
+test "max_history_tokens feeds into compaction threshold" {
+    // When max_history_tokens is set low, compaction triggers even when the
+    // context window and compact_threshold_bytes are large.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const filler = "x" ** 256;
+    var messages: std.ArrayList(types.Message) = .empty;
+    try messages.append(arena, .{ .role = .system, .content = "system prompt" });
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        try messages.append(arena, .{ .role = .user, .content = filler });
+        try messages.append(arena, .{ .role = .assistant, .content = filler });
+    }
+    const estimated = Agent.estimateMessageTokens(messages.items);
+    // With a generous context window & compact_threshold, compaction would
+    // normally not fire. But max_history_tokens = 16 forces it.
+    const threshold: usize = 16;
+    try std.testing.expect(estimated > threshold);
+    const keep_start = Agent.compactionKeepStart(messages.items, estimated, threshold) orelse return error.TestExpectedCompaction;
+    try Agent.compactMiddle(&messages, arena, keep_start, "[compacted via max_history_tokens]");
+    // Verify compaction happened: the list shrank and the summary is there.
+    try std.testing.expect(messages.items.len < 9);
+    try std.testing.expect(std.mem.find(u8, messages.items[1].content.?, "max_history_tokens") != null);
 }
 
 test "resumed-session cleanup completes partial tool-call exchanges instead of discarding executed results" {

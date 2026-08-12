@@ -3,8 +3,8 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_log",
+  "category": "kanban",
+  "name": "kanban_log",
   "description": "Record what you did on a card. This is how a run leaves a trail another clanker can read: the entry is stamped with your name and the time, and announced in the board's chatroom.",
   "input_schema": {
     "type": "object",
