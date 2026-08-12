@@ -1,5 +1,5 @@
 const std = @import("std");
-const worktree = @import("improve/worktree.zig");
+const worktree = @import("worktree.zig");
 
 test "repro worktree.create invalid free" {
     var dbg = std.heap.DebugAllocator(.{}).init;

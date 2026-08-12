@@ -44,13 +44,21 @@ comptime {
     _ = @import("tools/registry.zig");
     _ = @import("tools/manifest.zig");
     _ = @import("tools/builder.zig");
+    _ = @import("tools/usage.zig");
     _ = @import("agent/system_prompt.zig");
     _ = @import("agent/loop.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/graph.zig");
+    _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
     _ = @import("util/atomic_write.zig");
     _ = @import("util/filelock.zig");
+    _ = @import("util/diskcap.zig");
+    _ = @import("util/json.zig");
+    _ = @import("util/rawhttp.zig");
+    _ = @import("util/runlock.zig");
+    _ = @import("util/toml_bridge.zig");
+    _ = @import("util/toolout.zig");
     _ = @import("agent/autolearn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
@@ -65,12 +73,13 @@ comptime {
     _ = @import("llm/gcp_jwt.zig");
     _ = @import("llm/vertex_token.zig");
     _ = @import("peers/chatrooms.zig");
-    _ = @import("private_todos.zig");
+    _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
     _ = @import("tui/width.zig");
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");
+    _ = @import("tui/stats.zig");
     _ = @import("tui/repl_vaxis.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
@@ -78,12 +87,12 @@ comptime {
     _ = @import("research/ledger.zig");
     _ = @import("research/harness.zig");
     _ = @import("research/autoresearch.zig");
-    _ = @import("workflows.zig");
+    _ = @import("agent/workflows.zig");
     _ = @import("schedule/cron.zig");
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");
     _ = @import("schedule/command.zig");
-    _ = @import("repro_test.zig");
+    _ = @import("improve/repro_test.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),

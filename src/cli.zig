@@ -18,7 +18,7 @@ const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
-const private_todos = @import("private_todos.zig");
+const private_todos = @import("agent/private_todos.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
@@ -7084,7 +7084,7 @@ fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const w_mod = @import("workflows.zig");
+    const w_mod = @import("agent/workflows.zig");
     const list = w_mod.loadAllMerged(arena, io, cfg.agent.workflows_dir) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"workflows scan failed\"}");
         return;
@@ -10187,7 +10187,7 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
-    const workflows_mod = @import("workflows.zig");
+    const workflows_mod = @import("agent/workflows.zig");
     const wfs = try workflows_mod.loadAllMerged(arena, io, cfg.agent.workflows_dir);
     const sub = opts.workflow_sub orelse "list";
     if (std.mem.eql(u8, sub, "list")) {

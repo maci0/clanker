@@ -9,7 +9,7 @@ const registry = @import("../tools/registry.zig");
 const tool_usage = @import("../tools/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
-const private_todos = @import("../private_todos.zig");
+const private_todos = @import("private_todos.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
 const autolearn = @import("autolearn.zig");
@@ -238,7 +238,7 @@ pub const Agent = struct {
         log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
         const home = ctx.environ_map.get("HOME") orelse "";
         const global_path = (try system_prompt.resolveGlobalInstructionsPath(arena, home, cfg.agent.global_instructions_file)) orelse "";
-        const workflows_mod = @import("../workflows.zig");
+        const workflows_mod = @import("workflows.zig");
         const wf_catalog = blk: {
             if (cfg.agent.workflows_dir.len == 0) break :blk "";
             const wfs = workflows_mod.loadAllMerged(arena, ctx.io, cfg.agent.workflows_dir) catch break :blk "";
@@ -293,7 +293,7 @@ pub const Agent = struct {
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
         const home = self.ctx.environ_map.get("HOME") orelse "";
         const global_path = (system_prompt.resolveGlobalInstructionsPath(self.arena, home, self.cfg.agent.global_instructions_file) catch null) orelse "";
-        const workflows_mod = @import("../workflows.zig");
+        const workflows_mod = @import("workflows.zig");
         const wf_catalog = blk: {
             if (self.cfg.agent.workflows_dir.len == 0) break :blk "";
             const wfs = workflows_mod.loadAllMerged(self.arena, self.ctx.io, self.cfg.agent.workflows_dir) catch break :blk "";

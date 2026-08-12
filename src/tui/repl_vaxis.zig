@@ -1518,7 +1518,7 @@ const Model = struct {
     }
 
     fn runWorkflowsTool(self: *Model, name: []const u8) bool {
-        const workflows_mod = @import("../workflows.zig");
+        const workflows_mod = @import("../agent/workflows.zig");
         const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch {
             self.lines.append(self.arena, .{ .text = "[could not list workflows]", .dim = true }) catch {};
             return true;
@@ -1542,7 +1542,7 @@ const Model = struct {
     }
 
     fn expandWorkflow(self: *Model, name: []const u8, args: []const u8) !?[]u8 {
-        const workflows_mod = @import("../workflows.zig");
+        const workflows_mod = @import("../agent/workflows.zig");
         const wfs = try workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir);
         const wf = workflows_mod.findByName(wfs, name) orelse return null;
         const expanded = try workflows_mod.instantiate(self.arena, wf.body, args);
@@ -2184,7 +2184,7 @@ const Model = struct {
             switch (pc.spec.action) {
                 .theme => return self.completeArg(ctx, cmd, partial, &theme_mod.names),
                 .workflow => {
-                    const workflows_mod = @import("../workflows.zig");
+                    const workflows_mod = @import("../agent/workflows.zig");
                     const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch return false;
                     var names: std.ArrayList([]const u8) = .empty;
                     for (wfs) |w| names.append(self.arena, w.name) catch break;
