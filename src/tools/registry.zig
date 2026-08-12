@@ -1023,3 +1023,18 @@ test "turnHookTools returns only enabled turn_hook tools, sorted by name" {
     try std.testing.expectEqualStrings("a_hook", hooks[0].name);
     try std.testing.expectEqualStrings("z_hook", hooks[1].name);
 }
+
+test "fuzz: no byte sequence crashes the descriptor parser" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            _ = Registry.parseDescriptor(arena_state.allocator(), input) catch return;
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}

@@ -8,7 +8,7 @@
     "properties": {
       "op": {
         "type": "string",
-        "enum": ["list", "create", "add", "update", "move", "claim", "assign", "close", "delete", "log", "usage", "subtask_add", "subtask_toggle", "subtask_remove", "depend_add", "depend_remove"]
+        "enum": ["list", "create", "add", "update", "move", "claim", "assign", "close", "delete", "log", "usage", "subtask_add", "subtask_toggle", "subtask_remove", "subtask_depend", "depend_add", "depend_remove"]
       },
       "room": {
         "type": "string",
@@ -25,6 +25,7 @@
       "what": { "type": "string" },
       "subtask": { "type": "string" },
       "subtask_id": { "type": "string" },
+      "parent_subtask_id": { "type": "string", "description": "Parent checklist item id for a nested subtask_add" },
       "text": { "type": "string" },
       "done": { "type": "boolean" },
       "on": { "type": "string" },

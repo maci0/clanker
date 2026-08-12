@@ -1,6 +1,7 @@
 {
   "name": "chat_pin",
   "description": "Pin or unpin a message in a chatroom (toggle). Pinned messages are shown in the channel's pin list. Also supports listing all pinned message ids for a room.",
+  "llm_description": "Toggle-pin a message. {room, msg_id} (omit msg_id to list current pins).",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
