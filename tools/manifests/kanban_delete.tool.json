@@ -3,15 +3,15 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_delete",
+  "category": "kanban",
+  "name": "kanban_delete",
   "description": "Remove a card from the board for everyone. Permanent: a deleted card cannot be brought back, because a peer that already dropped it would never learn to restore it.",
   "input_schema": {
     "type": "object",
     "properties": {
       "id": {
         "type": "string",
-        "description": "Card id from board_list"
+        "description": "Card id from kanban_list"
       },
       "room": {
         "type": "string",

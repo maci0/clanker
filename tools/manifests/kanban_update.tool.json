@@ -3,8 +3,8 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_update",
+  "category": "kanban",
+  "name": "kanban_update",
   "description": "Change a card's title, notes, assignee, priority or deadline. Assigning or setting a deadline is announced in the board's chatroom; editing text is not.",
   "input_schema": {
     "type": "object",

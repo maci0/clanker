@@ -87,9 +87,9 @@ export function bind(node, st, render) {
 // A fixed timer is too short to read a long message, so hovering or
 // focusing a toast (mouse or keyboard) holds it on screen.
 export function toast(msg, kind) {
-  if (!msg || typeof document === "undefined") return;
+  if (!msg || typeof document === "undefined") return null;
   var host = document.getElementById("toasts");
-  if (!host) return;
+  if (!host) return null;
   var node = document.createElement("p");
   node.className = "toast";
   node.tabIndex = 0;
@@ -114,6 +114,7 @@ export function toast(msg, kind) {
   host.appendChild(node);
   while (host.children.length > 3) host.removeChild(host.firstChild);
   schedule();
+  return node;
 }
 
 export function skeletonRows(container, n) {
@@ -185,5 +186,4 @@ export var UI = {
     return T.div({ class: "section-head" }, T.h2(title), controls || null);
   }
 };
-
 

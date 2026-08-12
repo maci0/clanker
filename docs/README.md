@@ -357,7 +357,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored, so per-worktree work runs as `git -C .local/worktrees/<wt> add/commit/push <branch>` |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
@@ -532,7 +532,7 @@ iter 2
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `stats` | Token usage per provider/model |
-| `serve [--port N]` | HTTP server + web UI (default port 17921) |
+| `serve [--host A] [--allow-host N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
@@ -730,7 +730,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 ## HTTP server
 
-`clanker serve` starts a local HTTP server on port 17921 (override with `--port`). Endpoints:
+`clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--port`). Endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -765,6 +765,31 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/chat/subscribe` | POST | Join or leave a chatroom |
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
+
+### Binding and the trust model
+
+There is no authentication. The server exposes the full agent: `/api/run` runs a task, tools exec and write, and `/api/ask` answers write confirmations. Anyone who can reach the port can do all of it. Two things keep that from being a network-facing surface by default, and only the first is about the network:
+
+- **What it binds.** `--host` sets the interface, default `127.0.0.1`, so out of the box nothing off this machine can connect at all. `--host 0.0.0.0` (or `::`) makes it reachable from the LAN. That is opt-in and still unauthenticated: past loopback, the access control is a firewall or a network you trust, not clanker.
+- **Which authority it answers to.** Binding loopback stops remote connections but not DNS rebinding: a hostile name can resolve to `127.0.0.1` and make a browser treat this control plane as its own origin. So every request, GET included, is checked against the authority in its `Host` header (`unexpectedHost` in `src/cli.zig`) and refused with `421 Misdirected Request` when it does not match. The same rule gates the `Origin` header on state-changing requests, as CSRF protection.
+
+The authority rule is:
+
+| Authority | Served |
+|-----------|--------|
+| `127.0.0.1:17921`, `192.168.1.5:17921`, `[::1]:17921`, any IP literal at the listen port | yes |
+| `localhost:17921` | yes |
+| a name passed to `--allow-host`, at the listen port or with no port | yes |
+| any other name, e.g. `attacker.example:17921` | no |
+| any authority at a different port, or missing/duplicate `Host` | no |
+
+An IP literal is accepted because DNS rebinding needs a *name* whose resolution the attacker controls, and there is no resolution step to subvert in a literal. That is what makes `--host 0.0.0.0` usable on its own: a LAN client browsing to `http://192.168.1.5:17921/` is served. A name is not accepted on the same reasoning, so reaching the server through a real hostname (a reverse proxy, a `.lan` entry, a tailnet name) means naming it:
+
+```sh
+clanker serve --host 0.0.0.0 --allow-host clanker.lan
+```
+
+`--allow-host` is repeatable, matched case-insensitively, and takes `--allow-host x` or `--allow-host=x`. Hot reload re-execs with the same `--host`, `--port` and `--allow-host` set, so a rebuild does not quietly narrow the policy.
 
 ### `POST /api/run`
 

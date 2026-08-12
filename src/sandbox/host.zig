@@ -1513,9 +1513,11 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // The board is one guest (board.wasm) behind eleven manifest names, and it
     // needs two ops rather than one: it replicates each card into its room with
     // "send" and folds that room's log back with "history" on every read.
-    // Matched exactly, or on the "board_" prefix — a bare startsWith("board")
-    // also grants any future tool whose name merely begins that way.
-    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "board_"))
+    // Matched on the "board" name, the legacy "board_" prefix, and the current
+    // "kanban_" prefix (commit 4fadb86 renamed the public tools).
+    if (std.mem.eql(u8, tool_name, "board") or
+        std.mem.startsWith(u8, tool_name, "board_") or
+        std.mem.startsWith(u8, tool_name, "kanban_"))
         return std.mem.eql(u8, op, "send") or std.mem.eql(u8, op, "history");
     // The janitor announces what it pruned into the room. Like the board it
     // ignores a failed chat call, so being denied here cost it its
@@ -2447,6 +2449,17 @@ fn isGitRemoteOpToken(t: []const u8) bool {
     return std.mem.eql(u8, t, "push") or std.mem.eql(u8, t, "merge") or std.mem.eql(u8, t, "checkout");
 }
 
+/// Git global options that take a value, either as the next argument
+/// (`-C <path>`, `--git-dir <path>`) or in the same argument (`--git-dir=<path>`).
+/// The value must not be mistaken for the git verb: without this,
+/// `git -C <worktree> status` read the worktree path as the subcommand and was
+/// denied, which blocked the operator's per-worktree workflow (`git -C "$WT"
+/// ...`) through the sandboxed git tool.
+const git_value_options = [_][]const u8{
+    "-C", "--git-dir",   "--work-tree", "--git-common-dir",
+    "-c", "--namespace", "--exec-path", "--config-env",
+};
+
 /// Git has network-capable plumbing verbs such as ls-remote and archive that
 /// are not recognizable as generic network programs. Keep the host boundary
 /// on an allowlist so a replaced or malicious guest cannot bypass
@@ -2454,8 +2467,23 @@ fn isGitRemoteOpToken(t: []const u8) bool {
 fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
     if (argv.len < 2) return false;
     var verb: ?[]const u8 = null;
-    for (argv[1..]) |arg| {
-        if (arg.len == 0 or arg[0] == '-') continue;
+    var i: usize = 1;
+    while (i < argv.len) : (i += 1) {
+        const arg = argv[i];
+        if (arg.len == 0) continue;
+        if (arg[0] == '-') {
+            // A value-taking global option written as `--name value` also
+            // consumes the next argument; skip it too so it is not read as the
+            // verb. `--name=value` is a single argument and is already skipped
+            // by the flag check above.
+            for (git_value_options) |o| {
+                if (std.mem.eql(u8, arg, o)) {
+                    i += 1;
+                    break;
+                }
+            }
+            continue;
+        }
         verb = arg;
         break;
     }
@@ -3661,6 +3689,15 @@ test "git exec permits named local verbs and blocks network plumbing" {
     try std.testing.expect(!gitVerbAllowed(&.{ "git", "archive", "--remote=https://example.com/repo" }, false));
     try std.testing.expect(!gitVerbAllowed(&.{ "git", "push" }, false));
     try std.testing.expect(gitVerbAllowed(&.{ "git", "push" }, true));
+    // A value-taking global option must not be read as the verb. The operator
+    // workflow drives a task worktree with `git -C <worktree> <verb>`; before
+    // the fix, the worktree path after `-C` was mistaken for the subcommand
+    // and denied.
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "status" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "commit", "-m", "msg" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "--git-dir=.local/worktrees/wt/.git", "--work-tree=.local/worktrees/wt", "add", "x" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "--git-dir", ".local/worktrees/wt/.git", "--work-tree", ".local/worktrees/wt", "push", "origin", "branch" }, true));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "ls-remote" }, false));
 }
 
 test "patternNamesCmd matches only the first command token" {

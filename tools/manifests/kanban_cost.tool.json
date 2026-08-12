@@ -3,8 +3,8 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_cost",
+  "category": "kanban",
+  "name": "kanban_cost",
   "description": "Accrue what a card has cost so far: prompt and completion tokens, dollars, and the run that spent them. Totals add up across runs rather than replacing each other.",
   "input_schema": {
     "type": "object",
