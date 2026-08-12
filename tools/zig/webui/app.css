@@ -1862,7 +1862,7 @@ mark {
   color: var(--fg-muted); transition: background 120ms ease;
 }
 .board-header-btn:hover { background: var(--surface-2); }
-.board-header-btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.board-header-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
 .board-filter {
   margin-top: var(--space-2); border-radius: var(--radius);
@@ -2380,7 +2380,7 @@ h2#session-title {
 
 /* Card detail save button — Trello green accent */
 .card-detail-save-btn {
-  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  background: var(--accent); color: var(--on-accent); border: none; border-radius: 6px;
   padding: 0.4rem 1.2rem; font-size: 13px; font-weight: 600; cursor: pointer;
   transition: background 120ms ease;
 }

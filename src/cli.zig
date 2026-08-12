@@ -912,7 +912,7 @@ fn commandForHelp(name: []const u8) ?Command {
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
 /// cannot be added without appearing here.
-pub fn printUsage(io: std.Io) void {
+fn printUsage(io: std.Io) void {
     var buf: [8192]u8 = undefined;
     writeStdErr(io, renderUsage(&buf)) catch {};
 }

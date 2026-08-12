@@ -2253,7 +2253,7 @@ const parent_answer_max_msg_bytes = 400;
 /// the sub-agent cannot see — it started with an empty transcript on
 /// purpose), and the question with its options, under the same
 /// answer-verbatim contract the ask_user peer path uses.
-pub fn parentAnswerPrompt(
+fn parentAnswerPrompt(
     arena: std.mem.Allocator,
     parent_task: []const u8,
     messages: []const types.Message,
@@ -2297,7 +2297,7 @@ pub fn parentAnswerPrompt(
 /// builds a fresh client Ctx per call rather than sharing the parent's HTTP
 /// state across threads (the same discipline runNested applies). Returns the
 /// answer gpa-owned; the caller (ckAsk) frees it.
-pub fn answerAsParent(
+fn answerAsParent(
     io: std.Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
