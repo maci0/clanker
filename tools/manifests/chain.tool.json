@@ -1,6 +1,7 @@
 {
   "name": "chain",
   "description": "Pipeline runner: chain tool calls where each step's output feeds the next. Steps can be tools (via ck_tool) or inline LLM mutates. Supports {{prev}} / {{prev.field}} / {{vars.key}} substitution and named chains from chains/*.json. Use {steps:[{tool,args}|{mutate:{instruction,mode}}]} or {chain:\"name\", vars:{}} or {list:true}/{show:\"name\"}.",
+  "llm_description": "Pipeline runner: chain tool calls where each step's output feeds the next. Steps are tools (via ck_tool) or inline LLM mutates. Supports {{prev}}/{{prev.field}}/{{vars.key}} substitution and named chains from chains/*.json. Input: {steps:[{tool,args}|{mutate:{instruction,mode?:'json'(default)|'text'}},stop_on_error?]} or {chain:'name', vars:{}} or {list:true} or {show:'name'}.",
   "wasm": "zig-out/tools/chain.wasm",
   "input_schema": {
     "type": "object",

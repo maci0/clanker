@@ -1,6 +1,7 @@
 {
   "name": "gh",
   "description": "Run the GitHub CLI through the sandbox, gated to only the invocations the agent's exec_pattern_allow config grants (e.g. \"gh pr create*\" or \"gh pr merge*\"). Input: {\"args\": [\"pr\", \"create\", \"--base\", \"main\"]}. Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}. No matching pattern configured = gh is disabled; a command matching no pattern is refused.",
+  "llm_description": "Run GitHub CLI (gh) commands, gated to patterns granted by exec_pattern_allow (e.g. \"gh pr create*\"). {\"args\":[\"pr\",\"create\",\"--base\",\"main\"]}. Returns {\"ok\",\"code\",\"stdout\",\"stderr\"}; no matching pattern = refused.",
   "wasm": "zig-out/tools/gh.wasm",
   "input_schema": {
     "type": "object",

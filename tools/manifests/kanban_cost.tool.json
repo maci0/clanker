@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_cost",
   "description": "Accrue what a card has cost so far: prompt and completion tokens, dollars, and the run that spent them. Totals add up across runs rather than replacing each other.",
+  "llm_description": "Accrue a card's cost (prompt/completion tokens, USD, run id); totals add across runs, not replace. {\"id\"} required; optional \"prompt_tokens\", \"completion_tokens\", \"cost\" (USD), \"run_id\", \"room\" (defaults 'board').",
   "input_schema": {
     "type": "object",
     "properties": {

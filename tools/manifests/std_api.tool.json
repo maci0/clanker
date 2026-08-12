@@ -1,6 +1,7 @@
 {
   "name": "std_api",
   "description": "look up a Zig 0.16 std library symbol signature + docs (e.g. readSliceShort, std.process.spawn). Use before writing Zig code to get the exact API right.",
+  "llm_description": "Look up a Zig 0.16 std library symbol's signature + docs. Input: {symbol}.",
   "wasm": "zig-out/tools/std_api.wasm",
   "input_schema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] },
   "fs_prefixes": [],

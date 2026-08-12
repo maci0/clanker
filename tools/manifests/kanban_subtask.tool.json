@@ -5,7 +5,8 @@
   "sequential": true,
   "category": "kanban",
   "name": "kanban_subtask",
-  "description": "Add, tick or remove a subtask on a card. Use op subtask_add with text, or subtask_toggle / subtask_remove with subtask_id.",
+  "description": "Add, tick, remove or link checklist items on a card. Items nest to any depth and may depend on any other item in the same card.",
+  "llm_description": "Manage a checklist tree. subtask_add accepts optional parent_subtask_id; subtask_depend links subtask_id to depends_on and off removes that edge. Cycles are rejected.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -24,6 +25,10 @@
       "subtask_id": {
         "type": "string",
         "description": "Subtask id, for toggle and remove"
+      },
+      "parent_subtask_id": {
+        "type": "string",
+        "description": "Optional parent checklist item id for subtask_add; nesting can continue at any depth"
       },
       "done": {
         "type": "boolean",

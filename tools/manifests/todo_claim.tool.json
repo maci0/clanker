@@ -1,6 +1,7 @@
 {
   "name": "todo_claim",
   "description": "Mark a private todo as the one you are working on. See kanban_claim for shared work.",
+  "llm_description": "Mark a private todo (id from todo_add/todo_list) as the one being worked on. Use kanban_claim for shared work.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

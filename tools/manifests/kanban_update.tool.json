@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_update",
   "description": "Change a card's title, notes, assignee, priority or deadline. Assigning or setting a deadline is announced in the board's chatroom; editing text is not.",
+  "llm_description": "Update a card's title, body, who/assignee (empty to unassign), priority (low/normal/high), or deadline (unix seconds, 0 = none). Assigning or setting deadline is announced in the board room; text edits are not.",
   "input_schema": {
     "type": "object",
     "properties": {

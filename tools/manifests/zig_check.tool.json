@@ -1,6 +1,7 @@
 {
   "name": "zig_check",
   "description": "fast per-file zig ast-check / fmt check (no full gate)",
+  "llm_description": "Fast per-file Zig ast-check/fmt check (not the full build gate). Params: file (required), fmt (optional bool, adds fmt check).",
   "wasm": "zig-out/tools/zig_check.wasm",
   "input_schema": {
     "type": "object",

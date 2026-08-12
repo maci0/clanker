@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_depend",
   "description": "Say a card is waiting on another, or that it no longer is. A card whose dependencies are not finished is shown as blocked rather than being forbidden to move.",
+  "llm_description": "Add or remove a card dependency: op depend_add or depend_remove, depends_on = id it waits on. Unfinished deps show the card as blocked but don't block moving it.",
   "input_schema": {
     "type": "object",
     "properties": {

@@ -1,6 +1,7 @@
 {
   "name": "todo_add",
   "description": "Add a todo to this run's own private checklist. Private to the run and gone when it ends: it is your working plan, not shared work. For work other clankers should see, use kanban_add.",
+  "llm_description": "Add an item to this run's private, ephemeral checklist (not shared — use kanban_add for shared work).",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

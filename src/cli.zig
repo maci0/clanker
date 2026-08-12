@@ -44,6 +44,9 @@ const diskcap = @import("util/diskcap.zig");
 const runlock = @import("util/runlock.zig");
 const filelock = @import("util/filelock.zig");
 const gate_checks = @import("gate/checks.zig");
+const schedule_cmd = @import("schedule/command.zig");
+const schedule_runner = @import("schedule/runner.zig");
+const schedule_store = @import("schedule/store.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool — its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -93,9 +96,13 @@ pub const Command = enum {
     arena,
     compare,
     workflow,
+<<<<<<< HEAD
     /// `plugins list|validate|new`: the third-party side of the tool
     /// registry. `src/tools/manifest.zig` is the schema it enforces.
     plugins,
+=======
+    schedule,
+>>>>>>> origin/main
 };
 
 pub const Options = struct {
@@ -206,6 +213,15 @@ pub const Options = struct {
     compare_synthesize: bool = false,
     /// `compare --reveal`: print the label-to-model key even with no verdict.
     compare_reveal: bool = false,
+    /// `schedule <sub> [arg1] [arg2]`: "add" takes the cron spec then the
+    /// task, everything else takes an entry id. Absent sub means "list".
+    schedule_sub: ?[]const u8 = null,
+    schedule_arg1: ?[]const u8 = null,
+    schedule_arg2: ?[]const u8 = null,
+    /// `schedule add --tz-offset`: minutes east of UTC the cron fields are
+    /// read at, written `+02:00`, `-05:00`, `UTC` or a plain minute count.
+    /// Fixed, never a DST-aware zone — see src/schedule/cron.zig.
+    schedule_tz: ?[]const u8 = null,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -463,6 +479,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--reveal")) {
                 opts.compare_reveal = true;
                 used = .compare_reveal;
+            } else if (std.mem.eql(u8, a, "--tz-offset")) {
+                opts.schedule_tz = try takeValue(args, &idx, inline_value, a, diag);
+                used = .schedule_tz;
             } else if (std.mem.eql(u8, a, "--judge-provider")) {
                 opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
                 used = .arena_judge_provider;
@@ -576,6 +595,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .plugins;
             } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
                 opts.command = .workflow;
+            } else if (std.mem.eql(u8, a, "schedule")) {
+                opts.command = .schedule;
             } else if (std.mem.eql(u8, a, "version")) {
                 opts.command = .version;
             } else if (a.len > 0 and !std.mem.eql(u8, a, "help")) {
@@ -658,11 +679,23 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.room = a;
         } else if (opts.command == .chat and opts.message == null) {
             opts.message = a;
+<<<<<<< HEAD
         } else if (opts.command == .plugins) {
             if (opts.plugins_sub == null) {
                 opts.plugins_sub = a;
             } else if (opts.plugin_target == null) {
                 opts.plugin_target = a;
+=======
+        } else if (opts.command == .schedule) {
+            // Positional-only: <sub> then up to two arguments whose meaning
+            // depends on it (add takes a spec and a task, the rest an id).
+            if (opts.schedule_sub == null) {
+                opts.schedule_sub = a;
+            } else if (opts.schedule_arg1 == null) {
+                opts.schedule_arg1 = a;
+            } else if (opts.schedule_arg2 == null) {
+                opts.schedule_arg2 = a;
+>>>>>>> origin/main
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -828,6 +861,25 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             }
         }
     }
+    // A mistyped `schedule` subcommand is a usage error, caught here rather
+    // than after the store has been read: `clanker schedule dsiable sch-1`
+    // must not read as "list, with two stray arguments".
+    if (opts.command == .schedule) {
+        const sub = opts.schedule_sub orelse "list";
+        if (scheduleSubArity(sub)) |arity| {
+            if (arity >= 1 and opts.schedule_arg1 == null) {
+                setDiag(diag, if (std.mem.eql(u8, sub, "add")) "<cron>" else "<id>");
+                return error.MissingArg;
+            }
+            if (arity >= 2 and opts.schedule_arg2 == null) {
+                setDiag(diag, "<task>");
+                return error.MissingArg;
+            }
+        } else {
+            setDiag(diag, sub);
+            return error.BadSubcommand;
+        }
+    }
     if (opts.command == .chat) {
         const needs_room = !std.mem.eql(u8, opts.chat_sub, "rooms");
         if (needs_room and opts.room == null) {
@@ -840,6 +892,18 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         }
     }
     return opts;
+}
+
+/// How many positional arguments a `schedule` subcommand takes, or null when
+/// it is not one. The single place the subcommand list is written down, so a
+/// new one cannot be accepted by the parser and rejected by the command (or
+/// the reverse).
+fn scheduleSubArity(sub: []const u8) ?u8 {
+    if (std.mem.eql(u8, sub, "list") or std.mem.eql(u8, sub, "log") or std.mem.eql(u8, sub, "run-due")) return 0;
+    if (std.mem.eql(u8, sub, "remove") or std.mem.eql(u8, sub, "enable") or
+        std.mem.eql(u8, sub, "disable") or std.mem.eql(u8, sub, "run")) return 1;
+    if (std.mem.eql(u8, sub, "add")) return 2;
+    return null;
 }
 
 fn commandForHelp(name: []const u8) ?Command {
@@ -990,6 +1054,7 @@ const Flag = enum {
     compare_pick,
     compare_synthesize,
     compare_reveal,
+    schedule_tz,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -1027,6 +1092,7 @@ const Flag = enum {
             .compare_pick => "--pick",
             .compare_synthesize => "--synthesize",
             .compare_reveal => "--reveal",
+            .schedule_tz => "--tz-offset",
         };
     }
 };
@@ -1095,6 +1161,7 @@ const specs = [_]Spec{
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
     .{ .command = .autolearn, .usage = "autolearn", .blurb = "fold recent runs into learnings", .group = .maintain },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it" },
+    .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own — the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields — minute hour day-of-month month day-of-week — each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
 };
 
@@ -1164,8 +1231,59 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .arena => try cmdArena(init, opts),
         .compare => try cmdCompare(init, opts),
         .workflow => try cmdWorkflow(init, opts),
+<<<<<<< HEAD
         .plugins => try cmdPlugins(init, opts),
+=======
+        .schedule => try cmdSchedule(init, opts),
+>>>>>>> origin/main
     }
+}
+
+/// The one piece of `schedule` that cannot live in `src/schedule/`: turning a
+/// stored entry into an actual agent run means calling `cmdRun`, which is
+/// here. Everything else — the store, the cron arithmetic, the due/claim/
+/// ledger logic, the printing — is behind `schedule_cmd.cmd`, which takes this
+/// as a callback so its tests can drive the whole path without a provider.
+const ScheduleFire = struct {
+    init: std.process.Init,
+    opts: Options,
+
+    fn callback(self: *ScheduleFire) schedule_runner.Fire {
+        return .{ .ctx = self, .call = call };
+    }
+
+    fn call(ctx: *anyopaque, entry: *const schedule_store.Entry) anyerror!void {
+        const self: *ScheduleFire = @ptrCast(@alignCast(ctx));
+        var run_opts = self.opts;
+        run_opts.command = .run;
+        run_opts.task = entry.task;
+        // The entry's own overrides win over anything on the `run-due`
+        // invocation, so one sweep can fire entries pinned to different
+        // providers.
+        run_opts.provider = entry.provider orelse self.opts.provider;
+        run_opts.model = entry.model orelse self.opts.model;
+        // A scheduled run is a fresh conversation every time: resuming a
+        // session would grow one transcript forever on a timer.
+        run_opts.session = null;
+        run_opts.continue_last = false;
+        run_opts.schedule_sub = null;
+        run_opts.schedule_arg1 = null;
+        run_opts.schedule_arg2 = null;
+        run_opts.schedule_tz = null;
+        try cmdRun(self.init, run_opts);
+    }
+};
+
+fn cmdSchedule(init: std.process.Init, opts: Options) !void {
+    var fire = ScheduleFire{ .init = init, .opts = opts };
+    try schedule_cmd.cmd(init, .{
+        .sub = opts.schedule_sub orelse "list",
+        .arg1 = opts.schedule_arg1,
+        .arg2 = opts.schedule_arg2,
+        .provider = opts.provider,
+        .model = opts.model,
+        .tz_offset = opts.schedule_tz,
+    }, fire.callback());
 }
 
 fn writeStdErr(io: std.Io, bytes: []const u8) !void {
@@ -2790,12 +2908,11 @@ fn cmdSessions(init: std.process.Init) !void {
 /// `clanker session export <id> [path]` — one saved conversation written out
 /// as a self-contained HTML transcript.
 ///
-/// Native rather than a `cmd_*` WASM tool, unlike its `sessions` neighbour: a
-/// tool's output is a `text` field the CLI prints, and this produces a file
-/// on disk, at a path the caller may name, whose whole point is that it is
-/// larger than the guest's shared output buffer. The rendering itself lives
-/// in `agent/session_export.zig` and is unit-tested there; this only resolves
-/// the id and the destination.
+/// Currently native, but a candidate for a `cmd_*` WASM tool: `ck_fs_write`
+/// lets a guest write files directly (the way write_note and edit_file do),
+/// so the output-buffer-size concern that originally kept this native no
+/// longer applies. The rendering lives in `agent/session_export.zig` and is
+/// unit-tested there; this only resolves the id and the destination.
 fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();

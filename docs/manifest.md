@@ -41,6 +41,7 @@ author wrote, which is the one failure mode a version key exists to prevent.
 |---|---|---|
 | `name` | string | What the model writes to call the tool. Lowercase letters, digits and underscores only. Also the registry key, so it must be unique across the tools directory |
 | `description` | string | What the model reads to decide whether to call it. The first line (up to 160 characters) is what the catalog shows; the rest is only seen once the schema is loaded, so put the *what* first and the argument detail after |
+| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. The catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works — just not as cheaply |
 | `wasm` | string | The module. See [Where the module lives](#where-the-module-lives) |
 
 `input_schema` is not strictly required, but a manifest without one tells the

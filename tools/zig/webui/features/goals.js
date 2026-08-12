@@ -627,17 +627,7 @@ export function bindGoals(deps) {
       el.goalObjective.value = "";
       el.goalCriterion.value = "";
       el.goalMaxIterations.value = "";
-      // Newest first after renderGoals — start work so defining a goal is not
-      // just writing state/goals.json.
-      var goals = goalState.val || [];
-      var created = null;
-      for (var i = 0; i < goals.length; i++) {
-        if ((goals[i].status || "active") === "active" && goals[i].objective === objective) {
-          created = goals[i];
-          break;
-        }
-      }
-      if (created) workOnGoal(created);
+      el.goalsStatus.textContent = "Goal card created in Backlog.";
     });
   });
 }

@@ -1,6 +1,7 @@
 {
   "name": "autoresearch",
   "description": "list autoresearch runs or tail a run's ledger. Input {\"run\":\"<id>\", \"last\":20}. No id lists runs.",
+  "llm_description": "List autoresearch runs or tail a run's ledger. Input {run:'<id>', last:20}; no id lists runs.",
   "wasm": "zig-out/tools/autoresearch_tool.wasm",
   "input_schema": {
     "type": "object",

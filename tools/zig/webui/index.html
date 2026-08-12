@@ -69,7 +69,6 @@ lamps carry further). The seven named palettes ride the same tokens.
     <p class="rail-group" role="presentation">Work</p>
     <button type="button" class="rail-tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
     <button type="button" class="rail-tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" tabindex="-1" data-view="board">Board</button>
-    <button type="button" class="rail-tab" role="tab" id="tab-goals" aria-controls="view-goals" aria-selected="false" tabindex="-1" data-view="goals" hidden>Goals</button>
     <p class="rail-group" role="presentation">Watch</p>
     <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
     <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
@@ -437,8 +436,6 @@ lamps carry further). The seven named palettes ride the same tokens.
       </form>
     </dialog>
   </div>
-  <div class="view" id="view-goals" role="tabpanel" aria-labelledby="tab-goals" tabindex="-1" hidden>
-  </div>
   <div class="view" id="view-board" role="tabpanel" aria-labelledby="tab-board" tabindex="-1" hidden>
     <section>
       <div class="section-head">
@@ -452,7 +449,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="board-mine">
             <span>Only mine</span>
           </label>
-          <button type="button" class="secondary" id="board-resync-goals" title="Put every goal's card in the column its status asks for: done goals to Done, goals waiting for review to Review, running goals to Doing">Re-sync from goals</button>
+          <button type="button" class="secondary" id="board-resync-goals" title="Put every goal card in the lane its status asks for, including retained goals in Archive">Re-sync goals</button>
           <button type="button" class="secondary" id="board-refresh">Refresh</button>
         </div>
       </div>
@@ -472,7 +469,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <form id="card-form" hidden>
         <input type="text" id="card-title"><select id="card-column"></select><button type="submit" id="card-add">Add</button>
       </form>
-      <div class="transcript-tools board-filter" id="board-filter" style="margin-top: var(--space-3);">
+      <div class="transcript-tools board-filter" id="board-filter">
         <label for="board-filter-input">Filter</label>
         <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
         <label for="board-filter-mine" class="checkbox-row"><input type="checkbox" id="board-filter-mine"> Only mine</label>
@@ -485,17 +482,20 @@ lamps carry further). The seven named palettes ride the same tokens.
         <select id="board-filter-label"><option value="">All</option><option value="green">green</option><option value="yellow">yellow</option><option value="orange">orange</option><option value="red">red</option><option value="purple">purple</option><option value="blue">blue</option></select>
       </div>
       <div class="board" id="board"></div>
-      <div class="toolbar-actions" style="margin-top: var(--space-3);">
+      <div class="toolbar-actions board-list-controls" id="board-list-controls">
         <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
       </div>
-      <div id="board-list-view" style="margin-top: var(--space-3); overflow-x:auto;"></div>
+      <div id="board-list-view" class="board-list-view"></div>
       <!-- A sibling, not a child: inside .board it became a flex item after the
            last column and needed sideways scrolling to find, which is the
            opposite of what a first-run message is for. -->
-      <p class="run-empty" id="board-empty" hidden>No cards yet. A card added here goes into the room's log, so every clanker in the room sees it.</p>
+      <div class="board-empty" id="board-empty" hidden>
+        <strong>No goal cards yet</strong>
+        <span>Define the outcome and its completion criterion above. The new goal will enter Backlog and remain available to every clanker in this room.</span>
+      </div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
       <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>
-      <details class="board-activity" open>
+      <details class="board-activity">
         <summary>Goal activity</summary>
         <div class="board-activity-head"><span>Run output, steering, and goal specifications</span><button type="button" class="secondary" id="goals-refresh">Refresh</button></div>
         <div id="goals"></div>

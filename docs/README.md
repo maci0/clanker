@@ -33,8 +33,35 @@ The vaxis REPL adds two things `clanker run` has no use for, since a one-shot ru
 
 ### LLM providers (`src/llm/`)
 
-- **OpenAI-compatible** (`src/llm/client.zig`): works with any OpenAI-compatible endpoint.
-- **Anthropic** (`src/llm/providers.zig`): supports Anthropic's native API.
+A provider is a **native vtable**, not a WASM module: one struct of function
+pointers (`buildRequest`, `parseResponse`, `parseErrorDetail`,
+`parseStreamEvent`, `authHeaders`, `endpointUrl`) declared in
+`src/llm/providers/api.zig`, implemented by exactly one file under
+`src/llm/providers/`, and listed in the single `registry` table in
+`src/llm/providers.zig`. Keys must not enter the sandbox and the transport is
+on the per-token hot path, which is what rules WASM out:
+[docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
+
+`src/llm/client.zig` is the shared HTTP / SSE / retry / token-counting core.
+It is deliberately one module for every provider and contains no
+`switch (provider.kind)`: it resolves the vtable once per call
+(`providers.forKind`) and calls through it. The codec halves are pure
+functions of their inputs — no I/O, no credentials — so each provider's
+request building and response/stream parsing is unit-tested on the host beside
+its own file.
+
+**Adding a provider** is three edits, in fixed places: a new
+`src/llm/providers/<name>.zig`, a row in `registry`, and a `ProviderKind` tag
+in `src/config.zig` (which is the `kind = "..."` config surface, so it has to
+live there; `fromStr` is reflective and needs no change). Nothing else in the
+tree learns about it. Where a new provider mostly matches an existing one,
+re-export that provider's function pointers rather than copying the codec —
+`vertex.zig` does exactly this with `anthropic.zig` and differs only in a body
+header, the URL verb and the credential.
+
+- **openai_compat** (`src/llm/providers/openai.zig`): works with any OpenAI-compatible endpoint.
+- **anthropic** (`src/llm/providers/anthropic.zig`): Anthropic's native Messages API.
+- **vertex_anthropic** (`src/llm/providers/vertex.zig`): the Anthropic codec on Google Vertex AI (details below).
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
 - **kimi-k3**: OpenAI-compatible provider at `api.moonshot.ai/v1`, supports reasoning.
 - **muse-spark** / **muse-spark-1.1**: Anthropic-compatible providers for Muse Spark models.
@@ -43,22 +70,47 @@ The vaxis REPL adds two things `clanker run` has no use for, since a one-shot ru
 - **openai** / **anthropic**: first-party API endpoints.
 - **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project`, `location`, and either an access token in `api_key_env` or a `service_account_file`; tokens are minted in-process and cached until they near expiry. `std.crypto.Certificate.rsa` only verifies signatures, so the RS256 assertion Google requires is signed in `src/llm/gcp_jwt.zig` on std primitives: `der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, and the RSASSA-PKCS1-v1_5 padding is built by hand. No gcloud, no Python, no subprocess. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
 
-**Auth is a separate axis from the wire format.** Most providers accept an API
-key; some also accept OAuth, and the two are chosen by the credential, not a
-new provider kind. Anthropic already does this: a token that starts `sk-ant-oat`
-(an OAuth access token from `ant auth login`) is sent as `Authorization: Bearer`
-with an `oauth-2025-04-20` beta header, while any other value goes on
-`x-api-key` (`isOauthToken` in `src/llm/client.zig`). Vertex mints and refreshes
-a GCP OAuth token from `service_account_file` instead of reading a static key.
-For an OpenAI-compatible provider that offers both (xAI, say), the API-key path
-already works with `api_key_env` alone, because both an API key and an OAuth
-token ride `Authorization: Bearer` there; adding OAuth is a credential-
-acquisition concern (obtain and refresh the token), not a new header path. The
-target design that names these strategies (`api_key` / `oauth_static` /
-`oauth_refresh`) is [docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md),
-alongside the modular-provider vtable in [docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
+**Auth is a separate axis from the wire format**
+([docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md)),
+and the split is real in the code: `src/llm/auth.zig` owns **credential
+acquisition** — where the secret comes from — while **header application** —
+how it rides the request — stays each provider's `authHeaders`. Three
+strategies:
 
-Streaming is the Anthropic event vocabulary, not OpenAI's: `content_block_delta` carries `text_delta` for prose and `input_json_delta` fragments for tool arguments, and usage arrives split across `message_start` (input, cache reads) and `message_delta` (output, cumulative). Unknown event types, including `thinking_delta` and `signature_delta`, are ignored rather than treated as errors.
+- `api_key` — read `api_key_env` and present it the wire kind's way.
+- `oauth_static` — a pasted OAuth access token, presented as `Bearer`.
+- `oauth_refresh` — a token minted and renewed in-process.
+
+Each provider declares an `auth.Spec` in its registry entry saying which is the
+default, how to recognise an OAuth token by shape, and how to mint one.
+Anthropic stays zero-config that way: a token starting `sk-ant-oat` (an OAuth
+access token from `ant auth login`) is detected as `oauth_static` and sent as
+`Authorization: Bearer` with an `oauth-2025-04-20` beta header, while any other
+value is `api_key` and goes on `x-api-key`. Vertex is the one `oauth_refresh`
+today, minting a GCP token from `service_account_file` — an access token in
+`api_key_env` still wins over it. openai_compat is `api_key` by default and
+declares no shape detection, because an API key and an OAuth token are not
+distinguishable across the many vendors it serves.
+
+Where detection cannot be safe, say so: the optional per-provider
+`auth = "api_key" | "oauth_static" | "oauth_refresh"` config key overrides it,
+and an unknown value is rejected at load rather than guessed. For an
+OpenAI-compatible provider that offers both (xAI, say), the API-key path works
+with `api_key_env` alone because both credentials ride `Bearer` there; adding
+OAuth is a credential-acquisition concern, not a new header path or a new wire
+kind.
+
+Streaming is split the same way. Each provider's `parseStreamEvent` is a pure
+`(chunk_arena, payload) -> ?StreamEvent` function; `null` means "ignore this
+frame". One `StreamAccumulator` in `client.zig` folds those neutral events into
+a `ChatResponse` — text, per-index tool-call fragments, usage and the finish
+reason — so the two event vocabularies share one accumulation and one token
+accounting path instead of two that can drift. The Anthropic vocabulary:
+`content_block_delta` carries `text_delta` for prose and `input_json_delta`
+fragments for tool arguments, and usage arrives split across `message_start`
+(input, cache reads) and `message_delta` (output, cumulative). Unknown event
+types, including `thinking_delta` and `signature_delta`, are ignored rather
+than treated as errors.
 
 Providers and models are configured in `config.toml` / `config.local.toml`; the complete field-by-field reference, with per-kind examples and a minimal working config, is [docs/configuration.md](configuration.md).
 
@@ -94,6 +146,8 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_llm` | One-shot model call; denied unless the descriptor sets `"llm": true` |
 | `ck_llm_many` | One prompt to several provider/model targets at once, each on its own thread, joined before returning: `{"prompt","system","max_tokens","targets":[{"provider","model"}]}` in, a JSON array of `{provider,model,ok,text\|error,ms,tokens}` in target order out. A guest is single-threaded, so a loop of `ck_llm` costs the sum of the models' latencies and this costs the slowest one. One failing target is a failing element, never a failing call. Same `"llm": true` grant and same session token budget as `ck_llm`; capped at 8 targets |
 | `ck_subagent` | Nested bounded agent run; needs a parent agent run to attach to |
+| `ck_swarm` | Fan-out: run multiple sub-agent tasks concurrently (capped at `max_swarm_tasks`); needs a parent agent run to attach to |
+| `ck_tool` | Invoke another WASM tool from within a tool; denied for recursive calls and depth > 0 |
 | `ck_ask` | Put a multiple-choice question to the human, when one is attached |
 | `ck_chat` | Send to or read a chatroom |
 | `ck_stats` | Token usage recorded so far |
@@ -247,7 +301,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
-| `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
+| `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
 entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
@@ -485,6 +539,7 @@ iter 2
 | `chat history <room> [after]` | Read a chatroom's history (newest first) |
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
+| `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
 | `stats` | Token usage per provider/model |
 | `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
@@ -502,6 +557,42 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 - The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`.
 
 `clanker providers check <name>` checks one provider: the same provenance line and `default=true`/`default=false` marker, no summary table. It exits non-zero when the named provider is unknown (`UnknownProvider`) or did not come back OK (`ProviderCheckFailed`); a full sweep does not fail on a provider that is down.
+
+### Scheduled runs
+
+Recurring agent runs, kept in `state/schedule.json` and recorded in `state/schedule/log.jsonl`. Code: `src/schedule/` (`cron.zig` the dialect, `store.zig` the two files, `runner.zig` the due/claim/fire logic, `command.zig` the operator surface). Full design in [docs/prds/0009-schedule.md](prds/0009-schedule.md).
+
+| Subcommand | What it does |
+|---|---|
+| `schedule list` | Every entry with its next fire time (the default with no subcommand) |
+| `schedule add "<cron>" "<task>"` | Schedule a task. The first run is the first window *after* the add, never immediately |
+| `schedule remove <id>` | Drop an entry; its ledger history stays |
+| `schedule enable <id>` / `disable <id>` | A disabled entry is never due. Re-enabling counts the next window from now, not from the pause |
+| `schedule run <id>` | Fire one entry now, whatever its schedule says — the way to test an entry. Counts as a real run: it advances the window and lands in the ledger marked `manual` |
+| `schedule run-due` | Fire everything whose window has passed. What cron calls |
+| `schedule log` | The last 20 ledger records, newest first |
+
+Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a scheduled run can use a cheaper backend than the default; `--tz-offset <±HH:MM>` sets the fixed offset the cron fields are read at (also `UTC`, or a plain minute count).
+
+**Nothing fires on its own.** There is no background loop and no scheduling thread in `clanker serve` — the system's own cron (or a systemd timer, or launchd) is the clock, which is the decision recorded in [ADR 0008](adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md):
+
+```
+* * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due
+```
+
+`run-due` is built for that: it holds a non-blocking exclusive lock for the whole sweep, so a per-minute cron overlapping a run that takes longer than a minute prints `another 'schedule run-due' is still working` and exits 0 rather than stacking sweeps. It exits non-zero only when an entry it fired came back an error.
+
+**Cron dialect.** Five fields — `minute hour day-of-month month day-of-week` — each `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those. Sunday is `0` or `7`. Deliberately not accepted, because guessing at a dialect is worse than an error at the point the mistake was made: names (`MON`, `JAN`), `@nicknames` (`@daily`), a seconds field, `L`/`W`/`#`, wrapping ranges (`55-5`), and a step on a bare number (`5/10` — write `5-59/10` or `*/10`). When *both* day fields are restricted the entry fires when **either** matches, as in Vixie cron: `0 0 13 * 5` is "the 13th, and every Friday", not "Friday the 13th". A field counts as unrestricted when it is written `*` or `*/n`; `*/2,15` is a set the writer chose and is treated as one. A spec that parses but can never come around (`0 0 30 2 *`) is refused by `add`.
+
+**Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0007](adrs/0007-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `src/schedule/cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
+
+**Missed runs fire once and are never backfilled.** An entry's `last_run` records the moment it *ran*, not the slot it ran *for*, so the next window is computed from wake time. A machine that slept through a day of a `*/5` entry fires it exactly once on waking, counts the 286 windows in between into the ledger's `skipped`, and resumes on the normal grid. Backfilling would mean 288 agent runs and a real bill for answers that stopped being interesting hours ago.
+
+`run-due` claims a window — writes `last_run` and `runs += 1` — *before* it calls the model, then re-opens the store afterwards to record the outcome. A sweep killed halfway therefore leaves the entry looking fired (at-most-once, rather than a crash loop that bills per iteration), and an `enable`/`disable` that landed while the model was working survives the write.
+
+**Ledger.** `state/schedule/log.jsonl`, one JSON object per line, the same shape `state/arena/log.jsonl` uses: `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`. `trigger` is `due` or `manual`; `due_at` is the window that made the entry due, which differs from `ts` because cron granularity is a minute and `run-due` may be seconds late. Trimmed oldest-first at 4 MiB.
+
+The shell scripts `clanker-improve.sh` and `clanker-review.sh` are still driven from outside the binary; nothing in them has moved into `schedule`. What `schedule` replaces is a crontab line calling `clanker run "<prompt>"`.
 
 ## Configuration
 
@@ -747,7 +838,9 @@ clanker serve --host 0.0.0.0 --serve-as clanker.lan
 
 ### `POST /api/run`
 
-Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>"}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after. `goal` is optional: when set, that entry from `state/goals.json` is prepended as an `## Active goal` preamble, and an empty `task` becomes a default work order for the goal (what the web UI **Work on this** button sends). When `goal` is omitted and `modules.goal` is on, the newest active goal steers the run automatically.
+Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>", "images": [...]}`. `session` is optional; when set (and `modules.sessions` is on) the prior transcript is loaded before the turn and saved after. `goal` is optional: when set, that entry from `state/goals.json` is prepended as an `## Active goal` preamble, and an empty `task` becomes a default work order for the goal (what the web UI **Work on this** button sends). When `goal` is omitted and `modules.goal` is on, the newest active goal steers the run automatically.
+
+`images` is an optional array of `{"mime", "b64"}` image attachments (the webui composer's paste/drop path, and the `image` tool's result). Each decoded image is capped at 4 MB and at most 4 per message. Attaching images requires `modules.multimodal` to be on: a run with images while it is off returns a 400 naming the flag, rather than silently dropping the attachment. The provider request carries the images in each provider family's native format — OpenAI-compatible sends `image_url` data URIs; Anthropic/Vertex send base64 `image` content blocks. A provider 400 on an image-bearing run is surfaced with the provider name and a hint that the model may not support vision.
 
 With `"stream": true`, the response body is `text/plain` and framed line-by-line: plain lines are answer content, verbatim; a line prefixed with byte `0x01` is an out-of-band JSON event instead of content:
 

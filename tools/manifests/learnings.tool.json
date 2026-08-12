@@ -1,6 +1,7 @@
 {
   "name": "learnings",
   "description": "read persisted learnings (state/learnings.md)",
+  "llm_description": "Read persisted learnings from state/learnings.md.",
   "wasm": "zig-out/tools/learnings.wasm",
   "input_schema": {
     "type": "object",

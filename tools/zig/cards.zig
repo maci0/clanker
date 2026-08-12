@@ -46,7 +46,7 @@
 //!   @todo {"action":"claim","todo":"<id>"}      assignee := message from
 //!   @todo {"action":"assign","todo":"<id>","who":"..."}   "" clears it
 //!   @todo {"action":"close","todo":"<id>"}      column := "done"
-//!   @todo {"action":"subtask_add","todo":"<id>","text":"..."}
+//!   @todo {"action":"subtask_add","todo":"<id>","text":"...","parent":"<subtask-id>"}
 //!   @todo {"action":"subtask_toggle","todo":"<id>","subtask":"<id>","done":true}
 //!   @todo {"action":"subtask_remove","todo":"<id>","subtask":"<id>"}
 //!   @todo {"action":"depend","todo":"<id>","on":"<id>","off":false}
@@ -110,6 +110,13 @@ pub const Subtask = struct {
     id: []const u8,
     text: []const u8,
     done: bool = false,
+    /// Empty for a root checklist item; otherwise the id of another item on
+    /// this card. A flat wire representation keeps old readers compatible
+    /// while allowing an arbitrarily deep tree.
+    parent: []const u8 = "",
+    /// Other checklist item ids that must be complete before this item is
+    /// actionable. These edges are independent of the visual parent tree.
+    depends_on: []const []const u8 = &.{},
 };
 
 pub const LogEntry = struct {
@@ -148,9 +155,10 @@ pub const Card = struct {
     usage: Usage = .{},
 
     /// The three words the todo tools have always answered with, now read off
-    /// the column instead of a separate flag.
+    /// the column instead of a separate flag. Archived work is also closed:
+    /// archive changes retention/visibility, not whether the work is pending.
     pub fn status(self: *const Card) []const u8 {
-        if (std.mem.eql(u8, self.column, done_column)) return "closed";
+        if (std.mem.eql(u8, self.column, done_column) or std.mem.eql(u8, self.column, "archive")) return "closed";
         if (self.assignee.len > 0) return "claimed";
         return "open";
     }
@@ -171,6 +179,7 @@ pub const Action = struct {
     who: ?[]const u8 = null,
     text: ?[]const u8 = null,
     subtask: ?[]const u8 = null,
+    parent: ?[]const u8 = null,
     done: ?bool = null,
     on: ?[]const u8 = null,
     off: ?bool = null,
@@ -220,9 +229,11 @@ const SubtaskState = struct {
     id: []const u8,
     text: []const u8,
     done: bool = false,
+    parent: []const u8 = "",
     removed: bool = false,
     done_at: Stamp = .{},
     removed_at: Stamp = .{},
+    deps: std.ArrayListUnmanaged(DepState) = .empty,
 };
 
 const DepState = struct {
@@ -268,11 +279,11 @@ const State = struct {
     cost: f64 = 0,
     runs: std.ArrayListUnmanaged([]const u8) = .empty,
 
-    fn subtask(self: *State, arena: std.mem.Allocator, id: []const u8, text: []const u8) !*SubtaskState {
+    fn subtask(self: *State, arena: std.mem.Allocator, id: []const u8, text: []const u8, parent: []const u8) !*SubtaskState {
         for (self.subtasks.items) |*s| {
             if (std.mem.eql(u8, s.id, id)) return s;
         }
-        try self.subtasks.append(arena, .{ .id = id, .text = text });
+        try self.subtasks.append(arena, .{ .id = id, .text = text, .parent = parent });
         return &self.subtasks.items[self.subtasks.items.len - 1];
     }
 
@@ -413,20 +424,36 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         } else if (std.mem.eql(u8, act.action, "subtask_add")) {
             const text = act.text orelse continue;
             if (text.len == 0) continue;
-            _ = try c.subtask(arena, m.id, text);
+            _ = try c.subtask(arena, m.id, text, act.parent orelse "");
         } else if (std.mem.eql(u8, act.action, "subtask_toggle")) {
             const sid = act.subtask orelse continue;
-            const s = try c.subtask(arena, sid, "");
+            const s = try c.subtask(arena, sid, "", "");
             if (s.done_at.beaten(m.ts, m.id)) {
                 s.done = act.done orelse true;
                 s.done_at = .{ .ts = m.ts, .id = m.id };
             }
         } else if (std.mem.eql(u8, act.action, "subtask_remove")) {
             const sid = act.subtask orelse continue;
-            const s = try c.subtask(arena, sid, "");
+            const s = try c.subtask(arena, sid, "", "");
             if (s.removed_at.beaten(m.ts, m.id)) {
                 s.removed = true;
                 s.removed_at = .{ .ts = m.ts, .id = m.id };
+            }
+        } else if (std.mem.eql(u8, act.action, "subtask_depend")) {
+            const sid = act.subtask orelse continue;
+            const on = act.on orelse continue;
+            const s = try c.subtask(arena, sid, "", "");
+            var dep: ?*DepState = null;
+            for (s.deps.items) |*d| {
+                if (std.mem.eql(u8, d.on, on)) dep = d;
+            }
+            if (dep == null) {
+                try s.deps.append(arena, .{ .on = on });
+                dep = &s.deps.items[s.deps.items.len - 1];
+            }
+            if (dep.?.at.beaten(m.ts, m.id)) {
+                dep.?.off = act.off orelse false;
+                dep.?.at = .{ .ts = m.ts, .id = m.id };
             }
         } else if (std.mem.eql(u8, act.action, "depend")) {
             const on = act.on orelse continue;
@@ -484,7 +511,11 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             // A subtask only toggled or removed, never added, has no text and
             // is not a subtask; it is the residue of a message about one.
             if (s.removed or s.text.len == 0) continue;
-            try subs.append(arena, .{ .id = s.id, .text = s.text, .done = s.done });
+            var sub_deps: std.ArrayListUnmanaged([]const u8) = .empty;
+            for (s.deps.items) |d| {
+                if (!d.off) try sub_deps.append(arena, d.on);
+            }
+            try subs.append(arena, .{ .id = s.id, .text = s.text, .done = s.done, .parent = s.parent, .depends_on = sub_deps.items });
         }
         var deps: std.ArrayListUnmanaged([]const u8) = .empty;
         for (c.deps.items) |d| {
@@ -685,6 +716,19 @@ test "a close and a later move converge on the move, in either order" {
     try std.testing.expectEqualStrings("doing", cb[0].column);
     // Nobody claimed it, and leaving done put it back to being unowned work.
     try std.testing.expectEqualStrings("open", cb[0].status());
+}
+
+test "archive retains a card and reports it closed" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const add = try encodeAdd(arena, "retained goal");
+    const archive = try encode(arena, .{ .action = "move", .todo = "m1", .column = "archive" });
+    const folded = try derive(arena, &.{ msg("m1", "x", 100, add), msg("m2", "x", 200, archive) });
+    try std.testing.expectEqual(@as(usize, 1), folded.len);
+    try std.testing.expectEqualStrings("archive", folded[0].column);
+    try std.testing.expectEqualStrings("closed", folded[0].status());
 }
 
 test "edits converge on the latest writer whatever the arrival order" {

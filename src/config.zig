@@ -17,6 +17,10 @@ const json = std.json;
 const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 
+/// The wire format a provider speaks. One tag per entry in the
+/// `src/llm/providers.zig` registry; the tag *is* the `kind = "..."` spelling,
+/// so adding a provider means adding a tag here and a row there, and nothing
+/// else in this file.
 pub const ProviderKind = enum {
     openai_compat,
     anthropic,
@@ -25,10 +29,25 @@ pub const ProviderKind = enum {
     vertex_anthropic,
 
     pub fn fromStr(s: []const u8) ?ProviderKind {
-        if (std.mem.eql(u8, s, "openai_compat")) return .openai_compat;
-        if (std.mem.eql(u8, s, "anthropic")) return .anthropic;
-        if (std.mem.eql(u8, s, "vertex_anthropic")) return .vertex_anthropic;
-        return null;
+        return std.meta.stringToEnum(ProviderKind, s);
+    }
+};
+
+/// How a provider's credential is acquired — a separate axis from the wire
+/// kind, because one wire format can accept several (docs/adrs/0005). Left
+/// unset, each kind auto-detects from the credential's shape where the two
+/// are distinguishable, which is what keeps Anthropic zero-config.
+pub const AuthStrategy = enum {
+    /// Read `api_key_env` and present it the way the wire kind wants.
+    api_key,
+    /// A pasted OAuth access token (env var), presented as a bearer token.
+    oauth_static,
+    /// A token minted and renewed in-process. Vertex's GCP service-account
+    /// token is the one provider that does this today.
+    oauth_refresh,
+
+    pub fn fromStr(s: []const u8) ?AuthStrategy {
+        return std.meta.stringToEnum(AuthStrategy, s);
     }
 };
 
@@ -69,6 +88,11 @@ pub const Provider = struct {
     kind: ProviderKind = .openai_compat,
     base_url: []const u8,
     api_key_env: ?[]const u8 = null,
+    /// Explicit credential-acquisition strategy, overriding the wire kind's
+    /// auto-detection. Needed where a provider's API keys and OAuth tokens
+    /// are not distinguishable by shape, since guessing wrong sends the
+    /// secret on the wrong header.
+    auth: ?AuthStrategy = null,
     /// vertex_anthropic only: the GCP project and region that serve the model,
     /// and the service account JSON used to mint access tokens.
     project: []const u8 = "",
@@ -605,12 +629,23 @@ pub const Config = struct {
             .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
         };
         warnUnknownKeys(obj, &.{
-            "base_url",         "kind",          "project",
-            "location",         "api_key_env",   "service_account_file",
-            "path",             "default_model", "check_timeout_seconds",
+            "base_url",
+            "kind",
+            "project",
+            "location",
+            "api_key_env",
+            "auth",
+            "service_account_file",
+            "path",
+            "default_model",
+            "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
-            "model",            "models",        "max_tokens",
-            "context_window",   "temperature",   "top_p",
+            "model",
+            "models",
+            "max_tokens",
+            "context_window",
+            "temperature",
+            "top_p",
             "reasoning_effort",
         }, name);
         // Settings that belong to a model are rejected on the provider: they
@@ -644,6 +679,13 @@ pub const Config = struct {
         }
         if (obj.get("api_key_env")) |k| {
             p.api_key_env = try jsonStr(k, "api_key_env");
+        }
+        if (obj.get("auth")) |k| {
+            const s = try jsonStr(k, "auth");
+            p.auth = AuthStrategy.fromStr(s) orelse {
+                log.log(.error_, "provider '{s}': unknown auth \"{s}\" (expected \"api_key\", \"oauth_static\" or \"oauth_refresh\")", .{ name, s });
+                return error.UnknownAuthStrategy;
+            };
         }
         if (obj.get("path")) |k| {
             p.path = try jsonStr(k, "path");
@@ -1967,6 +2009,45 @@ test "exec_pattern_allow rejects git patterns to protect the deny list" {
     try std.testing.expectError(
         error.ExecPatternAllowGitForbidden,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml"),
+    );
+}
+
+test "the auth strategy is optional, parsed by name, and rejected when misspelt" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "xai"
+        \\providers = { xai = { base_url = "https://api.x.ai/v1", api_key_env = "XAI_TOKEN", auth = "oauth_static" }, plain = { base_url = "https://y.test" } }
+        \\models = { "xai/m" = { provider = "xai" }, "plain/m" = { provider = "plain" } }
+        ,
+    });
+    var cfg = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqual(AuthStrategy.oauth_static, cfg.providers.get("xai").?.auth.?);
+    // Unset is the norm: the wire kind auto-detects, which is what keeps
+    // every existing config working untouched.
+    try std.testing.expect(cfg.providers.get("plain").?.auth == null);
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "bad.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://y.test", auth = "oauth" } }
+        \\models = { "p/m" = { provider = "p" } }
+        ,
+    });
+    // A typo must fail loudly: silently falling back would send the secret on
+    // whichever header the default happened to pick.
+    try std.testing.expectError(
+        error.UnknownAuthStrategy,
+        Config.load(io, arena_state.allocator(), tmp.dir, "bad.toml", "missing.toml"),
     );
 }
 

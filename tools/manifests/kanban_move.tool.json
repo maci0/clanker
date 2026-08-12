@@ -6,6 +6,7 @@
   "category": "kanban",
   "name": "kanban_move",
   "description": "Move a card to another column, which is how work is claimed and finished. Announces the move in the board's chatroom.",
+  "llm_description": "Move a card (id) to another column (column) — how work is claimed and finished. Announced in the board room.",
   "input_schema": {
     "type": "object",
     "properties": {

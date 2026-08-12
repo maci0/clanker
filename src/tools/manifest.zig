@@ -45,6 +45,10 @@ pub const known_keys = [_][]const u8{
     "manifest_version",
     "name",
     "description",
+    // The compressed, model-facing description. Optional: `parseDescriptor`
+    // falls back to `description` when a manifest omits it, so an unmigrated
+    // manifest is valid, just more expensive per turn.
+    "llm_description",
     "wasm",
     "input_schema",
     "parameters",

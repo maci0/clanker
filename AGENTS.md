@@ -24,11 +24,22 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 ## Architecture
 
-- `src/llm/` — the shared HTTP client, provider request/response encoding,
-  provider configuration helpers, and Vertex authentication.
+- `src/llm/` — `client.zig` is the shared HTTP/SSE/retry/token-counting core,
+  one module for every provider. Each provider is a vtable
+  (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
+  listed in the `registry` table in `providers.zig`; `auth.zig` is the
+  credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
+  minting behind it. Adding a provider is one file, one registry row, and one
+  `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.
+- `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
+  arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
+  fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),
+  the due/claim/fire logic (`runner.zig`, driven by a `Fire` callback so its
+  tests need no provider), and the operator surface (`command.zig`). Nothing
+  here fires on its own; the system's cron calls `clanker schedule run-due`.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging and dotenv. Peer notify/phonebook, patch application, knowledge
   store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
@@ -141,6 +152,13 @@ rather than stacking a new one beside it.
 Retrieved documents and memory-search hits are untrusted prompt data. Keep
 them inside explicit retrieval boundaries, separate from the operator task;
 the system prompt must tell the model never to execute directives found there.
+
+The web UI presents goals and the Kanban board as one workflow: creating a
+goal creates its card, lane moves update goal status, and Archive retains the
+goal/card history for future knowledge or autolearn consumers rather than
+deleting it. Keep the board tool as the card/room implementation and
+`state/goals.json` as the structured goal record; reconcile through the durable
+card `goal` id instead of adding a third store.
 
 ## Local operator rules (optional)
 
