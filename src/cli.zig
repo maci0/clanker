@@ -2180,9 +2180,8 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
         .max_context_bytes = cfg.improve.max_context_bytes,
     });
 
-    // Back to the shared tree (and the worktree dropped) before verifying
-    // gates below: that check has to see the merged-back result in the tree
-    // everyone else works in, not the isolated copy.
+    // Back to the shared tree (and the worktree dropped).
+    const was_isolated = wt != null;
     if (wt) |*w| {
         if (original_cwd) |p| std.process.setCurrentPath(io, p) catch |err|
             log.log(.warn, "improve-self: could not switch back out of the isolated worktree: {s}", .{@errorName(err)});
@@ -2194,8 +2193,53 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     // Verify that any applied improvement still passes all deterministic gates
     // (build/test/tools/fmt/lint). In dry-run no changes are written, so skip.
     if (!opts.dry_run) {
-        try verifyGates(gpa, io, arena);
+        if (was_isolated) {
+            // mergeBack lands promotions on the base branch at the ref
+            // level — no working tree is ever touched, this one included.
+            // Checking std.Io.Dir.cwd() here would check whatever was on
+            // disk in the shared tree before this run started, not the
+            // change that just landed (and possibly not even that: the
+            // shared tree may have uncommitted edits from someone else).
+            // A throwaway worktree at the base branch's now-current tip is
+            // the only way to actually see what landed.
+            try verifyMergedGates(gpa, io, arena);
+        } else {
+            try verifyGates(gpa, io, arena);
+        }
     }
+}
+
+/// Same check as `verifyGates`, against a disposable worktree at the base
+/// branch's current tip instead of the process's own cwd. Used after an
+/// isolated improve-self run, where the promoted changes only ever touched
+/// worktrees that no longer exist by this point.
+fn verifyMergedGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
+    const id = try std.fmt.allocPrint(gpa, "verify-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+    defer gpa.free(id);
+    var vwt = worktree_mod.create(gpa, io, id) catch |err| {
+        log.log(.warn, "improve-self: could not create a worktree to verify the merged result ({s}); skipping final verification", .{@errorName(err)});
+        return;
+    };
+    defer vwt.deinit(gpa);
+
+    const original_cwd = std.process.currentPathAlloc(io, gpa) catch |err| {
+        log.log(.warn, "improve-self: could not read cwd to verify the merged result ({s}); skipping final verification", .{@errorName(err)});
+        vwt.cleanup(gpa, io);
+        return;
+    };
+    defer gpa.free(original_cwd);
+
+    std.process.setCurrentPath(io, vwt.path) catch |err| {
+        log.log(.warn, "improve-self: could not switch into the verification worktree ({s}); skipping final verification", .{@errorName(err)});
+        vwt.cleanup(gpa, io);
+        return;
+    };
+    defer {
+        std.process.setCurrentPath(io, original_cwd) catch |err|
+            log.log(.warn, "improve-self: could not switch back out of the verification worktree: {s}", .{@errorName(err)});
+        vwt.cleanup(gpa, io);
+    }
+    try verifyGates(gpa, io, arena);
 }
 
 fn cmdGoal(init: std.process.Init, opts: Options) !void {
