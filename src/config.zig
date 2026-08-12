@@ -821,10 +821,13 @@ pub const Config = struct {
         return web;
     }
 
-    /// `ck_http` compares this exact string with the parsed URL hostname, so
-    /// a URL, path, or host:port entry would never grant the intended access.
+    /// `ck_http` compares this string (possibly a glob pattern) with the
+    /// parsed URL hostname, so a URL, path, or host:port entry would never
+    /// grant the intended access. `*` and `?` are wildcards (any run / single
+    /// character), so patterns like `*.example.com` and the catch-all `*` are
+    /// valid.
     fn isBareHost(host: []const u8) bool {
-        return host.len > 0 and std.mem.findAny(u8, host, ":/?#@% \t\r\n") == null;
+        return host.len > 0 and std.mem.findAny(u8, host, ":/#@% \t\r\n") == null;
     }
 
     fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
@@ -1369,6 +1372,20 @@ test "web.allow parses hostname entries onto Config" {
     try std.testing.expectEqual(@as(usize, 2), cfg.web.allow.len);
     try std.testing.expectEqualStrings("example.org", cfg.web.allow[0]);
     try std.testing.expectEqualStrings("docs.example", cfg.web.allow[1]);
+}
+
+test "web.allow accepts glob patterns and the catch-all" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const root = try json.parseFromSliceLeaky(json.Value, arena,
+        \\{"web":{"allow":["*.example.org","sub?.example","*"]}}
+    , .{ .ignore_unknown_fields = true });
+    const cfg = try Config.parseConfig(arena, root);
+    try std.testing.expectEqual(@as(usize, 3), cfg.web.allow.len);
+    try std.testing.expectEqualStrings("*.example.org", cfg.web.allow[0]);
+    try std.testing.expectEqualStrings("sub?.example", cfg.web.allow[1]);
+    try std.testing.expectEqualStrings("*", cfg.web.allow[2]);
 }
 
 test "config.local.toml web.allow replaces the global web allowlist" {
