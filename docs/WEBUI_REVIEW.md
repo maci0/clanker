@@ -149,6 +149,54 @@ tree. The shared working tree now also carries that agent's own in-progress
 `app.js`/`app.css` work (live-graph nodes, run-compare, board covers) — none
 of it overlaps these changes.
 
+## Mermaid diagrams (2026-08-12)
+
+Chat-parity slice: `mermaid` fences in answers now render as diagrams, the
+way the Kimi/ChatGPT/Claude surfaces render them, instead of a plain code
+block.
+
+- **Vendor:** official `mermaid@11.16.1` UMD (`dist/mermaid.min.js`, 3.5 MB,
+  `globalThis.mermaid`, no `import.meta` — classic-script safe) vendored at
+  `src/webui_vendor/mermaid.min.js`, embedded + routed the same way the other
+  vendor assets are (`webui_vendor_mermaid` const, `is_webui` allow-list
+  entry, `respondJs` branch with its own `gzip_mermaid` cache — gzip + ETag +
+  `public,max-age=3600` for free). Lazy: `loadMermaid()` in
+  `core/vendor.js` fetches it only when an answer actually contains a
+  `mermaid` fence. The binary grows ~7 MB (Debug); the page pays nothing
+  unless a diagram appears.
+- **Render path:** `lib/markdown.js` — `finalizeAnswer` routes `mermaid`
+  fences to `buildMermaidBlock` (diagram box + `details/summary` source
+  receipt) and calls `renderMermaidBlocks` after append, so live runs and
+  session reloads (both go through `finalizeAnswer`) render identically.
+- **CSP, deliberately:** mermaid injects its theme as a `<style>` element
+  inside the SVG, which the page's `style-src 'self'` blocked (3
+  `style-src-elem` violations from its temp measuring container, plus a
+  stripped-but-measured-wrongly theme). Two-part fix: (1) the renderer strips
+  the SVG's `<style>` via `DOMParser` and imports the node (`importNode`, not
+  `innerHTML`, so mermaid's structural `style=""` attributes survive without
+  re-tripping the inline-style check); the diagram is themed instead by
+  `.md-mermaid` rules in `app.css` that ride the app's own variables, so
+  every palette colors it like the page. (2) `style-src` gained
+  `'unsafe-inline'` — the one place the page emits an inline style block is
+  this vendored, same-origin renderer; `script-src` stays `'self'` (the
+  meaningful boundary for a page fronting `/api/run`), and the markdown
+  pipeline escapes raw HTML, so answer text cannot manufacture a `<style>` of
+  its own. Verified: 0 CSP violations at render.
+- **Theming:** `.md-mermaid` covers flowchart/sequence/class/state/ER/gantt
+  shapes via `--surface/--border/--fg/--fg-muted/--accent` — computed node
+  fill/stroke verified against the live page.
+
+Verification: `zig build` green; `zig build test --summary all` `428 pass, 1
+skip (429 total)`; `zig build tools` green; `zig fmt --check` clean; `node
+--check` on `markdown.js`/`vendor.js`/`app.js`. Playwright render test
+against live `clanker serve`: injected a `flowchart` answer via the real
+module (`import("/webui/lib/markdown.js")` + `finalizeAnswer`) — SVG
+rendered, `data-src` consumed, inline `<style>` stripped, source folded
+under the disclosure, plain `zig` fences still highlighted, **0 CSP
+violations** (the page's own `app.js` boot crash seen during the test is the
+concurrent agent's then-unresolved `UU` merge conflict, since resolved and
+committed as part of `a5c1414`).
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.

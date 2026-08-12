@@ -364,7 +364,16 @@ export function renderMermaidBlocks(root) {
       var code = box.getAttribute("data-src") || "";
       var id = "mm-" + Math.random().toString(36).slice(2, 10);
       window.mermaid.render(id, code).then(function (res) {
-        box.innerHTML = res.svg;
+        // Mermaid ships its theme as a <style> element inside the SVG, which
+        // the page's CSP forbids (style-src 'self'). Strip it and let the
+        // app's own .md-mermaid rules theme the diagram — every palette the
+        // page knows sets the same variables, so the diagram follows along.
+        // The node is imported rather than re-parsed (innerHTML) so the
+        // structural style="" attributes mermaid sets survive without tripping
+        // the CSP's inline-style check a second time.
+        var doc = new DOMParser().parseFromString(res.svg, "image/svg+xml");
+        doc.querySelectorAll("style").forEach(function (st) { st.remove(); });
+        box.appendChild(box.ownerDocument.importNode(doc.documentElement, true));
         box.setAttribute("aria-label", "Mermaid diagram");
         box.removeAttribute("data-src");
       }).catch(function (err) {

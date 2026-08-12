@@ -869,6 +869,10 @@ var renderMarkdown = mdRenderMarkdown;
 var highlightInto = mdHighlightInto;
 var buildCodeBlock = mdBuildCodeBlock;
 var finalizeAnswer = mdFinalizeAnswer;
+/* fuzzyMatch came over in the ES-module split as utilFuzzyMatch; the palette
+   and the prompt list call it bare, so it needs its alias like the markdown
+   bindings above. Without it, the `/` prompt list throws at render time. */
+var fuzzyMatch = utilFuzzyMatch;
 window.clankerOpenRun = function (id) {
   try { openRun(id); } catch (e) {}
 };

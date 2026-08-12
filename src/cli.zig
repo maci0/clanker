@@ -5522,7 +5522,14 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // 'unsafe-inline'. style-src-attr keeps the one thing that still sets styles
 // from script (the composer's auto-grow) working without reopening inline
 // <style> blocks.
-const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// Mermaid (the diagram renderer, loaded lazily for `mermaid` fences) injects
+// its theme as a <style> element inside the SVG it renders — the only place
+// the page emits an inline style block, and it comes from a vendored,
+// same-origin script, never from page content. style-src therefore allows
+// 'unsafe-inline': script-src stays 'self' (the meaningful boundary for a page
+// that fronts /api/run), and the markdown pipeline escapes raw HTML, so no
+// answer text can manufacture a <style> block of its own.
+const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The page, compressed when the client will take it. This is the response
 /// that blocks the first draw, so the 21 KB it used to send uncompressed was

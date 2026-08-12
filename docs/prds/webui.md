@@ -243,13 +243,14 @@ Phase 6 — Chat UX parity (Kimi Code web UI):
 - [x] 6.2 Citation chips → openRun — run references in answers (`run-…`/`sub-…`, `[subagent run: …]`) render as chips that open the run graph (`RUN_RE`/`appendRunRefs` in `lib/markdown.js`, `window.clankerOpenRun` bridge)
 - [x] 6.3 Model pill inside composer — the active model as a pill button beside the run controls, opening the same picker the header chip opens
 - [x] 6.4 Collapsed icon rail — rail collapses to a 3.5rem icon strip (`data-collapsed`, `data-short`, persisted); collapse toggle hidden under 60rem where the rail is a drawer
+- [x] 6.5 Mermaid diagrams — `mermaid` fences render as diagrams (vendored `mermaid@11`, lazy `loadMermaid`, `buildMermaidBlock` + `renderMermaidBlocks` in `lib/markdown.js`), themed by `.md-mermaid` rules riding the app's palette variables; the SVG's inline `<style>` is stripped for the CSP and `style-src` gained `'unsafe-inline'` for the vendored renderer only (`script-src` stays `'self'`)
 
 Infrastructure:
 
 - [x] ES module split (`app.js` 5,511 → ~3,500 lines; all `core/*`/`lib/*`/
       `features/*` modules embedded, routed, and individually cached)
 - [x] `lib.out_cap` comptime guard passes with headroom
-- [x] Strict CSP verified live (`curl -si`), no inline script/style
+- [x] Strict CSP verified live (`curl -si`): no inline script, and inline style only from the vendored mermaid renderer (`style-src 'self' 'unsafe-inline'`, `script-src 'self'` unchanged)
 - [x] Accessibility: 0 critical / 0 serious across all views (axe-core,
       `docs/assets/webui/axe.json`)
 

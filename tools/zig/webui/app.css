@@ -703,7 +703,45 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   display: flex; justify-content: center; overflow-x: auto;
   background: var(--surface-2);
 }
-.md-mermaid svg { max-width: 100%; height: auto; }
+.md-mermaid svg { max-width: 100%; height: auto; font-family: var(--mono); font-size: 12px; }
+/* The mermaid theme's <style> is stripped for the page CSP, so the diagram
+   is themed from these rules instead — which ride the app's own variables,
+   so every palette colors it the same way it colors the page. */
+.md-mermaid .node rect, .md-mermaid .node circle, .md-mermaid .node ellipse,
+.md-mermaid .node polygon, .md-mermaid .node path,
+.md-mermaid .actor, .md-mermaid .classGroup rect,
+.md-mermaid .stateGroup rect, .md-mermaid .statediagram-state rect,
+.md-mermaid .er entityBox, .md-mermaid .objectBox {
+  fill: var(--surface); stroke: var(--border); stroke-width: 1px;
+}
+.md-mermaid .label, .md-mermaid .label text,
+.md-mermaid .actor text, .md-mermaid .actor-line,
+.md-mermaid .classText, .md-mermaid .state-label text,
+.md-mermaid .entityBox text, .md-mermaid .objectBox text,
+.md-mermaid .pieTitleText, .md-mermaid .slice {
+  fill: var(--fg); color: var(--fg);
+}
+.md-mermaid .edgePath .path, .md-mermaid .edgePaths .path,
+.md-mermaid .edgePath .path.thick, .md-mermaid .relation,
+.md-mermaid .composition, .md-mermaid .aggregation, .md-mermaid .dependency {
+  stroke: var(--fg-muted); stroke-width: 1px;
+}
+.md-mermaid .edgeLabel { background: var(--surface); fill: var(--fg); }
+.md-mermaid .edgeLabel rect { fill: var(--surface); stroke: var(--rule); }
+.md-mermaid .edgeLabel text { fill: var(--fg); }
+.md-mermaid .cluster rect { fill: var(--surface-2); stroke: var(--rule); stroke-dasharray: 2 2; }
+.md-mermaid .cluster-label, .md-mermaid .cluster-label text,
+.md-mermaid .cluster-label span, .md-mermaid .cluster-label p {
+  fill: var(--fg-muted); color: var(--fg-muted);
+}
+.md-mermaid .marker, .md-mermaid marker { fill: var(--fg-muted); stroke: var(--fg-muted); }
+.md-mermaid .messageText { fill: var(--fg); stroke: none; }
+.md-mermaid .messageLine0, .md-mermaid .messageLine1 { stroke: var(--fg-muted); }
+.md-mermaid .note { fill: color-mix(in srgb, var(--accent) 10%, var(--surface)); stroke: var(--accent); }
+.md-mermaid .noteText { fill: var(--fg); }
+.md-mermaid .grid .tick line, .md-mermaid .grid path { stroke: var(--rule); }
+.md-mermaid .taskBar { fill: color-mix(in srgb, var(--accent) 40%, var(--surface)); }
+.md-mermaid .sectionTitle, .md-mermaid .todayText { fill: var(--fg-muted); }
 .md-mermaid-error {
   color: var(--danger); font-family: var(--mono); font-size: var(--step-0);
   justify-content: flex-start; white-space: pre-wrap;
