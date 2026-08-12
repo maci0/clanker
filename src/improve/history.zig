@@ -458,8 +458,12 @@ pub const History = struct {
         var buf: std.ArrayList(u8) = .empty;
         for (entries[start..]) |e| {
             if (e.summary.len == 0) continue;
-            try buf.appendSlice(arena, "- ");
-            try buf.appendSlice(arena, e.status);
+            if (std.mem.eql(u8, e.status, "reverted")) {
+                try buf.appendSlice(arena, "- \xe2\x9b\x94 REVERTED (do NOT re-propose): ");
+            } else {
+                try buf.appendSlice(arena, "- ");
+                try buf.appendSlice(arena, e.status);
+            }
             // What the change did, not just that it landed. "accepted" on its
             // own reads as an endorsement, and a run whose last ten lines all
             // said "accepted" was being told, ten times over, that adding a
@@ -475,14 +479,14 @@ pub const History = struct {
             // what was attempted, not what went wrong with it.
             if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
                 if (std.mem.eql(u8, e.status, "reverted")) {
-                    try buf.appendSlice(arena, "\n    reverted because: ");
+                    try buf.appendSlice(arena, "\n    reverted by human because: ");
                 } else {
                     try buf.appendSlice(arena, "\n    rejected because: ");
                 }
                 try buf.appendSlice(arena, firstLine(e.detail, 200));
             }
             if (std.mem.eql(u8, e.status, "reverted") and e.detail.len == 0) {
-                try buf.appendSlice(arena, "\n    (reverted by human review after promotion)");
+                try buf.appendSlice(arena, "\n    (REVERTED by human review after promotion — do not re-propose this change in any form)");
             }
             try buf.appendSlice(arena, "\n");
         }
@@ -944,8 +948,9 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
 
     // The rendered history now tells the next run the truth.
     const summary = try hist.recentSummary(arena, 6);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "- reverted [behavior]: gets reverted") != null);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "(reverted by human review after promotion)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "REVERTED (do NOT re-propose)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "gets reverted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "do not re-propose this change in any form") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: stays accepted") != null);
 }
 
