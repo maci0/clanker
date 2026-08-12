@@ -197,8 +197,94 @@ violations** (the page's own `app.js` boot crash seen during the test is the
 concurrent agent's then-unresolved `UU` merge conflict, since resolved and
 committed as part of `a5c1414`).
 
+## A11y sweep — Phase 6 + mermaid additions (2026-08-12)
+
+axe-core 4.13.0 (npm-packed to /tmp, CDP-injected) over live `clanker serve`,
+1280×862: all 8 rail views + a transcript carrying the Phase 6 and mermaid
+additions injected through the real `lib/markdown.js`.
+
+- **Phase 6 + mermaid additions: 0 violations.** Branch button, run-ref
+  citation chips, composer model pill, and the rendered mermaid SVG (stripped
+  `<style>`, `aria-label` container, folded source) all pass.
+- **Boot regression fixed:** the merged tree's `app.js` referenced bare
+  `fuzzyMatch` with no alias for the `utilFuzzyMatch` import — the `/` prompt
+  list threw `fuzzyMatch is not defined` at render. Alias added beside the
+  markdown bindings; `pageErrors: []` on every view now.
+- **Contrast fixes (density-slice regression):** the `#f4f4f5` surface pushes
+  `--fg-muted` (#6b7280) to 4.39:1. `#header-model`, `button.model-pill` and
+  `.rail-item-meta` now use `color-mix(in srgb, var(--fg-muted) 55%, var(--fg))`
+  — theme-aware, ≥4.5:1 on every palette.
+- **Remaining, pre-existing (concurrent-surface items, not this slice's
+  additions):** chat `#task` textarea `role="combobox"` (aria-allowed-role,
+  minor — prompt-palette combobox design), `#rail-list` workspace headers as
+  direct non-`<li>` children (list, serious — workspace feature), board
+  nested-interactive 9 + aria-hidden-focus 4 + empty-table-header 1, goals
+  color-contrast 12 + label-title-only 12, runs `select-name` critical on the
+  run-compare B select, system color-contrast 4. These belong to the
+  concurrent agent's board/run-compare/goals/workspace work and are logged
+  here as the handoff for whoever resolves that surface.
+
+## Run changes — per-file edit diffs (2026-08-12)
+
+Parity slice: a run's file edits now render as per-file diffs in the run
+detail, the way the Kimi/ChatGPT/Claude surfaces show what a run changed.
+Before this, an `edit_file` node's detail said "replaced 1 match" — the
+result line — and nothing about the change itself; the raw `old`/`new` text
+was never recorded.
+
+- **Recording:** `src/agent/graph.zig` — `Node` gains `arguments` (a truncated
+  preview of the tool call's JSON arguments, capped at a new
+  `arguments_preview_cap` of 8000 — roomier than the 4000-byte output cap
+  because a diff needs both sides intact). `loop.zig` captures
+  `truncatedArgs(tc.arguments)` on every tool node; a collapsed retry keeps
+  the latest arguments; `persistGraphOrErr` writes the field only when
+  non-empty, so old runs and non-tool nodes stay byte-identical.
+- **Pass-through:** `tools/zig/cmd_graph.zig` — `GraphNode.arguments`
+  (`?[]const u8`, null for old runs) is re-emitted by `json <run-id>` so the
+  web UI sees it; `writeGraph` round-trips it.
+- **Rendering:** `app.js` node detail — for a tool node whose arguments parse
+  to `{path, old, new}` or `{path, create, content}`, a `diff-view` card
+  renders above the output: `✎ <path>  +N −M`, removed/added lines from
+  `diffRows` (common-prefix/suffix trim on the old/new fragments, two context
+  lines), theme-aware via the existing diff CSS. A create renders all-added;
+  an unparseable (truncated) arguments preview shows a "preview truncated"
+  note instead of a broken diff.
+- **Verified end-to-end** (playwright against live serve with a synthetic
+  run): 3 edit_file nodes → "+3 −3" (with context), "+1 −0" (create), "+40
+  −40"; 0 page errors; screenshot `docs/assets/webui/run-diff.png`. New
+  tests: cmd_graph GraphFile arguments round-trip + old-run compat,
+  `truncatedArgs` cap/UTF-8. Suite `429 pass, 1 skip (430 total)`.
+
+## Preview pane — html/svg fences (2026-08-12)
+
+Parity slice: an `html` or `svg` fence in an answer is now both code and
+output — the source stays copyable, and a Preview toggle opens a rendered
+pane below it, completing the rendered-output family (mermaid diagrams,
+then this). The content is model-generated and untrusted, so the posture is
+defense in depth:
+
+- **`lib/markdown.js` `buildCodeBlock`:** html/svg fences get a
+  `Preview`/`Hide preview` button (with `aria-expanded`) beside Copy; the
+  panel lazily creates an `<iframe sandbox="">` over a `blob:` URL
+  (`image/svg+xml` for svg, `text/html` for html; `srcdoc` fallback).
+  Sandboxed means no scripts and an opaque origin.
+- **CSP:** `webui_csp` gains `frame-src 'self' blob:` (documented in the
+  header comment). The frame inherits this document's policy, so even
+  without the sandbox attribute the markup's scripts, external images, and
+  fetches are blocked — the sandbox is belt, the inherited script-src is
+  braces. `img-src 'self' data:` stays, so data: images still render.
+- **CSS:** `.md-preview` — neutral white canvas (the markup may assume
+  white), 360px frame, hairline top rule.
+- **Verified** (playwright, live serve): html fence → Preview button, zig
+  fence → none; click → sandboxed blob iframe (sandbox="", 360px), toggle
+  hides; the injected `<script>` was **blocked by the sandbox** and an
+  external `<img>` was **blocked by the inherited CSP** (both observed as
+  console messages — the posture working, not defects); **zero frame-src
+  violations**; screenshot `docs/assets/webui/preview.png`.
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
-- Rerun the axe sweep over the Phase 6 additions (branch handler, run-ref chips, model pill) once the concurrent agent's in-flight `app.js` work settles.
+- Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.
+- If Kimi parity is to extend beyond the documented Phase 6: a composer "research/web search" toggle (wiring the existing `web_search`/`fetch_web` tools into a run directive — server-side, in the agent loop) is the remaining candidate. The per-run file-edit diff view and the html/svg preview pane from this slice are now shipped.

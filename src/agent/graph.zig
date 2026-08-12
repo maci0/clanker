@@ -40,21 +40,45 @@ pub const Node = struct {
     /// `output_preview_cap` bytes so a large tool result can't blow up the
     /// graph file. Lets the web UI show what happened, not just its size.
     output: []const u8 = "",
+    /// Truncated preview of the tool call's arguments (JSON) — the input a
+    /// step consumed, complementing `output`, which says what it produced.
+    /// What an edit tool changed lives here (path/old/new), and the run
+    /// detail renders it as a per-file diff; the result line alone ("replaced
+    /// 1 match") says nothing about the change itself. Capped at
+    /// `arguments_preview_cap` — and, unlike output, a truncated preview is
+    /// unparseable JSON, so the UI degrades to a note instead of a broken
+    /// diff. Empty for non-tool nodes and for runs recorded before the field.
+    arguments: []const u8 = "",
 };
 
 pub const output_preview_cap = 4000;
 
-/// Bounds a node's recorded output to `output_preview_cap` bytes.
+/// Diffs need both sides of the edit intact to render, and a real edit's
+/// old/new fragments carry surrounding context lines, so the arguments
+/// preview is deliberately roomier than the output preview.
+pub const arguments_preview_cap = 8000;
+
+/// Bounds a recorded preview to `cap` bytes.
 /// When the cap cuts through a UTF-8 codepoint, backs up to the start of
 /// that codepoint so the preview never ends with a dangling continuation byte
 /// (which would corrupt the JSON or UI rendering).
-pub fn truncatedPreview(s: []const u8) []const u8 {
-    if (s.len <= output_preview_cap) return s;
-    var end: usize = output_preview_cap;
+pub fn previewCap(s: []const u8, cap: usize) []const u8 {
+    if (s.len <= cap) return s;
+    var end: usize = cap;
     // A continuation byte is 0b10xxxxxx. Back up while the byte at `end` is
     // one, stepping out of the middle of a multi-byte character.
     while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
     return s[0..end];
+}
+
+/// Bounds a node's recorded output to `output_preview_cap` bytes.
+pub fn truncatedPreview(s: []const u8) []const u8 {
+    return previewCap(s, output_preview_cap);
+}
+
+/// Bounds a node's recorded arguments to `arguments_preview_cap` bytes.
+pub fn truncatedArgs(s: []const u8) []const u8 {
+    return previewCap(s, arguments_preview_cap);
 }
 
 pub const Graph = struct {
@@ -92,6 +116,10 @@ pub const Graph = struct {
                 last.completion_tokens += node.completion_tokens;
                 last.result_bytes += node.result_bytes;
                 last.iteration = node.iteration;
+                // A retry re-sends the call, usually unchanged: keep the
+                // latest arguments so the recorded preview matches what the
+                // successful attempt actually ran.
+                last.arguments = node.arguments;
                 return;
             }
         }
@@ -150,6 +178,20 @@ test "truncatedPreview does not split a UTF-8 codepoint" {
     try std.testing.expect(got.len == 0 or (got[got.len - 1] & 0xC0) != 0x80);
     // And it must not contain the split continuation byte.
     try std.testing.expect(std.mem.indexOf(u8, got, &.{0xA9}) == null);
+}
+
+test "truncatedArgs caps at arguments_preview_cap without splitting a codepoint" {
+    var big: [arguments_preview_cap + 3]u8 = undefined;
+    @memset(big[0..arguments_preview_cap], 'a');
+    big[arguments_preview_cap] = 0xC3;
+    big[arguments_preview_cap + 1] = 0xA9;
+    big[arguments_preview_cap + 2] = 'b';
+    const got = truncatedArgs(&big);
+    try std.testing.expectEqual(arguments_preview_cap, got.len);
+    try std.testing.expect(got.len == 0 or (got[got.len - 1] & 0xC0) != 0x80);
+    // Under the cap, the whole slice is returned untouched.
+    const small = "{\"path\":\"a.zig\",\"old\":\"x\",\"new\":\"y\"}";
+    try std.testing.expectEqualStrings(small, truncatedArgs(small));
 }
 
 test "repeated steps collapse, and a step revisited later marks the loop" {

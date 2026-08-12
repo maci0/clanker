@@ -2163,13 +2163,32 @@ var layoutGraph = graphLayoutGraph;
 var buildIncompleteNode = graphBuildIncompleteNode;
 var buildNodeBox = graphBuildNodeBox;
 
+/* Rows for the edit-diff card: removed/added lines with a couple of context
+   lines around the change, computed from an edit tool's old/new fragments.
+   The fragments carry surrounding context by contract, so trimming the
+   common prefix and suffix leaves exactly what the edit changed. */
+function diffRows(oldText, newText) {
+  var oldLines = oldText.replace(/\n$/, "").split("\n");
+  var newLines = newText.replace(/\n$/, "").split("\n");
+  var pre = 0;
+  while (pre < oldLines.length && pre < newLines.length && oldLines[pre] === newLines[pre]) pre += 1;
+  var oldEnd = oldLines.length;
+  var newEnd = newLines.length;
+  while (oldEnd > pre && newEnd > pre && oldLines[oldEnd - 1] === newLines[newEnd - 1]) { oldEnd -= 1; newEnd -= 1; }
+  var rows = [];
+  for (var i = Math.max(0, pre - 2); i < pre; i += 1) rows.push({ kind: "ctx", text: oldLines[i] });
+  for (var i = pre; i < oldEnd; i += 1) rows.push({ kind: "del", text: oldLines[i] });
+  for (var i = pre; i < newEnd; i += 1) rows.push({ kind: "add", text: newLines[i] });
+  for (var i = oldEnd; i < Math.min(oldLines.length, oldEnd + 2); i += 1) rows.push({ kind: "ctx", text: oldLines[i] });
+  return rows;
+}
+
 /* A collapsible tree for JSON-shaped node output — most tool results are
    JSON, and a flat highlighted blob makes a large payload (a big file
    listing, a nested API response) a wall of text with no way to collapse
    the part you don't care about. <details>/<summary> gives keyboard
    toggle and correct semantics for free, no custom ARIA needed. */
-function buildJsonTree(value, keyLabel, depth) {
-  if (value === null) return jsonLeaf(keyLabel, "null", "hljs-literal");
+function buildJsonTree(value, keyLabel, depth) {  if (value === null) return jsonLeaf(keyLabel, "null", "hljs-literal");
   if (typeof value === "boolean") return jsonLeaf(keyLabel, String(value), "hljs-literal");
   if (typeof value === "number") return jsonLeaf(keyLabel, String(value), "hljs-number");
   if (typeof value === "string") return jsonLeaf(keyLabel, JSON.stringify(value), "hljs-string");
@@ -2337,6 +2356,67 @@ function showNodeDetail(kind, node) {
 
   var out = document.createElement("div");
   out.className = "run-detail-output";
+  /* A file-edit tool records its arguments (path/old/new or create/content)
+     on the run node now, so the change itself renders here — the result
+     line ("replaced 1 match") says it happened, not what it was. Old runs
+     predate the field and fall through to the output below. */
+  (function () {
+    var argsStr = node.arguments || "";
+    if (!argsStr) return;
+    var argsParsed = null;
+    try { argsParsed = JSON.parse(argsStr); } catch (e) { argsParsed = null; }
+    // Truncated previews are invalid JSON on purpose (the cap cuts mid-string)
+    // so a broken diff can never render: say so instead.
+    if (!argsParsed) {
+      if (argsStr.length >= 8000) {
+        var truncNote = document.createElement("p");
+        truncNote.className = "meta run-diff-truncated";
+        truncNote.textContent = "arguments preview truncated — open the run's source to see the full change";
+        out.appendChild(truncNote);
+      }
+      return;
+    }
+    var file = argsParsed.path;
+    if (typeof file !== "string" || !file) return;
+    var rows = [];
+    var isCreate = argsParsed.create === true;
+    if (isCreate && typeof argsParsed.content === "string") {
+      var contentLines = argsParsed.content.replace(/\n$/, "").split("\n");
+      contentLines.forEach(function (l) { rows.push({ kind: "add", text: l }); });
+    } else if (typeof argsParsed.old === "string" && typeof argsParsed.new === "string") {
+      rows = diffRows(argsParsed.old, argsParsed.new);
+    } else {
+      return;
+    }
+    var adds = rows.filter(function (r) { return r.kind === "add"; }).length;
+    var dels = rows.filter(function (r) { return r.kind === "del"; }).length;
+    var diffWrap = document.createElement("div");
+    diffWrap.className = "diff-view edit-diff";
+    var diffHead = document.createElement("div");
+    diffHead.className = "diff-header";
+    var fileTag = document.createElement("span");
+    fileTag.textContent = "\u270e " + file;
+    diffHead.appendChild(fileTag);
+    var counts = document.createElement("span");
+    counts.className = "diff-counts";
+    counts.textContent = "+" + adds + " \u2212" + dels;
+    diffHead.appendChild(counts);
+    diffWrap.appendChild(diffHead);
+    rows.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "diff-line";
+      row.setAttribute("data-kind", r.kind);
+      var sign = document.createElement("span");
+      sign.className = "diff-sign";
+      sign.textContent = r.kind === "add" ? "+" : (r.kind === "del" ? "\u2212" : " ");
+      row.appendChild(sign);
+      var txt = document.createElement("span");
+      txt.textContent = r.text;
+      row.appendChild(txt);
+      diffWrap.appendChild(row);
+    });
+    out.appendChild(diffWrap);
+  })();
   if (node.output) {
     var parsed;
     if (!truncated) {

@@ -307,6 +307,48 @@ export function buildCodeBlock(lang, code) {
   langTag.className = "code-lang";
   langTag.textContent = shown.lang;
   head.appendChild(langTag);
+  /* An html or svg fence is both code and output: the source stays
+     copyable above, and a Preview toggle renders it below. The content is
+     model-generated and untrusted, so the frame is fully sandboxed (no
+     scripts, opaque origin) and the page CSP still applies to it — a blob
+     URL inherits the creating document's policy, which blocks script
+     regardless of what the markup tries. */
+  var langNorm = (lang || "").toLowerCase();
+  var previewBtn = null;
+  var panel = null;
+  if (langNorm === "html" || langNorm === "svg") {
+    previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "copy-code-btn";
+    previewBtn.textContent = "Preview";
+    previewBtn.setAttribute("aria-expanded", "false");
+    panel = document.createElement("div");
+    panel.className = "md-preview";
+    panel.hidden = true;
+    previewBtn.addEventListener("click", function () {
+      if (panel.hidden) {
+        panel.hidden = false;
+        if (!panel.querySelector("iframe")) {
+          var fr = document.createElement("iframe");
+          fr.setAttribute("sandbox", "");
+          fr.title = "Rendered preview of " + langNorm;
+          try {
+            fr.src = URL.createObjectURL(new Blob([code], { type: langNorm === "svg" ? "image/svg+xml" : "text/html" }));
+          } catch (_) {
+            fr.srcdoc = code;
+          }
+          panel.appendChild(fr);
+        }
+        previewBtn.textContent = "Hide preview";
+        previewBtn.setAttribute("aria-expanded", "true");
+      } else {
+        panel.hidden = true;
+        previewBtn.textContent = "Preview";
+        previewBtn.setAttribute("aria-expanded", "false");
+      }
+    });
+    head.appendChild(previewBtn);
+  }
   var copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.className = "copy-code-btn";
@@ -315,6 +357,7 @@ export function buildCodeBlock(lang, code) {
   head.appendChild(copyBtn);
   wrap.appendChild(head);
   wrap.appendChild(pre);
+  if (panel) wrap.appendChild(panel);
   return wrap;
 }
 

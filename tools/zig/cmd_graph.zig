@@ -30,6 +30,10 @@ const GraphNode = struct {
     duration_ms: u64 = 0,
     ok: bool = true,
     output: []const u8 = "",
+    /// Tool-call arguments preview (JSON) recorded since the arguments field
+    /// landed; absent for older runs. Re-emitted by `json <run-id>` so the
+    /// web UI can render the change an edit tool made.
+    arguments: ?[]const u8 = null,
 };
 
 const GraphFile = struct {
@@ -211,6 +215,25 @@ test labelOf {
     const cut = labelOf(wide);
     try std.testing.expect(cut.len <= label_max);
     try std.testing.expect(std.unicode.utf8ValidateSlice(cut));
+}
+
+test "GraphFile carries tool arguments for the web UI" {
+    const src = "{\"run_id\":\"run-1\",\"task\":\"t\",\"nodes\":[{\"kind\":\"tool\",\"iteration\":1,\"label\":\"edit_file\",\"output\":\"{\\\"ok\\\":true}\",\"arguments\":\"{\\\"path\\\":\\\"a.zig\\\",\\\"old\\\":\\\"x\\\",\\\"new\\\":\\\"y\\\"}\"}]}";
+    const g = try std.json.parseFromSliceLeaky(GraphFile, std.testing.allocator, src, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 1), g.nodes.len);
+    try std.testing.expectEqualStrings("edit_file", g.nodes[0].label);
+    const args = g.nodes[0].arguments orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("{\"path\":\"a.zig\",\"old\":\"x\",\"new\":\"y\"}", args);
+    // The web UI's view re-emits it: `json <run-id>` Stringifies GraphFile.
+    var enc: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer enc.deinit();
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(g);
+    try std.testing.expect(std.mem.indexOf(u8, enc.written(), "\"arguments\"") != null);
+    // Old runs recorded before the field parsed fine and stay field-less.
+    const old = "{\"run_id\":\"run-0\",\"task\":\"t\",\"nodes\":[{\"kind\":\"tool\",\"iteration\":1,\"label\":\"read_file\",\"output\":\"{}\"}]}";
+    const g0 = try std.json.parseFromSliceLeaky(GraphFile, std.testing.allocator, old, .{ .ignore_unknown_fields = true });
+    try std.testing.expect(g0.nodes[0].arguments == null);
 }
 
 fn lessThanStr(_: void, a: []const u8, b: []const u8) bool {

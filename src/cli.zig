@@ -5529,7 +5529,12 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // 'unsafe-inline': script-src stays 'self' (the meaningful boundary for a page
 // that fronts /api/run), and the markdown pipeline escapes raw HTML, so no
 // answer text can manufacture a <style> block of its own.
-const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// The html/svg preview pane opens a fully sandboxed iframe (`sandbox=""`,
+// no scripts, opaque origin) over a blob: URL, so frame-src allows 'self'
+// blob:. The frame inherits this document's policy, which is what actually
+// keeps the untrusted markup inert — the sandbox attribute is belt, the
+// inherited script-src is braces.
+const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The page, compressed when the client will take it. This is the response
 /// that blocks the first draw, so the 21 KB it used to send uncompressed was

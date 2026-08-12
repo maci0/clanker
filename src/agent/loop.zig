@@ -649,6 +649,7 @@ pub const Agent = struct {
                     .label = tc.name,
                     .result_bytes = content.len,
                     .output = graph_mod.truncatedPreview(content),
+                    .arguments = graph_mod.truncatedArgs(tc.arguments),
                 });
                 // A tool that exists to answer pass/fail gets its verdict on
                 // the timeline: "the run continued because this passed" is
@@ -1764,6 +1765,10 @@ pub const Agent = struct {
             try s.write(n.ok);
             try s.objectField("output");
             try s.write(n.output);
+            if (n.arguments.len > 0) {
+                try s.objectField("arguments");
+                try s.write(n.arguments);
+            }
             try s.objectField("repeats");
             try s.print("{d}", .{n.repeats});
             try s.objectField("loop_to");

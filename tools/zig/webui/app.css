@@ -763,6 +763,16 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   background: var(--surface-2);
 }
 
+/* ---- rendered preview (html/svg fences) ----
+   The preview frame is a sandboxed iframe over a blob: URL; its content is
+   model-generated, so it renders on a neutral white canvas under a
+   hairline — deliberately not themed, because the markup may assume white. */
+.md-preview { border-top: 1px solid var(--rule); }
+.md-preview iframe {
+  display: block; width: 100%; height: 360px; border: 0;
+  background: #fff;
+}
+
 /* ---- fenced code blocks inside a finished answer ----
    The language tag and Copy button sit in their own header strip rather
    than floating over the code: as overlays they covered the first line and
@@ -1103,6 +1113,12 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .diff-line[data-kind="hunk"] { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent-text); font-weight: 600; }
 .diff-gutter { flex: none; width: 2.2rem; text-align: right; padding-right: 0.5rem; color: var(--fg-muted); user-select: none; }
 .diff-sign { flex: none; width: 1rem; text-align: center; user-select: none; }
+.diff-line[data-kind="ctx"] { color: var(--fg-muted); }
+.diff-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* The edit-diff card (rendered from a tool node's recorded arguments) sits
+   above the tool's own output, so it gets its own bottom air. */
+.edit-diff { margin-bottom: 0.6rem; }
+.run-diff-truncated { padding: 0.4rem 0.6rem; }
 .run-detail-close {
   padding: 0.2rem 0.6rem; font-size: var(--step-0);
   background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);

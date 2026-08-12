@@ -244,6 +244,8 @@ Phase 6 — Chat UX parity (Kimi Code web UI):
 - [x] 6.3 Model pill inside composer — the active model as a pill button beside the run controls, opening the same picker the header chip opens
 - [x] 6.4 Collapsed icon rail — rail collapses to a 3.5rem icon strip (`data-collapsed`, `data-short`, persisted); collapse toggle hidden under 60rem where the rail is a drawer
 - [x] 6.5 Mermaid diagrams — `mermaid` fences render as diagrams (vendored `mermaid@11`, lazy `loadMermaid`, `buildMermaidBlock` + `renderMermaidBlocks` in `lib/markdown.js`), themed by `.md-mermaid` rules riding the app's palette variables; the SVG's inline `<style>` is stripped for the CSP and `style-src` gained `'unsafe-inline'` for the vendored renderer only (`script-src` stays `'self'`)
+- [x] 6.6 Run changes — file-edit tool nodes record their arguments (`Node.arguments`, `arguments_preview_cap` 8000) and the run detail renders a per-file diff card (`✎ path  +N −M`, context lines, create = all-added) for `path`/`old`/`new` and `create`/`content` shapes
+- [x] 6.7 Preview pane — `html`/`svg` fences render in a sandboxed blob-URL iframe (Preview toggle, `sandbox=""`, no scripts, opaque origin), with `frame-src 'self' blob:` added to the CSP; untrusted markup's scripts/external resources stay blocked
 
 Infrastructure:
 
@@ -251,8 +253,11 @@ Infrastructure:
       `features/*` modules embedded, routed, and individually cached)
 - [x] `lib.out_cap` comptime guard passes with headroom
 - [x] Strict CSP verified live (`curl -si`): no inline script, and inline style only from the vendored mermaid renderer (`style-src 'self' 'unsafe-inline'`, `script-src 'self'` unchanged)
-- [x] Accessibility: 0 critical / 0 serious across all views (axe-core,
-      `docs/assets/webui/axe.json`)
+- [x] Accessibility: Phase 6 + mermaid additions 0 violations across views
+      (axe-core 4.13, live sweep 2026-08-12 — see `docs/WEBUI_REVIEW.md`);
+      pre-existing composer/rail/board/goals/runs contrast and structure
+      items from the concurrent board/run-compare/workspace work logged there
+      as the handoff for that surface
 
 ## Open questions / future work
 
