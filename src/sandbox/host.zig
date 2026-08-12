@@ -1332,7 +1332,7 @@ const chat_history_page_size = 20;
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
 /// Room-scoped todo_* ops were removed once the board covered that need
 /// (ADR 0002, docs/adrs/0002-private-todos-vs-shared-board.md); a todo_* op
-/// naming a "room" now fails with a pointer to the board_* tools below.
+/// naming a "room" now fails with a pointer to the kanban_* tools below.
 /// The only surviving todo_* path is a run's private list (sub-agent runs
 /// only; src/agent/private_todos.zig): same op names and response shapes,
 /// but in-memory, single-owner, and never fanned out.
@@ -1503,7 +1503,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         // append, the fan-out and the subscription filter. The branch near the
         // top of this function still handles a todo_* op with no room, which is
         // the run's own private list and genuinely a different thing.
-        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"room todo lists are board cards now: use board_add, board_move, board_claim or board_list. They fold the same room log, so nothing was lost, and a card also carries subtasks, dependencies, a work log and a cost.\"}");
+        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"room todo lists are board cards now: use kanban_add, kanban_move, kanban_claim or kanban_list. They fold the same room log, so nothing was lost, and a card also carries subtasks, dependencies, a work log and a cost.\"}");
     }
     log.log(.warn, "[chat] unknown op '{s}'", .{op});
     return Err.invalid;
@@ -1513,9 +1513,11 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // The board is one guest (board.wasm) behind eleven manifest names, and it
     // needs two ops rather than one: it replicates each card into its room with
     // "send" and folds that room's log back with "history" on every read.
-    // Matched exactly, or on the "board_" prefix — a bare startsWith("board")
-    // also grants any future tool whose name merely begins that way.
-    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "board_"))
+    // Matched on the "board" name (the internal multiplexed entry) and the
+    // "kanban_" prefix the public tools use (commit 4fadb86 renamed the tools
+    // from board_* to kanban_*).
+    if (std.mem.eql(u8, tool_name, "board") or
+        std.mem.startsWith(u8, tool_name, "kanban_"))
         return std.mem.eql(u8, op, "send") or std.mem.eql(u8, op, "history");
     // The janitor announces what it pruned into the room. Like the board it
     // ignores a failed chat call, so being denied here cost it its
@@ -2454,8 +2456,8 @@ fn isGitRemoteOpToken(t: []const u8) bool {
 /// denied, which blocked the operator's per-worktree workflow (`git -C "$WT"
 /// ...`) through the sandboxed git tool.
 const git_value_options = [_][]const u8{
-    "-C",         "--git-dir",      "--work-tree",      "--git-common-dir",
-    "-c",         "--namespace",    "--exec-path",      "--config-env",
+    "-C", "--git-dir",   "--work-tree", "--git-common-dir",
+    "-c", "--namespace", "--exec-path", "--config-env",
 };
 
 /// Git has network-capable plumbing verbs such as ls-remote and archive that
@@ -4412,9 +4414,9 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     // board ignores a failed chat call — so this is pinned per name, not just
     // for the bare "board".
     for ([_][]const u8{
-        "board",        "board_add",     "board_claim",  "board_cost",
-        "board_delete", "board_depend",  "board_list",   "board_log",
-        "board_move",   "board_subtask", "board_update",
+        "board",         "kanban_add",     "kanban_claim",  "kanban_cost",
+        "kanban_delete", "kanban_depend",  "kanban_list",   "kanban_log",
+        "kanban_move",   "kanban_subtask", "kanban_update",
     }) |tool| {
         try std.testing.expect(chatAccessAllowed(tool, "send"));
         try std.testing.expect(chatAccessAllowed(tool, "history"));
