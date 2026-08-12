@@ -832,28 +832,10 @@ pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, title: []const u8, messages_in: []const StoredMessage) ![]const u8 {
     var out: std.ArrayList(types.Message) = .empty;
     for (messages_in) |sm| {
+        if (sm.content == null or sm.content.?.len == 0) continue;
         const role = roleFromStr(sm.role);
-        // Accept user, assistant, and tool messages so imported OpenAI/OpenWebUI
-        // exports that include tool rounds preserve the full conversation.
-        if (role != .user and role != .assistant and role != .tool) continue;
-        // Tool messages need their tool_call_id; user/assistant need content.
-        if (role == .tool) {
-            if (sm.tool_call_id == null) continue;
-        } else if (sm.content == null or sm.content.?.len == 0) {
-            // Assistant messages with tool_calls but no content are valid.
-            if (role == .assistant and sm.tool_calls != null and sm.tool_calls.?.len > 0) {
-                // fall through
-            } else {
-                continue;
-            }
-        }
-        var msg = types.Message{ .role = role, .content = sm.content, .tool_call_id = sm.tool_call_id };
-        if (sm.tool_calls) |calls| {
-            var tc_list: std.ArrayList(types.ToolCall) = .empty;
-            for (calls) |tc| try tc_list.append(arena, .{ .id = tc.id, .name = tc.name, .arguments = tc.arguments });
-            msg.tool_calls = try tc_list.toOwnedSlice(arena);
-        }
-        try out.append(arena, msg);
+        if (role != .user and role != .assistant) continue;
+        try out.append(arena, .{ .role = role, .content = sm.content });
     }
     if (out.items.len == 0) return error.MissingField;
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
