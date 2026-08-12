@@ -120,6 +120,7 @@ var el = {
   cardDetail: document.getElementById("card-detail"),
   cardDetailBox: document.querySelector("#card-detail .overlay-box"),
   boardMine: document.getElementById("board-mine"),
+  boardResyncGoals: document.getElementById("board-resync-goals"),
   boardRefresh: document.getElementById("board-refresh"),
   boardStatus: document.getElementById("board-status"),
   boardRoom: document.getElementById("board-room"),

@@ -417,6 +417,20 @@ test "compactMessages counts tool-call arguments toward the token estimate" {
     try std.testing.expectEqualStrings("bbbb", messages.items[1].content.?);
 }
 
+test "estimatedTokens rounds up so short messages are not free" {
+    try std.testing.expectEqual(@as(usize, 1), estimatedTokens(.{ .role = .user, .content = "a" }));
+    try std.testing.expectEqual(@as(usize, 1), estimatedTokens(.{ .role = .user, .content = "abcd" }));
+    try std.testing.expectEqual(@as(usize, 2), estimatedTokens(.{ .role = .user, .content = "abcde" }));
+    // A tool-call-only message contributes its arguments toward the token
+    // estimate: 10 bytes -> ceil(10/4) = 3 tokens.
+    const m = types.Message{ .role = .assistant, .tool_calls = &.{.{
+        .id = "c",
+        .name = "read",
+        .arguments = "abcdefghij",
+    }} };
+    try std.testing.expectEqual(@as(usize, 3), estimatedTokens(m));
+}
+
 test "compactMessages preserves system messages even when they exceed the budget" {
     var messages: std.ArrayList(types.Message) = .empty;
     defer messages.deinit(std.testing.allocator);
@@ -1057,4 +1071,11 @@ test "deleteSession on a missing session returns FileNotFound without touching t
     // with the git tool's deny checks in the eval suite.
     try std.testing.expectError(error.FileNotFound, deleteSession(io, arena, tmp.dir, "nope"));
     try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, "state", .{}));
+}
+
+test "compactMessages is a no-op on an empty message list" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+    compactMessages(&messages, 0);
+    try std.testing.expectEqual(@as(usize, 0), messages.items.len);
 }

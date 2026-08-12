@@ -1583,9 +1583,12 @@ pub fn hostOf(url: []const u8) ?[]const u8 {
     var host = rest[0..end];
     if (std.mem.indexOfScalar(u8, host, '@')) |at| host = host[at + 1 ..];
     if (host.len > 0 and host[0] == '[') {
-        // IPv6 literal: the port sits after the closing bracket.
+        // IPv6 literal: the port sits after the closing bracket. std.Uri.host
+        // excludes the brackets, so return the raw address or the granted host
+        // could never match ck_http's comparison against a peer/providers URL
+        // on IPv6.
         const close = std.mem.indexOfScalar(u8, host, ']') orelse return null;
-        host = host[0 .. close + 1];
+        host = host[1..close];
     } else if (std.mem.indexOfScalar(u8, host, ':')) |colon| {
         host = host[0..colon];
     }
@@ -1608,6 +1611,18 @@ test "configuredHosts extracts peer and provider hosts" {
     try std.testing.expectEqualStrings("rig.lan", peer_hosts[1]);
 
     try std.testing.expectEqual(@as(usize, 0), (try configuredHosts(&cfg, arena, "nothing")).len);
+    try std.testing.expect(hostOf("not-a-url") == null);
+}
+
+test "hostOf strips IPv6 brackets, userinfo, and ports" {
+    // An IPv6 literal: std.Uri.host excludes the brackets, so the granted
+    // host must too, or an IPv6 peer/provierd could never be reached by a
+    // network_from_config tool.
+    try std.testing.expectEqualStrings("::1", hostOf("http://[::1]:8080/agent").?);
+    try std.testing.expectEqualStrings("::1", hostOf("http://[::1]").?);
+    // Userinfo and port are stripped before the host comparison.
+    try std.testing.expectEqualStrings("rig.lan", hostOf("https://user:pass@rig.lan:8443").?);
+    // A URL with no scheme yields nothing rather than a bogus host.
     try std.testing.expect(hostOf("not-a-url") == null);
 }
 

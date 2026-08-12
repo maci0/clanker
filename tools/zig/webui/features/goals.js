@@ -449,6 +449,40 @@ export function goalIdForCard(cardId) {
   return null;
 }
 
+/* The board's "Re-sync from goals" action: a goal can be done while its mirror
+   card sits in an earlier column — a card auto-created in the backlog by
+   mirrorGoalsToBoard whose goal was later marked done, for instance. Walk the
+   goals and, for each done goal, move its card to the done column. Idempotent
+   and cheap: a card already in done is left alone, and the reverse-sync in
+   board.js's postBoard is a no-op for an already-done goal, so this never
+   loops. Returns how many cards were moved. */
+export function syncCardsFromGoals() {
+  var done = board.columns.length ? board.columns[board.columns.length - 1].id : "done";
+  var moved = 0;
+  var goals = goalState.val || [];
+  goals.forEach(function (g) {
+    if (!g || !g.id || (g.status || "active") !== "done") return;
+    var cardId = goalCardLinks[g.id];
+    if (!cardId) {
+      // No recorded link (e.g. a card auto-created by title after a reload):
+      // a done goal's mirror card is still findable by matching the objective.
+      for (var i = 0; i < board.cards.length; i++) {
+        if (board.cards[i].title === g.objective) { cardId = board.cards[i].id; break; }
+      }
+    }
+    if (!cardId) return;
+    var card = null;
+    for (var j = 0; j < board.cards.length; j++) {
+      if (board.cards[j].id === cardId) { card = board.cards[j]; break; }
+    }
+    if (card && card.column !== done) {
+      postBoard({ op: "move", id: cardId, column: done }, null);
+      moved += 1;
+    }
+  });
+  return moved;
+}
+
 /* Wires the view to the DOM and the app: `deps.el` is app.js's element map,
    `deps.showView` switches views, `deps.getSessionId` reads the conversation
    the chat composer is on (a goal run joins that session). */
