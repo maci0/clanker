@@ -29,6 +29,12 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.
+- `src/schedule/` — `clanker schedule`: the cron dialect and next-fire
+  arithmetic (`cron.zig`, pure — no allocator, clock or `std.Io`, so it is
+  fully host-testable), `state/schedule.json` + the fire ledger (`store.zig`),
+  the due/claim/fire logic (`runner.zig`, driven by a `Fire` callback so its
+  tests need no provider), and the operator surface (`command.zig`). Nothing
+  here fires on its own; the system's cron calls `clanker schedule run-due`.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging and dotenv. Peer notify/phonebook, patch application, knowledge
   store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).

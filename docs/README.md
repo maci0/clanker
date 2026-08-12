@@ -240,7 +240,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
-| `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
+| `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
 entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
@@ -471,6 +471,7 @@ iter 2
 | `chat history <room> [after]` | Read a chatroom's history (newest first) |
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
+| `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
 | `stats` | Token usage per provider/model |
 | `serve [--port N]` | HTTP server + web UI (default port 17921) |
 | `setup` | Guided first run: check config, keys and tools |
@@ -488,6 +489,42 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 - The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`.
 
 `clanker providers check <name>` checks one provider: the same provenance line and `default=true`/`default=false` marker, no summary table. It exits non-zero when the named provider is unknown (`UnknownProvider`) or did not come back OK (`ProviderCheckFailed`); a full sweep does not fail on a provider that is down.
+
+### Scheduled runs
+
+Recurring agent runs, kept in `state/schedule.json` and recorded in `state/schedule/log.jsonl`. Code: `src/schedule/` (`cron.zig` the dialect, `store.zig` the two files, `runner.zig` the due/claim/fire logic, `command.zig` the operator surface). Full design in [docs/prds/0009-schedule.md](prds/0009-schedule.md).
+
+| Subcommand | What it does |
+|---|---|
+| `schedule list` | Every entry with its next fire time (the default with no subcommand) |
+| `schedule add "<cron>" "<task>"` | Schedule a task. The first run is the first window *after* the add, never immediately |
+| `schedule remove <id>` | Drop an entry; its ledger history stays |
+| `schedule enable <id>` / `disable <id>` | A disabled entry is never due. Re-enabling counts the next window from now, not from the pause |
+| `schedule run <id>` | Fire one entry now, whatever its schedule says — the way to test an entry. Counts as a real run: it advances the window and lands in the ledger marked `manual` |
+| `schedule run-due` | Fire everything whose window has passed. What cron calls |
+| `schedule log` | The last 20 ledger records, newest first |
+
+Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a scheduled run can use a cheaper backend than the default; `--tz-offset <±HH:MM>` sets the fixed offset the cron fields are read at (also `UTC`, or a plain minute count).
+
+**Nothing fires on its own.** There is no background loop and no scheduling thread in `clanker serve` — the system's own cron (or a systemd timer, or launchd) is the clock, which is the decision recorded in [ADR 0008](adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md):
+
+```
+* * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due
+```
+
+`run-due` is built for that: it holds a non-blocking exclusive lock for the whole sweep, so a per-minute cron overlapping a run that takes longer than a minute prints `another 'schedule run-due' is still working` and exits 0 rather than stacking sweeps. It exits non-zero only when an entry it fired came back an error.
+
+**Cron dialect.** Five fields — `minute hour day-of-month month day-of-week` — each `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those. Sunday is `0` or `7`. Deliberately not accepted, because guessing at a dialect is worse than an error at the point the mistake was made: names (`MON`, `JAN`), `@nicknames` (`@daily`), a seconds field, `L`/`W`/`#`, wrapping ranges (`55-5`), and a step on a bare number (`5/10` — write `5-59/10` or `*/10`). When *both* day fields are restricted the entry fires when **either** matches, as in Vixie cron: `0 0 13 * 5` is "the 13th, and every Friday", not "Friday the 13th". A field counts as unrestricted when it is written `*` or `*/n`; `*/2,15` is a set the writer chose and is treated as one. A spec that parses but can never come around (`0 0 30 2 *`) is refused by `add`.
+
+**Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0007](adrs/0007-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `src/schedule/cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
+
+**Missed runs fire once and are never backfilled.** An entry's `last_run` records the moment it *ran*, not the slot it ran *for*, so the next window is computed from wake time. A machine that slept through a day of a `*/5` entry fires it exactly once on waking, counts the 286 windows in between into the ledger's `skipped`, and resumes on the normal grid. Backfilling would mean 288 agent runs and a real bill for answers that stopped being interesting hours ago.
+
+`run-due` claims a window — writes `last_run` and `runs += 1` — *before* it calls the model, then re-opens the store afterwards to record the outcome. A sweep killed halfway therefore leaves the entry looking fired (at-most-once, rather than a crash loop that bills per iteration), and an `enable`/`disable` that landed while the model was working survives the write.
+
+**Ledger.** `state/schedule/log.jsonl`, one JSON object per line, the same shape `state/arena/log.jsonl` uses: `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`. `trigger` is `due` or `manual`; `due_at` is the window that made the entry due, which differs from `ts` because cron granularity is a minute and `run-due` may be seconds late. Trimmed oldest-first at 4 MiB.
+
+The shell scripts `clanker-improve.sh` and `clanker-review.sh` are still driven from outside the binary; nothing in them has moved into `schedule`. What `schedule` replaces is a crontab line calling `clanker run "<prompt>"`.
 
 ## Configuration
 
