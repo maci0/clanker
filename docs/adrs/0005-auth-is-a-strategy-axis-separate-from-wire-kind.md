@@ -85,3 +85,34 @@ detail the codec/transport already owns.
   fail loudly rather than guess wrong and send a token on the wrong header.
 - Auth stays native (ADR 0004): the token is a secret, and resolving or minting
   it is exactly what the sandbox withholds from guests.
+
+## Implementation notes
+
+Landed as `src/llm/auth.zig` (acquisition) plus each provider's `authHeaders`
+(application), with the strategy carried on the resolved `Credential` so the
+header code reads it rather than re-deriving it. The config field is an
+optional `auth = "api_key" | "oauth_static" | "oauth_refresh"` on a provider;
+unset means auto-detect, and an unrecognised value is rejected at load.
+
+Two details differ from the sketch above:
+
+- **Detection is per-provider data, not a hard-coded prefix check.** Each
+  provider declares an `auth.Spec` — a default strategy, an optional
+  `detect(credential) -> Strategy` hook, an optional `mint` hook, and whether a
+  credential is required at all. Anthropic supplies `detect` (the `sk-ant-oat`
+  prefix); `openai_compat` deliberately supplies none, so it never guesses
+  across the many vendors it serves and `auth = "oauth_static"` is the only way
+  to say so there. This is the "fail loudly rather than guess wrong" clause
+  made structural.
+- **Vertex is already the `oauth_refresh` strategy, but only in name.** It
+  selects `.oauth_refresh` and mints through the `Spec.mint` hook, which calls
+  the existing `vertex_token.zig` — the GCP-specific path is unchanged, and no
+  generic `clanker auth login` / refresh-token store was built. That remains
+  the "later cleanup, not a prerequisite" this ADR called it. A provider asking
+  for `oauth_refresh` with no `mint` hook is rejected rather than silently
+  downgraded.
+
+`oauth_static` on `openai_compat` is currently indistinguishable on the wire
+from `api_key` (both are `Bearer`), exactly as this ADR predicted for xAI. The
+value of setting it today is declarative; the acquisition side is where a real
+OAuth provider will attach.

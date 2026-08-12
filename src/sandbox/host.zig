@@ -1049,7 +1049,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             try s.write(p.base_url);
             // api_key_env intentionally excluded from every access level:
             // env var names pointing to secrets should never cross into
-            // guest memory. The host resolves them in src/llm/client.zig.
+            // guest memory. The host resolves them in src/llm/auth.zig.
             try s.objectField("default_model");
             try s.write(p.default_model);
             try s.objectField("models");

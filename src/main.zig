@@ -31,6 +31,12 @@ comptime {
     _ = @import("config.zig");
     _ = @import("llm/types.zig");
     _ = @import("llm/providers.zig");
+    _ = @import("llm/providers/api.zig");
+    _ = @import("llm/providers/common.zig");
+    _ = @import("llm/providers/openai.zig");
+    _ = @import("llm/providers/anthropic.zig");
+    _ = @import("llm/providers/vertex.zig");
+    _ = @import("llm/auth.zig");
     _ = @import("llm/client.zig");
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");

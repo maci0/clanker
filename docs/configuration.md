@@ -55,6 +55,7 @@ unconfigured one.
 | `kind` | string | Wire format: `openai_compat` (default), `anthropic`, or `vertex_anthropic`. See below. |
 | `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, unless `path` overrides. |
 | `api_key_env` | string | Name of the `.env` variable holding the credential. Omit for a keyless local endpoint (ollama, vLLM). |
+| `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional — each `kind` auto-detects where the credential types are distinguishable. See below. |
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
@@ -110,10 +111,42 @@ default_model = "claude-sonnet-5"
 # api_key_env = "VERTEX_ACCESS_TOKEN"
 ```
 
-Auth is a separate axis from the wire format; the full picture (and the target
-`api_key` / `oauth_static` / `oauth_refresh` design) is in the LLM-providers
-section of `docs/README.md` and
-[ADR 0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md).
+### `auth` — the credential axis
+
+Auth is a separate axis from the wire format, so `kind` says how the request is
+*shaped* and `auth` says where the credential *comes from*:
+
+| Value | Meaning |
+|---|---|
+| `api_key` | Read `api_key_env` and present it the way the wire kind wants (`Bearer` for `openai_compat`/`vertex_anthropic`, `x-api-key` for `anthropic`). |
+| `oauth_static` | A pasted OAuth access token in `api_key_env`, presented as `Authorization: Bearer` plus any provider beta header. |
+| `oauth_refresh` | A token minted and renewed in-process. Only `vertex_anthropic` supports it today (from `service_account_file`); other kinds reject it rather than downgrade silently. |
+
+Leave it unset unless you need it. Each kind auto-detects: `anthropic` reads an
+`sk-ant-oat` prefix as `oauth_static` and anything else as `api_key`;
+`vertex_anthropic` picks `oauth_refresh` when `service_account_file` is set and
+no token is in `api_key_env`; `openai_compat` defaults to `api_key` and does
+*not* guess, because an API key and an OAuth token are indistinguishable across
+the vendors it serves — set `auth = "oauth_static"` explicitly there.
+
+```toml
+[providers.xai]
+kind = "openai_compat"                   # the wire format
+base_url = "https://api.x.ai/v1"
+api_key_env = "XAI_TOKEN"
+auth = "oauth_static"                    # ...and where the credential comes from
+```
+
+On `openai_compat` that line is documentation today rather than behaviour: an
+API key and an OAuth token both ride `Authorization: Bearer` there, so the two
+strategies produce the same request. It is the acquisition side (obtaining and
+refreshing the token) that an OAuth provider will hang off it, which is
+precisely the point of splitting the axes.
+
+An unrecognised value is an error at load, not a fallback: guessing wrong sends
+the secret on the wrong header. The design is
+[ADR 0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md); the
+implementation is `src/llm/auth.zig` plus each provider's `authHeaders`.
 
 ## `[models."<provider>/<model>"]`
 

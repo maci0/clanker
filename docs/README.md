@@ -33,8 +33,35 @@ The vaxis REPL adds two things `clanker run` has no use for, since a one-shot ru
 
 ### LLM providers (`src/llm/`)
 
-- **OpenAI-compatible** (`src/llm/client.zig`): works with any OpenAI-compatible endpoint.
-- **Anthropic** (`src/llm/providers.zig`): supports Anthropic's native API.
+A provider is a **native vtable**, not a WASM module: one struct of function
+pointers (`buildRequest`, `parseResponse`, `parseErrorDetail`,
+`parseStreamEvent`, `authHeaders`, `endpointUrl`) declared in
+`src/llm/providers/api.zig`, implemented by exactly one file under
+`src/llm/providers/`, and listed in the single `registry` table in
+`src/llm/providers.zig`. Keys must not enter the sandbox and the transport is
+on the per-token hot path, which is what rules WASM out:
+[docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
+
+`src/llm/client.zig` is the shared HTTP / SSE / retry / token-counting core.
+It is deliberately one module for every provider and contains no
+`switch (provider.kind)`: it resolves the vtable once per call
+(`providers.forKind`) and calls through it. The codec halves are pure
+functions of their inputs — no I/O, no credentials — so each provider's
+request building and response/stream parsing is unit-tested on the host beside
+its own file.
+
+**Adding a provider** is three edits, in fixed places: a new
+`src/llm/providers/<name>.zig`, a row in `registry`, and a `ProviderKind` tag
+in `src/config.zig` (which is the `kind = "..."` config surface, so it has to
+live there; `fromStr` is reflective and needs no change). Nothing else in the
+tree learns about it. Where a new provider mostly matches an existing one,
+re-export that provider's function pointers rather than copying the codec —
+`vertex.zig` does exactly this with `anthropic.zig` and differs only in a body
+header, the URL verb and the credential.
+
+- **openai_compat** (`src/llm/providers/openai.zig`): works with any OpenAI-compatible endpoint.
+- **anthropic** (`src/llm/providers/anthropic.zig`): Anthropic's native Messages API.
+- **vertex_anthropic** (`src/llm/providers/vertex.zig`): the Anthropic codec on Google Vertex AI (details below).
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
 - **kimi-k3**: OpenAI-compatible provider at `api.moonshot.ai/v1`, supports reasoning.
 - **muse-spark** / **muse-spark-1.1**: Anthropic-compatible providers for Muse Spark models.
@@ -43,22 +70,47 @@ The vaxis REPL adds two things `clanker run` has no use for, since a one-shot ru
 - **openai** / **anthropic**: first-party API endpoints.
 - **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project`, `location`, and either an access token in `api_key_env` or a `service_account_file`; tokens are minted in-process and cached until they near expiry. `std.crypto.Certificate.rsa` only verifies signatures, so the RS256 assertion Google requires is signed in `src/llm/gcp_jwt.zig` on std primitives: `der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, and the RSASSA-PKCS1-v1_5 padding is built by hand. No gcloud, no Python, no subprocess. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
 
-**Auth is a separate axis from the wire format.** Most providers accept an API
-key; some also accept OAuth, and the two are chosen by the credential, not a
-new provider kind. Anthropic already does this: a token that starts `sk-ant-oat`
-(an OAuth access token from `ant auth login`) is sent as `Authorization: Bearer`
-with an `oauth-2025-04-20` beta header, while any other value goes on
-`x-api-key` (`isOauthToken` in `src/llm/client.zig`). Vertex mints and refreshes
-a GCP OAuth token from `service_account_file` instead of reading a static key.
-For an OpenAI-compatible provider that offers both (xAI, say), the API-key path
-already works with `api_key_env` alone, because both an API key and an OAuth
-token ride `Authorization: Bearer` there; adding OAuth is a credential-
-acquisition concern (obtain and refresh the token), not a new header path. The
-target design that names these strategies (`api_key` / `oauth_static` /
-`oauth_refresh`) is [docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md),
-alongside the modular-provider vtable in [docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
+**Auth is a separate axis from the wire format**
+([docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md)),
+and the split is real in the code: `src/llm/auth.zig` owns **credential
+acquisition** — where the secret comes from — while **header application** —
+how it rides the request — stays each provider's `authHeaders`. Three
+strategies:
 
-Streaming is the Anthropic event vocabulary, not OpenAI's: `content_block_delta` carries `text_delta` for prose and `input_json_delta` fragments for tool arguments, and usage arrives split across `message_start` (input, cache reads) and `message_delta` (output, cumulative). Unknown event types, including `thinking_delta` and `signature_delta`, are ignored rather than treated as errors.
+- `api_key` — read `api_key_env` and present it the wire kind's way.
+- `oauth_static` — a pasted OAuth access token, presented as `Bearer`.
+- `oauth_refresh` — a token minted and renewed in-process.
+
+Each provider declares an `auth.Spec` in its registry entry saying which is the
+default, how to recognise an OAuth token by shape, and how to mint one.
+Anthropic stays zero-config that way: a token starting `sk-ant-oat` (an OAuth
+access token from `ant auth login`) is detected as `oauth_static` and sent as
+`Authorization: Bearer` with an `oauth-2025-04-20` beta header, while any other
+value is `api_key` and goes on `x-api-key`. Vertex is the one `oauth_refresh`
+today, minting a GCP token from `service_account_file` — an access token in
+`api_key_env` still wins over it. openai_compat is `api_key` by default and
+declares no shape detection, because an API key and an OAuth token are not
+distinguishable across the many vendors it serves.
+
+Where detection cannot be safe, say so: the optional per-provider
+`auth = "api_key" | "oauth_static" | "oauth_refresh"` config key overrides it,
+and an unknown value is rejected at load rather than guessed. For an
+OpenAI-compatible provider that offers both (xAI, say), the API-key path works
+with `api_key_env` alone because both credentials ride `Bearer` there; adding
+OAuth is a credential-acquisition concern, not a new header path or a new wire
+kind.
+
+Streaming is split the same way. Each provider's `parseStreamEvent` is a pure
+`(chunk_arena, payload) -> ?StreamEvent` function; `null` means "ignore this
+frame". One `StreamAccumulator` in `client.zig` folds those neutral events into
+a `ChatResponse` — text, per-index tool-call fragments, usage and the finish
+reason — so the two event vocabularies share one accumulation and one token
+accounting path instead of two that can drift. The Anthropic vocabulary:
+`content_block_delta` carries `text_delta` for prose and `input_json_delta`
+fragments for tool arguments, and usage arrives split across `message_start`
+(input, cache reads) and `message_delta` (output, cumulative). Unknown event
+types, including `thinking_delta` and `signature_delta`, are ignored rather
+than treated as errors.
 
 Providers and models are configured in `config.toml` / `config.local.toml`; the complete field-by-field reference, with per-kind examples and a minimal working config, is [docs/configuration.md](configuration.md).
 

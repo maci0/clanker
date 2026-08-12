@@ -24,8 +24,13 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 ## Architecture
 
-- `src/llm/` — the shared HTTP client, provider request/response encoding,
-  provider configuration helpers, and Vertex authentication.
+- `src/llm/` — `client.zig` is the shared HTTP/SSE/retry/token-counting core,
+  one module for every provider. Each provider is a vtable
+  (`providers/api.zig`) implemented in its own `providers/<name>.zig` and
+  listed in the `registry` table in `providers.zig`; `auth.zig` is the
+  credential-acquisition axis, `gcp_jwt.zig`/`vertex_token.zig` the Vertex
+  minting behind it. Adding a provider is one file, one registry row, and one
+  `ProviderKind` tag in `config.zig` — never a new `switch (provider.kind)`.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.
