@@ -664,6 +664,16 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    rather than generated content, so they survive Copy answer and reach a
    screen reader the same way the answer does. */
 .turn-note { color: var(--fg-muted); font-style: italic; }
+.citation-chip {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  padding: 0.05rem 0.45rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent-text); vertical-align: baseline; line-height: 1.4;
+}
+.citation-chip:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border-color: var(--accent); }
+.citation-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ---- fenced code blocks inside a finished answer ----
    The language tag and Copy button sit in their own header strip rather
@@ -726,6 +736,19 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 @media (hover: none) { .turn-foot { opacity: 1; transition: none; } }
 @media (prefers-reduced-motion: reduce) { .turn-foot { transition: none; } }
 .turn-foot:empty { display: none; margin: 0; padding: 0; border: 0; }
+.turn-branches {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem;
+  padding-left: 0.6rem; border-left: 2px solid var(--rule); font-size: 12px;
+}
+.turn-branches:empty { display: none; }
+.branch-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.2rem 0.6rem; border-radius: 999px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--fg-muted); font-family: var(--sans); font-size: 12px;
+}
+.branch-chip:hover { border-color: var(--accent); color: var(--fg); }
+.branch-chip[data-current="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .turn-foot button {
   padding: 0.25rem 0.6rem; font-size: 12px;
   background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border); border-radius: 999px;
@@ -942,8 +965,9 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .run-node[data-match="true"] { outline: 2px solid var(--warn); outline-offset: 2px; }
 .run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet) 35%, transparent), 0 1px 2px rgba(0,0,0,0.12); }
 .run-node[data-jump="true"] .run-node-label::after { content: " ↗"; color: var(--violet-text); font-weight: 700; }
-.run-node[data-highlight="true"] { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
+.run-node[data-highlight="true"] { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); z-index: 1; }
 .run-edges path[data-highlight="true"] { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
+.run-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .run-node-duration { position: absolute; top: 4px; right: 6px; font-size: 10px; font-weight: 600; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.35rem; line-height: 1.4; }
 .run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 2.2rem; }
 .run-node-metrics { font-variant-numeric: tabular-nums; display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
@@ -983,6 +1007,14 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
   margin: 0 0 0.5rem; padding-left: 0.6rem; border-left: 2px solid var(--border);
 }
+.diff-view { font-family: var(--mono); font-size: 12px; line-height: 1.5; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
+.diff-header { padding: 0.4rem 0.6rem; background: var(--surface-2); border-bottom: 1px solid var(--rule); font-weight: 600; color: var(--fg-muted); font-size: 11px; }
+.diff-line { display: flex; padding: 0 0.4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-line[data-kind="add"] { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.diff-line[data-kind="del"] { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.diff-line[data-kind="hunk"] { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent-text); font-weight: 600; }
+.diff-gutter { flex: none; width: 2.2rem; text-align: right; padding-right: 0.5rem; color: var(--fg-muted); user-select: none; }
+.diff-sign { flex: none; width: 1rem; text-align: center; user-select: none; }
 .run-detail-close {
   padding: 0.2rem 0.6rem; font-size: var(--step-0);
   background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
