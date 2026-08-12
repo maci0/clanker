@@ -41,6 +41,20 @@ not exist was any of the things that make a format a format:
   for a directory someone unpacked somewhere: a portable package cannot know
   what clanker's cwd will be.
 
+The cost of that last gap is not hypothetical. `4fadb86` renamed the ten
+`board_*` manifests to `kanban_*` and left two things behind it: an eval still
+naming `board_list` (caught, loudly, by `src/evals/scorers.zig`) and
+`host.zig`'s `chatAccessAllowed`, which grants the board guest its chat ops by
+matching the string `"board"`, and now matches nothing. Per that function's own
+doc comment the board *ignores* a failed chat call, so cards stopped
+replicating into their room with no error anywhere; the host test that should
+have caught it iterates a hardcoded list of the eleven old names, so the rename
+went green. Nothing in the tree connects a manifest's `name` to the places that
+depend on it, and nothing checks a manifest against anything. A validator does
+not by itself close that specific hole — the fix is for that test to derive its
+names from the shipped manifests, and it is owned elsewhere — but "the manifest
+is the contract and nothing verifies it" is the same sentence in both cases.
+
 The constraint that shaped all of it: the loader must not get stricter.
 Ninety-three manifests ship in this repo and an unknown number exist in
 checkouts; the format had to be written down as it *is*, not as it might have
@@ -217,6 +231,14 @@ existing docs:
   tree is clean, so it would stay green — but it would also make the loader's
   forgiveness irrelevant inside this repo, which may be the point or may be a
   strictness nobody asked for.
+- **Should one helper own "walk a directory of `*.tool.json`"?** Three places
+  now inline that loop: `Registry.load`, the two conformance tests beside it
+  (plus the one this change adds), and `cmdPlugins`' `pluginsValidate`. The
+  validator genuinely cannot go through `Registry.load` — it needs the raw
+  bytes and the filename of a manifest that *fails* to parse, which the loader
+  drops — but the walk itself is the same three lines each time, and a second
+  reader of the same directory is how two answers about the same tool set start
+  to disagree.
 - **Does `category` belong in the registry?** It is a manifest field two guests
   read by parsing the manifest themselves. Either it is real metadata and
   `Tool` should carry it, or it is guest-private and the reference should say so
