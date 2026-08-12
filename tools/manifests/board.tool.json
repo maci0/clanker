@@ -42,5 +42,5 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board"
+  "category": "kanban"
 }

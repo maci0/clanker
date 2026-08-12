@@ -37,15 +37,15 @@ be both; conflating them was the original `state/board.json` mistake.
 ## Non-goals
 
 - Promoting a private todo to a board card automatically. The agent does this
-  explicitly with `board_add`.
+  explicitly with `kanban_add`.
 - Private todo history after run end. Ephemerality is the feature.
 
 ## Design
 
 **Routing on absence.** The `todo_*` tools share the chat module. Naming
 `room` now unconditionally hard-errors (`src/sandbox/host.zig`: "room todo
-lists are board cards now: use board_add, board_move, board_claim or
-board_list."); the shared room-list path this doc originally described no
+lists are board cards now: use kanban_add, kanban_move, kanban_claim or
+kanban_list."); the shared room-list path this doc originally described no
 longer exists. Omitting `room` routes to `src/agent/private_todos.zig`.
 `Agent.run` attaches a fresh list for every top-level run and removes it when
 the run returns; `subagent.runNested` attaches a distinct list for its nested
@@ -67,7 +67,7 @@ though the room-scoped middle ground it used to also cover is gone.
 
 | Condition | Behaviour |
 |---|---|
-| `todo_*` with `room` | Hard error: room todo lists are gone, use `board_add`/`board_move`/`board_claim`/`board_list` |
+| `todo_*` with `room` | Hard error: room todo lists are gone, use `kanban_add`/`kanban_move`/`kanban_claim`/`kanban_list` |
 | `todo_*` with no `room` and no list attached (caller never ran through `Agent.run`) | Hard error: host wiring error |
 | `todo_add` past 100 items | "private todo list is full; close items instead of adding more" |
 | `todo_add` with empty or >512-char title | Named error, no item added |
