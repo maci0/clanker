@@ -43,8 +43,9 @@ const gate_checks = @import("gate/checks.zig");
 // WASM "webui" tool — its shared output buffer, lib.zig's out_cap, is 64 KiB,
 // far smaller than these). Vendored rather than CDN-loaded so the page has
 // zero runtime network dependencies and needs no change to the webui CSP.
-const webui_vendor_van = @embedFile("webui_vendor/van.js");
-const webui_vendor_vanui = @embedFile("webui_vendor/van-ui.js");
+const webui_vendor_preact = @embedFile("webui_vendor/preact.module.js");
+const webui_vendor_htm = @embedFile("webui_vendor/htm.module.js");
+const webui_vendor_signals = @embedFile("webui_vendor/signals-core.module.js");
 const webui_vendor_d3dag = @embedFile("webui_vendor/d3-dag.min.js");
 const webui_vendor_hljs = @embedFile("webui_vendor/hljs.min.js");
 const webui_vendor_mermaid = @embedFile("webui_vendor/mermaid.min.js");
@@ -2916,10 +2917,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
             std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-            std.mem.eql(u8, path, "/webui/van-boot.js") or
+            std.mem.eql(u8, path, "/webui/preact-boot.js") or
             std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/tools.js") or std.mem.eql(u8, path, "/webui/core/overlay.js") or std.mem.eql(u8, path, "/webui/core/search.js") or std.mem.eql(u8, path, "/webui/core/composer.js") or std.mem.eql(u8, path, "/webui/core/scroll.js") or
             std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or std.mem.eql(u8, path, "/webui/features/knowledge.js") or std.mem.eql(u8, path, "/webui/features/prompts.js") or
-            std.mem.eql(u8, path, "/webui/vendor/van.js") or std.mem.eql(u8, path, "/webui/vendor/van-ui.js") or
+            std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js");
@@ -2967,13 +2968,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleHttpMetrics(stream);
         } else if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui"))) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van.js")) {
-            respondJs(gpa, stream, webui_vendor_van, &gzip_van, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/van-ui.js")) {
-            respondJs(gpa, stream, webui_vendor_vanui, &gzip_vanui, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
+            respondJs(gpa, stream, webui_vendor_preact, &gzip_preact, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
+            respondJs(gpa, stream, webui_vendor_htm, &gzip_htm, acceptsGzip(headers_raw), headers_raw);
+        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js")) {
+            respondJs(gpa, stream, webui_vendor_signals, &gzip_signals, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and
             (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-                std.mem.eql(u8, path, "/webui/van-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or
+                std.mem.eql(u8, path, "/webui/preact-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or
                 std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/tools.js") or std.mem.eql(u8, path, "/webui/core/overlay.js") or std.mem.eql(u8, path, "/webui/core/search.js") or std.mem.eql(u8, path, "/webui/core/composer.js") or std.mem.eql(u8, path, "/webui/core/scroll.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
                 std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
                 std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
@@ -4154,7 +4157,7 @@ fn handleWebuiAsset(
     const arena = arena_state.allocator();
 
     const is_css = std.mem.endsWith(u8, target, ".css");
-    const is_boot = std.mem.endsWith(u8, target, "van-boot.js");
+    const is_boot = std.mem.endsWith(u8, target, "preact-boot.js");
     // The feature views share their file names with core/goals.js and
     // lib/board.js, so these two carry the directory in the suffix and the
     // bare-name predicates below exclude them — a bare endsWith("board.js")
@@ -4190,8 +4193,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_van_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_van_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -6722,7 +6725,7 @@ const RenderCache = struct {
 var render_page: RenderCache = .{};
 var render_css: RenderCache = .{};
 var render_js: RenderCache = .{};
-var render_van_boot: RenderCache = .{};
+var render_preact_boot: RenderCache = .{};
 var render_vendor: RenderCache = .{};
 var render_theme: RenderCache = .{};
 var render_markdown: RenderCache = .{};
@@ -6757,7 +6760,7 @@ var render_ui: RenderCache = .{};
 var gzip_page: GzipCache = .{};
 var gzip_css: GzipCache = .{};
 var gzip_js: GzipCache = .{};
-var gzip_van_boot: GzipCache = .{};
+var gzip_preact_boot: GzipCache = .{};
 var gzip_vendor: GzipCache = .{};
 var gzip_theme: GzipCache = .{};
 var gzip_markdown: GzipCache = .{};
@@ -6788,8 +6791,9 @@ var gzip_palette: GzipCache = .{};
 var gzip_modelpicker: GzipCache = .{};
 var gzip_tools: GzipCache = .{};
 var gzip_ui: GzipCache = .{};
-var gzip_van: GzipCache = .{};
-var gzip_vanui: GzipCache = .{};
+var gzip_preact: GzipCache = .{};
+var gzip_htm: GzipCache = .{};
+var gzip_signals: GzipCache = .{};
 var gzip_d3dag: GzipCache = .{};
 var gzip_hljs: GzipCache = .{};
 var gzip_mermaid: GzipCache = .{};

@@ -1,4 +1,6 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
+import { T, state, add, effect } from "./ui.js";
+
 export var pluginViews = {};
 
 var _VIEWS = null;
@@ -32,13 +34,13 @@ export function pluginApi() {
     },
     status: function (message) { _el.webuiPluginsStatus.textContent = message; },
     fmt: fmt(),
-    van: window.van,
-    ui: {
-      Modal: window.Modal, Tabs: window.Tabs, Banner: window.Banner,
-      Tooltip: window.Tooltip, Toggle: window.Toggle, Await: window.Await,
-      MessageBoard: window.MessageBoard, OptionGroup: window.OptionGroup,
-      choose: window.choose
-    },
+    // Kept under the old name so plugins written against the VanJS-era API
+    // keep working: same tags/state/add semantics, now signals-backed.
+    van: { tags: T, state: state, add: add, derive: effect },
+    // Component views: Preact + htm, vendored, put on window by preact-boot.
+    preact: window.preact,
+    html: window.html,
+    signals: window.signals,
     showView: function (id) { _showView(id, false); }
   };
 }

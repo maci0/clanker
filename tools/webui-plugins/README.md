@@ -48,14 +48,15 @@ clanker.registerView({
 | `api.status(message)` | announce through the live region, which also shows a toast |
 | `api.fmt` | `bytes`, `int`, `cost`, `time` — the page's own formatters, so a plugin's numbers match |
 | `api.showView(id)` | switch to another view |
-| `api.van` | [VanJS](https://vanjs.org): `van.tags`, `van.state`, `van.derive`, `van.add` |
-| `api.ui` | VanUI components: `Modal`, `Tabs`, `Banner`, `Tooltip`, `Toggle`, `Await`, `MessageBoard`, `OptionGroup`, `choose` |
+| `api.van` | the page's tag/state factory (signals-backed, VanJS-era API): `van.tags`, `van.state`, `van.derive`, `van.add` |
+| `api.preact` / `api.html` | vendored [Preact](https://preactjs.com) `h`/`render`/`Fragment` and an [htm](https://github.com/developit/htm) template tag bound to `h`, for a view that wants a component tree |
+| `api.signals` | vendored [@preact/signals-core](https://preactjs.com/guide/v10/signals/): `signal`, `computed`, `effect`, `batch` |
 
-Both are vendored and same-origin, so using them costs no extra request and no
-policy exception. VanJS builds real DOM nodes, so the no-`innerHTML` rule below
-is unchanged by it — `van.tags.p("text")` sets text as text. Prefer it when a
-view has state that changes: derive the DOM from the state and there is no
-second copy of "what is on screen" to keep in step.
+All are vendored and same-origin, so using them costs no extra request and no
+policy exception. `api.van.tags` builds real DOM nodes, so the no-`innerHTML`
+rule below is unchanged by it — `van.tags.p("text")` sets text as text. Prefer
+it when a view has state that changes: derive the DOM from the state and there
+is no second copy of "what is on screen" to keep in step.
 
 ```js
 var items = van.state([]);

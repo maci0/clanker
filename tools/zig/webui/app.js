@@ -1,5 +1,5 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch } from "./core/utils.js";
-import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI } from "./core/ui.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd } from "./core/ui.js";
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
@@ -169,7 +169,7 @@ var el = {
    button, a label or an empty state — which is how the page ended up with two
    Refresh behaviours and three status conventions before this existed.
 
-   van.tags builds real DOM nodes and sets text as text, so nothing here can
+   T builds real DOM nodes and sets text as text, so nothing here can
    introduce markup from data. */
 
 var T = vanT;
@@ -302,7 +302,7 @@ function togglePin(id) {
    what is pinned here, and what is typed in the filter. Nothing else can put
    a row on screen, which is what stops the rail and the transcript
    disagreeing about which conversation is open. */
-var railState = van.state({ sessions: [], filter: "", pins: [], current: "" });
+var railState = uiState({ sessions: [], filter: "", pins: [], current: "" });
 
 function isArchived(s){ return !!s.archived; }
 function showArchived(){ var cb=document.getElementById("archived-toggle"); return !!(cb && cb.checked); }
@@ -340,7 +340,7 @@ function railRowFor(s, current) {
     "aria-pressed": String(isPinned(s.id)),
     onclick: function () { togglePin(s.id); }
   });
-  van.add(pin, icon("pin", 15));
+  uiAdd(pin, icon("pin", 15));
 
   return T.li({ class: "rail-row" }, row, pin);
 }
@@ -2596,7 +2596,7 @@ function renderChatRooms(rooms) {
   });
 
   el.chatRoom.textContent = "";
-  van.add(el.chatRoom, [["Rooms", shared], ["Direct", dms]]
+  uiAdd(el.chatRoom, [["Rooms", shared], ["Direct", dms]]
     .filter(function (pair) { return pair[1].length; })
     .map(function (pair) {
       return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
@@ -3020,7 +3020,7 @@ el.chatForm.addEventListener("submit", function (e) {
 
 var allUsage = [];
 
-var usageState = van.state([]);
+var usageState = uiState([]);
 
 function renderUsage(rows) {
   allUsage = rows || allUsage;
@@ -3056,7 +3056,7 @@ bindGoals({ el: el, showView: showView, getSessionId: function () { return sessi
 var allToolsHolder = { list: [] };
 var allTools = allToolsHolder.list;
 
-var toolState = van.state({ tools: [], filter: "" });
+var toolState = uiState({ tools: [], filter: "" });
 
 var renderTools = toolsRenderTools;
 var showToolDetail = toolsShowDetail;
@@ -3386,7 +3386,7 @@ var nearBottom = scrollNearBottom;
 var prefersReducedMotion = scrollPrefersReducedMotion;
 function syncScrollButton() { scrollSyncButton(el.transcript, el.scrollBottom); }
 
-van.add(el.scrollBottom, icon("deposit", 14));
+uiAdd(el.scrollBottom, icon("deposit", 14));
 el.scrollBottom.addEventListener("click", function () {
   window.scrollTo({ top: document.body.scrollHeight, behavior: prefersReducedMotion() ? "auto" : "smooth" });
   el.task.focus();
@@ -3941,7 +3941,7 @@ var textPrompt = dialogTextPrompt;
 var finishTextPrompt = dialogFinishTextPrompt;
 dialogBindDialog(el, overlayOpen, overlayClose);
 
-van.add(el.helpOpen, icon("help", 15));
+uiAdd(el.helpOpen, icon("help", 15));
 el.helpOpen.addEventListener("click", function () { openOverlay(el.help, el.helpClose); });
 el.helpClose.addEventListener("click", function () { closeOverlay(el.help); });
 
