@@ -147,6 +147,140 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     try std.testing.expectEqualStrings("lint", hacky.label);
 }
 
+/// Consistency check over the tool manifests in a staged tree.
+///
+/// The registry (`src/tools/registry.zig`) loads `tools/manifests/*.tool.json`
+/// at runtime and never compiles source, so nothing but this check catches a
+/// proposal that:
+///   - duplicates a tool `name` (the registry's insert is last-wins, so one
+///     descriptor silently shadows another), or
+///   - points a descriptor at a `.wasm` that does not exist (the exact broken
+///     state `clanker doctor` flags as the most common one in this repo).
+///
+/// It is intentionally pure file/JSON inspection — no npm, no zig build — so
+/// it is deterministic and cheap to run for every proposal. The engine runs it
+/// after `toolsGate`, by which point `zig-out/tools/*.wasm` exist in the
+/// staged tree; `tools/bin/*.wasm` are committed and must be present.
+pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, tools_dir: []const u8) !GateResult {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const scope = dir.openDir(io, tools_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return .{ .ok = true, .label = "tool-descriptor", .detail = "no tools dir (ok on a minimal checkout)" },
+        else => return err,
+    };
+    defer scope.close(io);
+
+    var names: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var problems: std.ArrayList([]const u8) = .empty;
+    defer problems.deinit(gpa);
+
+    var it = scope.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+
+        const raw = scope.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch |err| {
+            try problems.append(gpa, try std.fmt.allocPrint(arena, "cannot read {s}: {s}", .{ entry.name, @errorName(err) }));
+            continue;
+        };
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+            try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} is not valid JSON", .{entry.name}));
+            continue;
+        };
+        const obj = switch (parsed) {
+            .object => |o| o,
+            else => {
+                try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} is not a JSON object", .{entry.name}));
+                continue;
+            },
+        };
+
+        // Duplicate tool names shadow silently in the registry.
+        const name = if (obj.get("name")) |v| switch (v) {
+            .string => |s| s,
+            else => "",
+        } else "";
+        if (name.len == 0) {
+            try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} has no \"name\"", .{entry.name}));
+        } else if (names.contains(name)) {
+            try problems.append(gpa, try std.fmt.allocPrint(arena, "duplicate tool name \"{s}\" ({s})", .{ name, entry.name }));
+        } else {
+            try names.put(arena, name, {});
+        }
+
+        // A descriptor pointing at a .wasm we never deliver breaks at runtime.
+        if (obj.get("wasm")) |v| switch (v) {
+            .string => |rel| {
+                if (!fileExistsIn(io, dir, rel)) {
+                    try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} references missing {s}", .{ entry.name, rel }));
+                }
+            },
+            else => {
+                try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} has no \"wasm\" string", .{entry.name}));
+            },
+        } else {
+            try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} has no \"wasm\" key", .{entry.name}));
+        }
+    }
+
+    if (problems.items.len > 0) {
+        // Owned by .stdout so GateResult.deinit frees it; .detail aliases it,
+        // matching runZigArgs' convention. A `defer gpa.free(detail)` here
+        // freed the text on this very return: every caller (the engine's
+        // feedback/history, the test's indexOf) then read freed memory.
+        const detail = try std.mem.join(gpa, "; ", problems.items);
+        return .{ .ok = false, .label = "tool-descriptor", .detail = detail, .stdout = detail };
+    }
+    return .{ .ok = true, .label = "tool-descriptor" };
+}
+
+/// True when `rel` (e.g. "zig-out/tools/x.wasm") resolves to an existing
+/// regular file under `dir`. The wasm paths in descriptors are relative to
+/// the repository root (`tools/bin/...`, `zig-out/tools/...`), not to the
+/// manifests directory they are declared in.
+fn fileExistsIn(io: std.Io, dir: std.Io.Dir, rel: []const u8) bool {
+    var f = dir.openFile(io, rel, .{}) catch return false;
+    f.close(io);
+    return true;
+}
+
+test "toolDescriptorGate rejects duplicate names and missing wasm" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "manifests");
+    try tmp.dir.createDirPath(io, "zig-out/tools");
+    // A real wasm so the "missing wasm" case is not tripped by the good file.
+    try tmp.dir.writeFile(io, .{ .sub_path = "zig-out/tools/good.wasm", .data = "{}" });
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/a.tool.json", .data = "{\"name\":\"dup\",\"wasm\":\"zig-out/tools/good.wasm\"}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/b.tool.json", .data = "{\"name\":\"dup\",\"wasm\":\"zig-out/tools/missing.wasm\"}" });
+
+    var bad = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    defer bad.deinit(gpa);
+    try std.testing.expect(!bad.ok);
+    try std.testing.expect(std.mem.indexOf(u8, bad.detail, "duplicate tool name") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad.detail, "references missing") != null);
+
+    // Fix both: unique name that points at a real wasm.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/b.tool.json", .data = "{\"name\":\"b\",\"wasm\":\"zig-out/tools/good.wasm\"}" });
+    const ok = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    try std.testing.expect(ok.ok);
+
+    // A tree with no tools dir at all passes (minimal checkout).
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    const none = try toolDescriptorGate(gpa, io, tmp2.dir, "manifests");
+    try std.testing.expect(none.ok);
+}
+
 /// Runs `zig ast-check` on each changed `.zig` file individually. A syntax
 /// error caught here gives a precise file + line, whereas `zig build` reports
 /// the same error buried in a dependency trace. Short-circuits when no `.zig`

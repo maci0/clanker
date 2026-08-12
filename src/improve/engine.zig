@@ -69,6 +69,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.testGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.fmtGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.lintGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.toolDescriptorGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
@@ -605,8 +606,10 @@ pub const Engine = struct {
 
         // ---- 5. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
+        var gate_timer = GateTimer.start(self.ctx.io);
         var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
         defer build.deinit(self.ctx.gpa);
+        gate_timer.lap("build");
         if (!build.ok) {
             const tail = try errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
@@ -623,6 +626,7 @@ pub const Engine = struct {
         // missing artifact rather than on its own merits.
         var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer tools.deinit(self.ctx.gpa);
+        gate_timer.lap("tools");
         if (!tools.ok) {
             const tail = try errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
@@ -633,8 +637,23 @@ pub const Engine = struct {
             return .failed;
         }
 
+        // Descriptor consistency: no duplicate tool names and every descriptor's
+        // wasm must exist. Runs after toolsGate so zig-out/tools/*.wasm are
+        // present; tools/bin/*.wasm are committed. Catches a proposal that
+        // shadows a tool or ships a manifest for a wasm that was never built.
+        var desc_check = try gate_checks.toolDescriptorGate(self.ctx.gpa, self.ctx.io, staged_dir, "tools/manifests");
+        defer desc_check.deinit(self.ctx.gpa);
+        if (!desc_check.ok) {
+            log.log(.error_, "tool descriptor check failed: {s}", .{desc_check.detail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, desc_check.detail, fingerprints);
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the tool manifests are inconsistent:\n{s}\nFix exactly that and re-propose.", .{desc_check.detail});
+            self.removeTree(staging);
+            return .failed;
+        }
+
         var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer test_gate.deinit(self.ctx.gpa);
+        gate_timer.lap("tests");
         if (!test_gate.ok) {
             const tail = try errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
@@ -673,6 +692,7 @@ pub const Engine = struct {
         if (self.cfg.improve.capability_gate) {
             var cap = try self.capabilityGate(staging, staged_dir);
             defer cap.deinit(self.ctx.gpa);
+            gate_timer.lap("capability evals");
             if (!cap.ok) {
                 // A task eval is an agent run, and an agent run is not
                 // deterministic: one model turn that skips a tool call fails a
@@ -683,7 +703,12 @@ pub const Engine = struct {
                 // Only re-run the cases that actually failed: each case is a
                 // full agent run, and re-running the whole suite for one flaky
                 // case costs N runs instead of 1.
-                const failed_names = try parseFailedEvalNames(self.arena, cap.detail);
+                // Parse names from stdout alone: detail now also carries the
+                // stderr log (so the model sees why a case failed), and log
+                // lines mentioning eval names would parse as garbage case
+                // names here -- the retry then runs `clanker eval <garbage>`
+                // and dies with UnknownEval instead of retrying anything.
+                const failed_names = try parseFailedEvalNames(self.arena, cap.stdout);
                 if (failed_names.len > 0) {
                     log.log(.warn, "capability evals: {d} case(s) failed; retrying only those", .{failed_names.len});
                     var retry = try self.capabilityGateRetry(staged_dir, failed_names);
@@ -1571,6 +1596,26 @@ fn proposalChangedPathsSlice(gpa: std.mem.Allocator, changes: []const proposal_m
 /// excerpt handed back freed memory: a gate whose output fitted in the budget
 /// segfaulted the improve run while collecting the reasons a proposal was
 /// rejected. Copying a string under 1500 bytes is not worth the aliasing.
+/// Wall-clock per gate phase, logged so the gate's cost profile is measurable
+/// from any run log. Measured on a live run before this existed: the whole
+/// gate cycle was ~85% of a 7-8 minute iteration, with nothing saying which
+/// phase (staging build vs the LLM-driven capability evals) actually costs
+/// what -- speeding the gate up starts with knowing that split.
+const GateTimer = struct {
+    io: std.Io,
+    last: i96,
+
+    fn start(io: std.Io) GateTimer {
+        return .{ .io = io, .last = std.Io.Timestamp.now(io, .real).nanoseconds };
+    }
+
+    fn lap(self: *GateTimer, name: []const u8) void {
+        const now = std.Io.Timestamp.now(self.io, .real).nanoseconds;
+        log.log(.info, "gate timing: {s} {d}ms", .{ name, @divTrunc(now - self.last, std.time.ns_per_ms) });
+        self.last = now;
+    }
+};
+
 fn errorTail(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
     const max = 1500;
     if (s.len <= max) return arena.dupe(u8, s);
