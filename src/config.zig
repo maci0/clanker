@@ -181,6 +181,14 @@ pub const Agent = struct {
     /// does not widen `git` or anything else. `*` matches any run of
     /// characters, including across spaces and empty.
     exec_pattern_allow: []const []const u8 = &.{},
+    /// Extra commands the REPL's `!` shell escape may run, on top of the union
+    /// of every registered tool's `exec_allow`. Empty (the default) means `!`
+    /// runs exactly the commands clanker's own tools may run and nothing more;
+    /// listing `["ls", "cat"]` here widens the escape without widening any
+    /// tool, since nothing reads this field except `src/tui/repl_vaxis.zig`.
+    /// The rest of the ck_exec policy (the deny tokens, git's verb allowlist,
+    /// `exec_pattern_allow`) still applies to whatever is named here.
+    repl_exec_allow: []const []const u8 = &.{},
     seed: u64 = 0,
     /// How long a serve-side ask_user question waits for the browser before
     /// giving up (seconds). The wait holds one of the server's connection
@@ -235,6 +243,7 @@ pub const AgentFields = struct {
     git_commit: bool = false,
     git_remote_ops: bool = false,
     exec_pattern_allow: bool = false,
+    repl_exec_allow: bool = false,
     seed: bool = false,
     ask_timeout_seconds: bool = false,
     provider_check_timeout_seconds: bool = false,
@@ -915,14 +924,14 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",      "compact_threshold_bytes",        "max_total_tokens",
-            "max_tokens_per_turn", "max_history_tokens",             "tool_catalog",
-            "hot_tools",           "tools_dir",                      "skills_dir",
-            "system_prompt_file",  "learnings_file",                 "global_instructions_file",
-            "state_dir",           "sandbox_root",                   "workflows_dir",
-            "chains_dir",          "git_commit",                     "git_remote_ops",
-            "exec_pattern_allow",  "seed",                           "ask_timeout_seconds",
-            "confirm_writes",      "provider_check_timeout_seconds",
+            "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
+            "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
+            "hot_tools",           "tools_dir",               "skills_dir",
+            "system_prompt_file",  "learnings_file",          "global_instructions_file",
+            "state_dir",           "sandbox_root",            "workflows_dir",
+            "chains_dir",          "git_commit",              "git_remote_ops",
+            "exec_pattern_allow",  "repl_exec_allow",         "seed",
+            "ask_timeout_seconds", "confirm_writes",          "provider_check_timeout_seconds",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
@@ -1019,6 +1028,20 @@ pub const Config = struct {
             a.exec_pattern_allow = try patterns.toOwnedSlice(arena);
             f.exec_pattern_allow = true;
         }
+        if (obj.get("repl_exec_allow")) |k| {
+            const arr = switch (k) {
+                .array => |ar| ar,
+                else => return error.ReplExecAllowNotArray,
+            };
+            var cmds: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| {
+                const cmd = try jsonStr(item, "repl_exec_allow[]");
+                if (cmd.len == 0) return error.ReplExecAllowEmpty;
+                try cmds.append(arena, cmd);
+            }
+            a.repl_exec_allow = try cmds.toOwnedSlice(arena);
+            f.repl_exec_allow = true;
+        }
         if (obj.get("tool_catalog")) |k| {
             a.tool_catalog = switch (k) {
                 .bool => |b| b,
@@ -1076,6 +1099,7 @@ pub const Config = struct {
         if (fields.git_commit) dst.git_commit = src.git_commit;
         if (fields.git_remote_ops) dst.git_remote_ops = src.git_remote_ops;
         if (fields.exec_pattern_allow) dst.exec_pattern_allow = src.exec_pattern_allow;
+        if (fields.repl_exec_allow) dst.repl_exec_allow = src.repl_exec_allow;
         if (fields.seed) dst.seed = src.seed;
         if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
         if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
@@ -1861,6 +1885,65 @@ test "agent.git_remote_ops and exec_pattern_allow parse from config" {
     const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.toml", "config.local.toml");
     try std.testing.expect(!cfg2.agent.git_remote_ops);
     try std.testing.expectEqual(@as(usize, 0), cfg2.agent.exec_pattern_allow.len);
+}
+
+test "agent.repl_exec_allow parses, defaults empty, and rejects a non-array" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { repl_exec_allow = ["ls", "cat"] }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(usize, 2), cfg.agent.repl_exec_allow.len);
+    try std.testing.expectEqualStrings("ls", cfg.agent.repl_exec_allow[0]);
+    try std.testing.expectEqualStrings("cat", cfg.agent.repl_exec_allow[1]);
+
+    // Absent: the `!` escape is limited to what the tool registry already allows.
+    var arena2 = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena2.deinit();
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try tmp2.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(usize, 0), cfg2.agent.repl_exec_allow.len);
+
+    var arena3 = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena3.deinit();
+    var tmp3 = std.testing.tmpDir(.{});
+    defer tmp3.cleanup();
+    try tmp3.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { repl_exec_allow = "ls" }
+        ,
+    });
+    try std.testing.expectError(
+        error.ReplExecAllowNotArray,
+        Config.load(io, arena3.allocator(), tmp3.dir, "config.toml", "config.local.toml"),
+    );
 }
 
 test "exec_pattern_allow rejects git patterns to protect the deny list" {

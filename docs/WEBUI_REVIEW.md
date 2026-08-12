@@ -410,9 +410,13 @@ persistence — it rides the one long-lived channel that already exists.
   `tools/zig/webui.zig`, but named in neither the `is_webui` module gate nor
   the `handleWebuiAsset` dispatch condition in `src/cli.zig` — two
   hand-maintained copies of one set, and the Arena view's dynamic `import()`
-  fell through both. Both now read a single `webui_asset_paths`, and a test
-  walks `tools/zig/webui/{core,lib,features}` and fails on any `.js` the list
-  has never heard of, so the next module cannot repeat it.
+  fell through both. Found independently and fixed upstream in the same window
+  (`644dc37`, "webui: serve features/arena.js from the native server"), which
+  is itself the argument: two people hit the same trap in one day. This slice
+  keeps the fix and removes the trap — both lists now read a single
+  `webui_asset_paths`, and a test walks `tools/zig/webui/{core,lib,features}`
+  and fails on any `.js` the list has never heard of, so the next module cannot
+  repeat it.
 - **Unescaped interpolation in the run `Export .html` path.** `drawRun`'s
   export builds a self-contained page by string concatenation and wrote
   `g.run_id` and `g.task` raw into `<title>`, `<h1>` and `<p>`. The task is

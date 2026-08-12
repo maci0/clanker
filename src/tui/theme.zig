@@ -435,6 +435,35 @@ pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Th
     return Theme.default;
 }
 
+/// Canonical theme names for `/theme` and completion, aligned with the web
+/// UI's palette set (core/theme.js). `select` also accepts the aliases
+/// (`catppuccin`, `tokyo-night`, `storm`, `day`, ...); these are the names to
+/// show and cycle through.
+pub const names = [_][]const u8{
+    "default",    "mono",             "mocha",          "latte", "frappe",
+    "macchiato",  "tokyonight",       "tokyonight-storm", "tokyonight-day",
+};
+
+/// Whether `select` recognizes `name` (canonical spelling or a known alias),
+/// so `/theme <name>` can reject a typo instead of silently falling back to
+/// default.
+pub fn isKnown(name: []const u8) bool {
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return std.mem.eql(u8, name, "catppuccin") or
+        std.mem.eql(u8, name, "tokyo-night") or
+        std.mem.eql(u8, name, "tokyonight-night") or
+        std.mem.eql(u8, name, "frappé") or
+        std.mem.eql(u8, name, "storm") or
+        std.mem.eql(u8, name, "day");
+}
+
+test "isKnown accepts every canonical name and rejects a typo" {
+    for (names) |n| try std.testing.expect(isKnown(n));
+    try std.testing.expect(isKnown("catppuccin"));
+    try std.testing.expect(!isKnown("nord"));
+    try std.testing.expect(!isKnown(""));
+}
+
 test "default theme matches the REPL's existing byte-for-byte colors" {
     try std.testing.expectEqualStrings("\x1b[32m", Theme.default.prompt);
     try std.testing.expectEqualStrings("\x1b[36m", Theme.default.tool);

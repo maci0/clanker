@@ -23,6 +23,12 @@
 //! calls render as the established left-bar cards, built as plain strings by
 //! transcript.zig's card helpers and styled into cells at draw time.
 //!
+//! A submitted line is one of three things, decided in `submit` in this
+//! order: a `!`-prefixed shell escape (runs here and now through the ck_exec
+//! gate — see `parseShellEscape`), a `/`-prefixed command from
+//! `command_registry`, or a task for the agent. Only the third reaches the
+//! LLM.
+//!
 //! Tab-complete over `command_registry` (`completeSlashCommand`) is the one
 //! completion UI that isn't a modal picker: it edits the TextField in place
 //! (single match, or several completing to a shared prefix) rather than
@@ -40,6 +46,7 @@ const providers = @import("../llm/providers.zig");
 const registry = @import("../tools/registry.zig");
 const session_mod = @import("../agent/session.zig");
 const runtime = @import("../sandbox/runtime.zig");
+const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
 const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
@@ -48,6 +55,10 @@ const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
+
+/// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
+/// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
+const stream_tick_ms: u32 = 33;
 
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
@@ -307,6 +318,9 @@ const CommandAction = union(enum) {
     autoresearch,
     /// Prints usage, or runs one judged debate as a normal agent task.
     arena,
+    /// Lists themes (no args) or switches the active color theme for this
+    /// session (with a name).
+    theme,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
     tool: struct { name: []const u8, args: []const u8 },
 };
@@ -340,6 +354,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
+    .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
 
@@ -377,6 +392,108 @@ fn parseCommand(task: []const u8) ?ParsedCommand {
     }
     return null;
 }
+
+// ---------------------------------------------------------------------
+// `!cmd` — the inline shell escape. A third input mode next to the
+// slash commands above and a task for the agent: the line runs locally,
+// right now, and nothing about it is sent to the LLM.
+//
+// It is not a shell. `!` builds one fixed argv and hands it to
+// `host.execUnderPolicy`, the non-WASM entry point to the same ck_exec
+// gate every tool goes through — the command must be on an allowlist,
+// the deny tokens still apply, and the child gets the filtered
+// environment a guest gets rather than this process's (which holds the
+// API keys). Nothing expands globs, `$VAR`, pipes or redirections,
+// because no shell is ever spawned to expand them.
+// ---------------------------------------------------------------------
+
+/// The text after a leading `!`, or null when the line is not a shell escape.
+/// Whitespace is trimmed on both sides of the `!`, so `  !  git status  ` and
+/// `!git status` are the same command. A bare `!` (or one followed only by
+/// spaces) returns an empty slice rather than null: it *is* a shell escape,
+/// just one with nothing to run, and `runShellEscape` answers it with usage
+/// plus the list of commands the escape may run. A `!` anywhere but the first
+/// column is ordinary text and stays a task.
+fn parseShellEscape(task: []const u8) ?[]const u8 {
+    const input = std.mem.trim(u8, task, " \t");
+    if (input.len == 0 or input[0] != '!') return null;
+    return std.mem.trim(u8, input[1..], " \t");
+}
+
+/// Comfortably more arguments than a hand-typed command line carries. Past
+/// this the line is refused rather than silently truncated — a command run
+/// with half its arguments is worse than one that did not run.
+const max_escape_args = 64;
+
+const ShellSplitError = error{ TooManyArgs, UnterminatedQuote };
+
+/// Splits a `!` line into argv without a shell. Whitespace separates
+/// arguments; an argument that *starts* with `'` or `"` runs to the matching
+/// quote, so `!rg "foo bar" src` is three arguments. A quote inside an
+/// otherwise unquoted argument is literal, and there are no backslash escapes
+/// — the grammar is deliberately the smallest one that lets a quoted argument
+/// hold a space, not a re-implementation of shell word splitting that would
+/// invite the expansions this path does not do.
+///
+/// Every returned slice borrows from `line`.
+fn splitShellArgs(line: []const u8, out: *[max_escape_args][]const u8) ShellSplitError![]const []const u8 {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < line.len) {
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        if (i >= line.len) break;
+        if (n == out.len) return error.TooManyArgs;
+        if (line[i] == '\'' or line[i] == '"') {
+            const quote = line[i];
+            i += 1;
+            const end = std.mem.findScalarPos(u8, line, i, quote) orelse return error.UnterminatedQuote;
+            out[n] = line[i..end];
+            i = end + 1;
+        } else {
+            const start = i;
+            while (i < line.len and line[i] != ' ' and line[i] != '\t') i += 1;
+            out[n] = line[start..i];
+        }
+        n += 1;
+    }
+    return out[0..n];
+}
+
+/// Output a `!` command may produce before it is cut, matching what ck_exec
+/// gives a guest — the escape has no reason to be more or less generous than
+/// the tools.
+const escape_stdout_limit = 1 << 20;
+const escape_stderr_limit = 64 * 1024;
+
+/// Transcript lines one `!` command may contribute. The stream caps above are
+/// byte caps; this is the readability cap, so `!git log` cannot push the
+/// conversation off the top of a scrollback nobody asked to page through.
+const escape_max_lines = 500;
+
+fn appendUniqueCmd(arena: std.mem.Allocator, list: *std.ArrayList([]const u8), cmd: []const u8) void {
+    for (list.items) |existing| {
+        if (std.mem.eql(u8, existing, cmd)) return;
+    }
+    list.append(arena, cmd) catch {};
+}
+
+fn lessThanCmd(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// The `!` escape's line in `/help`. Hand-written rather than a
+/// `command_registry` entry on purpose: a `CommandSpec` matches a spelling
+/// either exactly or followed by a space, and `!git status` has no space after
+/// the `!`, so no registry entry can express it. Keeping it out of the
+/// registry also keeps `buildCommandHelp`'s "every entry is a `/command`"
+/// shape intact.
+const shell_escape_help =
+    \\shell escape:
+    \\  !<command>        run it here, now, under the same ck_exec policy the
+    \\                    tools run under — not a shell, so no pipes, globs,
+    \\                    redirections or $VAR expansion
+    \\  !                 list the commands the escape may run
+;
 
 /// True for input that was clearly meant as a slash command (leading '/'):
 /// when the registry lookup missed, this is what keeps a typo'd command out
@@ -531,6 +648,90 @@ test "parseCommand matches names, aliases, and arguments" {
     try std.testing.expect(parseCommand("/nope") == null);
 }
 
+test "parseShellEscape claims a leading bang and nothing else" {
+    try std.testing.expectEqualStrings("git status", parseShellEscape("!git status").?);
+    // Whitespace either side of the bang, and after the command, is noise.
+    try std.testing.expectEqualStrings("git status", parseShellEscape("  !  git status  ").?);
+    try std.testing.expectEqualStrings("git status", parseShellEscape("!\tgit status\t").?);
+
+    // A bare bang is an escape with nothing to run, not a task: it prints
+    // usage. Distinguishing it from "not an escape" is the whole reason this
+    // returns an optional of a possibly-empty slice.
+    try std.testing.expectEqualStrings("", parseShellEscape("!").?);
+    try std.testing.expectEqualStrings("", parseShellEscape("   !   ").?);
+
+    // A bang anywhere but the first column is ordinary text.
+    try std.testing.expect(parseShellEscape("say hello!") == null);
+    try std.testing.expect(parseShellEscape("what does ! do?") == null);
+    try std.testing.expect(parseShellEscape("") == null);
+    try std.testing.expect(parseShellEscape("   ") == null);
+    // Slash commands and tasks are untouched by the interception.
+    try std.testing.expect(parseShellEscape("/help") == null);
+    try std.testing.expect(parseShellEscape("summarize the diff") == null);
+}
+
+test "splitShellArgs splits on whitespace and groups quoted arguments" {
+    var buf: [max_escape_args][]const u8 = undefined;
+
+    const plain = try splitShellArgs("git log --oneline -5", &buf);
+    try std.testing.expectEqual(@as(usize, 4), plain.len);
+    try std.testing.expectEqualStrings("git", plain[0]);
+    try std.testing.expectEqualStrings("--oneline", plain[2]);
+    try std.testing.expectEqualStrings("-5", plain[3]);
+
+    // Runs of whitespace collapse; tabs count as whitespace.
+    const spaced = try splitShellArgs("  rg \t needle   src  ", &buf);
+    try std.testing.expectEqual(@as(usize, 3), spaced.len);
+    try std.testing.expectEqualStrings("rg", spaced[0]);
+    try std.testing.expectEqualStrings("needle", spaced[1]);
+    try std.testing.expectEqualStrings("src", spaced[2]);
+
+    // A quoted argument keeps its spaces and loses its quotes.
+    const quoted = try splitShellArgs("rg \"foo bar\" src", &buf);
+    try std.testing.expectEqual(@as(usize, 3), quoted.len);
+    try std.testing.expectEqualStrings("foo bar", quoted[1]);
+    const single = try splitShellArgs("rg 'foo bar'", &buf);
+    try std.testing.expectEqualStrings("foo bar", single[1]);
+    // An empty quoted argument survives as an empty argument.
+    const empty_arg = try splitShellArgs("rg ''", &buf);
+    try std.testing.expectEqual(@as(usize, 2), empty_arg.len);
+    try std.testing.expectEqualStrings("", empty_arg[1]);
+
+    // A quote that does not start an argument is literal: no shell here means
+    // no shell quoting rules to emulate.
+    const inner = try splitShellArgs("rg foo\"bar", &buf);
+    try std.testing.expectEqual(@as(usize, 2), inner.len);
+    try std.testing.expectEqualStrings("foo\"bar", inner[1]);
+
+    try std.testing.expectEqual(@as(usize, 0), (try splitShellArgs("", &buf)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try splitShellArgs("   ", &buf)).len);
+
+    try std.testing.expectError(error.UnterminatedQuote, splitShellArgs("rg \"foo bar", &buf));
+    try std.testing.expectError(error.UnterminatedQuote, splitShellArgs("rg 'foo", &buf));
+}
+
+test "splitShellArgs refuses a line with more arguments than it can hold" {
+    var buf: [max_escape_args][]const u8 = undefined;
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(std.testing.allocator);
+    for (0..max_escape_args) |_| try line.appendSlice(std.testing.allocator, "a ");
+    // Exactly at the cap is fine; one more is refused rather than truncated.
+    try std.testing.expectEqual(@as(usize, max_escape_args), (try splitShellArgs(line.items, &buf)).len);
+    try line.appendSlice(std.testing.allocator, "a");
+    try std.testing.expectError(error.TooManyArgs, splitShellArgs(line.items, &buf));
+}
+
+test "the shell escape is documented in help and stays out of the registry" {
+    try std.testing.expect(std.mem.find(u8, shell_escape_help, "!<command>") != null);
+    // No registry entry may claim a bang spelling: dispatch intercepts `!`
+    // before parseCommand runs, so one there would be dead weight that /help
+    // would nonetheless advertise.
+    for (command_registry) |spec| {
+        try std.testing.expect(spec.name[0] != '!');
+        for (spec.aliases) |alias| try std.testing.expect(alias.len == 0 or alias[0] != '!');
+    }
+}
+
 test "looksLikeSlashCommand separates typo'd commands from tasks" {
     try std.testing.expect(looksLikeSlashCommand("/nope"));
     try std.testing.expect(looksLikeSlashCommand("  /nope  "));
@@ -603,8 +804,14 @@ const Model = struct {
     text_field: vxfw.TextField,
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
+    /// Counts stream-redraw ticks so the spinner advances every third one
+    /// while the transcript itself repaints at the full ~30fps tick rate.
+    tick_count: u32 = 0,
     status_buf: [192]u8 = undefined,
     scroll_buf: [32]u8 = undefined,
+    /// `/theme <name>` sets this for the session, overriding `CLANKER_THEME`.
+    /// Arena-owned. Null = fall back to the env var (then the default).
+    theme_override: ?[]const u8 = null,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op — there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -754,6 +961,14 @@ const Model = struct {
         if (task.len == 0) return;
         self.text_field.reset();
 
+        // `!cmd` is intercepted first: it never reaches the registry (no
+        // CommandSpec can match it — see shell_escape_help) and it must never
+        // reach the LLM, which is what a bare `!ls` used to do.
+        if (parseShellEscape(task)) |line| {
+            self.runShellEscape(line);
+            return;
+        }
+
         // Slash commands dispatch through `command_registry` — one lookup
         // covering every spelling, instead of literal matches strewn about.
         // An unrecognized /command is reported in the transcript rather than
@@ -841,6 +1056,28 @@ const Model = struct {
                     return;
                 };
                 try self.submitTask(ctx, prompt);
+            },
+            .theme => {
+                if (pc.args.len == 0) {
+                    const current = self.theme_override orelse themeName(self.ctx.environ_map) orelse "default";
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme: {s}", .{current}) catch "theme", .dim = true }) catch {};
+                    var buf: std.ArrayList(u8) = .empty;
+                    buf.appendSlice(self.arena, "  available:") catch {};
+                    for (theme_mod.names) |n| {
+                        buf.appendSlice(self.arena, " ") catch {};
+                        buf.appendSlice(self.arena, n) catch {};
+                    }
+                    self.lines.append(self.arena, .{ .text = buf.toOwnedSlice(self.arena) catch "  available: (see docs)", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  /theme <name> to switch; color needs a truecolor terminal", .dim = true }) catch {};
+                    return;
+                }
+                if (!theme_mod.isKnown(pc.args)) {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[unknown theme '{s}' — /theme lists them]", .{pc.args}) catch "[unknown theme]", .dim = true }) catch {};
+                    return;
+                }
+                self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme set to {s}", .{pc.args}) catch "theme set", .dim = true }) catch {};
+                ctx.redraw = true;
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");
@@ -939,6 +1176,153 @@ const Model = struct {
         return true;
     }
 
+    /// The command allowlist the `!` escape runs under: the union of every
+    /// registered tool's manifest `exec_allow`, plus anything named in
+    /// `agent.repl_exec_allow`. Derived rather than invented, so `!` starts
+    /// with exactly the exec authority clanker already grants itself and not a
+    /// byte more; widening it is one explicit config line, not a hidden
+    /// default. Sorted so `!` on its own lists it readably, and rebuilt per
+    /// call because `/plugins` can reload the registry mid-session.
+    fn escapeExecAllow(self: *Model) []const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        var it = self.reg.tools.iterator();
+        while (it.next()) |entry| {
+            for (entry.value_ptr.exec_allow) |cmd| appendUniqueCmd(self.arena, &out, cmd);
+        }
+        for (self.cfg.agent.repl_exec_allow) |cmd| appendUniqueCmd(self.arena, &out, cmd);
+        std.mem.sort([]const u8, out.items, {}, lessThanCmd);
+        return out.items;
+    }
+
+    /// Runs one `!` line and folds the result into the transcript. Never
+    /// fails outward: a refused, broken or noisy command is a transcript line,
+    /// not something that takes the session down.
+    fn runShellEscape(self: *Model, line: []const u8) void {
+        // Like submitting a task, this snaps a scrolled-up view back to the
+        // tail — the output lands there and hiding it reads as a no-op Enter.
+        self.view_end = null;
+        const allow = self.escapeExecAllow();
+
+        if (line.len == 0) {
+            self.lines.append(self.arena, .{ .text = "usage: !<command> [args]  — runs here under the ck_exec policy, not in a shell", .dim = true }) catch {};
+            if (allow.len == 0) {
+                self.lines.append(self.arena, .{ .text = "  nothing is allowed: no registered tool declares exec_allow, and agent.repl_exec_allow is empty", .dim = true }) catch {};
+                return;
+            }
+            var list: std.ArrayList(u8) = .empty;
+            list.appendSlice(self.arena, "  allowed: ") catch {};
+            for (allow, 0..) |cmd, i| {
+                if (i > 0) list.appendSlice(self.arena, ", ") catch {};
+                list.appendSlice(self.arena, cmd) catch {};
+            }
+            self.lines.append(self.arena, .{ .text = list.items, .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "  add more with agent.repl_exec_allow in config.local.toml", .dim = true }) catch {};
+            return;
+        }
+
+        // Echoed, and recalled by Up, exactly as typed: a screenful of command
+        // output with nothing above it saying what produced it is unreadable
+        // on scrollback.
+        const typed = std.fmt.allocPrint(self.arena, "!{s}", .{line}) catch "!";
+        self.lines.append(self.arena, .{
+            .text = std.fmt.allocPrint(self.arena, "clanker> {s}", .{typed}) catch "clanker> !",
+            .user = true,
+        }) catch {};
+        self.history.append(self.arena, typed) catch {};
+        self.hist_idx = self.history.items.len;
+        self.hist_draft = "";
+
+        var argv_buf: [max_escape_args][]const u8 = undefined;
+        const argv = splitShellArgs(line, &argv_buf) catch |err| {
+            self.lines.append(self.arena, .{ .text = switch (err) {
+                error.UnterminatedQuote => "[! unterminated quote — quote a whole argument, e.g. !rg \"foo bar\"]",
+                error.TooManyArgs => "[! too many arguments]",
+            }, .dim = true }) catch {};
+            return;
+        };
+        if (argv.len == 0) return;
+
+        // The escape's own sandbox: no filesystem prefixes and no network,
+        // because `execUnderPolicy` uses neither — what it does use is
+        // exec_allow, the deny tokens, git's verb allowlist, and the filtered
+        // child environment, which is why an allowed binary still cannot read
+        // this project's API keys out of the process env.
+        var sb: sandbox_host.Sandbox = .{
+            .gpa = self.gpa,
+            .io = self.io,
+            .root_dir = self.cfg.agent.sandbox_root,
+            .network_allow = &.{},
+            .fs_prefixes = &.{},
+            .environ_map = self.ctx.environ_map,
+            .exec_allow = allow,
+            .git_remote_ops = self.cfg.agent.git_remote_ops,
+            .exec_pattern_allow = self.cfg.agent.exec_pattern_allow,
+            .cfg = &self.cfg,
+        };
+
+        switch (sandbox_host.execUnderPolicy(&sb, argv, escape_stdout_limit, escape_stderr_limit)) {
+            .not_allowed => self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(
+                    self.arena,
+                    "[! '{s}' is not on the exec allowlist — type ! on its own to see what is, or add it to agent.repl_exec_allow]",
+                    .{argv[0]},
+                ) catch "[! not allowed]",
+                .dim = true,
+            }) catch {},
+            .denied => |d| {
+                const msg = switch (d) {
+                    .git_verb => std.fmt.allocPrint(self.arena, "[! git: only the local verbs are allowed (status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree)]", .{}),
+                    .no_pattern_match => std.fmt.allocPrint(self.arena, "[! '{s}': agent.exec_pattern_allow makes this command strict and no pattern matches]", .{argv[0]}),
+                    .deny_token => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied — '{s}' in '{s}' is on the sandbox deny list]", .{ argv[0], x.token, x.arg }),
+                    .shell_operator => |x| std.fmt.allocPrint(self.arena, "[! '{s}': denied — shell operator '{s}' in '{s}'; ! does not run a shell]", .{ argv[0], x.token, x.arg }),
+                };
+                self.lines.append(self.arena, .{ .text = msg catch "[! denied]", .dim = true }) catch {};
+            },
+            .failed => |err| self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "[! '{s}': {s}]", .{ argv[0], @errorName(err) }) catch "[! failed]",
+                .dim = true,
+            }) catch {},
+            .ran => |out| {
+                defer out.deinit(self.gpa);
+                var budget: usize = escape_max_lines;
+                self.appendEscapeOutput(out.stdout, &budget);
+                self.appendEscapeOutput(out.stderr, &budget);
+                // A silent non-zero exit reads as "it worked"; say it. Zero
+                // with no output stays silent, which is what a successful
+                // `!git add x` should look like.
+                if (out.code != 0) {
+                    self.lines.append(self.arena, .{
+                        .text = std.fmt.allocPrint(self.arena, "[! exit {d}]", .{out.code}) catch "[! failed]",
+                        .dim = true,
+                    }) catch {};
+                }
+            },
+        }
+    }
+
+    /// Folds one output stream into the transcript, one line per source line,
+    /// spending from a shared line budget so a chatty command cannot bury the
+    /// conversation. Untrusted text, exactly like a tool result: control bytes
+    /// are stripped before anything reaches the terminal (CWE-150), the same
+    /// rule `transcript.zig` applies everywhere else.
+    fn appendEscapeOutput(self: *Model, text: []const u8, budget: *usize) void {
+        if (text.len == 0) return;
+        // One trailing newline is a line terminator, not an empty last line.
+        const body = if (text[text.len - 1] == '\n') text[0 .. text.len - 1] else text;
+        var it = std.mem.splitScalar(u8, body, '\n');
+        while (it.next()) |raw| {
+            if (budget.* == 0) {
+                self.lines.append(self.arena, .{ .text = "[! output truncated]", .dim = true }) catch {};
+                return;
+            }
+            budget.* -= 1;
+            const clean = stripControls(self.gpa, raw);
+            defer if (clean.ptr != raw.ptr) self.gpa.free(clean);
+            const owned = self.arena.dupe(u8, clean) catch continue;
+            self.lines.append(self.arena, .{ .text = owned, .dim = true }) catch {};
+        }
+    }
+
     fn runWorkflowsTool(self: *Model, name: []const u8) bool {
         const workflows_mod = @import("../workflows.zig");
         const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch {
@@ -1024,7 +1408,7 @@ const Model = struct {
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
 
         // Kick off the tick heartbeat that picks up streamed deltas.
-        try ctx.tick(50, self.widget());
+        try ctx.tick(stream_tick_ms, self.widget());
     }
 
     /// Writes the conversation to `state/sessions/<id>.json` so a later
@@ -1094,12 +1478,17 @@ const Model = struct {
     /// The command list is generated from `command_registry`
     /// (`buildCommandHelp`), so a registry entry can never go undocumented —
     /// the property the deleted REPL's generated `:help` had
-    /// (docs/prds/0005-repl-tui.md). The key bindings stay hand-written here:
-    /// they are wired in the event handler, not the registry.
+    /// (docs/prds/0005-repl-tui.md). The `!` escape and the key bindings stay
+    /// hand-written here for the same reason as each other: neither is
+    /// dispatched through the registry (the escape is intercepted ahead of it,
+    /// the keys are wired in the event handler), so neither has a registry
+    /// entry to generate a line from.
     fn printHelp(self: *Model) void {
         const commands = buildCommandHelp(self.arena) catch return;
         var it = std.mem.splitScalar(u8, commands, '\n');
         while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        var eit = std.mem.splitScalar(u8, shell_escape_help, '\n');
+        while (eit.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
         const keys =
             \\keys:
             \\  Tab               complete a /command
@@ -1223,8 +1612,13 @@ const Model = struct {
                 const still_streaming = bridge_streaming;
                 bridge_mutex.unlock(bridge_io);
                 if (still_streaming) {
-                    self.spinner_frame +%= 1;
-                    try ctx.tick(50, self.widget());
+                    // Redraw at ~30fps so streamed text lands smoothly instead
+                    // of in visible 50ms (20fps) batches, but advance the
+                    // spinner only every third frame so it still animates at a
+                    // readable ~100ms/step rather than a blur.
+                    self.tick_count +%= 1;
+                    if (self.tick_count % 3 == 0) self.spinner_frame +%= 1;
+                    try ctx.tick(stream_tick_ms, self.widget());
                 }
                 ctx.redraw = true;
             },
@@ -1536,7 +1930,7 @@ const Model = struct {
         // were already painted in the theme-less default style, so a chosen
         // CLANKER_THEME only ever showed up inside fenced code — everywhere
         // else in the vaxis REPL's chrome ignored it).
-        const active = theme_mod.select(themeName(self.ctx.environ_map), self.ctx.environ_map);
+        const active = theme_mod.select(self.theme_override orelse themeName(self.ctx.environ_map), self.ctx.environ_map);
         const dim: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.dim } } else .{ .dim = true };
         const rule_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.rule } } else .{};
         const tool_style: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.tool } } else dim;
@@ -1920,8 +2314,8 @@ test "lineRows counts wrapped rows and honours embedded newlines" {
 
 test "tailWindow bottom-aligns a short transcript and fills a tall one" {
     const lines = [_]Line{
-        .{ .text = "one" },   .{ .text = "two" }, .{ .text = "three" },
-        .{ .text = "four" },  .{ .text = "five" },
+        .{ .text = "one" },  .{ .text = "two" },  .{ .text = "three" },
+        .{ .text = "four" }, .{ .text = "five" },
     };
     // All five fit in ten rows: start at 0, used == the five short lines.
     const short = tailWindow(&lines, lines.len, 10, 80);

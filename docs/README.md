@@ -394,7 +394,7 @@ The shipped `translate` plugin combines all of it: an `after` transform on every
 
 ## REPL slash commands
 
-A line starting with `/` is a command; anything else is sent to the agent as a task. Except for the in-process quit commands, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`. A bare `exit` or `quit` also leaves the REPL.
+A line starting with `!` is a shell escape (see below), a line starting with `/` is a command, and anything else is sent to the agent as a task. Except for the in-process quit commands, `/<name>` dispatches to the internal WASM tool `cmd_<name>` (`src/cli.zig`), so the command set is exactly the `cmd_*` tools in `tools/manifests/`. A bare `exit` or `quit` also leaves the REPL.
 
 | Command | Runs as | Description |
 |---------|---------|-------------|
@@ -407,6 +407,19 @@ A line starting with `/` is a command; anything else is sent to the agent as a t
 | `/goal <intent>` | in-process | Design and persist a goal (runs the agent) |
 | `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
+
+### `!cmd` — the inline shell escape
+
+A line starting with `!` is a third input mode, checked before the command table above: it runs right there and its output lands in the transcript, and nothing about it is sent to the model.
+
+```
+!git log --oneline -5
+!rg "fn parseShellEscape" src
+```
+
+It is not a shell. The line is split into one fixed argv — whitespace separates arguments, `'…'` or `"…"` groups one argument that contains spaces, there are no backslash escapes — and that argv goes through the same `ck_exec` gate a WASM tool's exec call goes through (`host.execUnderPolicy` → `host.execDenial`). So there are no pipes, redirections, globs or `$VAR` expansion, because there is no shell to expand them; the child also gets the same filtered environment a tool's subprocess gets, which is why an allowed binary cannot print this project's API keys.
+
+The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `[! exit N]`; output is control-stripped like every other untrusted string and capped at 500 lines.
 
 ### `/graph`
 
@@ -588,6 +601,7 @@ Fields:
   - `git_commit`: commit promoted improvements with git (default true).
   - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot — `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.toml`, not the committed example.
   - `exec_pattern_allow`: whole-command-line glob patterns a tool may run through `ck_exec`, e.g. `"gh pr create*"` or `"gh pr merge*"`. When a pattern names a command, that command becomes strict: only an argv matching one of its patterns runs, and the match also overrides the deny tokens for the args it grants (`"gh pr merge"` legitimately contains `"merge"`). Commands with no pattern stay under the deny-list check, so a pattern for `gh` does not widen `git` or anything else. `*` matches any run of characters, including across spaces and empty. The `gh` tool refuses to run at all unless a matching pattern is configured.
+  - `repl_exec_allow`: extra commands the REPL's `!cmd` escape may run, e.g. `["ls", "cat"]`. Empty (default) means `!` runs exactly the union of every registered tool's `exec_allow` and nothing more, so the escape starts with no authority the harness did not already have. Nothing but the REPL reads this, so widening it never widens a tool, and the rest of the policy — the deny tokens, `git`'s verb allowlist, `exec_pattern_allow` — still applies to whatever is named here.
   - `seed`: sampling seed.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
   - `provider_check_timeout_seconds`: how long `providers check` waits for one provider before reporting it as timed out and moving on (default 10). Without a ceiling a single unreachable endpoint costs the whole sweep the OS connect timeout (~75s on macOS). `0` disables the ceiling; `[providers.<name>] check_timeout_seconds` overrides it per provider.

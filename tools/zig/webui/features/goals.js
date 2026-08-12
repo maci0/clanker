@@ -98,13 +98,28 @@ function mirrorGoalsToBoard(goals) {
       if (status === "done" || status === "abandoned") return;
       if (goalMirrorRequested[g.id]) return;
       goalMirrorRequested[g.id] = true;
+      // A board card title is capped at 512 characters but a goal objective
+      // is not, so an over-long objective used to make the mirror fail with
+      // "title must be 1-512 characters" and pin this goal as "requested"
+      // forever. Truncate the *display* title for the card; the full
+      // objective stays on the goal and is one click away on the Goals view.
+      // The durable card<->goal link is the card's `goal` field, so a shorter
+      // title does not orphan it.
+      var title = g.objective;
+      if (title.length > 512) title = title.slice(0, 512);
       postBoard({
         op: "create",
-        title: g.objective,
+        title: title,
         body: g.completion_criterion || "",
         column: goalPinnedColumn(g, isGoalRunning(g.id)) || "backlog",
         goal: g.id
-      }, null);
+      }, null).then(function (ok) {
+        // Only a confirmed create keeps the debounce flag. On failure the flag
+        // is dropped so the next loadGoals retries; otherwise a transient
+        // error (or a too-long objective that was later shortened) would keep
+        // the goal off the board forever.
+        if (!ok) delete goalMirrorRequested[g.id];
+      });
     });
   };
   if (boardIsLoaded()) {

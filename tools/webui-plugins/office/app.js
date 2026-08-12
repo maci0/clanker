@@ -136,27 +136,46 @@ clanker.registerView({
 
     var offices = [];      // { layout, cards, agents, cursor }
     var goals = [];
-    /* The janitor. He is only in the room when there is something to sweep:
-       /api/janitor reports orphaned staging copies and stale run graphs, and
-       when it reports nothing he is not drawn at all. A mascot that mops a
-       clean floor would be the one dishonest thing in this view. */
-    var janitor = { present: false, bytes: 0, items: 0, x: 1, y: 1, dir: 1, quip: null, quipUntil: 0 };
+    /* The janitor. Always on the floor, walking his rounds: he is the
+       comedic relief, not a status lamp (/api/janitor's reclaimable-bytes
+       report still arrives as his grumbling, and the log line still names
+       the real command). He only actually CLEANS when a clanker makes a
+       mess: a board action can drop a pile of garbage at the actor's desk,
+       and the janitor rushes over and sweeps it up. Work makes crumbs;
+       somebody has to. */
+    var janitor = {
+      bytes: 0, items: 0,
+      x: 1, y: 1, dir: 1, office: 0,
+      tx: null, ty: null,          // current waypoint
+      pile: null,                  // the pile being rushed / cleaned
+      cleaning_until: 0,
+      quip: null, quipUntil: 0,
+    };
+    var PILE_CHANCE = 3;           // 1 in N board actions drops garbage
     /* Short, apologetic, understated: the character says very little, and a
        mascot with a joke for every occasion would be a different one. The
        janitor.zig header records why these are not verbatim quotes. */
     var JANITOR_QUIPS = [
-      "Sorry. I clean here.",
-      "Is nothing. Small job.",
+      "Sorry. I walk here.",
+      "Is quiet. I like quiet.",
       "I am only cleaner.",
       "Hold my mop.",
-      "You train? I clean. Same thing.",
-      "Nobody clean this. Okay. I clean this.",
+      "You train? I walk. Same thing.",
+      "Floor is fine. I check anyway.",
       "Is heavy? For you maybe.",
       "I do not lift. I tidy.",
       "First mop. Then we talk.",
       "Is fine. Floor is my gym.",
       "Somebody drop 300 megabyte. I say nothing.",
-      "Okay. Finish. Where is next mess."
+      "Robots do not eat. So where is crumbs from."
+    ];
+    var CLEAN_QUIPS = [
+      "Who throw this?",
+      "Fresh garbage. Is still warm.",
+      "I just clean here. Was nine seconds ago.",
+      "Is okay. Is job.",
+      "You work, I sweep. Is system.",
+      "This one signs its garbage. Brave."
     ];
 
     var quipIdx = 0;
@@ -217,6 +236,7 @@ clanker.registerView({
     var S_CHAIR = [3, 1];
     var S_PICTURE = [4, 1];
     var S_DOOR = [5, 1];
+    var S_GARBAGE = [6, 1];
 
     function tile(t, dx, dy) {
       if (!sheetReady) return false;
@@ -334,7 +354,10 @@ clanker.registerView({
       });
 
       o.agents.forEach(function (a) { drawAgent(a, ox, oy, ink, L.w); });
-      if (janitor.present && o.isFirst) drawJanitor(ox, oy, ink);
+      (o.piles || []).forEach(function (pl) {
+        tile(S_GARBAGE, ox + pl.x * TILE, oy + pl.y * TILE);
+      });
+      if (o.index === janitor.office) drawJanitor(ox, oy, ink);
     }
 
     /* The man, then his mop: the handle leans the way he is walking, and it
@@ -372,7 +395,7 @@ clanker.registerView({
       }
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
       ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
-      if (janitor.quip && offices.length > 0) bubble(px, py, janitor.quip, ox, offices[0].layout.w);
+      if (janitor.quip && offices.length > 0) bubble(px, py, janitor.quip, ox, offices[janitor.office].layout.w);
     }
 
     function drawBoard(o, ox, oy) {
@@ -617,18 +640,17 @@ clanker.registerView({
         return api.getJSON("/api/goals").catch(function () { return { goals: [] }; });
       }).then(function (g) {
         goals = (g.goals || []).filter(function (x) { return x.status === "active"; });
-        if (offices.length > 0) offices[0].isFirst = true;
+        offices.forEach(function (o, i) { o.index = i; o.piles = o.piles || []; });
         return api.getJSON("/api/janitor").catch(function () { return null; });
       }).then(function (jr) {
         if (jr && jr.ok) {
-          var was = janitor.present;
-          janitor.present = jr.items > 0;
+          var had = janitor.items > 0;
           janitor.bytes = jr.bytes;
           janitor.items = jr.items;
-          if (janitor.present && !was) {
+          if (jr.items > 0 && !had) {
             say("janitor: " + api.fmt.bytes(jr.bytes) + " to sweep up (clanker janitor --yes)");
-          } else if (!janitor.present && was) {
-            say("janitor: floor is clean, sitting down");
+          } else if (jr.items === 0 && had) {
+            say("janitor: big garbage is gone, back to rounds");
           }
         }
         status.val = offices.length + (offices.length === 1 ? " room" : " rooms");
@@ -676,20 +698,179 @@ clanker.registerView({
       agent.walk = { to: target, home: { x: agent.x, y: agent.y }, phase: "out", onArrive: onArrive };
     }
 
+    /* ---------- janitor navigation ----------
+       The floor as a walkability grid: walls, the wall-fixture strip, desks
+       with their chairs, the sofa, and the small fixtures are blocked. Small
+       (16 x ~14), rebuilt only when a layout is first seen. */
+    function blockedGrid(o) {
+      if (o._grid) return o._grid;
+      var L = o.layout;
+      var g = [];
+      for (var y = 0; y < L.h; y++) g.push(new Array(L.w).fill(false));
+      function block(x, yy) { if (yy >= 0 && yy < L.h && x >= 0 && x < L.w) g[yy][x] = true; }
+      for (var x0 = 0; x0 < L.w; x0++) { block(x0, 0); block(x0, L.h - 1); }
+      for (var y0 = 0; y0 < L.h; y0++) { block(0, y0); block(L.w - 1, y0); }
+      for (var ys = 1; ys <= 3; ys++) for (var xs = 1; xs < L.w - 1; xs++) block(xs, ys);
+      (L.plants || []).forEach(function (pl) { block(pl.x, pl.y); });
+      if (L.bin) block(L.bin.x, L.bin.y);
+      if (L.shelf) block(L.shelf.x, L.shelf.y);
+      if (L.cooler) block(L.cooler.x, L.cooler.y);
+      if (L.sofa) { block(L.sofa.x, L.sofa.y); block(L.sofa.x + 1, L.sofa.y); }
+      (L.desks || []).forEach(function (d) { block(d.x, d.y); block(d.x + 1, d.y); });
+      o._grid = g;
+      return g;
+    }
+
+    /* Plain A*, 4-neighbour, manhattan heuristic. The grid is tiny, so no
+       heap: a linear scan of the open list is faster to read and fast enough. */
+    function findPath(o, sx, sy, gx, gy) {
+      var g = blockedGrid(o);
+      var L = o.layout;
+      function free(x, y) { return y >= 0 && y < L.h && x >= 0 && x < L.w && !g[y][x]; }
+      // Snap endpoints to the nearest free tile so a pile beside a desk or a
+      // janitor mid-stride still resolves.
+      function snap(x, y) {
+        if (free(x, y)) return { x: x, y: y };
+        for (var r = 1; r <= 4; r++) {
+          for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
+            if (free(x + dx, y + dy)) return { x: x + dx, y: y + dy };
+          }
+        }
+        return null;
+      }
+      var start = snap(Math.round(sx), Math.round(sy));
+      var goal = snap(Math.round(gx), Math.round(gy));
+      if (!start || !goal) return null;
+      var open = [{ x: start.x, y: start.y, g: 0, f: 0, prev: null }];
+      var seen = {};
+      seen[start.x + "," + start.y] = true;
+      var guard = L.w * L.h * 4;
+      while (open.length > 0 && guard-- > 0) {
+        var best = 0;
+        for (var i = 1; i < open.length; i++) if (open[i].f < open[best].f) best = i;
+        var cur = open.splice(best, 1)[0];
+        if (cur.x === goal.x && cur.y === goal.y) {
+          var path = [];
+          for (var n = cur; n; n = n.prev) path.unshift({ x: n.x, y: n.y });
+          return path;
+        }
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+          var nx = cur.x + d[0];
+          var ny = cur.y + d[1];
+          var key = nx + "," + ny;
+          if (!free(nx, ny) || seen[key]) return;
+          seen[key] = true;
+          var gg = cur.g + 1;
+          open.push({ x: nx, y: ny, g: gg, f: gg + Math.abs(goal.x - nx) + Math.abs(goal.y - ny), prev: cur });
+        });
+      }
+      return null;
+    }
+
+    function pickWaypoint(L) {
+      // Anywhere on the open floor, not a corridor: rounds wander the whole
+      // lower half of the room, x and y both random, so he reads as a person
+      // pottering about rather than a platform sprite on rails.
+      var g = blockedGrid(offices[janitor.office]);
+      for (var tries = 0; tries < 10; tries++) {
+        var wx = 1 + Math.random() * (L.w - 3);
+        var wy = Math.min(L.h - 2, 4.5 + Math.random() * (L.h - 6.5));
+        if (!g[Math.round(wy)] || !g[Math.round(wy)][Math.round(wx)]) {
+          janitor.tx = wx;
+          janitor.ty = wy;
+          return;
+        }
+      }
+      janitor.tx = L.door.x;
+      janitor.ty = L.h - 2;
+    }
+
     function stepJanitor(dt, now) {
-      if (!janitor.present || reduced || offices.length === 0) return false;
-      var L = offices[0].layout;
-      janitor.x += janitor.dir * 2.2 * dt;
-      if (janitor.x > L.w - 2) { janitor.x = L.w - 2; janitor.dir = -1; }
-      if (janitor.x < 1) { janitor.x = 1; janitor.dir = 1; }
-      janitor.y = L.h - 2;
+      if (offices.length === 0) return false;
+      // A pile anywhere summons him; oldest first.
+      var target_office = null;
+      var pile = null;
+      for (var i = 0; i < offices.length; i++) {
+        var ps = offices[i].piles || [];
+        if (ps.length > 0) { target_office = i; pile = ps[0]; break; }
+      }
+      if (pile && janitor.pile !== pile) {
+        janitor.pile = pile;
+        janitor.path = null;
+        if (janitor.office !== target_office) {
+          // He takes the corridor between rooms; drawing that adds nothing,
+          // so he appears in the doorway of the room that needs him.
+          janitor.office = target_office;
+          var L0 = offices[target_office].layout;
+          janitor.x = L0.door.x;
+          janitor.y = L0.h - 2;
+        }
+        janitor.quip = null;
+      }
+      var L = offices[janitor.office].layout;
+      if (janitor.pile) {
+        if (now < janitor.cleaning_until) return true; // scrubbing in place
+        if (janitor.cleaning_until > 0) {
+          // Finished: pile gone, one dry line for whoever made it.
+          var o = offices[janitor.office];
+          var at = o.piles.indexOf(janitor.pile);
+          if (at >= 0) o.piles.splice(at, 1);
+          janitor.pile = null;
+          janitor.cleaning_until = 0;
+          janitor.quip = CLEAN_QUIPS[quipIdx % CLEAN_QUIPS.length];
+          quipIdx += 1;
+          janitor.quipUntil = now + 6000;
+          dirty = true;
+          return true;
+        }
+        if (!janitor.path) {
+          janitor.path = findPath(offices[janitor.office], janitor.x, janitor.y, janitor.pile.x, janitor.pile.y);
+          janitor.path_i = 0;
+        }
+        var arrived = false;
+        if (reduced || !janitor.path) {
+          // Reduced motion (or an unroutable corner case): appear at the mess.
+          janitor.x = janitor.pile.x;
+          janitor.y = janitor.pile.y;
+          arrived = true;
+        } else {
+          var node = janitor.path[janitor.path_i];
+          var dx = node.x - janitor.x;
+          var dy = node.y - janitor.y;
+          var dist = Math.sqrt(dx * dx + dy * dy);
+          var rush = 7 * dt; // garbage is urgent; rounds are not
+          if (dist <= rush) {
+            janitor.x = node.x;
+            janitor.y = node.y;
+            janitor.path_i += 1;
+            if (janitor.path_i >= janitor.path.length) arrived = true;
+          } else {
+            janitor.x += (dx / dist) * rush;
+            janitor.y += (dy / dist) * rush;
+            janitor.dir = dx >= 0 ? 1 : -1;
+          }
+        }
+        if (arrived) {
+          janitor.path = null;
+          janitor.cleaning_until = now + (reduced ? 1 : 1400);
+        }
+        return true;
+      }
+      // Rounds: amble between waypoints, one dry line every so often.
       if (now > janitor.quipUntil) {
-        // A line every so often, cycling rather than random so he does not
-        // say the same thing twice in a row.
         janitor.quip = JANITOR_QUIPS[quipIdx % JANITOR_QUIPS.length];
         quipIdx += 1;
         janitor.quipUntil = now + 9000;
       }
+      if (reduced) return false;
+      if (janitor.tx === null || (Math.abs(janitor.tx - janitor.x) < 0.3 && Math.abs(janitor.ty - janitor.y) < 0.3)) pickWaypoint(L);
+      var wx = janitor.tx - janitor.x;
+      var wy = janitor.ty - janitor.y;
+      var wd = Math.sqrt(wx * wx + wy * wy) || 1;
+      var pace = 1.6 * dt;
+      janitor.x += (wx / wd) * pace;
+      janitor.y += (wy / wd) * pace;
+      janitor.dir = wx >= 0 ? 1 : -1;
       return true;
     }
 
@@ -742,6 +923,16 @@ clanker.registerView({
         if (!line) return;
         var actor = agentIn(o, m.from);
         say(o.room + ": " + line);
+        // Work makes crumbs: some actions leave a pile of garbage by the
+        // actor's desk, and the janitor will rush over. Which actions do is
+        // decided by the message's own id, so every viewer sees the same mess.
+        if (hashString(m.id || m.text) % PILE_CHANCE === 0 && (o.piles || []).length < 3) {
+          var px_ = Math.min(Math.max(actor.x + 1, 1), o.layout.w - 2);
+          var py_ = Math.min(Math.max(actor.y + 1, 5), o.layout.h - 2);
+          o.piles.push({ x: px_, y: py_ });
+          say(o.room + ": " + m.from + " threw a pile of garbage on the floor");
+          dirty = true;
+        }
         sendToBoard(o, actor, function () {
           // Re-read the board rather than folding the action here: the server
           // already folds the log, and a second implementation of that would
@@ -827,7 +1018,6 @@ clanker.registerView({
     var janitorTimer = window.setInterval(function () {
       api.getJSON("/api/janitor").then(function (jr) {
         if (!jr || !jr.ok) return;
-        janitor.present = jr.items > 0;
         janitor.bytes = jr.bytes;
         janitor.items = jr.items;
         dirty = true;

@@ -118,8 +118,9 @@ that shipped and was later caught and fixed. `webui_asset_paths` is one list
 because it used to be two: the module gate and the asset route were
 hand-maintained copies of the same set, and `features/arena.js` appeared in
 neither, so the Arena view's dynamic `import()` 404'd against a server that
-held its bytes. A test now walks `tools/zig/webui/{core,lib,features}` and
-fails on any module the list has never heard of.
+held its bytes (hit twice independently in one day — see `644dc37` and
+`docs/WEBUI_REVIEW.md`). A test now walks `tools/zig/webui/{core,lib,features}`
+and fails on any module the list has never heard of.
 
 **Ask bridge (`ask_user`).** A streaming run writes
 `\x01{"type":"ask","id":…,"question":…,"options":[…]}` down its own

@@ -63,6 +63,7 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **A2A agent cards** – `.well-known/agent.json` discovery
 - **`/goal`** – persistent structured goals steering agent runs
 - **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/tools`, `/sessions`, `/graph`, `/status`) served by internal WASM tools
+- **Inline shell escape** – `!git log --oneline -5` in the REPL runs there and then, printing into the transcript instead of going to the model. Not a shell: one fixed argv through the same `ck_exec` gate the tools go through, so no pipes, globs or `$VAR`, and the child never sees your API keys. Bare `!` lists what it may run
 - **Execution graphs** – every run is recorded to `state/runs/`; replay it with `/graph` or `clanker graph <run-id>`
 - **Arena** – `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
 - **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on

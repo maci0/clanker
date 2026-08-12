@@ -658,6 +658,14 @@ function showCardDetail(id) {
   save.className = "secondary";
   save.textContent = "Save card";
   save.addEventListener("click", function () {
+    if (!titleIn.value.trim()) {
+      // Don't post an empty title just to have the backend refuse it with the
+      // cryptic "title must be 1-512 characters"; say what to do in place and
+      // leave the draft intact so the user can type a title.
+      el.boardStatus.textContent = "A card needs a title before it can be saved.";
+      titleIn.focus();
+      return;
+    }
     var deadline = 0;
     if (dueIn.value) {
       var parsed = Date.parse(dueIn.value + "T23:59:59");
