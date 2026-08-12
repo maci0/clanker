@@ -34,7 +34,8 @@
       "completion_tokens": { "type": "integer" },
       "cost": { "type": "number" },
       "run": { "type": "string" },
-      "run_id": { "type": "string" }
+      "run_id": { "type": "string" },
+      "goal": { "type": "string", "description": "Goal id (state/goals.json) this card mirrors; empty string unlinks" }
     },
     "required": []
   },

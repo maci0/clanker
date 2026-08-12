@@ -3101,7 +3101,10 @@ var viewLoaders = {
   },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
-  board: function () { return loadBoardRooms(); },
+  // Goals ride along with the board: the board->goal sync (moving a card
+  // marks its goal) needs the goal list, and the goal->board mirror needs to
+  // run even when the Goals view was never opened.
+  board: function () { return loadBoardRooms().then(function () { return loadGoals(); }); },
   knowledge: function(){ return kbLoad(); },
   prompts: promptsLoadView,
   tools: loadTools,

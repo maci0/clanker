@@ -42,6 +42,12 @@ pub const Decision = struct {
     answer: []const u8,
 };
 
+/// One poll for a mid-run steering message (see Agent.steer_fn). Returns the
+/// next queued message duped into `arena`, or null when nothing is queued. A
+/// bare function pointer like AskFn, because the wiring side (cli.zig's serve)
+/// identifies the run through a threadlocal rather than a context argument.
+pub const SteerFn = *const fn (arena: std.mem.Allocator) ?[]const u8;
+
 /// Cumulative token usage across all LLM calls in a single agent run.
 pub const RunStats = struct {
     total_prompt_tokens: u64 = 0,
@@ -115,6 +121,12 @@ pub const Agent = struct {
     /// means no gate — the state headless runs, the improve loop and nested
     /// sub-agents must stay in, because they have nobody to answer.
     confirm_fn: ?host.ConfirmFn = null,
+    /// Mid-run steering, wired by the streaming web run (POST /api/steer):
+    /// polled between iterations, each returned string joins the conversation
+    /// as a user message. The callee dupes into the passed arena, so the
+    /// message lives exactly as long as the rest of this run's transcript.
+    /// Null everywhere there is nobody who could interject.
+    steer_fn: ?SteerFn = null,
     /// Plan mode (webui-plan 2.2): the run proposes instead of executing.
     /// [[plan_mode_suffix]] is threaded into the system prompt and
     /// executeCalls refuses write-capable tools (the same needsConfirm
@@ -473,6 +485,24 @@ pub const Agent = struct {
                     .ok = false,
                 });
                 return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
+            }
+            // Mid-run steering: messages posted while the run works (POST
+            // /api/steer) join the conversation here, between iterations —
+            // the one seam where a user message is always legal, because the
+            // previous batch's tool results are already appended. Drained
+            // fully so two quick interjections both make this LLM call.
+            if (self.steer_fn) |steer| {
+                while (steer(self.arena)) |text| {
+                    log.log(.info, "steering message joined the run at iteration {d} ({d} bytes)", .{ iteration + 1, text.len });
+                    try messages.append(self.arena, .{ .role = .user, .content = text });
+                    try g.add(self.ctx.gpa, .{
+                        .kind = .decision,
+                        .iteration = iteration,
+                        .label = "user steered the run",
+                        .output = graph_mod.truncatedPreview(text),
+                        .ok = true,
+                    });
+                }
             }
             // Log estimated prompt tokens before each LLM call for visibility
             // into context usage and to aid compaction tuning. maybeCompactMessages

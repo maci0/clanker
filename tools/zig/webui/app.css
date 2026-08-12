@@ -1360,6 +1360,8 @@ button.tool-name:hover { color: var(--accent-text); }
   letter-spacing: 0.02em;
 }
 .goal[data-status="active"] .goal-status { color: var(--ok); font-weight: 700; }
+.goal[data-status="running"] .goal-status { color: var(--accent-text); font-weight: 700; }
+.goal[data-status="review"] .goal-status { color: var(--warn-text); font-weight: 700; }
 .goal-field { margin-top: 0.35rem; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 .goal-field b { color: var(--fg); font-weight: 700; }
 /* A goal run's own panel: streamed output, status and Stop, one per run, so
@@ -1383,6 +1385,13 @@ button.tool-name:hover { color: var(--accent-text); }
   color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .goal-run-output:empty::before { content: "…"; color: var(--fg-muted); }
+/* Mid-run steering: one line in, under the streamed output, so the
+   correction lands where the eyes already are. */
+.goal-steer {
+  display: flex; gap: var(--space-3); align-items: center;
+  padding: var(--space-2) var(--space-3); border-top: 1px solid var(--rule);
+}
+.goal-steer input { flex: 1; min-width: 0; }
 
 dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
 dd ul { list-style: none; margin: 0; padding: 0; }
@@ -1938,6 +1947,7 @@ h2#session-title {
 .card-flag[data-due="soon"] { color: var(--on-danger); background: var(--warn); border-color: var(--warn); }
 .card-flag[data-due="late"] { color: var(--on-danger); background: var(--danger); border-color: var(--danger); }
 .card-flag[data-blocked="true"] { color: var(--fg-muted); background: color-mix(in srgb, var(--surface-2) 88%, transparent); }
+.card-flag[data-goal="true"] { color: var(--accent-text); background: color-mix(in srgb, var(--surface-2) 88%, transparent); }
 .card-progress { color: var(--fg-muted); font-size: 11px; }
 .card-progress-bar { height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 0.2rem; }
 .card-progress-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
