@@ -62,6 +62,7 @@ const Req = struct {
     /// Id of the goal (state/goals.json) the card mirrors; "" unlinks on
     /// update. Set at creation by the web UI's goal->board mirroring.
     goal: ?[]const u8 = null,
+    labels: ?[]const cards.Label = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
     cost: ?f64 = null,
@@ -278,6 +279,8 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []cons
         try s.write(c.deadline);
         try s.objectField("goal");
         try s.write(c.goal);
+        try s.objectField("labels");
+        try s.write(c.labels);
         try s.objectField("subtasks");
         try s.write(c.subtasks);
         try s.objectField("depends_on");
@@ -377,6 +380,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .deadline = req.deadline,
             .who = assignee,
             .goal = req.goal,
+            .labels = req.labels,
         }) catch return lib.fail(out, "could not post the card to the room");
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
@@ -417,6 +421,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // Either reassigns, and "" clears.
             .who = req.who orelse req.assignee,
             .goal = req.goal,
+            .labels = req.labels,
         };
     } else if (std.mem.eql(u8, op, "move")) blk: {
         const col = req.column orelse return lib.fail(out, "which column?");

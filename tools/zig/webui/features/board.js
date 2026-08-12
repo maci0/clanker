@@ -138,14 +138,15 @@ export function cardById(id) {
    filter. It used to clear #board-grid and rebuild it, which is what forced the
    focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
    everything. */
-var boardState = state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "", assignee: "" });
+var boardState = state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "", assignee: "", label: "" });
 
 function boardFilterState() {
   return {
     text: (document.getElementById("board-filter-input") || {}).value || "",
     blockedOnly: !!(document.getElementById("board-filter-blocked") || {}).checked,
     priority: (document.getElementById("board-filter-priority") || {}).value || "",
-    assignee: (document.getElementById("board-filter-assignee") || {}).value || ""
+    assignee: (document.getElementById("board-filter-assignee") || {}).value || "",
+    label: (document.getElementById("board-filter-label") || {}).value || ""
   };
 }
 
@@ -161,7 +162,8 @@ export function renderBoard(next) {
     text: bf.text.trim().toLowerCase(),
     blockedOnly: bf.blockedOnly,
     priority: bf.priority,
-    assignee: bf.assignee
+    assignee: bf.assignee,
+    label: bf.label
   };
   // Trello-like assignee filter options: derive from cards present
   (function(){
@@ -196,7 +198,7 @@ function boardColumn(col, s) {
   var shown = s.cards
     .filter(function (c) { return c.column === col.id; })
     .filter(function (c) { return !s.mine || c.assignee === s.me; })
-    .filter(function (c) { if (s.assignee) { if (s.assignee === "(unassigned)") { if (c.assignee) return false; } else if (c.assignee !== s.assignee) return false; } if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
+    .filter(function (c) { if (s.assignee) { if (s.assignee === "(unassigned)") { if (c.assignee) return false; } else if (c.assignee !== s.assignee) return false; } if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.label && !(c.labels || []).some(function (l) { return l.color === s.label; })) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "") + " " + (c.labels || []).map(function(l){ return l.text || l.color || ""; }).join(" ")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
     .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
   var over = col.wip && shown.length > col.wip;
@@ -1469,7 +1471,7 @@ export function bindBoard(deps) {
       })
       .finally(function () { el.boardResyncGoals.disabled = false; });
   });
-  ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee"].forEach(function(id){
+  ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee","board-filter-label"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
     n.addEventListener(id==="board-filter-input" ? "input" : "change", function(){ renderBoard(null); });
@@ -1498,6 +1500,7 @@ export function bindBoard(deps) {
         if(s.mine && c.assignee!==s.me) return false;
         if(s.blockedOnly && blockers(c).length===0) return false;
         if(s.priority && (c.priority||"normal")!==s.priority) return false;
+        if(s.label && !(c.labels||[]).some(function(l){ return l.color===s.label; })) return false;
         if(s.text && (c.title+" "+(c.body||"")+" "+(c.assignee||"")).toLowerCase().indexOf(s.text)===-1) return false;
         return true;
       });

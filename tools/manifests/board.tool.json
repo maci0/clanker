@@ -37,6 +37,15 @@
       "run": { "type": "string" },
       "run_id": { "type": "string" },
       "goal": { "type": "string", "description": "Goal id (state/goals.json) this card mirrors; empty string unlinks" }
+      ,"labels": {
+        "type": "array",
+        "maxItems": 10,
+        "items": {
+          "type": "object",
+          "properties": { "color": { "type": "string" }, "text": { "type": "string" } },
+          "required": ["color"]
+        }
+      }
     },
     "required": []
   },
