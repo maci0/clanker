@@ -5347,53 +5347,61 @@ const goal_id_cap = 64;
 /// exist fits.
 const session_id_cap = 64;
 
-const GoalRunSlot = struct {
-    /// 0 marks a free slot.
+/// A steer slot is occupied when either a goal or a session is set: a goal
+/// run registers by goal id, a session chat run by session id. A run with
+/// neither cannot be steered and does not register.
+const SteerSlot = struct {
+    /// 0 marks an empty key (a run is keyed by goal, by session, or both).
     goal_len: usize = 0,
     goal_buf: [goal_id_cap]u8 = @splat(0),
     /// The session this run streams into, when it has one (a goal-only
-    /// `--goal` CLI run has none). Carried so a *different* browser/session
-    /// can find and open the live transcript of a run some other client
-    /// started — without this, GET /api/goals could say a goal is running
-    /// but nothing on the page could point at where.
+    /// `--goal` CLI run has none; a chat run has one but no goal). Carried
+    /// so a *different* browser/session can find and open the live transcript
+    /// of a run some other client started — without this, GET /api/goals
+    /// could say a goal is running but nothing on the page could point at
+    /// where — and so a chat run is steerable by session id.
     session_len: usize = 0,
     session_buf: [session_id_cap]u8 = @splat(0),
     /// Queued steering messages, serve_gpa-owned, drained oldest-first by
-    /// steerPoll and freed by goalRunRelease when the run ends unpolled.
+    /// steerPoll and freed by runRelease when the run ends unpolled.
     queue: std.ArrayListUnmanaged([]u8) = .empty,
 
-    fn goalId(self: *const GoalRunSlot) []const u8 {
+    fn occupied(self: *const SteerSlot) bool {
+        return self.goal_len != 0 or self.session_len != 0;
+    }
+
+    fn goalId(self: *const SteerSlot) []const u8 {
         return self.goal_buf[0..self.goal_len];
     }
 
-    fn sessionId(self: *const GoalRunSlot) []const u8 {
+    fn sessionId(self: *const SteerSlot) []const u8 {
         return self.session_buf[0..self.session_len];
     }
 };
 
-var goal_run_mutex: std.c.pthread_mutex_t = .{};
-var goal_run_slots: [max_connection_threads]GoalRunSlot = @splat(.{});
+var steer_mutex: std.c.pthread_mutex_t = .{};
+var steer_slots: [max_connection_threads]SteerSlot = @splat(.{});
 
 /// The slot this connection thread's run registered. SteerFn is a bare
 /// function pointer (like AskFn), so the threadlocal is its context.
-threadlocal var current_goal_run_slot: ?usize = null;
+threadlocal var current_steer_slot: ?usize = null;
 
-/// Claims a slot for a goal run starting on this thread. Returns false (and
-/// registers nothing) when the id does not fit or every slot is taken; the
-/// run proceeds unsteerable rather than failing. `session_id` may be empty
-/// (a run with no session to point at still registers, just without one).
-fn goalRunRegister(goal_id: []const u8, session_id: []const u8) bool {
-    if (goal_id.len == 0 or goal_id.len > goal_id_cap) return false;
-    if (session_id.len > session_id_cap) return false;
-    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
-    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
-    for (&goal_run_slots, 0..) |*slot, i| {
-        if (slot.goal_len != 0) continue;
+/// Claims a slot for a streaming run starting on this thread, keyed by its
+/// goal id and/or its session id (either may be empty, but not both). Returns
+/// false (and registers nothing) when the run has no key, a key is oversize,
+/// or every slot is taken; the run proceeds unsteerable rather than failing.
+fn runRegister(goal_id: []const u8, session_id: []const u8) bool {
+    if (goal_id.len > goal_id_cap or session_id.len > session_id_cap) return false;
+    if (goal_id.len == 0 and session_id.len == 0) return false;
+    _ = std.c.pthread_mutex_lock(&steer_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+    for (&steer_slots, 0..) |*slot, i| {
+        if (slot.occupied()) continue;
         @memcpy(slot.goal_buf[0..goal_id.len], goal_id);
         slot.goal_len = goal_id.len;
         @memcpy(slot.session_buf[0..session_id.len], session_id);
         slot.session_len = session_id.len;
-        current_goal_run_slot = i;
+        current_steer_slot = i;
         return true;
     }
     return false;
@@ -5401,12 +5409,12 @@ fn goalRunRegister(goal_id: []const u8, session_id: []const u8) bool {
 
 /// Frees this thread's slot and whatever steering messages were never polled.
 /// Safe to call unconditionally: a thread that never registered has no slot.
-fn goalRunRelease() void {
-    const idx = current_goal_run_slot orelse return;
-    current_goal_run_slot = null;
-    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
-    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
-    const slot = &goal_run_slots[idx];
+fn runRelease() void {
+    const idx = current_steer_slot orelse return;
+    current_steer_slot = null;
+    _ = std.c.pthread_mutex_lock(&steer_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+    const slot = &steer_slots[idx];
     if (serve_gpa) |gpa| {
         for (slot.queue.items) |m| gpa.free(m);
         slot.queue.deinit(gpa);
@@ -5416,13 +5424,15 @@ fn goalRunRelease() void {
 
 /// Writes `{"id":..., "session":...}` for every goal with a run in flight, as
 /// a JSON array, for GET /api/goals' `running` field. `session` is "" when
-/// the run has none to point at.
+/// the run has none to point at. Only goal-keyed slots appear — a chat run
+/// with no goal is steerable but is not a goal the board should show as
+/// running.
 fn appendRunningGoals(w: *std.Io.Writer) void {
     var s = std.json.Stringify{ .writer = w };
-    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
-    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
+    _ = std.c.pthread_mutex_lock(&steer_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
     s.beginArray() catch return;
-    for (&goal_run_slots) |*slot| {
+    for (&steer_slots) |*slot| {
         if (slot.goal_len == 0) continue;
         s.beginObject() catch return;
         s.objectField("id") catch return;
@@ -5436,14 +5446,18 @@ fn appendRunningGoals(w: *std.Io.Writer) void {
 
 const SteerEnqueue = enum { ok, no_run, full, out_of_memory };
 
-/// Queues a steering message for the goal's in-flight run. The copy is made
-/// with `gpa` (the serve allocator, the same one goalRunRelease and steerPoll
-/// free with). Returns no_run when nothing currently works that goal.
-fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, message: []const u8) SteerEnqueue {
-    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
-    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
-    for (&goal_run_slots) |*slot| {
-        if (slot.goal_len == 0 or !std.mem.eql(u8, slot.goalId(), goal_id)) continue;
+/// Queues a steering message for the in-flight run keyed by `goal_id` and/or
+/// `session_id` (the caller passes whichever the client named). The copy is
+/// made with `gpa` (the serve allocator, the same one runRelease and steerPoll
+/// free with). Returns no_run when nothing currently works that key.
+fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, session_id: []const u8, message: []const u8) SteerEnqueue {
+    _ = std.c.pthread_mutex_lock(&steer_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+    for (&steer_slots) |*slot| {
+        if (!slot.occupied()) continue;
+        const goal_hit = goal_id.len != 0 and slot.goal_len != 0 and std.mem.eql(u8, slot.goalId(), goal_id);
+        const session_hit = session_id.len != 0 and slot.session_len != 0 and std.mem.eql(u8, slot.sessionId(), session_id);
+        if (!goal_hit and !session_hit) continue;
         if (slot.queue.items.len >= steer_message_cap) return .full;
         const copy = gpa.dupe(u8, message) catch return .out_of_memory;
         slot.queue.append(gpa, copy) catch {
@@ -5456,15 +5470,15 @@ fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, message: []const u8
 }
 
 /// Agent.steer_fn for streaming web runs: pops the next queued message for
-/// this thread's registered goal run and hands back an arena copy. Also puts
+/// this thread's registered run and hands back an arena copy. Also puts
 /// a status line on the run's own stream, so the panel shows the run picked
 /// the message up rather than leaving the sender to wonder.
 fn steerPoll(arena: std.mem.Allocator) ?[]const u8 {
-    const idx = current_goal_run_slot orelse return null;
+    const idx = current_steer_slot orelse return null;
     const copy = blk: {
-        _ = std.c.pthread_mutex_lock(&goal_run_mutex);
-        defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
-        const slot = &goal_run_slots[idx];
+        _ = std.c.pthread_mutex_lock(&steer_mutex);
+        defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+        const slot = &steer_slots[idx];
         if (slot.queue.items.len == 0) break :blk null;
         const msg = slot.queue.orderedRemove(0);
         defer if (serve_gpa) |gpa| gpa.free(msg);
@@ -5476,16 +5490,15 @@ fn steerPoll(arena: std.mem.Allocator) ?[]const u8 {
     return copy;
 }
 
-const SteerBody = struct { goal: []const u8 = "", message: []const u8 = "" };
+const SteerBody = struct { goal: []const u8 = "", session: []const u8 = "", message: []const u8 = "" };
 
-/// `POST /api/steer` queues a mid-run message for a goal's in-flight run
-/// (see Agent.steer_fn). Body: {"goal":"<id>","message":"..."}. 404 when no
-/// streaming run currently carries that goal — steering has nowhere to land.
+/// `POST /api/steer` queues a mid-run message for an in-flight run (see
+/// Agent.steer_fn). Body: {"goal":"<id>","message":"..."} targets a goal run;
+/// {"session":"<id>","message":"..."} targets the chat run streaming that
+/// session. One key is required. 404 when no streaming run currently carries
+/// that key — steering has nowhere to land.
 fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream, body: []const u8) void {
-    if (!cfg.modules.goal) {
-        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal module disabled\"}");
-        return;
-    }
+    _ = cfg;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -5494,8 +5507,8 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
         return;
     };
     const msg = std.mem.trim(u8, req.message, " \t\r\n");
-    if (req.goal.len == 0 or msg.len == 0) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing goal or message\"}");
+    if ((req.goal.len == 0 and req.session.len == 0) or msg.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing goal/session or message\"}");
         return;
     }
     if (msg.len > 8192) {
@@ -5508,9 +5521,9 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    switch (steerEnqueue(gpa, req.goal, framed)) {
+    switch (steerEnqueue(gpa, req.goal, req.session, framed)) {
         .ok => respond(stream, 200, "OK", "{\"ok\":true}"),
-        .no_run => respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no run is currently working that goal\"}"),
+        .no_run => respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no run is currently working that goal or session\"}"),
         .full => respond(stream, 429, "Too Many Requests", "{\"ok\":false,\"error\":\"too many queued messages for this run; wait for it to catch up\"}"),
         .out_of_memory => respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}"),
     }
@@ -5577,16 +5590,18 @@ test "a finished run moves its goal to review, and only from active" {
     try std.testing.expectEqualStrings("done", goals[1].status);
 }
 
-test "goal run registry: register, steer, poll, release" {
+test "steer registry: register by goal or session, steer, poll, release" {
     serve_gpa = std.testing.allocator;
     defer serve_gpa = null;
-    try std.testing.expect(!goalRunRegister("", "sess-1"));
-    try std.testing.expect(goalRunRegister("g-123", "sess-1"));
-    defer goalRunRelease();
+    // A run with neither key cannot register.
+    try std.testing.expect(!runRegister("", ""));
+    // A goal run registers by goal; steer it by goal.
+    try std.testing.expect(runRegister("g-123", "sess-1"));
+    defer runRelease();
 
-    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "hi"));
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "go left"));
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "then right"));
+    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "", "hi"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "", "go left"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "sess-1", "then right"));
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -5598,8 +5613,27 @@ test "goal run registry: register, steer, poll, release" {
     var w: std.Io.Writer = .fixed(&buf);
     appendRunningGoals(&w);
     try std.testing.expectEqualStrings("[{\"id\":\"g-123\",\"session\":\"sess-1\"}]", buf[0..w.end]);
-    // goalRunRelease (deferred) frees "then right", which was never polled;
+    // runRelease (deferred) frees "then right", which was never polled;
     // the testing allocator's leak check is the assertion.
+}
+
+test "steer registry: a session-only (chat) run steers by session" {
+    serve_gpa = std.testing.allocator;
+    defer serve_gpa = null;
+    // A chat run has a session but no goal; it must still register and steer.
+    try std.testing.expect(runRegister("", "chat-sess"));
+    defer runRelease();
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "chat-sess", "adjust"));
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const got = steerPoll(arena) orelse return error.TestExpectedSteer;
+    try std.testing.expectEqualStrings("adjust", got);
+    // A session-only run never shows up in /api/goals' `running` list.
+    var buf: [64]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    appendRunningGoals(&w);
+    try std.testing.expectEqualStrings("[]", buf[0..w.end]);
 }
 
 /// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
@@ -8272,17 +8306,16 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         rawhttp.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
-        // A goal run in flight is visible (GET /api/goals reports it under
-        // `running`) and steerable (POST /api/steer) for exactly as long as
-        // this connection works it. Registration failing (full table, oversize
-        // id) just means this run cannot be steered — not that it cannot run.
-        // `resolved.goal_id` so an auto-steered run registers too, not only
-        // one named by explicit id. The session id (may be empty) lets a
-        // different browser/session find and open this run's transcript.
-        if (resolved.goal_id) |gid| {
-            if (goalRunRegister(gid, req.session)) a.steer_fn = &steerPoll;
-        }
-        defer goalRunRelease();
+        // A streaming run in flight is steerable (POST /api/steer) for exactly
+        // as long as this connection works it, keyed by its goal id (a goal
+        // run) and/or its session id (a chat run), whichever the client can
+        // name. Registration failing (full table, oversize key) just means
+        // this run cannot be steered — not that it cannot run. `resolved
+        // .goal_id` so an auto-steered run registers too, not only one named
+        // by explicit id. The session id (may be empty) lets a different
+        // browser/session find and open this run's transcript.
+        if (runRegister(resolved.goal_id orelse "", req.session)) a.steer_fn = &steerPoll;
+        defer runRelease();
         // With a browser on the other end of this stream, ask_user has
         // somebody to ask: the question goes down as an `ask` control event
         // and the answer comes back through POST /api/ask. Streaming runs
