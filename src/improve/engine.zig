@@ -465,17 +465,18 @@ pub const Engine = struct {
         log.log(.info, "iteration attempt {d}: asking model for a proposal ({d} bytes context)", .{ attempt, context.bytes });
 
         // ---- 2. proposal from the model ----
-        var msg_buf: [3]types.Message = undefined;
-        var msg_n: usize = 0;
-        msg_buf[msg_n] = .{ .role = .system, .content = system_prompt };
-        msg_n += 1;
-        if (focus_prompt.len > 0) {
-            msg_buf[msg_n] = .{ .role = .system, .content = focus_prompt };
-            msg_n += 1;
-        }
-        msg_buf[msg_n] = .{ .role = .user, .content = user_prompt };
-        msg_n += 1;
-        const messages = msg_buf[0..msg_n];
+        // One system message, always at position 0: qwen2.5/qwen3-family chat
+        // templates reject a system message that is not the first one
+        // ("System message must be at the beginning"), so the focus pin rides
+        // inside the single system message instead of as a second system turn.
+        const system_content = if (focus_prompt.len > 0)
+            try std.fmt.allocPrint(self.arena, "{s}\n\n{s}", .{ system_prompt, focus_prompt })
+        else
+            system_prompt;
+        const messages = [_]types.Message{
+            .{ .role = .system, .content = system_content },
+            .{ .role = .user, .content = user_prompt },
+        };
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{
             .provider = self.provider,
@@ -1044,21 +1045,22 @@ pub const Engine = struct {
         });
 
         log.log(.info, "plan: asking for candidate ideas ({d} bytes context)", .{context.bytes});
-        var msg_buf: [3]types.Message = undefined;
-        var msg_n: usize = 0;
-        msg_buf[msg_n] = .{ .role = .system, .content = system_prompt };
-        msg_n += 1;
-        if (focus_prompt.len > 0) {
-            msg_buf[msg_n] = .{ .role = .system, .content = focus_prompt };
-            msg_n += 1;
-        }
-        msg_buf[msg_n] = .{ .role = .user, .content = user_prompt };
-        msg_n += 1;
+        // One system message, always at position 0 (qwen2.5/qwen3 templates
+        // reject a system message that is not first): fold the focus pin into
+        // the single system message.
+        const system_content = if (focus_prompt.len > 0)
+            try std.fmt.allocPrint(self.arena, "{s}\n\n{s}", .{ system_prompt, focus_prompt })
+        else
+            system_prompt;
+        const messages = [_]types.Message{
+            .{ .role = .system, .content = system_content },
+            .{ .role = .user, .content = user_prompt },
+        };
 
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{
             .provider = self.provider,
-            .messages = msg_buf[0..msg_n],
+            .messages = messages,
             // An idea list is a few hundred tokens; the full patch budget
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
