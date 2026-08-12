@@ -89,6 +89,16 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
+    // The worktree's load-bearing state sharing keeps getting reverted by
+    // proposals that reconstruct linkSharedState's arrays from memory
+    // instead of the current source (twice in one afternoon, both times a
+    // change whose summary claimed something unrelated). The prompt already
+    // says not to; these make it mechanical. Substring checks, so APPENDING
+    // to an array keeps its needle intact -- only removing an entry (or the
+    // credential links every gate run depends on) breaks the match.
+    .{ .file = "src/improve/worktree.zig", .needle = "\".env\", \"config.local.toml\"" },
+    .{ .file = "src/improve/worktree.zig", .needle = "\"state/improvements.jsonl\", \"state/history\"" },
+    .{ .file = "src/improve/worktree.zig", .needle = "\"state/learnings.md\", \"state/autolearn.jsonl\"" },
 };
 
 /// The next symbol worth looking up in `text`, reduced to its most specific
