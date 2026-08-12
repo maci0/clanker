@@ -117,6 +117,7 @@ var el = {
   cardColumn: document.getElementById("card-column"),
   cardAdd: document.getElementById("card-add"),
   cardDetail: document.getElementById("card-detail"),
+  cardDetailBox: document.querySelector("#card-detail .overlay-box"),
   boardMine: document.getElementById("board-mine"),
   boardRefresh: document.getElementById("board-refresh"),
   boardStatus: document.getElementById("board-status"),
@@ -1093,6 +1094,17 @@ function renderStats(turn, stats, task) {
     });
     actions.appendChild(regenBtn);
 
+    var branchBtn = document.createElement("button");
+    branchBtn.type = "button";
+    branchBtn.className = "secondary";
+    branchBtn.textContent = "Branch";
+    branchBtn.title = "Fork this conversation at this turn into a new session";
+    branchBtn.addEventListener("click", function () {
+      var forkBtn = document.getElementById("session-fork");
+      if (forkBtn) forkBtn.click();
+    });
+    actions.appendChild(branchBtn);
+
     var editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.className = "secondary";
@@ -1422,7 +1434,10 @@ function loadRuns() {
         el.runFilter.value = "";
         renderRunOptions("");
         el.runSelect.value = want;
-        return loadRun(want);
+        var p = loadRun(want);
+        var pn = window._pendingRunNode; window._pendingRunNode = null;
+        if (pn) p.then(function(){ setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(pn) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); });
+        return p;
       }
       var wanted = renderRunOptions(el.runFilter.value);
       if (wanted) return loadRun(wanted);
@@ -1448,6 +1463,7 @@ function showRunsError(message) {
 
 /* One way to open a named run, whether the view has loaded yet or not. */
 function openRun(id) {
+  try { history.replaceState(null, "", "#runs/" + encodeURIComponent(id)); } catch (_) {}
   if (viewLoaded.runs) {
     showView("runs", true);
     el.runFilter.value = "";
@@ -1519,6 +1535,21 @@ function drawRun(g) {
   var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
   copyHead.addEventListener("click", function(){ try{ navigator.clipboard.writeText(g.run_id); copyHead.textContent="Copied"; setTimeout(function(){ copyHead.textContent="Copy id"; }, 1200);}catch(_){} });
   head.appendChild(copyHead);
+  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link";
+  copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
+  copyLink.addEventListener("click", function(){
+    var sel = el.runGraph.querySelector(".run-node.selected");
+    var nodePart = sel && sel.getAttribute("data-label") ? "?node=" + encodeURIComponent(sel.getAttribute("data-label")) : "";
+    var u = location.origin + location.pathname + "#runs/" + encodeURIComponent(g.run_id) + nodePart;
+    try{ navigator.clipboard.writeText(u); copyLink.textContent="Copied"; setTimeout(function(){ copyLink.textContent="Copy link"; }, 1200);}catch(_){ copyText(u, copyLink, "Copy link", head); }
+  });
+  head.appendChild(copyLink);
+  if (g.parent_run_id) {
+    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8);
+    par.title = "Open parent run " + g.parent_run_id;
+    par.addEventListener("click", function(){ openRun(g.parent_run_id); });
+    head.appendChild(par);
+  }
   el.runGraph.appendChild(head);
 
   if (!nodes.length) {
@@ -1549,16 +1580,22 @@ function drawRun(g) {
 
   var graphSearch = document.createElement("div");
   graphSearch.className = "run-graph-search";
-  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap";
+  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
   var graphSearchInput = document.createElement("input");
-  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…";
-  graphSearchInput.setAttribute("aria-label", "Filter graph nodes");
+  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…  —  / to focus";
+  graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
+  graphSearchInput.title = "Filter nodes — / focuses, n/N next match, F failed, j/k next iteration";
   graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
   var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
+  graphNextBtn.title = "Next match (n)";
   var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear";
+  graphClearBtn.title = "Clear filter";
   var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit";
-  graphFitBtn.title = "Fit graph to view";
+  graphFitBtn.title = "Fit graph to view (0)";
   graphSearch.appendChild(graphSearchInput); graphSearch.appendChild(graphNextBtn); graphSearch.appendChild(graphClearBtn); graphSearch.appendChild(graphFitBtn);
+  var graphHint = document.createElement("span"); graphHint.className = "meta"; graphHint.textContent = "/ filter · n next · F failed · j/k iter · arrows walk · +/− zoom";
+  graphHint.style.fontSize = "11px"; graphHint.style.opacity = "0.75";
+  graphSearch.appendChild(graphHint);
   el.runGraph.appendChild(graphSearch);
   // Trello/Slack-style focus filters — dim non-matches so dense graphs stay scannable
   var _kindFilter = "";
@@ -1649,13 +1686,57 @@ function drawRun(g) {
   minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap — click to jump, drag viewport to pan");
   minimap.title = "Click to jump · drag viewport to pan";
   var mmLabel = document.createElement("span"); mmLabel.className = "run-minimap-label"; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
+  var mmCanvas = document.createElement("canvas"); mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
   var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
   minimap.appendChild(mmViewport);
   canvas.appendChild(minimap);
+  function paintMinimap(){
+    try{
+      var ctx = mmCanvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
+      var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
+      // light line for edges (Slack/Qwen-style overview)
+      try{
+        var svg = canvas.querySelector("svg.run-edges");
+        if (svg) {
+          var paths = svg.querySelectorAll("path");
+          ctx.strokeStyle = "rgba(140,140,140,0.35)";
+          ctx.lineWidth = 0.7;
+          paths.forEach(function(p){
+            var d = p.getAttribute("d") || "";
+            var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
+            if (!m) return;
+            var x1 = (parseFloat(m[1]) / sw) * mmCanvas.width;
+            var y1 = (parseFloat(m[2]) / sh) * mmCanvas.height;
+            var x2 = (parseFloat(m[3]) / sw) * mmCanvas.width;
+            var y2 = (parseFloat(m[4]) / sh) * mmCanvas.height;
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          });
+        }
+      }catch(_){}
+      var nodes = canvas.querySelectorAll(".run-node");
+      nodes.forEach(function(n){
+        var x = (n.offsetLeft / sw) * mmCanvas.width;
+        var y = (n.offsetTop / sh) * mmCanvas.height;
+        var w = 6, h = 4;
+        var kind = n.getAttribute("data-kind") || "";
+        if (kind === "llm") ctx.fillStyle = "rgba(11,87,208,0.75)";
+        else if (kind === "tool") ctx.fillStyle = "rgba(5,150,105,0.75)";
+        else if (kind === "final") ctx.fillStyle = "rgba(0,0,0,0.75)";
+        else ctx.fillStyle = "rgba(120,120,120,0.75)";
+        if (n.getAttribute("data-ok") === "false") ctx.fillStyle = "rgba(220,38,38,0.9)";
+        if (n.classList.contains("selected")) { ctx.fillStyle = "rgba(11,87,208,1)"; w = 7; h = 5; }
+        else if (n.hasAttribute("data-highlight")) ctx.fillStyle = "rgba(11,87,208,0.45)";
+        ctx.fillRect(x, y, w, h);
+      });
+    }catch(_){}
+  }
   function updateMinimap(){
     var needsMap = canvas.scrollWidth > canvas.clientWidth + 8 || canvas.scrollHeight > canvas.clientHeight + 8;
     minimap.hidden = !needsMap;
     if (minimap.hidden) return;
+    paintMinimap();
     var sx = canvas.scrollLeft / Math.max(1, canvas.scrollWidth - canvas.clientWidth);
     var sy = canvas.scrollTop / Math.max(1, canvas.scrollHeight - canvas.clientHeight);
     var vw = canvas.clientWidth / Math.max(1, canvas.scrollWidth) * 100;
@@ -1705,7 +1786,7 @@ function drawRun(g) {
   function doLayout(q){
     loadD3().then(function () {
       if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap: minimap, onSelect: function(k,n){ showNodeDetail(k,n); } });
-      try{ updateMinimap(); }catch(_){}
+      try{ updateMinimap(); paintMinimap(); }catch(_){}
     }).catch(function (err) {
       var errEl = document.createElement("p");
       errEl.className = "run-empty";
@@ -1752,6 +1833,25 @@ function drawRun(g) {
     chips[_iterIdx].click();
   }
   canvas.addEventListener("keydown", function(e){
+    if (document.activeElement === graphSearchInput) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      e.preventDefault();
+      var nodes = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      if (!nodes.length) return;
+      var at = nodes.indexOf(document.activeElement);
+      var nxt = at === -1 ? 0 : Math.min(nodes.length - 1, at + 1);
+      nodes[nxt].focus();
+      return;
+    }
+    if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      var nodes2 = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      if (!nodes2.length) return;
+      var at2 = nodes2.indexOf(document.activeElement);
+      var prv = at2 <= 0 ? 0 : at2 - 1;
+      nodes2[prv].focus();
+      return;
+    }
     if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomInBtn.click(); }
     else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomOutBtn.click(); }
     else if (e.key === "0") { e.preventDefault(); zoomResetBtn.click(); }
@@ -1760,6 +1860,9 @@ function drawRun(g) {
     else if (e.key === "j") { e.preventDefault(); focusIter(1); }
     else if (e.key === "k") { e.preventDefault(); focusIter(-1); }
     else if (e.key === "Escape") { graphSearchInput.blur(); canvas.focus(); }
+    else if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault(); graphSearchInput.focus(); graphSearchInput.select();
+    }
   });
   doLayout("");
 }
@@ -1861,6 +1964,16 @@ function showNodeDetail(kind, node) {
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
 
+  // Trello/Slack-style quick-jump: if output mentions another run, surface a Jump button in the header too
+  (function(){
+    var m = (node.output || "").match(/\[subagent run:\s*(sub-\d+)\]/);
+    if (m) {
+      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1];
+      j.title = "Open sub-run " + m[1];
+      j.addEventListener("click", function(){ openRun(m[1]); });
+      head.appendChild(j);
+    }
+  })();
   var copyBtn = document.createElement("button");
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
   copyBtn.title = "Copy this node's output";
@@ -2612,6 +2725,15 @@ function saveView(name) {
 }
 
 function showView(name, focusPanel) {
+  // support deep links like #runs/run-123 or #runs/sub-xxx?node=label — nav to the view, then open the run (+node)
+  var deepRun = null, deepNode = null;
+  if (name.indexOf("runs/") === 0) {
+    var rest = name.slice(5);
+    var qAt = rest.indexOf("?node=");
+    if (qAt !== -1) { deepRun = decodeURIComponent(rest.slice(0, qAt)); deepNode = decodeURIComponent(rest.slice(qAt + 6)); }
+    else { deepRun = decodeURIComponent(rest); }
+    name = "runs";
+  }
   if (VIEWS.indexOf(name) === -1) name = "chat";
   // The rooms poll has no idea the view switched away from under it — only
   // document.hidden stopped it before, so leaving Rooms for Chat or Board
@@ -2629,13 +2751,11 @@ function showView(name, focusPanel) {
     // Roving tabindex: the tablist is one stop, arrows move within it.
     tab.tabIndex = on ? 0 : -1;
   });
-  if (window.location.hash !== "#" + name) {
-    // Pushed for a switch someone made, replaced for the initial normalisation
-    // of whatever the URL arrived with. Writing a fragment into the address bar
-    // is a promise that Back returns to where you were, and it did not.
+  var desiredHash = deepRun ? "#runs/" + encodeURIComponent(deepRun) + (deepNode ? "?node=" + encodeURIComponent(deepNode) : "") : "#" + name;
+  if (window.location.hash !== desiredHash) {
     try {
-      if (viewSettled) window.history.pushState(null, "", "#" + name);
-      else window.history.replaceState(null, "", "#" + name);
+      if (viewSettled) window.history.pushState(null, "", desiredHash);
+      else window.history.replaceState(null, "", desiredHash);
     } catch (e) {}
   }
   viewSettled = true;
@@ -2657,6 +2777,12 @@ function showView(name, focusPanel) {
     }
   } else if (name === "rooms" && el.chatRoom.value) {
     startChatPoll(el.chatRoom.value);
+  }
+  if (deepRun) {
+    // preserve ?node= across the async Runs load
+    window._pendingRunNode = deepNode || null;
+    if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
+    else pendingRunId = deepRun;
   }
 }
 
@@ -3859,9 +3985,12 @@ function cardNode(c) {
   return b;
 }
 
+function cardDetailInner() { return el.cardDetailBox || el.cardDetail; }
 function closeCardDetail() {
-  el.cardDetail.hidden = true;
-  el.cardDetail.textContent = "";
+  if (!el.cardDetail.hidden) closeOverlay(el.cardDetail);
+  else { el.cardDetail.hidden = true; cardDetailInner().textContent = ""; return; }
+  // overlay helper clears hidden after focus restore; also clear inner content
+  cardDetailInner().textContent = "";
 }
 
 /* Unsaved edits to a card's fields, keyed by card id.
@@ -3947,13 +4076,23 @@ function input(id, type, value, placeholder) {
 function showCardDetail(id) {
   var c = cardById(id);
   if (!c) return closeCardDetail();
-  el.cardDetail.textContent = "";
-  el.cardDetail.hidden = false;
+  var box = cardDetailInner();
+  // reopen as modal overlay (Trello-like card modal, Slack-like overlay); board stays put
+  var wasHidden = el.cardDetail.hidden;
+  box.textContent = "";
+  if (wasHidden) {
+    // preserve card id for trap handlers; don't clear content on close until next open
+    openOverlay(el.cardDetail, null);
+    el.cardDetail.setAttribute("aria-labelledby", "card-detail-title");
+  }
+  // scrim click closes
+  el.cardDetail.onclick = function(e){ if (e.target === el.cardDetail) { delete cardDrafts[c.id]; openCardId = null; closeCardDetail(); renderBoard(board); } };
 
   var head = document.createElement("div");
   head.className = "run-detail-head";
   var title = document.createElement("span");
   title.className = "run-detail-title";
+  title.id = "card-detail-title";
   title.textContent = c.title;
   var close = document.createElement("button");
   close.type = "button";
@@ -3962,14 +4101,15 @@ function showCardDetail(id) {
   close.addEventListener("click", function () {
     delete cardDrafts[c.id];
     openCardId = null;
+    closeCardDetail();
     renderBoard(board);
   });
   head.appendChild(title);
   head.appendChild(close);
-  el.cardDetail.appendChild(head);
+  box.appendChild(head);
 
   // ---- fields ----
-  var fields = detailSection(el.cardDetail, "Card");
+  var fields = detailSection(box, "Card");
   var titleIn = input("card-f-title", "text", "");
   titleIn.maxLength = 500;
   bindDraft(titleIn, c.id, "title", c.title);
@@ -4026,6 +4166,18 @@ function showCardDetail(id) {
   });
   fields.appendChild(save);
 
+  // Trello-like: move without dragging — dropdown + Slack-style column jump buttons
+  var moveRow = document.createElement("div");
+  moveRow.className = "detail-row";
+  var moveSel = document.createElement("select");
+  moveSel.id = "card-f-column";
+  (board.columns || []).forEach(function(col){ var o=document.createElement("option"); o.value=col.id; o.textContent=col.title; moveSel.appendChild(o); });
+  moveSel.value = c.column;
+  var moveBtn = document.createElement("button"); moveBtn.type="button"; moveBtn.className="secondary"; moveBtn.textContent="Move";
+  moveBtn.addEventListener("click", function(){ if(moveSel.value !== c.column) postBoard({op:"move", id:c.id, column: moveSel.value}, "Moved to " + moveSel.value + "."); });
+  moveRow.appendChild(moveSel); moveRow.appendChild(moveBtn);
+  fields.appendChild(moveRow);
+
   var takeIt = document.createElement("button");
   takeIt.type = "button";
   takeIt.className = "secondary";
@@ -4059,7 +4211,7 @@ function showCardDetail(id) {
   fields.appendChild(del);
 
   // ---- subtasks ----
-  var subs = detailSection(el.cardDetail, "Subtasks");
+  var subs = detailSection(box, "Subtasks");
   (c.subtasks || []).forEach(function (s) {
     var row = document.createElement("div");
     row.className = "detail-row";
@@ -4130,7 +4282,7 @@ function showCardDetail(id) {
   subs.appendChild(subIn);
 
   // ---- dependencies ----
-  var deps = detailSection(el.cardDetail, "Waiting on");
+  var deps = detailSection(box, "Waiting on");
   (c.depends_on || []).forEach(function (depId) {
     var dep = cardById(depId);
     var row = document.createElement("div");
@@ -4172,7 +4324,7 @@ function showCardDetail(id) {
   // ---- usage ----
   var usage = c.usage || {};
   if (usage.prompt_tokens || usage.completion_tokens || usage.cost) {
-    var u = detailSection(el.cardDetail, "Cost so far");
+    var u = detailSection(box, "Cost so far");
     var line = document.createElement("p");
     line.className = "meta";
     line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
@@ -4191,7 +4343,7 @@ function showCardDetail(id) {
   }
 
   // ---- log ----
-  var logBox = detailSection(el.cardDetail, "Activity");
+  var logBox = detailSection(box, "Activity");
   var entries = (c.log || []).slice().reverse();
   if (!entries.length) {
     var empty = document.createElement("p");
@@ -4223,6 +4375,8 @@ function showCardDetail(id) {
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
   });
   logBox.appendChild(noteIn);
+  // focus first editable field in the modal (Slack/Trello: opening a card puts you on Title)
+  try { var first = box.querySelector("#card-f-title"); if (first) setTimeout(function(){ first.focus(); first.select(); }, 0); } catch(_){}
 }
 
 el.cardForm.addEventListener("submit", function (e) {
@@ -4329,7 +4483,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
       var prTd=document.createElement("td"); prTd.textContent=c.priority||"normal"; tr.appendChild(prTd);
       var costTd=document.createElement("td"); costTd.className="num"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
       var actTd=document.createElement("td");
-      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); document.getElementById("card-detail").scrollIntoView({behavior:"smooth", block:"start"}); }); actTd.appendChild(openBtn);
+      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); }); actTd.appendChild(openBtn);
       if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){
         var claimBtn=document.createElement("button"); claimBtn.type="button"; claimBtn.className="secondary"; claimBtn.textContent="Claim"; claimBtn.style.marginLeft="0.4rem"; claimBtn.addEventListener("click", function(){ postBoard({op:"update", id:c.id, assignee: ((document.getElementById("instance-chip")||{}).textContent||"").trim()}, "Claimed."); }); actTd.appendChild(claimBtn);
       }
@@ -4490,6 +4644,11 @@ paletteBind({
   setOpenCardId: function (id) { openCardId = id; }
 });
 document.addEventListener("keydown", function (e) {
+  // Trello/Slack-style card modal owns focus while open — Esc closes, Tab traps
+  if (el.cardDetail && !el.cardDetail.hidden) {
+    if (e.key === "Escape") { e.preventDefault(); delete cardDrafts[openCardId || ""]; openCardId = null; closeCardDetail(); renderBoard(board); return; }
+    if (e.key === "Tab") { trapOverlayTab(e, el.cardDetail); return; }
+  }
   if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
 

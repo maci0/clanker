@@ -911,6 +911,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .run-minimap-viewport { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; cursor: grab; pointer-events: auto; }
 .run-minimap-viewport:active { cursor: grabbing; }
 .run-minimap-label { position: absolute; left: 4px; top: 2px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); pointer-events: none; }
+.run-minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .run-kind-filter button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .run-edges { position: absolute; top: 0; left: 0; pointer-events: none; }
 .run-edges path { fill: none; stroke: var(--border); stroke-width: 1.5; }
@@ -939,6 +940,10 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .run-node[data-kind="tool"] .run-node-kind { color: var(--ok); }
 .run-node[data-ok="false"] .run-node-kind { color: var(--danger); }
 .run-node[data-match="true"] { outline: 2px solid var(--warn); outline-offset: 2px; }
+.run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet) 35%, transparent), 0 1px 2px rgba(0,0,0,0.12); }
+.run-node[data-jump="true"] .run-node-label::after { content: " ↗"; color: var(--violet-text); font-weight: 700; }
+.run-node[data-highlight="true"] { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
+.run-edges path[data-highlight="true"] { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
 .run-node-duration { position: absolute; top: 4px; right: 6px; font-size: 10px; font-weight: 600; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.35rem; line-height: 1.4; }
 .run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 2.2rem; }
 .run-node-metrics { font-variant-numeric: tabular-nums; display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
