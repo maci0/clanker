@@ -81,6 +81,11 @@ pub const Model = struct {
     /// derives these; see cmdProvidersFill in cli.zig). Informational: lets a
     /// model entry self-document what it supports without a second lookup.
     capabilities: []const []const u8 = &.{},
+    /// Free-form grouping ("flagship", "fast", "reasoning", "cheap", ...),
+    /// used to sort/group the model list in the webui picker, the TUI's
+    /// /model picker, and the CLI. Purely presentational: never sent to a
+    /// provider. Empty sorts last within its provider.
+    category: []const u8 = "",
 };
 
 pub const Provider = struct {
@@ -803,6 +808,7 @@ pub const Config = struct {
             "cost_per_1m_input",
             "cost_per_1m_output",
             "capabilities",
+            "category",
         }, name);
         if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
         if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
@@ -821,6 +827,7 @@ pub const Config = struct {
             for (arr.items) |item| try caps.append(arena, try jsonStr(item, "capabilities[]"));
             m.capabilities = try caps.toOwnedSlice(arena);
         }
+        if (obj.get("category")) |k| m.category = try jsonStr(k, "category");
         return m;
     }
 

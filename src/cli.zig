@@ -4285,7 +4285,7 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
         return;
     };
-    var buf: [64 * 1024]u8 = undefined;
+    var buf: [128 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return;
@@ -6048,6 +6048,10 @@ fn handleProviders(cfg: *const config.Config, stream: std.Io.net.Stream) void {
                 s.objectField("cost_per_1m_output") catch return;
                 s.write(c) catch return;
             }
+            if (m.value_ptr.category.len > 0) {
+                s.objectField("category") catch return;
+                s.write(m.value_ptr.category) catch return;
+            }
             s.endObject() catch return;
         }
         s.endArray() catch return;
@@ -7032,10 +7036,22 @@ fn handleWorkflows(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         s.write(wf.name) catch return;
         s.objectField("description") catch return;
         s.write(wf.description) catch return;
+        if (wf.llm_description.len > 0 and !std.mem.eql(u8, wf.llm_description, wf.description)) {
+            s.objectField("llm_description") catch return;
+            s.write(wf.llm_description) catch return;
+        }
+        if (wf.tags.len > 0) {
+            s.objectField("tags") catch return;
+            s.write(wf.tags) catch return;
+        }
         s.objectField("arg_hint") catch return;
         s.write(wf.arg_hint) catch return;
         s.objectField("rel_path") catch return;
         s.write(wf.rel_path) catch return;
+        if (wf.chain_json != null) {
+            s.objectField("chain") catch return;
+            s.write(true) catch return;
+        }
         s.endObject() catch return;
     }
     s.endArray() catch return;

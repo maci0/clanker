@@ -30,10 +30,20 @@ export function loadProviders() {
       (d.providers || []).forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
-        (prov.models || []).forEach(function (m) {
+        // Grouped by provider (the outer shape); category only orders the
+        // models inside each group. Uncategorized models sort last rather
+        // than jumping ahead of every categorized peer.
+        var models = (prov.models || []).slice().sort(function (a, b) {
+          var ac = a.category || "", bc = b.category || "";
+          if (!ac !== !bc) return ac ? -1 : 1;
+          if (ac !== bc) return ac < bc ? -1 : 1;
+          return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+        });
+        models.forEach(function (m) {
           var value = prov.name + " " + m.name;
           var label = m.display || m.name;
           var meta = [];
+          if (m.category) meta.push(m.category);
           if (m.context_window) meta.push(_fmtInt(m.context_window) + " ctx");
           if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
             meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +

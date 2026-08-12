@@ -481,7 +481,9 @@ lamps carry further). The seven named palettes ride the same tokens.
         <label for="board-filter-label">Label</label>
         <select id="board-filter-label"><option value="">All</option><option value="green">green</option><option value="yellow">yellow</option><option value="orange">orange</option><option value="red">red</option><option value="purple">purple</option><option value="blue">blue</option></select>
       </div>
-      <div class="board" id="board"></div>
+      <!-- Keep the DOM id distinct from the #board route. If both are
+           "board", native fragment scrolling opens this view halfway down. -->
+      <div class="board" id="board-grid"></div>
       <div class="toolbar-actions board-list-controls" id="board-list-controls">
         <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
       </div>

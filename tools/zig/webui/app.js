@@ -113,7 +113,7 @@ var el = {
   sessionExport: document.getElementById("session-export"),
   sessionCopy: document.getElementById("session-copy"),
   runCopy: document.getElementById("run-copy"),
-  board: document.getElementById("board"),
+  board: document.getElementById("board-grid"),
   boardEmpty: document.getElementById("board-empty"),
   cardForm: document.getElementById("card-form"),
   cardTitle: document.getElementById("card-title"),
@@ -2736,11 +2736,14 @@ function renderChatRooms(rooms) {
   return wanted;
 }
 
+var roomTopics = {};
 function loadChatRooms() {
   return fetch("/api/chat/rooms")
     .then(readJson)
     .then(function (data) {
       subscribedRooms = data.subscribed || [];
+      // Store topics
+      (data.rooms || []).forEach(function(r){ if(r.topic) roomTopics[r.room]=r.topic; });
       var wanted = renderChatRooms(data.rooms || []);
       if (wanted) return openChatRoom(wanted);
     })
@@ -2764,6 +2767,26 @@ function openChatRoom(room) {
   el.chatText.disabled = false;
   el.chatSend.disabled = false;
   el.chatText.placeholder = isDm(room) ? "Message " + dmPartner(room) + "…" : "Message " + room + "…";
+  // Topic bar
+  var existingTopic = document.querySelector(".chat-topic");
+  if(existingTopic) existingTopic.remove();
+  if(roomTopics[room]){
+    var topicEl = document.createElement("div"); topicEl.className="chat-topic";
+    topicEl.textContent = "📌 " + roomTopics[room];
+    topicEl.title = "Channel topic — click to change";
+    topicEl.style.cursor = "pointer";
+    topicEl.addEventListener("click", function(){
+      var newTopic = prompt("Set channel topic:", roomTopics[room]||"");
+      if(newTopic !== null){
+        fetch("/api/chat/topic", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({room:room,topic:newTopic})
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if(d.ok){ roomTopics[room]=newTopic; topicEl.textContent="📌 "+newTopic; }
+        }).catch(function(){});
+      }
+    });
+    el.chatLog.parentNode.insertBefore(topicEl, el.chatLog);
+  }
   // Opening a room fills the log with its history, and a live region would
   // read every one of those out as if it had just arrived. Announcements
   // start once the backlog is in place.
