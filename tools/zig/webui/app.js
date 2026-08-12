@@ -2869,7 +2869,7 @@ function renderChatRooms(rooms) {
   el.chatText.disabled = empty;
   el.chatSend.disabled = empty;
   if (empty) {
-    el.chatStatus.textContent = "No rooms and no peers configured.";
+    el.chatStatus.textContent = "No rooms yet. Add [chat.rooms] in config.toml or use --serve-as to peer.";
     return null;
   }
   var wanted = Array.prototype.some.call(options, function (o) { return o.value === previous; })

@@ -868,18 +868,11 @@ test "gitDenyGuardGate allows non-git patterns and non-config files" {
 /// directory, and a bare "zig" is not reliably found from there: on macOS the
 /// fmt and ast-check gates failed at *spawn*, before zig ever saw the code they
 /// were meant to check, and both of this file's tests failed with it.
-///
-/// The two fixed paths behind it are where zig lives on the machine this loop
-/// usually runs on, kept as a fallback for a binary whose build cache has since
-/// been cleared.
 fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
-    const known_first = [_][]const u8{ build_options.zig_exe, "/home/maci/.local/bin/zig", "/home/maci/.zvm/0.16.0/zig" };
-    for (known_first) |k| {
-        // Relative, or empty on a build that predates the option: `cwd` is not
-        // this process's, so it could not be resolved against anything useful.
-        if (k.len == 0 or k[0] != '/') continue;
-        std.Io.Dir.accessAbsolute(io, k, .{ .execute = true }) catch continue;
-        return gpa.dupe(u8, k) catch null;
+    const zig_exe = build_options.zig_exe;
+    if (zig_exe.len > 0 and zig_exe[0] == '/') {
+        std.Io.Dir.accessAbsolute(io, zig_exe, .{ .execute = true }) catch return null;
+        return gpa.dupe(u8, zig_exe) catch null;
     }
     return null;
 }

@@ -2434,16 +2434,21 @@ const Model = struct {
         if (line_count == 0 and !streaming) {
             // Empty state hugs the bottom, just above the input, the way a
             // chat client opens rather than pinning a banner to the top.
-            row = bottom -| 5;
-            writeWrapped(surface, &row, bottom, text_width, "Type a task to begin. clanker streams tool work and keeps the conversation.", vaxis.Style{});
+            row = bottom -| 7;
+            writeWrapped(surface, &row, bottom, text_width, "Type a task to begin, or try:", vaxis.Style{});
             if (row < bottom) row += 1;
-            if (row < bottom) row += 1;
-            if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "  \"fix the failing test\"    \"explain src/main.zig\"    \"refactor the parser\"", dim);
+            const examples = [_][]const u8{
+                "  \"fix the failing test\"",
+                "  \"explain src/main.zig\"",
+                "  \"refactor the parser\"",
+            };
+            for (examples) |ex| {
+                if (row < bottom) writeWrapped(surface, &row, bottom, text_width, ex, dim);
+                if (row < bottom) row += 1;
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, text_width, "/model to switch models  /help for commands  Ctrl-C to quit", dim);
+                writeWrapped(surface, &row, bottom, text_width, "/model to switch  /help for commands  Ctrl-C to quit", dim);
             }
         }
         // Transcript layout: the visible block is bottom-aligned, chat-style,

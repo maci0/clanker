@@ -85,10 +85,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     const now_s: i64 = @intFromFloat(lib.nowSeconds());
+
+    var id_w: usize = 0;
+    for (metas.items) |m| id_w = @max(id_w, m.id.len);
+
     for (metas.items) |m| {
         if (buf.items.len > 0) try buf.append(lib.alloc, '\n');
         try buf.appendSlice(lib.alloc, m.id);
-        try buf.appendSlice(lib.alloc, "  ");
+        var col: usize = m.id.len;
+        while (col < id_w + 2) : (col += 1) try buf.append(lib.alloc, ' ');
         const first_nl = std.mem.findScalar(u8, m.title, '\n') orelse m.title.len;
         const one_line = m.title[0..first_nl];
         const title = if (one_line.len > 60) one_line[0..60] else one_line;
