@@ -2,6 +2,8 @@
 
 <p align="center">
   <img src="docs/assets/mascot.jpg" alt="clanker mascot" width="280">
+  <br>
+  <strong><em>embrace the jank.</em></strong>
 </p>
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs its tools as sandboxed WebAssembly modules via zwasm, and improves its own source code through a gated loop: the agent proposes an exact-match patch, applies it to a staging copy, verifies it with `zig build`, `zig build test`, `zig build tools`, `zig fmt`, and lint, and promotes it to the live tree only if all gates pass.
