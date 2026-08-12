@@ -2090,9 +2090,30 @@ function loadUsage() {
 
 var goalState = van.state([]);
 
+/* Goals whose board mirror has already been requested, so a goal created
+   from within a run (the agent's `goal` tool appends it to state/goals.json,
+   which the next loadGoals picks up) gets a board card once rather than on
+   every refresh. Form-created goals and board->goal cards set goalCardLinks
+   themselves, so this only ever adds the ones that arrived without a card. */
+var goalBoardMirrored = {};
+
 /* Newest first: the goal most recently set is the one steering runs now. */
 function renderGoals(goals) {
   goalState.val = (goals || []).slice().sort(goalSortKey);
+}
+
+/* Goals that reach the web UI from state/goals.json are mirrored onto the
+   board in the section matching their state (backlog for a fresh active goal),
+   so a goal created from within a goal run is not invisible on the board.
+   ensureGoalBoardCard is idempotent (it finds an existing card by title or
+   creates one) and the goalBoardMirrored guard keeps a goal from being
+   re-created across refreshes. */
+function mirrorGoalsToBoard(goals) {
+  (goals || []).forEach(function (g) {
+    if (!g || !g.id || !g.objective || goalBoardMirrored[g.id]) return;
+    goalBoardMirrored[g.id] = true;
+    ensureGoalBoardCard(g.objective, g.completion_criterion);
+  });
 }
 
 function goalCard(g) {
@@ -2158,7 +2179,10 @@ bind(el.goals, goalState, function (goals) {
 function loadGoals() {
   return fetch("/api/goals")
     .then(readJson)
-    .then(function (data) { renderGoals(data.goals || []); })
+    .then(function (data) {
+      renderGoals(data.goals || []);
+      mirrorGoalsToBoard(data.goals || []);
+    })
     .catch(function (err) {
       el.goals.textContent = "";
       var p = document.createElement("p");
