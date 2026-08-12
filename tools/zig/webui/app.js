@@ -304,6 +304,8 @@ function togglePin(id) {
    disagreeing about which conversation is open. */
 var railState = van.state({ sessions: [], filter: "", pins: [], current: "" });
 
+function isArchived(s){ return !!s.archived; }
+function showArchived(){ var cb=document.getElementById("archived-toggle"); return !!(cb && cb.checked); }
 function renderSessionOptions(sessions) {
   if (sessions) { knownSessionsHolder.list.length = 0; Array.prototype.push.apply(knownSessionsHolder.list, sessions); knownSessions = knownSessionsHolder.list; }
   railState.val = {
@@ -317,7 +319,8 @@ function renderSessionOptions(sessions) {
 
 function railRowFor(s, current) {
   var title = (s.title || "").replace(/\s+/g, " ").trim() || "(untitled)";
-  var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") +
+  var archivedMark = s.archived ? " · archived" : "";
+  var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") + archivedMark +
     (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
   var open = s.id === current;
 
@@ -358,7 +361,8 @@ function workspacesOf(sessions) {
 
 bind(el.railList, railState, function (s) {
   var out = [];
-  var ordered = s.sessions.slice().sort(function (a, b) {
+  var filtered = s.sessions.filter(function(it){ return showArchived() || !isArchived(it); });
+  var ordered = filtered.slice().sort(function (a, b) {
     var pa = isPinned(a.id) ? 1 : 0, pb = isPinned(b.id) ? 1 : 0;
     return pa === pb ? 0 : pb - pa;
   });
@@ -1217,6 +1221,22 @@ function renderStats(turn, stats, task) {
       scrollTo(el.task, "center");
     });
     actions.appendChild(editBtn);
+    // OpenWebUI-style history hygiene affordances (no invented state):
+    // - Copy turn copies the transcript slice for that turn via the same
+    //   helper Copy answer uses (still the per-turn source, not invented).
+    var copyTurnBtn = document.createElement("button");
+    copyTurnBtn.type = "button";
+    copyTurnBtn.className = "secondary";
+    copyTurnBtn.textContent = "Copy turn";
+    copyTurnBtn.title = "Copy this turn as markdown";
+    copyTurnBtn.addEventListener("click", function(){
+      var you = turn.root.querySelector(".turn-you");
+      var promptText = you ? you.textContent : task || "";
+      var answerText = turn.root.markdownSource || (turn.answer ? turn.answer.textContent : "");
+      var md = (promptText ? ("## " + String(promptText).trim() + "\n\n") : "") + String(answerText||"").replace(/\s+$/, "");
+      copyText(md || String(promptText||""), copyTurnBtn, "Copy turn", turn.root);
+    });
+    actions.appendChild(copyTurnBtn);
     if (stopped) {
       var contBtn = document.createElement("button");
       contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue";
@@ -1341,10 +1361,24 @@ el.cancel.addEventListener("click", function () {
   if (controller) controller.abort();
 });
 
+function handleSlashDocFile(task){
+  var m = task.match(/^\/(?:doc|file)\s+(.+)$/);
+  if (!m) return null;
+  var path = m[1].trim();
+  if (!path) return null;
+  // Create a Knowledge collection on-the-fly if needed and add the file as a doc via a hint
+  // We can't read the file client-side (sandbox), so we inject a task header that tells
+  // the agent to read that path via read_file/file_ops and treat it as RAG.
+  // This mirrors OpenWebUI #file / @doc — here it's /doc <path> as an alias for #knowledge.
+  return "[File: " + path + "]\n\n" + task;
+}
+
 el.form.addEventListener("submit", function (e) {
   e.preventDefault();
   var task = el.task.value.trim();
   if (busy || task === "") return;
+  var promoted = handleSlashDocFile(task);
+  if (promoted) task = promoted;
 
   var isPlan = el.planMode && el.planMode.checked;
   var isResearch = el.researchMode && el.researchMode.checked;
@@ -3669,6 +3703,69 @@ el.runCopy.addEventListener("click", function () {
    quick-add @ mention hint. */
 bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: function () { return knownPeers; } });
 
+// Archive + Import (history parity) — reuses existing session API, no invented state
+(function(){
+  var archBtn = document.getElementById("session-archive");
+  var importBtn = document.getElementById("session-import");
+  var tog = document.getElementById("archived-toggle");
+  if (archBtn) archBtn.addEventListener("click", function(){
+    var meta = currentSessionMeta && currentSessionMeta();
+    if (!meta){ el.sessionStatus.textContent = "This conversation has no saved turns yet."; return; }
+    var next = !meta.archived;
+    archBtn.disabled = true;
+    fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ archived: next }) })
+      .then(readJson).then(function(){
+        el.sessionStatus.textContent = next ? "Archived — toggle Show archived to see it." : "Unarchived.";
+        archBtn.textContent = next ? "Unarchive" : "Archive";
+        return loadSessions();
+      }).catch(function(err){ el.sessionStatus.textContent = "Archive failed: " + err.message; })
+      .finally(function(){ archBtn.disabled = false; });
+  });
+  function syncArchiveLabel(){
+    try {
+      var meta = currentSessionMeta && currentSessionMeta();
+      if (archBtn) archBtn.textContent = meta && meta.archived ? "Unarchive" : "Archive";
+    } catch(_){}
+  }
+  setInterval(syncArchiveLabel, 900);
+  if (tog) tog.addEventListener("change", function(){ renderSessionOptions(null); });
+  if (importBtn) importBtn.addEventListener("click", function(){
+    var inp = document.createElement("input"); inp.type="file"; inp.accept=".json,application/json";
+    inp.addEventListener("change", function(){
+      var f = inp.files && inp.files[0]; if (!f) return;
+      var fr = new FileReader();
+      fr.onload = function(){
+        var text = String(fr.result || "");
+        var parsed = null; try { parsed = JSON.parse(text); } catch(e){ alert("Not valid JSON: "+e.message); return; }
+        // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
+        var msgs = null; var title = "";
+        if (Array.isArray(parsed)) msgs = parsed;
+        else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
+        else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
+        else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
+        if (!msgs || !msgs.length){ alert("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
+        // Normalize to StoredMessage shape the server expects
+        var norm = msgs.map(function(m){
+          var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
+          var content = m.content!=null ? String(m.content) : (m.text!=null?String(m.text):"");
+          if (role!=="user" && role!=="assistant") role="user";
+          return { role: role, content: content };
+        }).filter(function(m){ return m.content && m.content.trim(); });
+        if (!norm.length){ alert("No importable messages."); return; }
+        fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
+          .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
+          .then(function(d){
+            el.sessionStatus.textContent = "Imported.";
+            if (d.id){ sessionId = d.id; try{ window.localStorage.setItem("clanker.session", sessionId); }catch(_){} renderSessionChip(); }
+            return loadSessions();
+          }).catch(function(err){ alert("Import failed: "+err.message); });
+      };
+      fr.readAsText(f);
+    });
+    inp.click();
+  });
+})();
+
 
 /* ---------- web UI plugins ----------
 
@@ -3812,6 +3909,42 @@ document.addEventListener("keydown", function (e) {
 
 try { kbBind(); } catch(_){}
 try { promptsBind(); } catch(_){}
+
+// Settings surface wires the same header affordances (single source of truth)
+try {
+  (function(){
+    var themeCycle = document.getElementById("settings-theme-cycle");
+    var themeLabel = document.getElementById("settings-theme-label");
+    var headerCycle = document.getElementById("theme-toggle");
+    function syncThemeLabel(){
+      try { themeLabel.textContent = theme; } catch(_){}
+    }
+    if (themeCycle) themeCycle.addEventListener("click", function(){ if(headerCycle) headerCycle.click(); setTimeout(syncThemeLabel, 0); });
+    syncThemeLabel();
+    // session/status mirrors
+    function syncSessionMirror(){
+      try {
+        var m = document.getElementById("settings-session-chip");
+        if (m) m.textContent = document.getElementById("session-chip") ? document.getElementById("session-chip").textContent : "";
+        var meta = currentSessionMeta && currentSessionMeta();
+        if (m && meta && meta.title) m.textContent = meta.title + " · " + m.textContent;
+      } catch(_){}
+    }
+    setInterval(syncSessionMirror, 1200);
+    syncSessionMirror();
+    var sCompact = document.getElementById("settings-compact");
+    var sDelete = document.getElementById("settings-delete");
+    var sFork = document.getElementById("settings-fork");
+    var sRename = document.getElementById("settings-rename");
+    var sMove = document.getElementById("settings-move");
+    if (sCompact && document.getElementById("session-compact")) sCompact.addEventListener("click", function(){ document.getElementById("session-compact").click(); });
+    if (sDelete && document.getElementById("session-delete")) sDelete.addEventListener("click", function(){ document.getElementById("session-delete").click(); });
+    if (sFork && document.getElementById("session-fork")) sFork.addEventListener("click", function(){ document.getElementById("session-fork").click(); });
+    if (sRename && document.getElementById("session-rename")) sRename.addEventListener("click", function(){ document.getElementById("session-rename").click(); });
+    if (sMove && document.getElementById("session-move")) sMove.addEventListener("click", function(){ document.getElementById("session-move").click(); });
+  })();
+} catch(_){}
+
 
 // # prompt for knowledge — typing # shows collections to inject context
 var kbMentionActive = false;

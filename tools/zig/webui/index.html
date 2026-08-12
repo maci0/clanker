@@ -107,6 +107,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="session-fork">Fork</button>
         <button type="button" class="secondary" id="session-rename">Rename</button>
         <button type="button" class="secondary" id="session-move" title="Put this conversation in a workspace">Move to…</button>
+        <button type="button" class="secondary" id="session-archive" title="Hide from history without deleting (you can undo in Archived)">Archive</button>
         <button type="button" class="secondary danger" id="session-delete">Delete</button>
         <!-- Folded away rather than dropped: six equal buttons in a row read as
              one wall and hide which three you reach for daily. All of them are
@@ -119,6 +120,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <button type="button" class="secondary" id="session-export-json" title="Download this conversation as JSON">Export .json</button>
             <button type="button" class="secondary" id="session-copy" title="Copy the whole transcript">Copy all</button>
             <button type="button" class="secondary" id="prompt-save" title="Save what is in the composer as a reusable prompt">Save prompt</button>
+            <button type="button" class="secondary" id="session-import" title="Import a chat from JSON (OpenAI/OpenWebUI export)">Import chat</button>
           </div>
         </details>
       </div>
@@ -478,6 +480,42 @@ lamps carry further). The seven named palettes ride the same tokens.
            disabled plugin's assets are not served at all. -->
       <div id="webui-plugins"></div>
       <p class="sr-only" id="webui-plugins-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="settings-section">
+      <div class="section-head">
+        <h2>Settings</h2>
+        <span class="meta">Appearance, session, and system — local to this browser unless noted.</span>
+      </div>
+      <div class="settings-grid" style="display:grid;gap:0.9rem;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+        <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
+          <div style="font-weight:600;margin-bottom:0.35rem">Appearance</div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+            <button type="button" class="secondary" id="settings-theme-cycle">Cycle theme</button>
+            <span class="meta" id="settings-theme-label">system</span>
+          </div>
+          <div class="meta" style="margin-top:0.35rem">Cycles through the header theme control's themes (single-user).</div>
+        </div>
+        <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
+          <div style="font-weight:600;margin-bottom:0.35rem">Chat history</div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+            <button type="button" class="secondary" id="settings-compact">Compact</button>
+            <button type="button" class="secondary danger" id="settings-delete">Delete chat</button>
+          </div>
+          <div class="meta" style="margin-top:0.35rem">Compact drops oldest exchanges to fit context; Delete removes this conversation only. Both use the existing chat header actions.</div>
+        </div>
+        <div style="border:1px solid var(--rule);border-radius:10px;padding:0.7rem 0.9rem;background:var(--surface)">
+          <div style="font-weight:600;margin-bottom:0.35rem">Session</div>
+          <div class="meta" id="settings-session-chip">session …</div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.4rem">
+            <button type="button" class="secondary" id="settings-fork">Fork</button>
+            <button type="button" class="secondary" id="settings-rename">Rename</button>
+            <button type="button" class="secondary" id="settings-move">Move to workspace</button>
+          </div>
+          <div class="meta" style="margin-top:0.35rem">Same actions as the chat header — surfaced here for discoverability (OpenWebUI-style user-menu discoverability, single-user).</div>
+        </div>
+      </div>
+      <p class="sr-only" id="settings-status" role="status" aria-live="polite"></p>
     </section>
 
     <section>

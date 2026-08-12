@@ -17,6 +17,9 @@ pub const Session = struct {
     /// conversation is in exactly one, and "" means the default one, so a
     /// session written before workspaces existed needs no migration.
     workspace: []const u8 = "",
+    /// Whether this chat is archived / hidden from the default listing.
+    /// False absences still decode as false, so pre-archive sessions need no migration.
+    archived: bool = false,
 };
 
 const store_dir = "state/sessions";
@@ -46,6 +49,10 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     if (session.workspace.len > 0) {
         try s.objectField("workspace");
         try s.write(session.workspace);
+    }
+    if (session.archived) {
+        try s.objectField("archived");
+        try s.write(true);
     }
     try s.objectField("messages");
     try s.beginArray();
@@ -95,19 +102,20 @@ const StoredToolCall = struct {
     arguments: []const u8,
 };
 
-const StoredMessage = struct {
+pub const StoredMessage = struct {
     role: []const u8,
     content: ?[]const u8 = null,
     tool_calls: ?[]const StoredToolCall = null,
     tool_call_id: ?[]const u8 = null,
 };
 
-const StoredSession = struct {
+pub const StoredSession = struct {
     id: []const u8,
     title: []const u8,
     created: i64,
     updated: i64,
     workspace: []const u8 = "",
+    archived: bool = false,
     messages: []const StoredMessage = &.{},
 };
 
@@ -139,6 +147,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         .created = stored.created,
         .updated = stored.updated,
         .workspace = stored.workspace,
+        .archived = stored.archived,
         .messages = try messages.toOwnedSlice(arena),
     };
 }
@@ -256,6 +265,7 @@ pub const SessionMeta = struct {
     created: i64 = 0,
     updated: i64 = 0,
     workspace: []const u8 = "",
+    archived: bool = false,
     messages: usize = 0,
     /// Total byte length of the transcript's message content (plus tool-call
     /// arguments). Compaction thresholds are in bytes, so a picker can show
@@ -294,6 +304,7 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
             .created = stored.created,
             .updated = stored.updated,
             .workspace = stored.workspace,
+            .archived = stored.archived,
             .messages = stored.messages.len,
             .bytes = bytes,
         }) catch continue;
@@ -806,6 +817,38 @@ test "listSessions skips corrupt entries without hiding valid sessions" {
     const sessions = try listSessions(io, arena, tmp.dir);
     try std.testing.expectEqual(@as(usize, 1), sessions.len);
     try std.testing.expectEqualStrings("valid", sessions[0].id);
+}
+
+pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8, archived: bool) !void {
+    var s = try loadSession(io, gpa, arena, base, id);
+    s.archived = archived;
+    try saveSession(io, gpa, arena, base, s);
+}
+
+/// Imports an OpenAI/OpenWebUI-style chat export into a new local session.
+/// Accepts an array of {"role":"user"|"assistant","content":string} (unknown
+/// roles/tools are skipped) so both providers' exports and our own
+/// /api/sessions/<id> JSON can be pasted without conversion.
+pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, title: []const u8, messages_in: []const StoredMessage) ![]const u8 {
+    var out: std.ArrayList(types.Message) = .empty;
+    for (messages_in) |sm| {
+        if (sm.content == null or sm.content.?.len == 0) continue;
+        const role = roleFromStr(sm.role);
+        if (role != .user and role != .assistant) continue;
+        try out.append(arena, .{ .role = role, .content = sm.content });
+    }
+    if (out.items.len == 0) return error.MissingField;
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    const new_id = try std.fmt.allocPrint(arena, "sess-{d}-{d}", .{ now, @rem(std.Io.Timestamp.now(io, .real).nanoseconds, 1000000) });
+    try saveSession(io, gpa, arena, base, .{
+        .id = new_id,
+        .title = if (title.len > 0) title else "imported chat",
+        .messages = try out.toOwnedSlice(arena),
+        .created = now,
+        .updated = now,
+        .archived = false,
+    });
+    return new_id;
 }
 
 /// Moves a conversation to a workspace. "" is the default one.

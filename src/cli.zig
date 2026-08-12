@@ -4762,6 +4762,16 @@ fn handleSessions(
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
                 return;
             };
+            if (req.archived) |arch| {
+                session.setArchived(io, gpa, arena, std.Io.Dir.cwd(), id, arch) catch {
+                    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                    return;
+                };
+                if (req.title == null and req.workspace == null) {
+                    respond(stream, 200, "OK", "{\"ok\":true}");
+                    return;
+                }
+            }
             // Moving between folders and renaming are the same kind of edit,
             // so they share the endpoint; a body may carry either or both.
             if (req.workspace) |ws| {
@@ -4779,7 +4789,7 @@ fn handleSessions(
                 }
             }
             const title = req.title orelse {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title or workspace\"}");
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title, workspace, or archived\"}");
                 return;
             };
             session.renameSession(io, gpa, arena, std.Io.Dir.cwd(), id, title) catch {
@@ -4803,6 +4813,23 @@ fn handleSessions(
     if (rest.len != 0) {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
         return;
+    }
+
+    // Import: POST /api/sessions with {import_chat:true, title, messages:[{role,content}]}
+    if (std.mem.eql(u8, method, "POST")) {
+        const import_req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch null;
+        if (import_req != null and import_req.?.import_chat != null and import_req.?.import_chat.? == true) {
+            const msgs = import_req.?.messages orelse &[_]session.StoredMessage{};
+            const title = if (import_req.?.title) |t| t else "imported chat";
+            const new_id = session.importChat(io, gpa, arena, std.Io.Dir.cwd(), title, msgs) catch {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"import failed: need at least one user/assistant message with content\"}");
+                return;
+            };
+            var ibuf: [256]u8 = undefined;
+            const ibody = std.fmt.bufPrint(&ibuf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{new_id}) catch return;
+            respond(stream, 200, "OK", ibody);
+            return;
+        }
     }
 
     const list = session.listSessions(io, arena, std.Io.Dir.cwd()) catch |err| {
@@ -5102,6 +5129,8 @@ fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) 
         try s.write(m.updated);
         try s.objectField("workspace");
         try s.write(m.workspace);
+        try s.objectField("archived");
+        try s.write(m.archived);
         try s.objectField("messages");
         try s.write(m.messages);
         try s.objectField("bytes");
@@ -5222,6 +5251,12 @@ const SessionPatchBody = struct {
     title: ?[]const u8 = null,
     /// Absent means "leave it where it is"; "" means the default folder.
     workspace: ?[]const u8 = null,
+    /// When set, archives/unarchives the chat (OpenWebUI parity — archive).
+    archived: ?bool = null,
+    /// When true with messages, creates a new imported chat (OpenWebUI parity — import).
+    import_chat: ?bool = null,
+    /// Messages array for import — array of {role,content}
+    messages: ?[]const session.StoredMessage = null,
 };
 
 const PluginToggleBody = struct {

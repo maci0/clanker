@@ -86,7 +86,6 @@ pub const Worktree = struct {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
                     resyncLocalBranch(gpa, io, branch_sha);
-                    log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -104,7 +103,6 @@ pub const Worktree = struct {
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
                 resyncLocalBranch(gpa, io, commit);
-                log.log(.info, "improve-self: merged {s} into {s} at {s}", .{ self.branch, self.base_branch, commit });
                 return;
             }
             // Someone else moved base_branch between the read and the write;
@@ -199,7 +197,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     const root = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(root);
 
-    for ([_][]const u8{ ".env", "config.local.toml", "config.local.json" }) |name| {
+    for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
