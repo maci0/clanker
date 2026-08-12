@@ -2104,11 +2104,12 @@ h2#session-title {
 .md-task { list-style: none; margin-left: -1.2em; }
 .md-task input { margin-right: var(--space-2); }
 
-/* Board: columns scroll sideways as a group, each column scrolls down on
-   its own, so a long Backlog never pushes Done off the bottom. */
+/* Board: columns wrap to new rows when they don't fit the viewport width, so
+   the board adapts to any screen size without horizontal scrolling; each column
+   scrolls down on its own, so a long Backlog never pushes Done off the bottom. */
 .board {
-  display: flex; gap: var(--space-3); margin-top: var(--space-3);
-  overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start;
+  display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3);
+  overflow-x: hidden; padding-bottom: var(--space-3); align-items: flex-start;
   /* Trello-style: fill available height so columns scroll internally */
   min-height: 60vh;
 }
@@ -2635,6 +2636,8 @@ h2#session-title {
   #view-board .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
   #view-board .section-head .toolbar-actions { gap: var(--space-2); }
   #view-board .section-head button { min-height: 44px; }
+  #view-board .board { flex-direction: column; }
+  #view-board .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
   .board-goal-form { display: flex; padding: var(--space-3); }
   .board-goal-form input, .board-goal-form button { width: 100%; min-height: 44px; }
   .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
