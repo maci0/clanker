@@ -137,18 +137,55 @@ Shipped:
 - [x] Tab-complete over `command_registry` (unique match completes the
       line, several complete to their shared prefix and list the rest)
 - [x] Manual scrollback (PgUp/PgDn, Home/End)
+- [x] Bottom-anchored transcript: at rest and while scrolled back the visible
+      block hugs the input (chat-client layout); streaming still flows top-down
+      (`tailWindow`/`lineRows`, bottom-align offset in `draw`)
+- [x] Scrollbar in the rightmost column when the transcript overflows, thumb
+      tracking the visible window (`drawScrollbar`)
+- [x] Prompt echo and status line coloured (accent brand/model, green idle
+      phase, the user's `clanker>` line in bold prompt-green)
+- [x] Multi-line transcript output renders one row per line (was collapsing
+      onto one row: `/help` and completed replies; `row += 1` per Line)
 
-Open:
+Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
-- [ ] Slash-command search (fuzzy palette like `/model`'s, for discovery
-      beyond Tab-complete's prefix match)
-- [ ] Transcript search (scrollback paging exists; searching within it does not)
-- [ ] Inline `ask_user`/confirm-before-write prompt UI
-- [ ] Real markdown rendering outside fenced code blocks
-- [ ] Multi-line input (Shift+Enter or equivalent)
-- [ ] Image/multimodal input
-- [ ] Plan mode toggle
-- [ ] Visible token/cost/context-budget stats and compaction visibility
+- [ ] **Inline `ask_user` / confirm-before-write prompt UI.** The biggest gap:
+      a run that calls `ask_user`, or `agent.confirm_writes = "always"`, has no
+      prompt-rendering path here, so the question is silently declined / the
+      write runs ungated (`repl_vaxis.zig` startup warning says so). The
+      `/model` picker's modal (`picker_open`/`handlePickerKey`) is the shape to
+      reuse, not a new mechanism.
+- [ ] **Visible per-turn stats + compaction.** No analog of `clanker run`'s
+      footer (prompt/completion tokens, wall time, tok/s, cache hit, cost) and
+      no cue when `compact_threshold_bytes` compacts mid-session. grok/kimi/
+      opencode all show a running token/context meter; the web UI has one
+      (webui 2.3), this does not.
+- [ ] **Graceful iteration-limit landing.** Hitting `agent.max_iterations`
+      returns `error.MaxIterationsExceeded` and the turn renders `[error: ...]`,
+      discarding every tool round's work with no partial answer. Default raised
+      24 -> 50, but the REPL should surface partial progress and offer to
+      continue (append "keep going") rather than erroring, the way a coding CLI
+      does. (Config bump: `config.zig`.)
+- [ ] **Real markdown outside fenced code.** Only fences get styled
+      (`syntax.zig`); bold/italic/inline-code/headings/bullets render as plain
+      text, unlike `clanker run`'s `MdStream` and every CLI above.
+- [ ] **Multi-line input** (Shift+Enter or a heredoc paste mode). `vxfw.TextField`
+      is single-line; Enter always submits.
+- [ ] **Transcript search.** Scrollback paging exists; `/`-to-search within it
+      does not (grok/opencode both have it).
+- [ ] **Slash-command fuzzy palette.** Tab-complete is prefix-only; a `/model`-
+      style fuzzy picker over `command_registry` would match mid-word.
+- [ ] **Image / multimodal input.** The web UI has an attachment path (webui
+      1.3); this REPL has no route for a task that needs one.
+- [ ] **Plan mode toggle.** `Agent.plan_mode` exists and the web UI toggles it
+      (webui 2.2); nothing here sets it, so no propose-then-apply flow.
+- [ ] **Inline `!shell` escape.** grok/kimi/opencode (and Pi) run a shell line
+      with a `!` prefix without leaving the loop; here a bare `!cmd` falls
+      through to the LLM as a task. Intercept it in `submit()` before
+      `parseCommand`, route through the sandboxed `exec` path.
+- [ ] **Theme without an env var.** Colour (the RGB palettes) only lights up
+      when `CLANKER_THEME` is set; the default 16-colour theme is bold-only. A
+      `/theme` command or truecolor autodetection would surface it.
 
 ## Open questions / future work
 
