@@ -723,7 +723,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   margin: var(--space-2) 0 0; padding: var(--space-2);
   background: var(--surface-2); border-radius: var(--radius-sm);
   white-space: pre-wrap; overflow-wrap: anywhere;
-  max-width: var(--measure);
+  max-width: var(--measure); max-height: 20rem; overflow-y: auto;
 }
 /* The run's own private checklist (features/todos.js), streamed as `todos`
    events while the run works. Only palette variables here, so it inherits
@@ -1117,6 +1117,7 @@ input[type="text"], input[type="search"], input[type="date"], input[type="number
 }
 input[type="text"]:focus-visible, input[type="search"]:focus-visible,
 input[type="date"]:focus-visible, input[type="number"]:focus-visible,
+input[type="url"]:focus-visible,
 select:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 #run-filter:focus, #run-filter:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 #run-filter::-webkit-search-cancel-button { cursor: pointer; opacity: 0.9; }
@@ -1284,7 +1285,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-msg[data-grouped="true"] { padding-top: 0.2rem; padding-bottom: 0.2rem; }
 .chat-msg[data-grouped="true"] .chat-meta { display: none; }
 .chat-gutter-time { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: center; }
-.chat-msg:hover .chat-gutter-time { opacity: 1; }
+.chat-msg:hover .chat-gutter-time, .chat-msg:focus-within .chat-gutter-time { opacity: 1; }
 .chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem 0.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
 .chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: 11px; border-radius: 999px; }
@@ -1681,7 +1682,7 @@ button:active:not(:disabled) {
 .model-picker .model-search { width: 100%; box-sizing: border-box; }
 .model-picker .model-list {
   position: absolute; top: calc(100% + var(--space-1)); left: 0; right: 0;
-  z-index: 20; margin: 0; max-height: 18rem;
+  z-index: 20; margin: 0; max-height: 18rem; overflow-y: auto;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); box-shadow: var(--lift-high);
 }
@@ -2289,7 +2290,7 @@ h2#session-title {
   background: var(--surface); border-radius: 6px; padding: 2px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid var(--rule);
 }
-.card:hover .card-quick-actions { display: flex; }
+.card:hover .card-quick-actions, .card:focus-within .card-quick-actions { display: flex; }
 .card-quick-actions button {
   min-width: 26px; min-height: 26px; padding: 0; border: none; background: none;
   color: var(--fg-muted); cursor: pointer; border-radius: 4px; display: grid; place-items: center;
