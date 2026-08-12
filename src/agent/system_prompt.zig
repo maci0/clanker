@@ -402,7 +402,7 @@ pub fn build(
     // not set a duplicate.
     reminders: {
         const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/alarms.json", arena, .limited(1 << 20)) catch break :reminders;
-        const AlarmEntry = struct { id: []const u8 = "", ts: i64 = 0, message: []const u8 = "" };
+        const AlarmEntry = struct { id: []const u8 = "", ts: i64 = 0, message: []const u8 = "", every: i64 = 0 };
         const alarms = std.json.parseFromSliceLeaky([]AlarmEntry, arena, raw, .{ .ignore_unknown_fields = true }) catch break :reminders;
         if (alarms.len == 0) break :reminders;
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
@@ -410,10 +410,14 @@ pub fn build(
         for (alarms) |a| {
             if (a.ts > now) continue;
             if (!due_header) {
-                try buf.appendSlice(arena, "## Reminders due NOW\n\nYou set these for yourself with the alarm tool. Act on each, then cancel it (alarm {\"action\":\"cancel\",\"id\":\"...\"}) or it will keep nagging every run.\n\n");
+                try buf.appendSlice(arena, "## Reminders due NOW\n\nYou set these for yourself with the alarm tool. Act on each, then mark it handled (alarm {\"action\":\"done\",\"id\":\"...\"}; a recurring one reschedules itself, a one-shot goes away) or it will keep nagging every run.\n\n");
                 due_header = true;
             }
-            try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (due {d} min ago)\n", .{ a.id, a.message, @max(@divTrunc(now - a.ts, 60), 0) }));
+            if (a.every > 0) {
+                try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (due {d} min ago; recurs every {d} min)\n", .{ a.id, a.message, @max(@divTrunc(now - a.ts, 60), 0), a.every }));
+            } else {
+                try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (due {d} min ago)\n", .{ a.id, a.message, @max(@divTrunc(now - a.ts, 60), 0) }));
+            }
         }
         if (due_header) try buf.appendSlice(arena, "\n");
         var pending_header = false;
@@ -424,7 +428,11 @@ pub fn build(
                 try buf.appendSlice(arena, "## Reminders scheduled (not yet due)\n\n");
                 pending_header = true;
             }
-            try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (in {d} min)\n", .{ a.id, a.message, @divTrunc(a.ts - now, 60) }));
+            if (a.every > 0) {
+                try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (in {d} min, then every {d} min)\n", .{ a.id, a.message, @divTrunc(a.ts - now, 60), a.every }));
+            } else {
+                try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (in {d} min)\n", .{ a.id, a.message, @divTrunc(a.ts - now, 60) }));
+            }
             shown += 1;
         }
         if (pending_header) try buf.appendSlice(arena, "\n");

@@ -1,13 +1,18 @@
 {
   "name": "alarm",
-  "description": "Set a reminder for your future self. A due alarm appears in the system prompt of every later run until you cancel it, so use it to follow up on things that need time to pass: \"check whether CI went green\", \"re-poll the peer\", \"revisit the stuck goal\". Input: {\"action\":\"set\",\"message\":\"...\",\"in_minutes\":20} or {\"action\":\"set\",\"message\":\"...\",\"at\":<epoch seconds>}; {\"action\":\"list\"}; {\"action\":\"cancel\",\"id\":\"a-...\"}. Cancel an alarm once you have acted on it, or it keeps nagging.",
+  "description": "Set a reminder for your future self. A due alarm appears in the system prompt of every later run until handled, so use it to follow up on things that need time to pass: \"check whether CI went green\", \"re-poll the peer\", \"revisit the stuck goal\". One-shot: {\"action\":\"set\",\"message\":\"...\",\"in_minutes\":20} or with \"at\":<epoch seconds>. Recurring: add \"every_minutes\":30. {\"action\":\"list\"} shows all with due flags. When you have acted on a due alarm, call {\"action\":\"done\",\"id\":\"a-...\"}: a one-shot is removed, a recurring one advances to its next occurrence. {\"action\":\"cancel\",\"id\":\"a-...\"} deletes outright.",
   "wasm": "zig-out/tools/alarm.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["set", "list", "cancel"]
+        "enum": [
+          "set",
+          "list",
+          "done",
+          "cancel"
+        ]
       },
       "message": {
         "type": "string"
@@ -20,9 +25,14 @@
       },
       "id": {
         "type": "string"
+      },
+      "every_minutes": {
+        "type": "number"
       }
     },
-    "required": ["action"]
+    "required": [
+      "action"
+    ]
   },
   "fs_prefixes": [
     "state/alarms.json"

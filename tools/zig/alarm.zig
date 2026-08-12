@@ -4,9 +4,11 @@
 //! minutes" survives the end of the session that thought of it.
 //! Input:  {"action":"set","message":"...","in_minutes":20}
 //!         {"action":"set","message":"...","at":1786540000}
+//!         {"action":"set","message":"...","in_minutes":5,"every_minutes":30}
 //!         {"action":"list"}
-//!         {"action":"cancel","id":"a-..."}
-//! Output: {"ok":true,...} (list carries alarms with a "due" flag)
+//!         {"action":"done","id":"a-..."}   handled: recurring advances, one-shot is removed
+//!         {"action":"cancel","id":"a-..."} delete outright, recurring or not
+//! Output: {"ok":true,...} (list carries alarms with "due" and "every_minutes")
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -17,9 +19,10 @@ const max_message = 500;
 
 const Alarm = struct {
     id: []const u8,
-    ts: i64, // fire time, epoch seconds
+    ts: i64, // next fire time, epoch seconds
     message: []const u8,
     set_ts: i64,
+    every: i64 = 0, // recurrence interval in minutes; 0 means one-shot
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -37,8 +40,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     if (std.mem.eql(u8, action, "set")) return doSet(obj, out);
     if (std.mem.eql(u8, action, "list")) return doList(out);
+    if (std.mem.eql(u8, action, "done")) return doDone(obj, out);
     if (std.mem.eql(u8, action, "cancel")) return doCancel(obj, out);
-    return lib.fail(out, "action must be set, list, or cancel");
+    return lib.fail(out, "action must be set, list, done, or cancel");
 }
 
 fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
@@ -69,13 +73,23 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         }
         return lib.fail(out, "set needs in_minutes or at");
     };
+    const every: i64 = blk: {
+        const v = obj.get("every_minutes") orelse break :blk 0;
+        const mins: i64 = switch (v) {
+            .integer => |i| i,
+            .float => |f| @intFromFloat(f),
+            else => return lib.fail(out, "every_minutes must be a number"),
+        };
+        if (mins < 1) return lib.fail(out, "every_minutes must be at least 1");
+        break :blk mins;
+    };
 
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         if (loaded.alarms.items.len >= max_alarms) return lib.fail(out, "alarm list is full (50); cancel some first");
         const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, loaded.alarms.items.len });
-        try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now });
+        try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });
         if (try store(loaded)) {
             const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d}}}", .{ id, fire - now });
             return out.writeAll(reply);
@@ -107,11 +121,56 @@ fn doList(out: *lib.Out) !void {
         try s.write(a.message);
         try s.objectField("due");
         try s.write(a.ts <= now);
+        try s.objectField("every_minutes");
+        try s.write(a.every);
         try s.endObject();
     }
     try s.endArray();
     try s.endObject();
     return out.writeAll(jbuf[0..w.end]);
+}
+
+/// Mark an alarm handled. A one-shot is removed (same as cancel); a
+/// recurring alarm advances to its next occurrence strictly after now, so
+/// handling a reminder that sat due for three intervals fires once next
+/// interval rather than three more times.
+fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
+    const id = switch (obj.get("id") orelse return lib.fail(out, "done needs an id")) {
+        .string => |s| s,
+        else => return lib.fail(out, "id must be a string"),
+    };
+    const now: i64 = @intFromFloat(lib.nowSeconds());
+    var attempt: u32 = 0;
+    while (attempt < 3) : (attempt += 1) {
+        var loaded = try load();
+        var found = false;
+        var next_ts: i64 = 0;
+        var i: usize = 0;
+        while (i < loaded.alarms.items.len) {
+            const a = &loaded.alarms.items[i];
+            if (std.mem.eql(u8, a.id, id)) {
+                found = true;
+                if (a.every > 0) {
+                    const step = a.every * 60;
+                    const behind = @max(now - a.ts, 0);
+                    a.ts += (@divTrunc(behind, step) + 1) * step;
+                    next_ts = a.ts;
+                    i += 1;
+                } else {
+                    _ = loaded.alarms.orderedRemove(i);
+                }
+            } else i += 1;
+        }
+        if (!found) return lib.fail(out, "no alarm with that id");
+        if (try store(loaded)) {
+            if (next_ts > 0) {
+                const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"next_in_seconds\":{d}}}", .{next_ts - now});
+                return out.writeAll(reply);
+            }
+            return out.writeAll("{\"ok\":true}");
+        }
+    }
+    return lib.fail(out, "alarms file kept changing underneath; try again");
 }
 
 fn doCancel(obj: std.json.ObjectMap, out: *lib.Out) !void {
