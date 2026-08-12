@@ -123,6 +123,17 @@ context, and asks the patch call to implement exactly that idea. Planning
 failing or running dry falls back to the single-shot behaviour. Disable with
 `improve.plan_phase = false`.
 
+## Living document
+
+This file and the `docs/prompts/*-review.md` prompts are living documents.
+When a turn surfaces a caveat, quirk, or failure mode worth remembering (a
+build gotcha, a sandbox edge case, a gate that fired for a non-obvious
+reason), fold it back into whichever file it belongs to before the turn
+ends. One slice per turn: the smallest true addition, not a rewrite of the
+whole document. When fewer words already say the same thing, tighten
+instead of appending: edit the stale sentence down to what still holds
+rather than stacking a new one beside it.
+
 ## Local operator rules (optional)
 
 Checkout-private additions (gitignored). Missing file is a soft skip for tools
