@@ -137,8 +137,11 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     try std.testing.expect(!dirty.ok);
     try std.testing.expectEqualStrings("lint", dirty.label);
 
-    // HACK and XXX are equally debt markers and must trip the gate.
-    try tmp.dir.writeFile(io, .{ .sub_path = "hacky.zig", .data = "// HACK: quick fix\nconst x = 1;\n" });
+    // The other two debt markers must trip the gate too. Spelled split, like
+    // `forbidden` itself: written whole, this file's own test data would be
+    // exactly the kind of forbidden marker `clanker gate`'s lintGate run
+    // scans checks.zig for, and lint would fail on itself every time.
+    try tmp.dir.writeFile(io, .{ .sub_path = "hacky.zig", .data = "// HA" ++ "CK: quick fix\nconst x = 1;\n" });
     const hacky = try lintGate(gpa, io, tmp.dir, &.{"hacky.zig"});
     try std.testing.expect(!hacky.ok);
     try std.testing.expectEqualStrings("lint", hacky.label);
