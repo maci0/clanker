@@ -20,6 +20,7 @@ const runner_mod = @import("../evals/runner.zig");
 const builder = @import("../tools/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const history_mod = @import("history.zig");
+const inert = @import("inert.zig");
 const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -72,6 +73,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
+    // The one gate that asks whether a change does anything. It is the gate a
+    // loop optimising for acceptance has the most to gain from removing, and
+    // removing it would look, to every other check, like a clean patch.
+    .{ .file = "src/improve/engine.zig", .needle = "inert.classify(" },
+    .{ .file = "src/improve/engine.zig", .needle = "self.valueRejection(" },
     // src/gate/checks.zig is deliberately outside the protected surface (so
     // clanker can keep strengthening the gates), which means a patch could
     // also gut buildGate/testGate/toolsGate's actual implementation there
@@ -361,6 +367,7 @@ pub const Engine = struct {
             opts.instructions,
             gate_tail,
             if (history_block.len > 0) history_block else "(no earlier attempts)",
+            try self.mixHint(),
             last_error orelse "none",
             self.stuck_hint,
         });
@@ -475,7 +482,7 @@ pub const Engine = struct {
                 const id = self.newId() catch null;
                 if (id) |owned_id| {
                     defer self.ctx.gpa.free(owned_id);
-                    self.hist.append(owned_id, .failed, opts.instructions, "propose a change outside the modifiable surface", &.{bad}, 0, 0, try std.fmt.allocPrint(self.arena, "\"{s}\" is not allowed to write", .{bad}), &.{}) catch |herr|
+                    self.hist.append(owned_id, .failed, opts.instructions, "propose a change outside the modifiable surface", &.{bad}, 0, 0, try std.fmt.allocPrint(self.arena, "\"{s}\" is not allowed to write", .{bad}), &.{}, null) catch |herr|
                         log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
                 }
                 self.feedback = try std.fmt.allocPrint(
@@ -570,7 +577,7 @@ pub const Engine = struct {
 
         self.applyPatch(staging, proposal.changes) catch |err| {
             log.log(.error_, "applying patch failed: {s}", .{@errorName(err)});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, @errorName(err), fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, @errorName(err), fingerprints, null);
             self.feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your previous patch failed to apply: {s}. The \"old\" text of every change must match the current file byte for byte, including whitespace. Re-read the file content shown above and match it exactly, or propose a different change.",
@@ -593,7 +600,7 @@ pub const Engine = struct {
         // one, and then never run again.
         if (try self.brokenInvariant(staged_dir, proposal.changes)) |bad| {
             log.log(.warn, "proposal rejected: it removes '{s}' from {s}", .{ bad.needle, bad.file });
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, bad.needle, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, bad.needle, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your patch removed \"{s}\" from {s}. That call is part of the gate every improvement has to pass, including this one. Keep it and re-propose.",
@@ -611,7 +618,7 @@ pub const Engine = struct {
             const tail = try errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tree did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
@@ -627,7 +634,7 @@ pub const Engine = struct {
             const tail = try errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.{s}", .{ "the staged tools did not compile", tail, self.stdSymbolHelp(tail) });
             self.removeTree(staging);
             return .failed;
@@ -639,7 +646,7 @@ pub const Engine = struct {
             const tail = try errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "the staged tests failed", tail });
             self.removeTree(staging);
             return .failed;
@@ -653,7 +660,7 @@ pub const Engine = struct {
             const tail = try errorTail(self.arena, fmt_check.detail);
             log.log(.error_, "staging fmt check failed:", .{});
             log.log(.error_, "{s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but {s}:\n{s}\nFix exactly that and re-propose.", .{ "zig fmt rejected your formatting", tail });
             self.removeTree(staging);
             return .failed;
@@ -664,8 +671,24 @@ pub const Engine = struct {
         if (!lint_check.ok) {
             const tail = try errorTail(self.arena, lint_check.detail);
             log.log(.error_, "staging lint failed: {s}", .{tail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
+            self.removeTree(staging);
+            return .failed;
+        }
+
+        // What the change actually does, decided from the staged source rather
+        // than from the summary the model wrote about it. Before the capability
+        // gate, which is an agent run per eval case: there is no point paying
+        // for those to prove a patch that changes nothing still works.
+        var verdict = try inert.classify(self.ctx.gpa, self.ctx.io, staged_dir, inertChanges(self.arena, proposal.changes) catch &.{});
+        defer verdict.deinit(self.ctx.gpa);
+        log.log(.info, "change class: {s}", .{verdict.class.asStr()});
+
+        if (self.valueRejection(&verdict) catch null) |reason| {
+            log.log(.warn, "proposal rejected: {s}", .{reason.detail});
+            try self.hist.append(id, .rejected, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, reason.detail, fingerprints, verdict.class);
+            self.feedback = reason.feedback;
             self.removeTree(staging);
             return .failed;
         }
@@ -694,7 +717,7 @@ pub const Engine = struct {
                         const tail = try errorTail(self.arena, retry.detail);
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
-                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
                         self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                         self.removeTree(staging);
                         return .failed;
@@ -711,7 +734,7 @@ pub const Engine = struct {
                         const tail = try errorTail(self.arena, cap.detail);
                         log.log(.error_, "staged tree failed its own capability evals:", .{});
                         log.log(.error_, "{s}", .{tail});
-                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints);
+                        try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
                         self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch compiled and its unit tests passed, but it broke a capability the eval suite checks:\n{s}\nFix exactly that and re-propose.", .{tail});
                         self.removeTree(staging);
                         return .failed;
@@ -757,7 +780,7 @@ pub const Engine = struct {
         // the next one, like work that never happened.
         const live = try self.gateScore();
         const score_after = live.score / @as(f64, @floatFromInt(@max(live.total, 1)));
-        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints);
+        try self.hist.append(id, .accepted, opts.instructions, proposal.summary, files, 0, score_after, "", fingerprints, verdict.class);
 
         // Git strategy: commit the promoted change so history, diff review and
         // bisectability work; the state/history snapshot remains the fallback.
@@ -774,6 +797,92 @@ pub const Engine = struct {
         // Clean up the staging directory now that promotion is done.
         self.removeTree(staging);
         return .accepted;
+    }
+
+    /// What the loop has actually been producing lately, stated before it is
+    /// asked for another one.
+    ///
+    /// The history block says what was accepted; it does not say that almost
+    /// all of it was the same kind of change. A model reading twelve lines of
+    /// "accepted: add a unit test for ..." reasonably concludes that adding a
+    /// unit test is what good work looks like here. Saying the proportion out
+    /// loud is cheaper than refusing the proposal afterwards.
+    fn mixHint(self: *Engine) ![]const u8 {
+        var scratch = std.heap.ArenaAllocator.init(self.ctx.gpa);
+        defer scratch.deinit();
+        const classes = self.hist.recentAcceptedClasses(scratch.allocator(), 12) catch return "";
+        if (classes.len < 4) return "";
+
+        var counts = std.EnumArray(inert.Class, usize).initFill(0);
+        for (classes) |c| counts.set(c, counts.get(c) + 1);
+        const substantive = counts.get(.behavior);
+        if (substantive * 2 >= classes.len) return "";
+
+        return std.fmt.allocPrint(
+            self.arena,
+            \\
+            \\# What this loop has been producing
+            \\Of the last {d} improvements accepted here, {d} changed code that
+            \\runs; {d} only added test blocks and {d} added code nothing calls.
+            \\That ratio is the problem to solve, not a pattern to continue. A
+            \\patch that only adds a test, or only adds a function with no
+            \\caller, will be refused however well written it is.
+            \\
+        ,
+            .{ classes.len, substantive, counts.get(.test_only), counts.get(.inert) },
+        );
+    }
+
+    /// Why a classified proposal is not worth promoting, or null when it is.
+    ///
+    /// This is the only gate that asks what a change *does* rather than whether
+    /// it is safe, which is why it exists at all: every other check is passed
+    /// perfectly by a change that does nothing, so a loop optimising for
+    /// acceptance converges on exactly that. Two shapes get refused.
+    fn valueRejection(self: *Engine, verdict: *const inert.Verdict) !?struct { detail: []const u8, feedback: []const u8 } {
+        switch (verdict.class) {
+            .inert => {
+                if (!self.cfg.improve.inert_gate) return null;
+                var names: std.ArrayList(u8) = .empty;
+                for (verdict.unreachable_fns, 0..) |n, i| {
+                    if (i > 0) try names.appendSlice(self.arena, ", ");
+                    try names.appendSlice(self.arena, n);
+                }
+                return .{
+                    .detail = try std.fmt.allocPrint(self.arena, "adds unreachable code: {s}", .{names.items}),
+                    .feedback = try std.fmt.allocPrint(
+                        self.arena,
+                        "Your patch adds {s} and nothing in the tree calls it, so promoting it would change nothing about how clanker behaves. " ++
+                            "A function plus a unit test for that function is not an improvement; src/util/json.zig already carries three of them. " ++
+                            "Either wire it into the code that should be using it, in the same patch, or propose a change to code that already runs.",
+                        .{names.items},
+                    ),
+                };
+            },
+            .test_only => {
+                const cap = self.cfg.improve.max_consecutive_test_only;
+                if (cap == 0) return null;
+                // Counted over accepted improvements, not over this run's
+                // attempts: the bias is a property of what the loop keeps being
+                // rewarded for, and it survives across runs.
+                var streak_arena = std.heap.ArenaAllocator.init(self.ctx.gpa);
+                defer streak_arena.deinit();
+                const streak = self.hist.trailingClassStreak(streak_arena.allocator(), .test_only, 64) catch 0;
+                if (streak < cap) return null;
+                return .{
+                    .detail = try std.fmt.allocPrint(self.arena, "the last {d} accepted improvements were also test-only", .{streak}),
+                    .feedback = try std.fmt.allocPrint(
+                        self.arena,
+                        "Your patch only adds or changes test blocks, and the last {d} improvements accepted here were the same. " ++
+                            "Test coverage is not what is short. Propose a change to code that runs: fix a bug, remove a limit, " ++
+                            "handle a case the current code gets wrong, or delete something that is no longer reachable. " ++
+                            "One more test will be refused for the same reason.",
+                        .{streak},
+                    ),
+                };
+            },
+            .docs_only, .behavior => return null,
+        }
     }
 
     /// Adds `paths` to the granted set for the rest of the run, skipping ones
@@ -1555,6 +1664,15 @@ pub const Engine = struct {
 };
 
 /// File paths from a proposal's changes (page-allocated; caller frees).
+/// The changes in the shape the classifier takes them. `inert` deliberately
+/// declares its own `Change` rather than importing `proposal.zig`, so that the
+/// module stays testable on string literals with no proposal to parse.
+fn inertChanges(arena: std.mem.Allocator, changes: []const proposal_mod.Change) ![]inert.Change {
+    const out = try arena.alloc(inert.Change, changes.len);
+    for (changes, out) |c, *o| o.* = .{ .file = c.file, .old = c.old, .new = c.new };
+    return out;
+}
+
 fn proposalChangedPaths(gpa: std.mem.Allocator, p: proposal_mod.Proposal) ![][]const u8 {
     return proposalChangedPathsSlice(gpa, p.changes);
 }
@@ -1771,6 +1889,15 @@ const improve_system =
     \\- Only touch files shown in the context. Never change the eval machinery
     \\  (src/evals/, src/improve/, src/tools/builder.zig).
     \\- Changes must compile with Zig 0.16 std APIs. Prefer minimal diffs.
+    \\- A patch has to change what the program does. Two shapes are refused
+    \\  outright, whatever their summary says:
+    \\    - adding a function, plus a test for that function, and no caller. If
+    \\      the new code is worth having, wire it into the code that should call
+    \\      it in the same patch.
+    \\    - adding only test blocks, when the last few accepted improvements were
+    \\      also only test blocks. Coverage is not the scarce thing here.
+    \\  Both pass every other gate perfectly, because there is nothing in them to
+    \\  break. That is why they are checked separately.
     \\- If the instruction is already satisfied by the current code, respond with
     \\  {"summary":"no changes needed","changes":[]}.
     \\
@@ -1805,9 +1932,10 @@ const improve_user_fmt =
     \\# Earlier runs on this repository
     \\Work listed as accepted is already in the source you were given: do not
     \\propose it again. Work listed as rejected failed for the stated reason;
-    \\do not repeat that mistake.
+    \\do not repeat that mistake. The tag after the status is what the change
+    \\turned out to do, decided from the diff rather than from its summary.
     \\{s}
-    \\
+    \\{s}
     \\# Previous attempt feedback
     \\{s}
     \\{s}

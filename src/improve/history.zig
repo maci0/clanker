@@ -4,6 +4,7 @@ const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
+const inert = @import("inert.zig");
 
 pub const Status = enum {
     accepted,
@@ -104,6 +105,11 @@ pub const History = struct {
         score_after: f64,
         detail: []const u8,
         changes: []const u64,
+        /// What the change did, when the caller got far enough to know. null
+        /// at the failure paths that reject a proposal before it is
+        /// classified — a build that never compiled has no class, and writing
+        /// one anyway would put guesses into the record the next run reads.
+        class: ?inert.Class,
     ) !void {
         self.base.createDirPath(self.io, self.state_dir) catch |err|
             log.log(.warn, "mkdir {s} failed: {t}", .{ self.state_dir, err });
@@ -176,6 +182,10 @@ pub const History = struct {
             try s.write(std.fmt.bufPrint(&fp_buf, "{x:0>16}", .{c}) catch continue);
         }
         try s.endArray();
+        if (class) |k| {
+            try s.objectField("class");
+            try s.write(k.asStr());
+        }
         try s.endObject();
 
         try buf.appendSlice(self.gpa, out.written());
@@ -251,6 +261,11 @@ pub const History = struct {
         /// Empty for entries written before fingerprints existed; those simply
         /// cannot be matched against, rather than matching everything.
         changes: []const u64 = &.{},
+        /// What the change did, as `inert.Class.asStr` wrote it. Absent on
+        /// entries written before classification existed, which read back as
+        /// `behavior` — an unclassified promotion must not be counted toward a
+        /// monoculture streak nobody measured.
+        class: []const u8 = "",
     };
 
     fn loadAll(self: *History, arena: std.mem.Allocator) ![]Entry {
@@ -311,6 +326,7 @@ pub const History = struct {
                 .summary = text(obj, "summary"),
                 .detail = text(obj, "detail"),
                 .changes = try fps.toOwnedSlice(arena),
+                .class = text(obj, "class"),
             });
         }
         return out.toOwnedSlice(arena);
@@ -356,6 +372,15 @@ pub const History = struct {
             if (e.summary.len == 0) continue;
             try buf.appendSlice(arena, "- ");
             try buf.appendSlice(arena, e.status);
+            // What the change did, not just that it landed. "accepted" on its
+            // own reads as an endorsement, and a run whose last ten lines all
+            // said "accepted" was being told, ten times over, that adding a
+            // test block is what success looks like here.
+            if (e.class.len > 0) {
+                try buf.appendSlice(arena, " [");
+                try buf.appendSlice(arena, e.class);
+                try buf.appendSlice(arena, "]");
+            }
             try buf.appendSlice(arena, ": ");
             try buf.appendSlice(arena, firstLine(e.summary, 160));
             // Why it failed is the part worth carrying: the summary alone says
@@ -367,6 +392,42 @@ pub const History = struct {
             try buf.appendSlice(arena, "\n");
         }
         return buf.toOwnedSlice(arena);
+    }
+
+    /// The classes of the last `max_entries` *accepted* improvements, oldest
+    /// first. Rejections are left out: the question this answers is what the
+    /// loop has been rewarded for, and a rejected proposal was rewarded for
+    /// nothing.
+    pub fn recentAcceptedClasses(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const inert.Class {
+        const entries = try self.loadAll(arena);
+        var out: std.ArrayList(inert.Class) = .empty;
+        var i = entries.len;
+        while (i > 0 and out.items.len < max_entries) {
+            i -= 1;
+            const e = entries[i];
+            if (!std.mem.eql(u8, e.status, "accepted")) continue;
+            // Only entries that carry the field. An unclassified promotion is
+            // not evidence either way, and counting it as `behavior` would
+            // silently reset a streak that a fresh log would have caught.
+            if (e.class.len == 0) continue;
+            try out.append(arena, inert.Class.fromStr(e.class));
+        }
+        std.mem.reverse(inert.Class, out.items);
+        return out.toOwnedSlice(arena);
+    }
+
+    /// How many of the most recent accepted improvements were `want`, counting
+    /// back from the newest and stopping at the first that was not.
+    pub fn trailingClassStreak(self: *History, arena: std.mem.Allocator, want: inert.Class, max_entries: usize) !usize {
+        const classes = try self.recentAcceptedClasses(arena, max_entries);
+        var n: usize = 0;
+        var i = classes.len;
+        while (i > 0) {
+            i -= 1;
+            if (classes[i] != want) break;
+            n += 1;
+        }
+        return n;
     }
 };
 
@@ -405,7 +466,7 @@ test "history append + revert round trip" {
 
     var hist = History.init(gpa, io, tmp.dir, "state");
     defer hist.deinit();
-    try hist.append("test-id-1", .accepted, "instruction", "summary", &.{"src/main.zig"}, 0.0, 1.0, "", &.{});
+    try hist.append("test-id-1", .accepted, "instruction", "summary", &.{"src/main.zig"}, 0.0, 1.0, "", &.{}, null);
     // revert of an unknown id errors cleanly
     try std.testing.expectError(error.ImprovementNotFound, hist.revert("nope"));
     // the log file exists with one line
@@ -437,7 +498,7 @@ test "an edit already accepted is recognised, a different one is not" {
     const fp = History.changeFingerprint("src/cli.zig", "    const resp = a.run(", "    repl_md = .{};\n    const resp = a.run(");
     try std.testing.expect(!try hist.alreadyAccepted(arena, &.{fp}));
 
-    try hist.append("imp-1", .accepted, "i", "reset repl_md", &.{"src/cli.zig"}, 0.0, 1.0, "", &.{fp});
+    try hist.append("imp-1", .accepted, "i", "reset repl_md", &.{"src/cli.zig"}, 0.0, 1.0, "", &.{fp}, null);
     try std.testing.expect(try hist.alreadyAccepted(arena, &.{fp}));
 
     // A different edit to the same file is still new.
@@ -446,7 +507,7 @@ test "an edit already accepted is recognised, a different one is not" {
 
     // A rejected attempt is not a reason to refuse the work.
     const refused = History.changeFingerprint("src/a.zig", "x", "y");
-    try hist.append("imp-2", .rejected, "i", "s", &.{"src/a.zig"}, 0.0, 0.0, "", &.{refused});
+    try hist.append("imp-2", .rejected, "i", "s", &.{"src/a.zig"}, 0.0, 0.0, "", &.{refused}, null);
     try std.testing.expect(!try hist.alreadyAccepted(arena, &.{refused}));
 }
 
@@ -498,9 +559,9 @@ test "append keeps every prior improvement" {
 
     var hist = History.init(gpa, io, tmp.dir, "state");
     defer hist.deinit();
-    try hist.append("imp-1", .accepted, "first", "did a thing", &.{"src/a.zig"}, 0.0, 1.0, "", &.{});
-    try hist.append("imp-2", .accepted, "second", "did another", &.{"src/b.zig"}, 1.0, 2.0, "", &.{});
-    try hist.append("imp-3", .rejected, "third", "was refused", &.{"src/c.zig"}, 2.0, 2.0, "", &.{});
+    try hist.append("imp-1", .accepted, "first", "did a thing", &.{"src/a.zig"}, 0.0, 1.0, "", &.{}, null);
+    try hist.append("imp-2", .accepted, "second", "did another", &.{"src/b.zig"}, 1.0, 2.0, "", &.{}, null);
+    try hist.append("imp-3", .rejected, "third", "was refused", &.{"src/c.zig"}, 2.0, 2.0, "", &.{}, null);
 
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(raw);
@@ -549,7 +610,7 @@ test "records from overlapping runs are all kept" {
             while (i < per_writer) : (i += 1) {
                 var buf: [64]u8 = undefined;
                 const id = std.fmt.bufPrint(&buf, "imp-{d}-{d}", .{ self.id, i }) catch return;
-                h.append(id, .accepted, "instruction", "summary", &.{}, 0, 0, "", &.{}) catch return;
+                h.append(id, .accepted, "instruction", "summary", &.{}, 0, 0, "", &.{}, null) catch return;
             }
         }
     };
@@ -594,10 +655,10 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
     const arena = arena_state.allocator();
 
     // Four attempts: only the last two fall inside the "recent" window.
-    try hist.append("e1", .accepted, "i1", "one", &.{"src/one.zig"}, 0, 1, "", &.{});
-    try hist.append("e2", .accepted, "i2", "two", &.{"src/two.zig"}, 0, 1, "", &.{});
-    try hist.append("e3", .rejected, "i3", "three", &.{ "src/three.zig", "src/one.zig" }, 0, 0, "why not", &.{});
-    try hist.append("e4", .accepted, "i4", "four", &.{ "src/one.zig", "src/four.zig" }, 0, 1, "", &.{});
+    try hist.append("e1", .accepted, "i1", "one", &.{"src/one.zig"}, 0, 1, "", &.{}, null);
+    try hist.append("e2", .accepted, "i2", "two", &.{"src/two.zig"}, 0, 1, "", &.{}, null);
+    try hist.append("e3", .rejected, "i3", "three", &.{ "src/three.zig", "src/one.zig" }, 0, 0, "why not", &.{}, null);
+    try hist.append("e4", .accepted, "i4", "four", &.{ "src/one.zig", "src/four.zig" }, 0, 1, "", &.{}, null);
 
     {
         const recent = try hist.recentlyTouched(arena, 2);
@@ -616,6 +677,52 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
         try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
     }
+}
+
+test "the class of an accepted change is recorded, rendered, and counted as a streak" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // An entry from before classification existed, then a real change, then
+    // three test-only promotions in a row.
+    try hist.append("e0", .accepted, "i", "unclassified", &.{"src/a.zig"}, 0, 1, "", &.{}, null);
+    try hist.append("e1", .accepted, "i", "real work", &.{"src/a.zig"}, 0, 1, "", &.{}, .behavior);
+    try hist.append("e2", .accepted, "i", "a test", &.{"src/a.zig"}, 0, 1, "", &.{}, .test_only);
+    // A rejection between them must not break the streak: the streak is about
+    // what the loop was rewarded for, and this was rewarded with nothing.
+    try hist.append("e3", .rejected, "i", "refused", &.{"src/a.zig"}, 0, 0, "no", &.{}, .inert);
+    try hist.append("e4", .accepted, "i", "another test", &.{"src/a.zig"}, 0, 1, "", &.{}, .test_only);
+    try hist.append("e5", .accepted, "i", "a third test", &.{"src/a.zig"}, 0, 1, "", &.{}, .test_only);
+
+    const classes = try hist.recentAcceptedClasses(arena, 12);
+    // Oldest first, rejections and the unclassified entry left out.
+    try std.testing.expectEqual(@as(usize, 4), classes.len);
+    try std.testing.expectEqual(inert.Class.behavior, classes[0]);
+    try std.testing.expectEqual(inert.Class.test_only, classes[3]);
+
+    try std.testing.expectEqual(@as(usize, 3), try hist.trailingClassStreak(arena, .test_only, 12));
+    try std.testing.expectEqual(@as(usize, 0), try hist.trailingClassStreak(arena, .behavior, 12));
+
+    const summary = try hist.recentSummary(arena, 6);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted [test_only]: a third test") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected [inert]: refused") != null);
+    // The pre-classification entry has no tag to render.
+    try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: unclassified") != null);
 }
 
 test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
@@ -640,7 +747,7 @@ test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
     defer gpa.free(big_detail);
     @memset(big_detail, 'x');
 
-    try hist.append("big", .failed, "instruction", "summary", &.{"src/main.zig"}, 0.0, 0.0, big_detail, &.{});
+    try hist.append("big", .failed, "instruction", "summary", &.{"src/main.zig"}, 0.0, 0.0, big_detail, &.{}, null);
 
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 24));
     defer gpa.free(raw);
