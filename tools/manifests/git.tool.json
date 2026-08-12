@@ -1,6 +1,6 @@
 {
   "name": "git",
-  "description": "Run sandboxed git commands on the project. Input: {\"args\": [\"status\", \"--porcelain\"]}. Allowed: status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree. push, reset, rebase, checkout, clean, rm, fetch, merge, revert, stash are denied by default; setting agent.git_remote_ops lifts push, merge and checkout for git. Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
+  "description": "Run sandboxed git commands on the project. Input: {\"args\": [\"status\", \"--porcelain\"]}. Allowed: status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree. push, reset, rebase, checkout, clean, rm, fetch, merge, revert, stash are denied by default; setting agent.git_remote_ops lifts push, merge and checkout for git. Git global options that take a value (-C <path>, --git-dir <path>, --work-tree <path>) are honored, so per-worktree operations work: git -C .local/worktrees/<wt> add/commit/push <branch>. Returns {\"ok\": bool, \"code\": int, \"stdout\": \"...\", \"stderr\": \"...\"}.",
   "wasm": "zig-out/tools/git.wasm",
   "input_schema": {
     "type": "object",
