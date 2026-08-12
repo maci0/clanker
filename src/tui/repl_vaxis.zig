@@ -194,6 +194,9 @@ const Line = struct {
 /// One entry in the `/model` picker: a provider/model pair flattened out of
 /// `Config.providers` so the picker can filter and sort without walking the
 /// nested map on every keystroke.
+/// Which list the shared modal picker is showing.
+const PickerKind = enum { model, theme };
+
 const ModelCandidate = struct {
     provider: []const u8,
     model: []const u8,
@@ -862,8 +865,15 @@ const Model = struct {
     /// the normal input handling below — a small modal, not a second widget.
     model_candidates: []const ModelCandidate = &.{},
     picker_open: bool = false,
+    /// What the open picker is choosing: a provider/model or a color theme.
+    /// Both share the one modal (query line + arrow-select + Enter/Esc); the
+    /// list source and what Enter does branch on this.
+    picker_kind: PickerKind = .model,
     picker_query: std.ArrayList(u8) = .empty,
     picker_selected: usize = 0,
+    /// The theme active when the theme picker opened, restored on Escape so a
+    /// cancelled live-preview does not stick.
+    theme_saved: ?[]const u8 = null,
 
     fn widget(self: *Model) vxfw.Widget {
         return .{
@@ -1058,21 +1068,11 @@ const Model = struct {
                 try self.submitTask(ctx, prompt);
             },
             .theme => {
-                if (pc.args.len == 0) {
-                    const current = self.theme_override orelse themeName(self.ctx.environ_map) orelse "default";
-                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme: {s}", .{current}) catch "theme", .dim = true }) catch {};
-                    var buf: std.ArrayList(u8) = .empty;
-                    buf.appendSlice(self.arena, "  available:") catch {};
-                    for (theme_mod.names) |n| {
-                        buf.appendSlice(self.arena, " ") catch {};
-                        buf.appendSlice(self.arena, n) catch {};
-                    }
-                    self.lines.append(self.arena, .{ .text = buf.toOwnedSlice(self.arena) catch "  available: (see docs)", .dim = true }) catch {};
-                    self.lines.append(self.arena, .{ .text = "  /theme <name> to switch; color needs a truecolor terminal", .dim = true }) catch {};
-                    return;
-                }
-                if (!theme_mod.isKnown(pc.args)) {
-                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[unknown theme '{s}' — /theme lists them]", .{pc.args}) catch "[unknown theme]", .dim = true }) catch {};
+                // Bare `/theme` (or a fuzzy seed) opens the live-preview
+                // picker menu; `/theme <exact-name>` still switches directly.
+                if (pc.args.len == 0 or !theme_mod.isKnown(pc.args)) {
+                    self.openThemePicker(pc.args);
+                    ctx.redraw = true;
                     return;
                 }
                 self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
@@ -1504,15 +1504,47 @@ const Model = struct {
     }
 
     fn openModelPicker(self: *Model, seed_query: []const u8) void {
+        self.picker_kind = .model;
         self.picker_open = true;
         self.picker_query.clearRetainingCapacity();
         self.picker_query.appendSlice(self.arena, seed_query) catch {};
         self.picker_selected = 0;
     }
 
+    /// The theme picker: same modal, but the list is the theme names and the
+    /// selection previews live (the whole REPL repaints in the highlighted
+    /// theme as you arrow through it). Escape restores what was active before.
+    fn openThemePicker(self: *Model, seed_query: []const u8) void {
+        self.picker_kind = .theme;
+        self.picker_open = true;
+        self.theme_saved = self.theme_override;
+        self.picker_query.clearRetainingCapacity();
+        self.picker_query.appendSlice(self.arena, seed_query) catch {};
+        self.picker_selected = 0;
+        self.previewSelectedTheme();
+    }
+
     fn closeModelPicker(self: *Model) void {
         self.picker_open = false;
         self.picker_query.clearRetainingCapacity();
+    }
+
+    /// Theme names matching the query, in `theme_mod.names` order.
+    fn filteredThemes(self: *Model) []const []const u8 {
+        var out: std.ArrayList([]const u8) = .empty;
+        for (theme_mod.names) |n| {
+            if (fuzzyMatch(self.picker_query.items, n)) out.append(self.arena, n) catch break;
+        }
+        return out.items;
+    }
+
+    /// Live-preview the highlighted theme by pointing `theme_override` at it,
+    /// so the next draw paints in it. No allocation: `theme_mod.names` entries
+    /// are static, so the slice is safe to hold.
+    fn previewSelectedTheme(self: *Model) void {
+        const matches = self.filteredThemes();
+        if (matches.len == 0) return;
+        self.theme_override = matches[@min(self.picker_selected, matches.len - 1)];
     }
 
     /// Candidates whose "provider display" matches the current query, in
@@ -1553,36 +1585,60 @@ const Model = struct {
         }
     }
 
+    /// Count of entries in the open picker's filtered list.
+    fn pickerLen(self: *Model) usize {
+        return switch (self.picker_kind) {
+            .model => self.filteredCandidates().len,
+            .theme => self.filteredThemes().len,
+        };
+    }
+
     fn handlePickerKey(self: *Model, ctx: *vxfw.EventContext, key: vaxis.Key) !void {
         if (key.matches(vaxis.Key.escape, .{})) {
+            // Theme preview is undone; a model pick has no preview to undo.
+            if (self.picker_kind == .theme) self.theme_override = self.theme_saved;
             self.closeModelPicker();
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.enter, .{})) {
-            const matches = self.filteredCandidates();
-            if (matches.len > 0) self.applyModelSelection(matches[@min(self.picker_selected, matches.len - 1)]);
+            switch (self.picker_kind) {
+                .model => {
+                    const matches = self.filteredCandidates();
+                    if (matches.len > 0) self.applyModelSelection(matches[@min(self.picker_selected, matches.len - 1)]);
+                },
+                .theme => {
+                    // The live preview already set theme_override to the
+                    // highlighted theme; Enter just keeps it.
+                    const matches = self.filteredThemes();
+                    if (matches.len > 0) self.theme_override = matches[@min(self.picker_selected, matches.len - 1)];
+                },
+            }
             self.closeModelPicker();
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.up, .{})) {
             if (self.picker_selected > 0) self.picker_selected -= 1;
+            if (self.picker_kind == .theme) self.previewSelectedTheme();
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.down, .{})) {
-            const n = self.filteredCandidates().len;
+            const n = self.pickerLen();
             if (n > 0 and self.picker_selected + 1 < n) self.picker_selected += 1;
+            if (self.picker_kind == .theme) self.previewSelectedTheme();
             return ctx.consumeAndRedraw();
         }
         if (key.matches(vaxis.Key.backspace, .{})) {
             if (self.picker_query.items.len > 0) {
                 _ = self.picker_query.pop();
                 self.picker_selected = 0;
+                if (self.picker_kind == .theme) self.previewSelectedTheme();
             }
             return ctx.consumeAndRedraw();
         }
         if (key.text) |t| {
             try self.picker_query.appendSlice(self.arena, t);
             self.picker_selected = 0;
+            if (self.picker_kind == .theme) self.previewSelectedTheme();
             return ctx.consumeAndRedraw();
         }
         return ctx.consumeAndRedraw();
@@ -2119,9 +2175,14 @@ const Model = struct {
     /// input itself (`drawBox`), so it reads as part of this REPL rather
     /// than a bolted-on popup.
     fn drawModelPicker(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, sel_style: vaxis.Style) void {
-        const matches = self.filteredCandidates();
+        const is_theme = self.picker_kind == .theme;
+        // Row count for either list; theme labels come from a static names
+        // list, model labels from the filtered candidates.
+        const theme_matches = if (is_theme) self.filteredThemes() else &[_][]const u8{};
+        const model_matches = if (is_theme) &[_]ModelCandidate{} else self.filteredCandidates();
+        const count = if (is_theme) theme_matches.len else model_matches.len;
         const max_rows: u16 = 8;
-        const rows_shown: u16 = @intCast(@min(matches.len, max_rows));
+        const rows_shown: u16 = @intCast(@min(count, max_rows));
         // The picker commits on Enter, so teach its controls at the decision
         // point instead of expecting the user to remember the /help prose.
         const h: u16 = rows_shown + 4; // border + query + rows + key guide + border
@@ -2129,33 +2190,35 @@ const Model = struct {
         const y = self.transcript_bottom -| h;
         drawBox(surface, 0, y, surface.size.width, h, rule_style);
 
-        writeRow(surface, y + 1, "/model ", .{ .bold = true });
-        var query_col: u16 = 7;
+        const prompt: []const u8 = if (is_theme) "/theme " else "/model ";
+        writeRow(surface, y + 1, prompt, .{ .bold = true });
+        var query_col: u16 = @intCast(prompt.len);
         writeRowAt(surface, y + 1, &query_col, self.picker_query.items, .{ .bold = true });
         writeRowAt(surface, y + 1, &query_col, "\xe2\x96\x8f", .{ .bold = true });
 
-        if (matches.len == 0) {
-            writeRow(surface, y + 2, "  no matching provider/model", .{ .dim = true });
+        if (count == 0) {
+            writeRow(surface, y + 2, if (is_theme) "  no matching theme" else "  no matching provider/model", .{ .dim = true });
             return;
         }
-        const sel = @min(self.picker_selected, matches.len - 1);
+        const sel = @min(self.picker_selected, count - 1);
         var row: u16 = y + 2;
-        for (matches[0..rows_shown], 0..) |cand, i| {
+        var i: usize = 0;
+        while (i < rows_shown) : (i += 1) {
             const marker: []const u8 = if (i == sel) "\xe2\x80\xba " else "  ";
             const style = if (i == sel) sel_style else vaxis.Style{};
             writeRow(surface, row, marker, style);
             var col: u16 = 2;
-            writeRowAt(surface, row, &col, cand.label, style);
+            const label = if (is_theme) theme_matches[i] else model_matches[i].label;
+            writeRowAt(surface, row, &col, label, style);
             row += 1;
         }
-        writeRow(surface, y + h - 2, "  Up/Down move  ·  Enter select  ·  Esc cancel", .{ .dim = true });
+        const guide: []const u8 = if (is_theme)
+            "  Up/Down preview  \xc2\xb7  Enter keep  \xc2\xb7  Esc cancel"
+        else
+            "  Up/Down move  \xc2\xb7  Enter select  \xc2\xb7  Esc cancel";
+        writeRow(surface, y + h - 2, guide, .{ .dim = true });
     }
 
-    /// Renders the live streaming buffer as plain wrapped text. The buffer
-    /// is raw model output without fence tags (unlike `lines`), so there's
-    /// no per-line language to highlight against — `writeWrapped` is the
-    /// right call. The `fence_on`/`syn_style` params are carried for a
-    /// future highlight pass but not used yet.
     /// Renders the live streaming buffer with the same fence-aware syntax
     /// highlighting the completed transcript gets, so a code block looks the
     /// same while it streams as it does once folded in (it used to render as
