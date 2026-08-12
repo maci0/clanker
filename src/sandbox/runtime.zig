@@ -852,7 +852,7 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
         .tool_self_name = "model_stats",
     };
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/stats.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/model_stats.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);

@@ -2,7 +2,7 @@
   "name": "model_stats",
   "description": "Global token usage statistics aggregated per provider/model: call count, prompt/completion/total tokens, cache hit rate, tokens/sec, and estimated USD cost. Useful for deciding which backend to use, spotting expensive runs, and planning context/token savings.",
   "llm_description": "Global per-provider/model token stats: call count, prompt/completion/total tokens, cache hit rate, tokens/sec, estimated USD cost. Pass {args: true} for a text table.",
-  "wasm": "zig-out/tools/stats.wasm",
+  "wasm": "zig-out/tools/model_stats.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
