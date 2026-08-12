@@ -7929,6 +7929,22 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
+/// Whether a model can be handed image_url content blocks. A model that
+/// declares its capabilities (non-empty) but omits `image_in` is telling us
+/// it is not vision-capable — DeepSeek v4-flash's endpoint, for example, only
+/// accepts `content` as a plain string and rejects the typed block array with
+/// an opaque JSON-deserialize 400 ("unknown variant `image_url`, expected
+/// `text`"). A model with no capabilities declared leaves it unknown, so the
+/// attachment is attempted as before and a failure still surfaces the vision
+/// hint (enrichRunError).
+fn imageAttachmentsSupported(model: config.Model) bool {
+    if (model.capabilities.len == 0) return true;
+    for (model.capabilities) |cap| {
+        if (std.mem.eql(u8, cap, "image_in")) return true;
+    }
+    return false;
+}
+
 /// The webui surfaces a run failure as `[run failed: <message>]`. A bare
 /// provider error ("HTTP 400: decrypt error") tells the user nothing about
 /// which backend or whether it is their config, a harness bug, or the
@@ -8132,6 +8148,23 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // rather than as a backend/upload bug.
         if (!cfg.modules.multimodal) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"image attachments are disabled: enable modules.multimodal in your config (the composer sent image attachment(s))\"}");
+            return;
+        }
+        // Refuse up front when the selected model declares its capabilities
+        // but not vision: sending image_url blocks to a text-only endpoint
+        // (DeepSeek v4-flash) fails with an opaque deserialize 400. Name the
+        // model and the config knob, so the failure reads as a choice.
+        if (!imageAttachmentsSupported(provider.activeModel())) {
+            const reason = std.fmt.allocPrint(
+                arena,
+                "the selected model {s}/{s} does not declare vision support (the image_in capability); attach the image to a vision-capable model, or add image_in to that model's capabilities in config if it does accept images",
+                .{ provider.name, provider.default_model },
+            ) catch null;
+            const err_body = if (reason) |r|
+                std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{r}) catch null
+            else
+                null;
+            respond(stream, 400, "Bad Request", err_body orelse "{\"ok\":false,\"error\":\"the selected model does not support image attachments\"}");
             return;
         }
         var imgs: std.ArrayList(types.ImagePart) = .empty;
@@ -9219,6 +9252,22 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqualStrings("", bare.goal);
     const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("g1", with_goal.goal);
+}
+
+test "a model that declares its capabilities without image_in is refused image attachments" {
+    // DeepSeek v4-flash: capabilities declared, no image_in → text-only
+    // endpoint; refuse rather than send image_url blocks it rejects.
+    const no_vision = config.Model{ .capabilities = &.{ "thinking", "tool_use" } };
+    try std.testing.expect(!imageAttachmentsSupported(no_vision));
+
+    // A vision model declares image_in and is accepted.
+    const vision = config.Model{ .capabilities = &.{ "thinking", "tool_use", "image_in" } };
+    try std.testing.expect(imageAttachmentsSupported(vision));
+
+    // No capabilities declared leaves it unknown → attempted as before (a
+    // local Ollama/vLLM vision model that forgot to declare image_in keeps
+    // working; a failure still surfaces the vision hint).
+    try std.testing.expect(imageAttachmentsSupported(config.Model{}));
 }
 
 test "run failure detail names the provider and hints at vision when images were attached" {
