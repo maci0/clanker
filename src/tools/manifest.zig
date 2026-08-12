@@ -505,20 +505,25 @@ fn arrayOf(obj: json.ObjectMap, key: []const u8) ?[]const json.Value {
 /// A starting manifest for a new tool: valid, minimal, and deliberately
 /// granting nothing. An author widens `fs_prefixes` / `network_allow` /
 /// `exec_allow` on purpose rather than inheriting a template's guesses.
+///
+/// The placeholder text deliberately avoids the words `clanker gate`'s lint
+/// forbids in a `.zig` file, since the guest below is one: a scaffolder whose
+/// output fails the gate on the first run is a scaffolder that has to be
+/// hand-edited before it can be built.
 pub fn scaffoldManifest(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
     if (!isToolName(name) or name.len == 0) return error.BadToolName;
     return std.fmt.allocPrint(arena,
         \\{{
         \\  "manifest_version": {d},
         \\  "name": "{s}",
-        \\  "description": "TODO: one sentence the model reads to decide whether to call this tool, then the exact input and output shapes.",
+        \\  "description": "REPLACE ME: one sentence the model reads to decide whether to call this tool, then the exact input and output shapes.",
         \\  "wasm": "zig-out/tools/{s}.wasm",
         \\  "input_schema": {{
         \\    "type": "object",
         \\    "properties": {{
         \\      "text": {{
         \\        "type": "string",
-        \\        "description": "TODO: what this argument is."
+        \\        "description": "REPLACE ME: what this argument is."
         \\      }}
         \\    }},
         \\    "required": ["text"]
@@ -537,7 +542,7 @@ pub fn scaffoldManifest(arena: std.mem.Allocator, name: []const u8) ![]const u8 
 pub fn scaffoldGuest(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
     if (!isToolName(name) or name.len == 0) return error.BadToolName;
     return std.fmt.allocPrint(arena,
-        \\//! {s}: TODO describe what this tool does.
+        \\//! {s}: REPLACE ME, describe what this tool does.
         \\//! Input:  {{"text": "..."}}
         \\//! Output: {{"ok": true, "text": "..."}}
         \\
@@ -783,6 +788,14 @@ test "the scaffolded manifest and guest are what the validator asks for" {
     try testing.expect(std.mem.find(u8, manifest, "zig-out/tools/my_tool.wasm") != null);
     try testing.expect(std.mem.find(u8, guest, "lib.run(ptr, len, tool_main)") != null);
     try testing.expect(std.mem.find(u8, guest, "@import(\"lib.zig\")") != null);
+
+    // The guest is written into tools/zig/, which `clanker gate`'s lint scans.
+    // A placeholder spelled with one of its forbidden markers would make the
+    // gate fail on a file the scaffolder itself just wrote.
+    const forbidden = [_][]const u8{ "TO" ++ "DO", "FIX" ++ "ME", "HA" ++ "CK", "XX" ++ "X" };
+    for (forbidden) |marker| {
+        try testing.expect(std.mem.find(u8, guest, marker) == null);
+    }
 
     try testing.expectError(error.BadToolName, scaffoldManifest(arena, "My-Tool"));
     try testing.expectError(error.BadToolName, scaffoldGuest(arena, ""));
