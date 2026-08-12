@@ -676,3 +676,25 @@ test "gitDenyGuardGate rejects changes to the git tool manifest" {
     try std.testing.expectEqualStrings("git-deny-guard", result.label);
     try std.testing.expectEqualStrings("proposals must not modify the git tool manifest", result.detail);
 }
+
+test "gitDenyGuardGate rejects a tab-separated git pattern" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.json"};
+    const new_texts = [_][]const u8{
+        \\{"agent":{"exec_pattern_allow":["git\tcheckout"]}}
+    };
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+    try std.testing.expectEqualStrings("exec_pattern_allow must not name git commands", result.detail);
+}
+
+test "gitDenyGuardGate allows a git-prefixed tool that is not the git command" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.json"};
+    const new_texts = [_][]const u8{
+        \\{"agent":{"exec_pattern_allow":["git-gh pr create*","git-status"]}}
+    };
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(result.ok);
+}
