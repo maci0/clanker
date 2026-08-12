@@ -208,7 +208,7 @@ pub fn parseFileRequest(
 /// Some local models wrap the requested JSON in a markdown code fence
 /// (```json ... ```) despite being told not to. Strip an outer fence and any
 /// leading/trailing whitespace so the JSON parser sees a bare object.
-fn stripMarkdownFence(raw: []const u8) []const u8 {
+pub fn stripMarkdownFence(raw: []const u8) []const u8 {
     var s = std.mem.trim(u8, raw, " \t\r\n");
     if (s.len >= 3 and std.mem.eql(u8, s[0..3], "```")) {
         if (std.mem.indexOfScalar(u8, s, '\n')) |nl| {

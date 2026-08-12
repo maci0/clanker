@@ -394,6 +394,23 @@ pub const History = struct {
         return buf.toOwnedSlice(arena);
     }
 
+    /// The raw summaries of the last `max_entries` attempts, oldest first,
+    /// every status included. The planner dedups its candidate ideas against
+    /// these: an accepted summary means the idea is already done, a rejected
+    /// one that it was tried and refused — either way not worth an iteration.
+    pub fn recentSummaries(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
+        const entries = try self.loadAll(arena);
+        if (entries.len == 0) return &.{};
+        const start = if (entries.len > max_entries) entries.len - max_entries else 0;
+
+        var out: std.ArrayList([]const u8) = .empty;
+        for (entries[start..]) |e| {
+            if (e.summary.len == 0) continue;
+            try out.append(arena, e.summary);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
     /// The classes of the last `max_entries` *accepted* improvements, oldest
     /// first. Rejections are left out: the question this answers is what the
     /// loop has been rewarded for, and a rejected proposal was rewarded for
@@ -676,6 +693,16 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
         try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected: three") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
+    }
+
+    {
+        // Raw summaries for the planner's dedup: rejected entries included,
+        // window respected, no rendering around them.
+        const summaries = try hist.recentSummaries(arena, 3);
+        try std.testing.expectEqual(@as(usize, 3), summaries.len);
+        try std.testing.expectEqualStrings("two", summaries[0]);
+        try std.testing.expectEqualStrings("three", summaries[1]);
+        try std.testing.expectEqualStrings("four", summaries[2]);
     }
 }
 
