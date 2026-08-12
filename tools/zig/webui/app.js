@@ -506,6 +506,42 @@ el.railToggle.addEventListener("click", function () {
 });
 el.railScrim.addEventListener("click", function () { setRailOpen(false); });
 
+/* Drag-to-scroll on the conversation list. The rail is pinned and only the
+   list scrolls, so a pointer drags the history the way a touchscreen does.
+   A gesture that barely moves is still a click (it opens that conversation);
+   one that travels scrolls instead, and the click that follows it is
+   swallowed so a scroll does not also switch the conversation. */
+(function initRailListDrag() {
+  var list = el.railList;
+  if (!list) return;
+  var dragging = false, startY = 0, startTop = 0, dragged = false;
+  list.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    dragging = true; dragged = false;
+    startY = e.clientY; startTop = list.scrollTop;
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!dragging) return;
+    var dy = e.clientY - startY;
+    if (Math.abs(dy) > 4) dragged = true;
+    if (dragged) {
+      list.scrollTop = startTop - dy;
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("mouseup", function () {
+    dragging = false;
+    if (dragged) {
+      // The click fires after mouseup on the same element; catch it in the
+      // capture phase so it cannot reach the row's onclick and switch the
+      // conversation after a scroll.
+      var swallow = function (ev) { ev.preventDefault(); ev.stopPropagation(); window.removeEventListener("click", swallow, true); };
+      window.addEventListener("click", swallow, true);
+      dragged = false;
+    }
+  });
+})();
+
 function railItems() {
   return Array.prototype.slice.call(el.railList.querySelectorAll(".rail-item"));
 }
