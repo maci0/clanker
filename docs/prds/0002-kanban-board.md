@@ -91,7 +91,11 @@ to what one clanker is concerned with. It narrows the answer, not the reach.
 
 `id` (the message id of the add), `title`, `body`, `column`, `status`
 (derived), `priority`, `assignee`, `assigned_by`, `created_by`, `created`,
-`deadline`, `subtasks[]`, `depends_on[]`, `blocked_by[]` (derived from cards
+`deadline`, `goal` (id of the `state/goals.json` goal this card mirrors, or
+`""`; set at creation or by `update`, folds last-writer-wins like the other
+edited fields, `""` unlinks — the web UI's goal↔board sync hangs off this
+one field, so the link survives reloads and replicates to peers),
+`subtasks[]`, `depends_on[]`, `blocked_by[]` (derived from cards
 whose dependencies are unfinished — shown as blocked, not forbidden),
 `log[]` (stamped entries), `usage` (aggregate object: `prompt_tokens`,
 `completion_tokens`, `cost`, and a `runs[]` breakdown; totals add up across
