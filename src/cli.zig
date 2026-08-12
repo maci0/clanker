@@ -292,7 +292,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 if (!std.mem.eql(u8, v, "min") and !std.mem.eql(u8, v, "max")) {
                     setDiag(diag, v);
-                    return error.BadPort;
+                    return error.BadDirection;
                 }
                 opts.research_direction = v;
                 used = .research_direction;
@@ -465,6 +465,22 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     }
 
     if (opts.command == .run and opts.task == null) return error.MissingTask;
+    // goal, improve-self and revert all take one required positional too, but
+    // used to fall through to a bare error name at runtime (exit 1) instead
+    // of the friendly, exit-2 usage error the other required-arg commands
+    // get; catch them here on the same path as notify/chat below.
+    if (opts.command == .goal and opts.task == null) {
+        setDiag(diag, "<intent>");
+        return error.MissingArg;
+    }
+    if (opts.command == .improve_self and opts.task == null) {
+        setDiag(diag, "<instructions>");
+        return error.MissingArg;
+    }
+    if (opts.command == .revert and opts.task == null) {
+        setDiag(diag, "<id>");
+        return error.MissingArg;
+    }
     if (opts.command == .notify and opts.peer == null) {
         setDiag(diag, "<peer>");
         return error.MissingArg;
@@ -2510,7 +2526,14 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const n = std.posix.read(stream.socket.handle, &tmp) catch return;
         if (n == 0) return;
         total.appendSlice(gpa, tmp[0..n]) catch return;
-        if (total.items.len > (1 << 20)) return;
+        // The body allowance is separate from its HTTP headers. Counting both
+        // against max_body_bytes made a body at the advertised boundary
+        // impossible to send, and the old 1 MiB literal also made the 4 MiB
+        // image attachment feature unreachable after base64 expansion.
+        if (total.items.len > rawhttp.max_body_bytes + 64 * 1024) {
+            respond(stream, 413, "Content Too Large", "{\"ok\":false,\"error\":\"request body too large\"}");
+            return;
+        }
         if (rawhttp.requestComplete(total.items)) break;
     }
     if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| {
@@ -3273,6 +3296,7 @@ const RunRequestBody = struct {
 /// The composer refuses images over 4 MB; the server enforces the same cap on
 /// each attachment's decoded size, since a hand-written request is not the page.
 const max_image_bytes = 4 * 1024 * 1024;
+const max_run_images = 4;
 
 /// The decoded length of a base64 payload without decoding it, so the 4 MB
 /// image cap is enforced on bytes, not on the encoding.
@@ -5005,6 +5029,17 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
         return;
     };
+    // This id becomes both a lock-file name and
+    // `state/sessions/<id>.json`. The dedicated session routes validate the
+    // same path fragment; the run route must not provide a traversal bypass.
+    if (req.session.len > 0 and !validSessionId(req.session)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid session id\"}");
+        return;
+    }
+    if (req.images.len > max_run_images) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"at most 4 images may be attached\"}");
+        return;
+    }
     // A goal-only POST is enough to start work: taskWithGoal fills the body.
     if (req.task.len == 0 and req.goal.len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing task\"}");

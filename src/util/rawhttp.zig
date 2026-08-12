@@ -12,7 +12,10 @@ const std = @import("std");
 /// The reader in cli.zig stops accumulating past this, so a declared body
 /// larger than it can never arrive and waiting for one is a hang. Kept here
 /// because the framing decision belongs with the framing code.
-pub const max_body_bytes: usize = 1 << 20;
+// Four 4 MiB image attachments expand to about 21.4 MiB as base64, with the
+// task and JSON framing on top. Keep the transport ceiling slightly above
+// that documented API payload while still bounding unauthenticated input.
+pub const max_body_bytes: usize = 24 << 20;
 
 pub fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
     var off: usize = 0;
@@ -74,8 +77,15 @@ test "a Content-Length that would overflow does not panic" {
 }
 
 test "a body larger than the reader will hold is not waited for" {
-    const over = "POST / HTTP/1.1\r\nContent-Length: 2097152\r\n\r\n";
+    const over = "POST / HTTP/1.1\r\nContent-Length: 33554432\r\n\r\n";
     try std.testing.expect(requestComplete(over));
+}
+
+test "transport limit admits four base64 encoded image attachments" {
+    // Four maximum-sized decoded images occupy ceil(n/3)*4 bytes each in
+    // JSON. This is the largest payload shape the run endpoint advertises.
+    const encoded_images = 4 * ((4 * 1024 * 1024 + 2) / 3 * 4);
+    try std.testing.expect(encoded_images < max_body_bytes);
 }
 
 test "parseContentLength refuses what it cannot represent" {

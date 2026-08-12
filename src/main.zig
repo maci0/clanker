@@ -112,6 +112,14 @@ pub fn main(init: std.process.Init) !void {
 
     var diag: []const u8 = "";
     const opts = cli.parse(arg_list.items, &diag) catch |err| {
+        // Out of memory here is a system failure, not a malformed
+        // invocation: exit 1 (general error), not 2 (usage error), so
+        // scripts can tell "you typed it wrong" apart from "the machine
+        // could not do it".
+        if (err == error.OutOfMemory) {
+            log.log(.error_, "out of memory", .{});
+            std.process.exit(1);
+        }
         switch (err) {
             error.MissingTask => log.log(.error_, "`clanker run` needs a task text argument", .{}),
             error.UnknownCommand => log.log(.error_, "unknown command '{s}' (see the command list below)", .{diag}),
@@ -119,9 +127,10 @@ pub fn main(init: std.process.Init) !void {
             error.MissingArg => log.log(.error_, "'{s}' needs a value", .{diag}),
             error.BadIters => log.log(.error_, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadPort => log.log(.error_, "--port wants a 16-bit port number, got '{s}'", .{diag}),
+            error.BadDirection => log.log(.error_, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
             error.FlagNotForCommand => log.log(.error_, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
             error.BadSubcommand => log.log(.error_, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
-            error.OutOfMemory => log.log(.error_, "out of memory", .{}),
+            error.OutOfMemory => unreachable,
         }
         cli.printUsageHint(init.io);
         // Usage errors (bad/missing args) are the caller's fault, not

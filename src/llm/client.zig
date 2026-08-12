@@ -7,7 +7,6 @@ const providers = @import("providers.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
 const vertex_token = @import("vertex_token.zig");
-const mock_server = @import("mock_server.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
 
@@ -857,6 +856,7 @@ test "endpoint url building" {
 }
 
 test "streaming chat assembles SSE deltas" {
+    const mock_server = @import("mock_server.zig");
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -1143,6 +1143,7 @@ test "vertex endpoint url carries project, location, model and verb" {
 }
 
 test "vertex stream: no-arg tool call and a frame with no trailing blank line" {
+    const mock_server = @import("mock_server.zig");
     // End-to-end over the real client path: the last frame arrives without the
     // terminating blank line (a close-delimited stream), and the tool call
     // carries no arguments. Both used to be dropped, which the agent loop then
@@ -1203,6 +1204,7 @@ test "vertex stream: no-arg tool call and a frame with no trailing blank line" {
 }
 
 test "vertex non-stream chat hits rawPredict, not streamRawPredict" {
+    const mock_server = @import("mock_server.zig");
     // chat() never sets params.stream, so it must ask endpointUrl for the
     // blocking verb; passing `true` here previously sent a plain chat() call
     // at Vertex's SSE-only :streamRawPredict endpoint.
@@ -1297,6 +1299,7 @@ test "session usage accumulates and renders the built-in status segment" {
 /// Drives one `chat` call against the anthropic mock and returns the request
 /// headers it saw, so a test can assert on how the key was presented.
 fn capturedAnthropicHeaders(gpa: std.mem.Allocator, key: []const u8, out: []u8) ![]const u8 {
+    const mock_server = @import("mock_server.zig");
     var threaded = std.Io.Threaded.init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();

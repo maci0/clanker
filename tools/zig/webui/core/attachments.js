@@ -1,6 +1,7 @@
 // Vanilla, no bundler. Image attachment plumbing for the composer.
 export var pendingImages = [];
 export var max_image_bytes = 4 * 1024 * 1024;
+export var max_images = 4;
 
 export function clearAttachments() { pendingImages.length = 0; }
 
@@ -30,6 +31,10 @@ export function renderAttachments(els, iconFn, fmtBytesFn) {
 
 export function addImageFile(file, els, iconFn, fmtBytesFn) {
   if (!file) return;
+  if (pendingImages.length >= max_images) {
+    els.sessionStatus.textContent = "At most " + max_images + " images can be attached to one message.";
+    return;
+  }
   if (file.type.indexOf("image/") !== 0) {
     els.sessionStatus.textContent = "Only images can be attached; " + (file.type || "that file") + " was ignored.";
     return;

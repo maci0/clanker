@@ -256,20 +256,27 @@ pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?
 /// The compaction budget a session is trimmed to before every save.
 pub const max_session_tokens = 128 * 1024;
 
+fn estimatedTokens(message: types.Message) usize {
+    var bytes: usize = if (message.content) |content| content.len else 0;
+    if (message.tool_calls) |calls| {
+        for (calls) |call| bytes +|= call.arguments.len;
+    }
+    // Round up so short messages and short tool arguments are not free.
+    return bytes / 4 + @intFromBool(bytes % 4 != 0);
+}
+
 /// Drops oldest non-system messages until the estimated token count fits under
 /// `max_tokens` so long sessions auto-compact instead of exceeding the context
 /// window. Token count is estimated as chars/4 (a rough heuristic).
 pub fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) void {
     var total: usize = 0;
-    for (messages.items) |m| {
-        total += if (m.content) |c| c.len / 4 else 0;
-    }
+    for (messages.items) |m| total +|= estimatedTokens(m);
     if (total <= max_tokens) return;
     var i: usize = 0;
     while (i < messages.items.len and total > max_tokens) {
         const m = messages.items[i];
         if (m.role != .system) {
-            total -|= if (m.content) |c| c.len / 4 else 0;
+            total -|= estimatedTokens(m);
             _ = messages.orderedRemove(i);
         } else {
             i += 1;
@@ -282,6 +289,41 @@ fn roleFromStr(s: []const u8) types.Role {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "compactMessages counts short content and tool-call arguments" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+    try messages.appendSlice(std.testing.allocator, &.{
+        .{ .role = .system, .content = "system" },
+        .{ .role = .user, .content = "abc" },
+        .{ .role = .assistant, .tool_calls = &.{.{
+            .id = "call-1",
+            .name = "read",
+            .arguments = "12345678",
+        }} },
+        .{ .role = .assistant, .content = "keep" },
+    });
+
+    compactMessages(&messages, 3);
+
+    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+    try std.testing.expectEqualStrings("keep", messages.items[1].content.?);
+}
+
+test "compactMessages preserves system messages even when they exceed the budget" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+    try messages.appendSlice(std.testing.allocator, &.{
+        .{ .role = .system, .content = "a system prompt larger than this budget" },
+        .{ .role = .user, .content = "remove me" },
+    });
+
+    compactMessages(&messages, 0);
+
+    try std.testing.expectEqual(@as(usize, 1), messages.items.len);
+    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
+}
 
 test "latestSessionId picks the most recently updated session" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
@@ -490,6 +532,66 @@ test "listSessions reports the byte weight of each conversation" {
     defer tmp2.cleanup();
     const empty = try listSessions(io, arena, tmp2.dir);
     try std.testing.expectEqual(@as(usize, 0), empty.len);
+}
+
+test "rename and delete change only the selected saved session" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    for ([_][]const u8{ "first", "second" }) |id| {
+        try saveSession(io, allocator, arena, tmp.dir, .{
+            .id = id,
+            .title = id,
+            .messages = &.{.{ .role = .user, .content = "preserved" }},
+            .created = 10,
+            .updated = 20,
+        });
+    }
+
+    try renameSession(io, allocator, arena, tmp.dir, "first", "renamed");
+    const renamed = try loadSession(io, allocator, arena, tmp.dir, "first");
+    try std.testing.expectEqualStrings("renamed", renamed.title);
+    try std.testing.expectEqualStrings("preserved", renamed.messages[0].content.?);
+    try std.testing.expectEqual(@as(i64, 10), renamed.created);
+    try std.testing.expectEqual(@as(i64, 20), renamed.updated);
+    try std.testing.expectEqualStrings("second", (try loadSession(io, allocator, arena, tmp.dir, "second")).title);
+
+    try deleteSession(io, arena, tmp.dir, "first");
+    try std.testing.expectError(error.FileNotFound, loadSession(io, allocator, arena, tmp.dir, "first"));
+    try std.testing.expectEqualStrings("second", (try loadSession(io, allocator, arena, tmp.dir, "second")).id);
+}
+
+test "listSessions skips corrupt entries without hiding valid sessions" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try saveSession(io, allocator, arena, tmp.dir, .{
+        .id = "valid",
+        .title = "available",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/corrupt.json", .data = "not json" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/ignored.txt", .data = "not json" });
+
+    const sessions = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), sessions.len);
+    try std.testing.expectEqualStrings("valid", sessions[0].id);
 }
 
 /// Moves a conversation to a workspace. "" is the default one.

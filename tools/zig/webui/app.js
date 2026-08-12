@@ -94,6 +94,7 @@ var el = {
   goalCriterion: document.getElementById("goal-criterion"),
   goalMaxIterations: document.getElementById("goal-max-iterations"),
   goalsStatus: document.getElementById("goals-status"),
+  goalAdd: document.getElementById("goal-add"),
   usage: document.getElementById("usage"),
   usageRefresh: document.getElementById("usage-refresh"),
   tools: document.getElementById("tools"),
@@ -114,6 +115,7 @@ var el = {
   cardForm: document.getElementById("card-form"),
   cardTitle: document.getElementById("card-title"),
   cardColumn: document.getElementById("card-column"),
+  cardAdd: document.getElementById("card-add"),
   cardDetail: document.getElementById("card-detail"),
   boardMine: document.getElementById("board-mine"),
   boardRefresh: document.getElementById("board-refresh"),
@@ -2640,7 +2642,9 @@ el.goalForm.addEventListener("submit", function (e) {
   var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
   var payload = { objective: objective, completion_criterion: criterion };
   if (Number.isFinite(budget) && budget > 0) payload.max_iterations = budget;
+  el.goalAdd.disabled = true;
   postGoal(payload, "Goal added.").then(function (d) {
+    el.goalAdd.disabled = false;
     // A refused goal keeps what was typed: the criterion is the field most
     // likely to be refused, and retyping the objective to fix it is a tax.
     if (!d) return;
@@ -3435,7 +3439,9 @@ el.cardForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var title = el.cardTitle.value.trim();
   if (!title) return;
+  el.cardAdd.disabled = true;
   postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function (ok) {
+    el.cardAdd.disabled = false;
     if (ok) el.cardTitle.value = "";
   });
 });

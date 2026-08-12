@@ -398,10 +398,10 @@ body {
 /* The cabinet's top rail: nameplate, gauges, controls. Its own panel strip,
    seamed off from the backplane below. */
 header {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
-  padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem;
+  padding: 0.55rem 1rem; border-bottom: 1px solid var(--rule);
   background: var(--surface);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 1px 3px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.06);
 }
 @media (max-width: 34rem) {
   header { padding: 0.7rem 1rem; gap: 0.4rem 0.5rem; }
@@ -419,15 +419,12 @@ header {
   #help-open { display: inline-flex; }
   #theme-toggle { font-size: var(--step--1); }
 }
-/* The nameplate: stamped, screwed to the rail. Engraved caps, no logo. */
 h1 {
-  font-family: var(--mono); font-size: var(--step-1); font-weight: 700;
-  letter-spacing: 0.22em; text-transform: uppercase;
+  font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase;
   margin: 0; color: var(--fg);
-  padding: 0.2rem 0.7rem 0.2rem 0.85rem;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12), inset 0 -1px 0 rgba(255, 255, 255, 0.2);
+  padding: 0.15rem 0.6rem;
+  border: 0; background: transparent;
 }
 .spacer { flex: 1; }
 /* A gauge chip: reading in mono behind a lamp. The lamp is the signature —
@@ -467,7 +464,10 @@ button.chip-btn {
 }
 button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
 
-main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: var(--space-5) clamp(1rem, 3vw, 2.5rem) var(--space-6); }
+main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: var(--space-4) clamp(0.75rem, 2vw, 1.75rem) var(--space-5); }
+.view > section { max-width: 48rem; margin-left: auto; margin-right: auto; }
+#view-chat > section { max-width: 48rem; }
+#view-board > section, #view-runs > section, #view-fleet > section { max-width: 62rem; }
 
 /* ---- tabs: one view at a time ----
    Everything used to be stacked in one column, so reaching Tools meant
@@ -476,9 +476,9 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
    channel that is engaged. */
 .rail-tab {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   width: 100%; text-align: left; cursor: pointer;
-  min-height: 32px; padding: var(--space-2) var(--space-3);
+  min-height: 30px; padding: 0.3rem var(--space-3);
   border: 1px solid transparent; border-radius: var(--radius-sm);
   background: transparent; color: var(--fg-muted);
   font-family: var(--mono); font-size: var(--step-0);
@@ -518,7 +518,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
     0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
 }
 .rail-tab { position: relative; padding-left: var(--space-5); }
-.rail-context { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
+.rail-context { margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3); }
 .rail-context[hidden] { display: none; }
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
@@ -531,7 +531,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
 /* ---- transcript: a running list of turns, chat-style ---- */
-.transcript { display: flex; flex-direction: column; gap: var(--space-6); margin-top: var(--space-6); }
+.transcript { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-4); }
 .transcript:empty { display: none; }
 /* A turn is a job on the panel's record: seamed off from the one above,
    its number stamped in the margin, a blue strip lit while it runs.
@@ -539,11 +539,11 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    32-inch shop monitor. */
 .turn {
   position: relative;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
   padding-left: var(--gutter);
-  padding-top: var(--space-4);
+  padding-top: var(--space-3);
 }
-.turn:last-child { border-bottom: 1px solid var(--rule); padding-bottom: var(--space-5); }
+.turn:last-child { border-bottom: 1px solid var(--rule); padding-bottom: var(--space-4); }
 .turn::before { content: none; }
 /* The job in progress: its strip is powered. */
 .turn[data-live="true"]::before {
@@ -571,9 +571,10 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    because it is prose and not a measurement. */
 .turn-you {
   font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
-  padding: 0 0 var(--space-3) var(--space-3);
-  border-left: 2px solid var(--rule);
-  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule); border-radius: 12px;
+  background: var(--surface-2);
+  margin: 0 0 var(--space-3);
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-width: var(--measure);
 }
@@ -581,13 +582,14 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
 .turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
-.turn-body { padding: 0 0 var(--space-5); }
+.turn-body { padding: 0 0 var(--space-3); }
 /* What the machine reached for while the job ran. */
 .turn-events {
   display: flex; flex-direction: column; gap: var(--space-1);
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border-left: 1px solid var(--rule);
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
 }
 
 .turn-events:empty { display: none; margin: 0; }
@@ -720,8 +722,22 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 @keyframes caret { 50% { opacity: 0.15; } }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
 
-/* ---- composer ---- */
-.composer { margin-top: var(--space-6); }
+/* ---- composer: floating pill, sticky bottom, lifts on focus ---- */
+.composer {
+  position: sticky; bottom: 0; z-index: 2;
+  margin-top: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-3) var(--space-4);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 8px 24px -12px rgba(0,0,0,0.2);
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10), 0 12px 32px -12px rgba(0,0,0,0.28), 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.composer textarea { min-height: 2.6rem; max-height: 10rem; field-sizing: content; }
 /* Images travelling with the next task. Small enough to stay out of the way,
    large enough to tell two screenshots apart. */
 .attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
@@ -748,17 +764,20 @@ label {
 }
 
 textarea {
-  width: 100%; min-height: 5rem; padding: 0.75rem;
-  font-family: var(--sans); font-size: var(--step-1); line-height: 1.55;
-  background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius); resize: vertical;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+  width: 100%; min-height: 2.6rem; padding: 0.55rem 0.75rem;
+  font-family: var(--sans); font-size: var(--step-0); line-height: 1.5;
+  background: transparent; color: var(--fg);
+  border: 0; border-radius: 0; resize: none;
+  box-shadow: none; outline: none;
 }
-textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea:focus-visible { outline: none; }
+.composer textarea { border: 0; box-shadow: none; }
+.composer textarea:focus-visible { border-color: transparent; outline: none; }
 ::placeholder { color: var(--fg-muted); opacity: 1; }
 .toolbar {
   display: flex; flex-wrap: wrap; justify-content: space-between;
-  align-items: center; gap: var(--space-4); margin-top: var(--space-4);
+  align-items: center; gap: var(--space-3); margin-top: var(--space-3);
+  padding-top: var(--space-2); border-top: 1px solid var(--rule);
 }
 .toolbar > .meta { margin-right: auto; }
 .toolbar > .meta:empty { display: none; }
@@ -802,8 +821,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5;
 }
 
-section { margin-top: var(--space-6); border-top: 1px solid var(--rule); padding-top: var(--space-5); }
-.section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3) var(--space-4); margin-bottom: var(--space-4); min-width: 0; }
+section { margin-top: var(--space-4); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
+.section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); min-width: 0; }
 /* Section names are legend plates too: the panel is engraved, not typeset. */
 h2 {
   font-family: var(--mono);
@@ -1341,29 +1360,29 @@ mark {
 .scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
-/* Transcript empty — hero when there is nothing to show yet */
+/* Transcript empty — compact hero */
 #transcript-empty {
-  padding: var(--space-6) var(--space-5);
-  border: 1px dashed var(--rule);
-  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: 16px;
   background: var(--surface-2);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06), var(--lift);
+  text-align: center;
 }
 #transcript-empty p:first-child {
   font-family: var(--sans);
-  font-size: var(--step-2);
+  font-size: var(--step-1);
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--fg);
-  margin: 0 0 var(--space-3);
-  max-width: var(--measure);
+  margin: 0 0 var(--space-2);
+  max-width: none;
 }
 #transcript-empty p:first-child + p {
   font-size: var(--step-0);
   color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
-.suggestions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.suggestions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); justify-content: center; }
 .suggestion {
   min-height: 32px; padding: 0 var(--space-4); text-align: left;
   border: 1px solid var(--border); border-radius: var(--radius-pill);
@@ -1443,24 +1462,25 @@ mark {
   }
 }
 
-.shell { display: flex; align-items: flex-start; }
+.shell { display: flex; align-items: flex-start; gap: 0; min-height: calc(100vh - 3.2rem); }
 
-/* The main panel: a face plate mounted proud of the backplane, machined
-   edge along its top, seam borders down its sides. */
+/* The main panel: centered reading column; the shell's side gutters absorb chrome. */
 main {
   background: var(--paper);
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
-  box-shadow: var(--lift), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  min-height: 100vh;
+  box-shadow: var(--lift);
+  min-height: calc(100vh - 3.2rem);
+  flex: 1;
 }
 .rail {
-  flex: none; width: 17rem; align-self: stretch;
+  flex: none; width: 16rem; align-self: stretch;
   position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: var(--border) transparent;
   background: transparent;
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--rule);
 }
 .rail-head { display: flex; flex-direction: column; gap: var(--space-3); }
 .rail-new {
@@ -1489,14 +1509,14 @@ main {
 .rail-folder { padding-left: var(--space-3); border-left: 1px solid var(--rule); margin-left: var(--space-2); }
 
 .rail-group {
-  margin: var(--space-4) 0 var(--space-2);
+  margin: var(--space-3) 0 var(--space-1);
   font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: 0.14em; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700;
 }
 .rail-group:first-child { margin-top: 0; }
 .rail-item {
   display: block; width: 100%; text-align: left; cursor: pointer;
-  min-height: 32px; padding: var(--space-2) var(--space-3);
+  min-height: 30px; padding: 0.3rem var(--space-3);
   border: 1px solid transparent; border-radius: var(--radius-sm);
   background: transparent; color: var(--fg);
   font-family: var(--sans); font-size: var(--step-0);
