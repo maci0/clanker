@@ -70,7 +70,17 @@ export function formatChatTime(ts) {
 
 export function fmtDeadline(ts) {
   if (!ts) return "";
-  return new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  var d = new Date(ts * 1000);
+  var now = new Date(); now.setHours(0,0,0,0);
+  var dd = new Date(d); dd.setHours(0,0,0,0);
+  var diffDays = Math.round((dd - now) / 86400000);
+  var dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (diffDays === 0) return "today · " + dateStr;
+  if (diffDays === 1) return "tomorrow · " + dateStr;
+  if (diffDays === -1) return "yesterday · " + dateStr;
+  if (diffDays > 1 && diffDays <= 7) return "in " + diffDays + " days · " + dateStr;
+  if (diffDays < -1 && diffDays >= -7) return Math.abs(diffDays) + " days ago · " + dateStr;
+  return dateStr;
 }
 
 /* The server explains itself — "sessions module disabled", "no such model for

@@ -1509,10 +1509,16 @@ function drawRun(g) {
   el.runGraph.textContent = "";
   var nodes = g.nodes || [];
 
-  var head = document.createElement("p");
+  var head = document.createElement("div");
   head.className = "run-head";
-  head.textContent = g.run_id + " · " + (g.provider || "?") + " · " + g.duration_ms + "ms · " +
-    g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion tok\n" + (g.task || "");
+  head.style.display = "flex"; head.style.flexWrap = "wrap"; head.style.gap = "0.4rem"; head.style.alignItems = "center";
+  var headId = document.createElement("span"); headId.textContent = g.run_id; headId.style.fontWeight = "600"; head.appendChild(headId);
+  if (g.provider) { var hp = document.createElement("span"); hp.className = "tool-tag"; hp.textContent = g.provider; head.appendChild(hp); }
+  var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
+  if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
+  var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
+  copyHead.addEventListener("click", function(){ try{ navigator.clipboard.writeText(g.run_id); copyHead.textContent="Copied"; setTimeout(function(){ copyHead.textContent="Copy id"; }, 1200);}catch(_){} });
+  head.appendChild(copyHead);
   el.runGraph.appendChild(head);
 
   if (!nodes.length) {
@@ -1541,28 +1547,221 @@ function drawRun(g) {
   summary.textContent = graphSummaryText(built);
   el.runGraph.appendChild(summary);
 
+  var graphSearch = document.createElement("div");
+  graphSearch.className = "run-graph-search";
+  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap";
+  var graphSearchInput = document.createElement("input");
+  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…";
+  graphSearchInput.setAttribute("aria-label", "Filter graph nodes");
+  graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
+  var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
+  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear";
+  var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit";
+  graphFitBtn.title = "Fit graph to view";
+  graphSearch.appendChild(graphSearchInput); graphSearch.appendChild(graphNextBtn); graphSearch.appendChild(graphClearBtn); graphSearch.appendChild(graphFitBtn);
+  el.runGraph.appendChild(graphSearch);
+  // Trello/Slack-style focus filters — dim non-matches so dense graphs stay scannable
+  var _kindFilter = "";
+  var graphKindBar = document.createElement("div");
+  graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "0.35rem"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "0.5rem";
+  graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
+  [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
+    var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label;
+    b.dataset.kind = opt.k; b.setAttribute("aria-pressed", opt.k === "" ? "true" : "false");
+    if (opt.k === "failed") b.title = "Only failed nodes";
+    b.addEventListener("click", function(){
+      _kindFilter = opt.k;
+      graphKindBar.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", x.dataset.kind === _kindFilter ? "true" : "false"); });
+      _matchIdx = -1; doLayout(_searchQ);
+    });
+    graphKindBar.appendChild(b);
+  });
+  el.runGraph.appendChild(graphKindBar);
+  // Codex-style breadcrumb: iteration / step chips + keyboard tour
+  var crumb = document.createElement("div");
+  crumb.className = "run-crumbs"; crumb.style.display = "flex"; crumb.style.gap = "0.35rem"; crumb.style.flexWrap = "wrap"; crumb.style.marginBottom = "0.5rem";
+  crumb.setAttribute("role", "navigation"); crumb.setAttribute("aria-label", "Iterations");
+  built.stages.forEach(function(st, idx){
+    var chip = document.createElement("button");
+    chip.type = "button"; chip.className = "secondary"; chip.textContent = "iter " + st.iteration;
+    chip.title = st.iteration + " · " + (st.llm.label || "llm") + (st.tools.length ? " · " + st.tools.map(function(t){ return t.label; }).join(", ") : "");
+    chip.addEventListener("click", function(){
+      // focus first node of this stage (llm)
+      var target = canvas.querySelector('.run-node[data-kind="llm"]');
+      // find by iteration tag neighbour
+      var tags = canvas.querySelectorAll(".run-iter-tag");
+      for (var ti=0; ti<tags.length; ti++) if (tags[ti].textContent.trim() === String(st.iteration)) {
+        var sib = tags[ti].nextElementSibling;
+        // walk to next llm node near tag
+        var x = parseFloat(tags[ti].style.left) + 20;
+        var y = parseFloat(tags[ti].style.top) + 11;
+        // fallback: focus canvas center near tag
+        canvas.scrollLeft = Math.max(0, x - canvas.clientWidth/2);
+        canvas.scrollTop = Math.max(0, y - canvas.clientHeight/2);
+        break;
+      }
+    });
+    crumb.appendChild(chip);
+  });
+  if (built.stages.length) el.runGraph.appendChild(crumb);
+
   var canvas = document.createElement("div");
   canvas.className = "run-canvas";
-  // Focusable so a graph wider than the viewport can be scrolled with arrow
-  // keys even when it holds nothing focusable (a run that recorded only the
-  // "did not finish" marker); node boxes are buttons and reachable on their
-  // own.
   canvas.tabIndex = 0;
-  canvas.setAttribute("aria-label", "Scrollable execution graph diagram");
+  canvas.setAttribute("aria-label", "Scrollable execution graph — drag to pan, Ctrl+wheel to zoom, +/- keys, search to highlight");
+  (function(){
+    var isPanning = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
+    canvas.addEventListener("mousedown", function(e){
+      if (e.target.closest && e.target.closest(".run-node")) return;
+      isPanning = true; startX = e.clientX; startY = e.clientY; startScrollLeft = canvas.scrollLeft; startScrollTop = canvas.scrollTop;
+      canvas.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+    window.addEventListener("mouseup", function(){ if(isPanning){ isPanning = false; canvas.style.cursor = ""; } });
+    window.addEventListener("mousemove", function(e){
+      if (!isPanning) return;
+      canvas.scrollLeft = startScrollLeft - (e.clientX - startX);
+      canvas.scrollTop = startScrollTop - (e.clientY - startY);
+    });
+    canvas.addEventListener("wheel", function(e){
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        if (e.deltaY < 0) zoomInBtn.click(); else if (e.deltaY > 0) zoomOutBtn.click();
+      }
+    }, { passive: false });
+  })();
+  var zoomWrap = document.createElement("div");
+  zoomWrap.style.display = "flex"; zoomWrap.style.gap = "0.4rem"; zoomWrap.style.marginTop = "0.4rem";
+  var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom";
+  var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom";
+  var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset";
+  var zoomLevel = 1;
+  function applyZoom(){ canvas.style.transform = zoomLevel === 1 ? "" : "scale(" + zoomLevel + ")"; canvas.style.transformOrigin = "top left"; }
+  zoomInBtn.addEventListener("click", function(){ zoomLevel = Math.min(1.8, zoomLevel + 0.15); applyZoom(); });
+  zoomOutBtn.addEventListener("click", function(){ zoomLevel = Math.max(0.5, zoomLevel - 0.15); applyZoom(); });
+  zoomResetBtn.addEventListener("click", function(){ zoomLevel = 1; applyZoom(); });
+  zoomWrap.appendChild(zoomInBtn); zoomWrap.appendChild(zoomOutBtn); zoomWrap.appendChild(zoomResetBtn);
   el.runGraph.appendChild(canvas);
+  el.runGraph.appendChild(zoomWrap);
 
-  // d3-dag is fetched on demand, so the first graph of a session draws one
-  // network round-trip later than the rest of the page.
-  loadD3().then(function () {
-    // A newer run may have been requested while the library was in flight.
-    if (canvas.isConnected) layoutGraph(canvas, built, slowest);
-  }).catch(function (err) {
-    var errEl = document.createElement("p");
-    errEl.className = "run-empty";
-    errEl.textContent = "Could not load the graph layout library: " + err.message;
-    canvas.appendChild(errEl);
-    el.runStatus.textContent = errEl.textContent;
+  var minimap = document.createElement("div");
+  minimap.className = "run-minimap"; minimap.hidden = true;
+  minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap — click to jump, drag viewport to pan");
+  minimap.title = "Click to jump · drag viewport to pan";
+  var mmLabel = document.createElement("span"); mmLabel.className = "run-minimap-label"; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
+  var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
+  minimap.appendChild(mmViewport);
+  canvas.appendChild(minimap);
+  function updateMinimap(){
+    var needsMap = canvas.scrollWidth > canvas.clientWidth + 8 || canvas.scrollHeight > canvas.clientHeight + 8;
+    minimap.hidden = !needsMap;
+    if (minimap.hidden) return;
+    var sx = canvas.scrollLeft / Math.max(1, canvas.scrollWidth - canvas.clientWidth);
+    var sy = canvas.scrollTop / Math.max(1, canvas.scrollHeight - canvas.clientHeight);
+    var vw = canvas.clientWidth / Math.max(1, canvas.scrollWidth) * 100;
+    var vh = canvas.clientHeight / Math.max(1, canvas.scrollHeight) * 100;
+    mmViewport.style.left = (sx * (100 - vw)) + "%";
+    mmViewport.style.top = (sy * (100 - vh)) + "%";
+    mmViewport.style.width = Math.max(12, vw) + "%";
+    mmViewport.style.height = Math.max(12, vh) + "%";
+  }
+  canvas.addEventListener("scroll", updateMinimap);
+  // click-to-jump on the map background
+  minimap.addEventListener("click", function(e){
+    if (e.target === mmViewport) return;
+    var rect = minimap.getBoundingClientRect();
+    var px = (e.clientX - rect.left) / rect.width;
+    var py = (e.clientY - rect.top) / rect.height;
+    canvas.scrollLeft = px * (canvas.scrollWidth - canvas.clientWidth);
+    canvas.scrollTop = py * (canvas.scrollHeight - canvas.clientHeight);
   });
+  // drag viewport to pan
+  (function(){
+    var dragging = false, startX = 0, startY = 0, startSL = 0, startST = 0;
+    mmViewport.addEventListener("mousedown", function(e){
+      dragging = true; startX = e.clientX; startY = e.clientY; startSL = canvas.scrollLeft; startST = canvas.scrollTop;
+      e.preventDefault(); e.stopPropagation();
+    });
+    window.addEventListener("mousemove", function(e){
+      if (!dragging) return;
+      var rect = minimap.getBoundingClientRect();
+      var dxRatio = (e.clientX - startX) / rect.width;
+      var dyRatio = (e.clientY - startY) / rect.height;
+      canvas.scrollLeft = startSL + dxRatio * canvas.scrollWidth;
+      canvas.scrollTop = startST + dyRatio * canvas.scrollHeight;
+    });
+    window.addEventListener("mouseup", function(){ dragging = false; });
+  })();
+  // keep in sync after layout / resize
+  window.addEventListener("resize", updateMinimap);
+  // Fit button
+  graphFitBtn.addEventListener("click", function(){
+    canvas.scrollLeft = 0; canvas.scrollTop = 0;
+    // also reset zoom if api exposed
+    try{ var ev = new KeyboardEvent("keydown", { key: "0" }); canvas.dispatchEvent(ev); }catch(_){}
+    updateMinimap();
+  });
+
+  function doLayout(q){
+    loadD3().then(function () {
+      if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap: minimap, onSelect: function(k,n){ showNodeDetail(k,n); } });
+      try{ updateMinimap(); }catch(_){}
+    }).catch(function (err) {
+      var errEl = document.createElement("p");
+      errEl.className = "run-empty";
+      errEl.textContent = "Could not load the graph layout library: " + err.message;
+      canvas.appendChild(errEl);
+      el.runStatus.textContent = errEl.textContent;
+    });
+  }
+  var _searchQ = "";
+  var _matchIdx = -1;
+  function focusNextMatch(){
+    var matches = canvas.querySelectorAll('.run-node[data-match="true"]');
+    if (!matches.length) return;
+    _matchIdx = (_matchIdx + 1) % matches.length;
+    matches[_matchIdx].focus();
+    matches[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
+  }
+  // Qwen-like: link to OpenWebUI's error lens — one button jumps to failed nodes
+  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed";
+  graphFailedBtn.title = "Next failed node";
+  graphSearch.appendChild(graphFailedBtn);
+  function focusNextFailed(){
+    var fails = canvas.querySelectorAll('.run-node[data-ok="false"]');
+    if (!fails.length) return;
+    _matchIdx = (_matchIdx + 1) % fails.length;
+    fails[_matchIdx].focus(); fails[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
+    fails[_matchIdx].click();
+  }
+  graphFailedBtn.addEventListener("click", focusNextFailed);
+  graphSearchInput.addEventListener("input", function(){
+    _searchQ = graphSearchInput.value.trim();
+    _matchIdx = -1;
+    doLayout(_searchQ);
+  });
+  graphNextBtn.addEventListener("click", focusNextMatch);
+  graphClearBtn.addEventListener("click", function(){ graphSearchInput.value = ""; _searchQ = ""; _matchIdx = -1; doLayout(""); graphSearchInput.focus(); });
+  // Codex-like j/k step tour between iterations
+  var _iterIdx = 0;
+  function focusIter(dir){
+    var chips = crumb.querySelectorAll("button");
+    if (!chips.length) return;
+    _iterIdx = (_iterIdx + dir + chips.length) % chips.length;
+    chips[_iterIdx].focus();
+    chips[_iterIdx].click();
+  }
+  canvas.addEventListener("keydown", function(e){
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomInBtn.click(); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomOutBtn.click(); }
+    else if (e.key === "0") { e.preventDefault(); zoomResetBtn.click(); }
+    else if (e.key === "n" || e.key === "N") { if (_searchQ) { e.preventDefault(); focusNextMatch(); } else if (e.shiftKey || e.key === "N") { e.preventDefault(); focusNextFailed(); } }
+    else if (e.key === "F" || e.key === "f") { if (e.shiftKey) { e.preventDefault(); focusNextFailed(); } }
+    else if (e.key === "j") { e.preventDefault(); focusIter(1); }
+    else if (e.key === "k") { e.preventDefault(); focusIter(-1); }
+    else if (e.key === "Escape") { graphSearchInput.blur(); canvas.focus(); }
+  });
+  doLayout("");
 }
 
 var graphSummaryText = graphSummaryTextMod;
@@ -1662,6 +1861,14 @@ function showNodeDetail(kind, node) {
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
 
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.title = "Copy this node's output";
+  copyBtn.addEventListener("click", function(){
+    var t = node.output || "";
+    try{ navigator.clipboard.writeText(t); copyBtn.textContent = "Copied"; setTimeout(function(){ copyBtn.textContent="Copy"; }, 1200); }catch(_){ copyText(t, copyBtn, "Copy", out); }
+  });
+  head.appendChild(copyBtn);
   var closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "secondary run-detail-close";
@@ -1695,14 +1902,41 @@ function showNodeDetail(kind, node) {
   // <details> elements, and <pre> implies preformatted text content, not a
   // widget tree. .run-detail-output already sets white-space: pre-wrap
   // itself, so nothing about the flat-text case depends on the tag.
+  // Qwen / Codex idea: clickable trace refs inside the detail (file:line, run ids) jump to source / graph
+  var traceBar = document.createElement("div");
+  traceBar.style.display = "flex"; traceBar.style.gap = "0.4rem"; traceBar.style.flexWrap = "wrap"; traceBar.style.marginBottom = "0.5rem";
+  var rawOut = node.output || "";
+  var traceRe = /(?:^|\s)([a-zA-Z0-9_\-\.\/]+\.(?:zig|ts|js|py|rs|go|md):\d+(?::\d+)?)/g;
+  var m, seen = {}, cnt = 0;
+  while ((m = traceRe.exec(rawOut)) && cnt < 6) {
+    var ref = m[1];
+    if (seen[ref]) continue; seen[ref] = true; cnt++;
+    (function(r){
+      var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = r; b.title = "Search for " + r;
+      b.addEventListener("click", function(){
+        // cross-link to graph search and file search where available
+        var s = document.querySelector("#run-filter"); if (s) { s.value = r.split(":")[0]; s.dispatchEvent(new Event("input",{bubbles:true})); }
+        var gf = document.querySelector(".run-graph-search input");
+        if (gf) { gf.value = r.split(":")[0].split("/").pop().split(".")[0]; gf.dispatchEvent(new Event("input",{bubbles:true})); }
+      });
+      traceBar.appendChild(b);
+    })(ref);
+  }
+  if (traceBar.childNodes.length) el.runDetail.appendChild(traceBar);
+  var subRe = /\[subagent run:\s*(sub-\d+)\]/g, sm;
+  while ((sm = subRe.exec(rawOut)) !== null) {
+    var sid = sm[1];
+    var sb = document.createElement("button"); sb.type = "button"; sb.className = "secondary"; sb.textContent = "↗ " + sid;
+    sb.title = "Open sub-run " + sid;
+    (function(id){ sb.addEventListener("click", function(){ if(typeof openRun==="function") openRun(id); }); })(sid);
+    traceBar.appendChild(sb);
+    if (!traceBar.parentNode) el.runDetail.appendChild(traceBar);
+  }
+
   var out = document.createElement("div");
   out.className = "run-detail-output";
-  // Left truly empty (no child) when there's nothing recorded, so the
-  // :empty CSS placeholder still fires.
   if (node.output) {
     var parsed;
-    // Not attempted on a truncated preview: it cannot parse, and the note
-    // above has already explained why the tree is missing.
     if (!truncated) {
       try { parsed = JSON.parse(node.output); } catch (e) { parsed = undefined; }
     }
@@ -1719,11 +1953,10 @@ function showNodeDetail(kind, node) {
   }
   el.runDetail.appendChild(out);
 
+  // Keep detail from covering the graph on tall runs (Kimi/Qwen split-pane feel)
+  el.runDetail.style.maxHeight = "42vh";
+  el.runDetail.style.overflow = "auto";
   scrollTo(el.runDetail, "nearest");
-  // Without this, focus stays on the node button that was just activated;
-  // a keyboard user tabbing onward would walk through every remaining
-  // node in the graph before ever reaching this panel's Close button,
-  // instead of landing on the thing that just appeared.
   closeBtn.focus();
 }
 
@@ -1808,7 +2041,10 @@ function renderChatRooms(rooms) {
       return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
         var label = chatRoomLabel(r);
         if (r.messages) label += "  ·  " + r.messages;
+        // count only peers that are "up" — green dot like Slack presence
+        var peerUp = knownPeers.some(function(p){ return p.name === r.room || p.name === dmPartner(r.room); });
         if (r.unread) label += " · " + r.unread + " new";
+        else if (peerUp && r.room.indexOf("dm:") === 0) label += " · online";
         return T.option({ value: r.room }, label);
       }));
     }));
@@ -3255,13 +3491,14 @@ function cardById(id) {
    filter. It used to clear #board and rebuild it, which is what forced the
    focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
    everything. */
-var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "" });
+var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "", assignee: "" });
 
 function boardFilterState() {
   return {
     text: (document.getElementById("board-filter-input") || {}).value || "",
     blockedOnly: !!(document.getElementById("board-filter-blocked") || {}).checked,
-    priority: (document.getElementById("board-filter-priority") || {}).value || ""
+    priority: (document.getElementById("board-filter-priority") || {}).value || "",
+    assignee: (document.getElementById("board-filter-assignee") || {}).value || ""
   };
 }
 
@@ -3276,8 +3513,27 @@ function renderBoard(next) {
     open: openCardId,
     text: bf.text.trim().toLowerCase(),
     blockedOnly: bf.blockedOnly,
-    priority: bf.priority
+    priority: bf.priority,
+    assignee: bf.assignee
   };
+  // Trello-like assignee filter options: derive from cards present
+  (function(){
+    var sel = document.getElementById("board-filter-assignee");
+    if (!sel) return;
+    var keep = sel.value;
+    var seen = {};
+    var opts = [""];
+    board.cards.forEach(function(c){ if(c.assignee && !seen[c.assignee]){ seen[c.assignee]=true; opts.push(c.assignee); } });
+    // keep "unassigned" sentinel as well
+    if (board.cards.some(function(c){ return !c.assignee; })) opts.push("(unassigned)");
+    sel.textContent = "";
+    opts.forEach(function(n){
+      var o=document.createElement("option");
+      o.value=n; o.textContent=n==="" ? "All" : n;
+      sel.appendChild(o);
+    });
+    if (opts.indexOf(keep) !== -1) sel.value = keep;
+  })();
 
   // The "new card" column choice follows the board rather than a fixed list.
   var keepCol = el.cardColumn.value;
@@ -3292,7 +3548,7 @@ function boardColumn(col, s) {
   var shown = s.cards
     .filter(function (c) { return c.column === col.id; })
     .filter(function (c) { return !s.mine || c.assignee === s.me; })
-    .filter(function (c) { if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
+    .filter(function (c) { if (s.assignee) { if (s.assignee === "(unassigned)") { if (c.assignee) return false; } else if (c.assignee !== s.assignee) return false; } if (s.blockedOnly && blockers(c).length === 0) return false; if (s.priority && (c.priority || "normal") !== s.priority) return false; if (s.text && (c.title + " " + (c.body || "") + " " + (c.assignee || "")).toLowerCase().indexOf(s.text) === -1) return false; return true; })
     .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
 
   var over = col.wip && shown.length > col.wip;
@@ -3335,6 +3591,19 @@ function boardColumn(col, s) {
   qaInput.addEventListener("keydown", function(e){
     if (e.key === "Enter" && qaInput.value.trim()) { e.preventDefault(); doCreate(); }
     else if (e.key === "Escape") { e.preventDefault(); closeQuickAdd(); }
+    else if (e.key === "Tab" && !e.shiftKey && qaInput.value.trim() === "") { /* Slack-like: Tab out closes empty quick-add */ }
+  });
+  // Slack-like: typing @ in quick-add shows available assignees as placeholder hint
+  qaInput.addEventListener("input", function(){
+    var v = qaInput.value;
+    var atIdx = v.lastIndexOf("@");
+    if (atIdx !== -1) {
+      var q = v.slice(atIdx + 1).toLowerCase();
+      var peers = (knownPeers || []).map(function(p){ return p.name || p; });
+      var hit = peers.find(function(n){ return n.toLowerCase().indexOf(q) === 0; });
+      if (hit) qaInput.title = "Assign to @" + hit + " — press Tab to accept";
+      else qaInput.title = "";
+    } else qaInput.title = "";
   });
   function doCreate(){
     var t = qaInput.value.trim(); if (!t) return;
@@ -3356,6 +3625,20 @@ function boardColumn(col, s) {
     }
   },
     T.div({ class: "board-col-head" },
+      (function(){
+        var collapse = document.createElement("button");
+        collapse.type = "button"; collapse.className = "secondary"; collapse.textContent = "‹";
+        collapse.title = "Collapse lane";
+        collapse.style.minHeight = "22px"; collapse.style.padding = "0 0.35rem"; collapse.style.fontSize = "12px"; collapse.style.borderRadius = "999px";
+        collapse.addEventListener("click", function(e){
+          e.stopPropagation();
+          var isCol = colEl.getAttribute("data-collapsed") === "true";
+          colEl.setAttribute("data-collapsed", String(!isCol));
+          collapse.textContent = isCol ? "‹" : "›";
+          collapse.title = isCol ? "Collapse lane" : "Expand lane";
+        });
+        return collapse;
+      })(),
       T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
       T.span({ style: "display:flex; gap:0.25rem; align-items:center;" },
         (function(){
@@ -3969,7 +4252,7 @@ function wireRefresh(button, load) {
 
 wireRefresh(el.boardRefresh, loadBoard);
 el.boardRoom.addEventListener("change", function () { loadBoard(); });
-["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority"].forEach(function(id){
+["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee"].forEach(function(id){
   var n=document.getElementById(id);
   if(!n) return;
   n.addEventListener(id==="board-filter-input" ? "input" : "change", function(){ renderBoard(null); });
@@ -3994,6 +4277,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
     var rows=[].concat(s.cards||[]);
     // reuse same filters as columns
     rows=rows.filter(function(c){
+      if(s.assignee) { if(s.assignee==="(unassigned)"){ if(c.assignee) return false; } else if(c.assignee!==s.assignee) return false; }
       if(s.mine && c.assignee!==s.me) return false;
       if(s.blockedOnly && blockers(c).length===0) return false;
       if(s.priority && (c.priority||"normal")!==s.priority) return false;
@@ -4064,7 +4348,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
     var _lastCards="";
     setInterval(function(){
       try{
-        var cur=JSON.stringify(boardState.val.cards||[])+boardState.val.text+boardState.val.mine+boardState.val.blockedOnly+boardState.val.priority;
+        var cur=JSON.stringify(boardState.val.cards||[])+boardState.val.text+boardState.val.mine+boardState.val.blockedOnly+boardState.val.priority+boardState.val.assignee;
         if(cur!==_lastCards){ _lastCards=cur; renderList(); }
       }catch(_){}
     }, 600);

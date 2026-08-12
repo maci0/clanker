@@ -411,9 +411,9 @@ pub const Config = struct {
             else => return error.ConfigNotObject,
         };
         warnUnknownKeys(obj, &.{
-            "default_provider", "agent", "improve", "providers",
-            "instance",         "peers", "notify",  "chatrooms",
-            "modules",          "web",
+            "default_provider", "agent",  "improve", "providers",
+            "models",           "instance", "peers", "notify",
+            "chatrooms",        "modules", "web",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -441,6 +441,10 @@ pub const Config = struct {
                 try cfg.providers.put(arena, kv.key_ptr.*, p);
             }
         }
+        if (obj.get("models")) |v| {
+            try distributeModels(arena, &cfg, v);
+        }
+        if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
         if (obj.get("instance")) |v| {
             cfg.instance = try parseInstance(arena, v);
             cfg.instance_present = true;

@@ -85,6 +85,14 @@ export function buildNodeBox(d, slowest, nodeW) {
   label.textContent = node.label || node.detail || kind;
   label.title = label.textContent;
   box.appendChild(label);
+  // Codex-like: show truncated duration on the card itself (Qwen's badge style)
+  if (node.duration_ms) {
+    var dur = document.createElement("span");
+    dur.className = "run-node-duration";
+    dur.textContent = (node.duration_ms < 1000 ? node.duration_ms + "ms" : (node.duration_ms/1000).toFixed(1) + "s");
+    dur.setAttribute("aria-hidden", "true");
+    box.appendChild(dur);
+  }
   var metrics = document.createElement("span");
   metrics.className = "run-node-metrics";
   metrics.textContent = metricsFor(node);
@@ -101,10 +109,20 @@ export function buildNodeBox(d, slowest, nodeW) {
   return box;
 }
 
+export function extendSubagentRefs(built) {
+  // Slack / Trello habit: where node detail carries "[subagent run: sub-…]", make it clickable
+  // by normalizing the text — graph's detail/output already contains the literal; the panel
+  // below links it. No DOM here; app.js does the linking after layout.
+  return built;
+}
+
 export function layoutGraph(canvas, built, slowest, opts) {
   opts = opts || {};
   var onSelect = opts.onSelect || function () {};
   var statusEl = opts.statusEl || null;
+  var minimap = opts.minimap || null;
+  var searchQuery = (opts.searchQuery || "").trim().toLowerCase();
+  var kindFilter = (opts.kindFilter || "").trim().toLowerCase();
   var nodeW = 152, hGap = 32, vGap = 48, pad = 14;
   var tagPad = 42;
   var containerW = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 320;
@@ -141,6 +159,29 @@ export function layoutGraph(canvas, built, slowest, opts) {
     var totalW = Math.max(containerW, graphW + pad * 2 + tagPad);
     var totalH = graphH + pad * 2;
     canvas.style.height = totalH + "px";
+    canvas.style.minHeight = totalH + "px";
+    var activeQuery = searchQuery || "";
+    var hasKind = !!kindFilter;
+    if (activeQuery || hasKind) {
+      data.forEach(function(d){
+        var hay = ((d.node && d.node.label) || "") + " " + ((d.node && d.node.detail) || "") + " " + d.kind;
+        var hitsText = !activeQuery || hay.toLowerCase().indexOf(activeQuery) !== -1;
+        var hitsKind = !hasKind || d.kind === kindFilter || (kindFilter === "failed" && d.node && d.node.ok === false);
+        d._matches = hitsText && hitsKind;
+        // dim non-matches (Slack/Trello focus mode), highlight matches
+        if (d._matches) { d.el.setAttribute("data-match", "true"); d.el.style.opacity = ""; }
+        else { d.el.removeAttribute("data-match"); d.el.style.opacity = hasKind || activeQuery ? "0.28" : ""; }
+      });
+      // dim edges when filtering, so matches pop
+      if (hasKind || activeQuery) svg.style.opacity = "0.35"; else svg.style.opacity = "";
+      if (statusEl) {
+        var n = data.filter(function(x){ return x._matches; }).length;
+        if (hasKind || activeQuery) statusEl.textContent = n + " of " + data.length + " nodes match" + (n ? "" : " — try Clear");
+      }
+    } else {
+      data.forEach(function(d){ d.el.removeAttribute("data-match"); d.el.style.opacity = ""; });
+      svg.style.opacity = "";
+    }
     var svgNS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "run-edges");
@@ -186,13 +227,19 @@ export function layoutGraph(canvas, built, slowest, opts) {
         tag.setAttribute("aria-hidden", "true");
         canvas.appendChild(tag);
       }
-      (function (k, n, b) {
+      (function (k, n, b, iter) {
         b.addEventListener("click", function () {
           canvas.querySelectorAll(".run-node.selected").forEach(function (x) { x.classList.remove("selected"); });
           b.classList.add("selected");
           onSelect(k, n);
+          // keep crumbs in sync with selection (Codex-like)
+          try{
+            document.querySelectorAll(".run-crumbs button").forEach(function(ch){
+              if (ch.textContent.trim() === "iter " + iter) ch.setAttribute("aria-current","true"); else ch.removeAttribute("aria-current");
+            });
+          }catch(_){}
         });
-      })(kind, dn.data.node, box2);
+      })(kind, dn.data.node, box2, dn.data.iteration);
     }
   }).catch(function (err) {
     var errEl2 = document.createElement("p");
