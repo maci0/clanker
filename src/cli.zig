@@ -996,20 +996,17 @@ fn renderUsage(buf: []u8) []const u8 {
 /// which is the least helpful thing a --help can do.
 fn printCommandHelp(io: std.Io, cmd: Command) void {
     const s = specFor(cmd) orelse return printUsage(io);
-    var buf: [4096]u8 = undefined;
+    var buf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
     if (s.detail.len > 0) w.print("\n{s}\n", .{s.detail}) catch {};
     if (s.flags.len > 0) {
-        w.writeAll("\nAccepts: ") catch {};
-        for (s.flags, 0..) |f, i| {
-            if (i > 0) w.writeAll(", ") catch {};
-            w.writeAll(f.name()) catch {};
+        w.writeAll("\nAccepts:\n") catch {};
+        for (s.flags) |f| {
+            w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
-        w.writeAll(", --verbose, --help, --version.\n") catch {};
-    } else {
-        w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
     }
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --help, -h; --version.\n") catch {};
     writeStdOut(io, buf[0..w.end]) catch {};
 }
 
@@ -1091,6 +1088,50 @@ const Flag = enum {
             .compare_synthesize => "--synthesize",
             .compare_reveal => "--reveal",
             .schedule_tz => "--tz-offset",
+        };
+    }
+
+    /// What the flag does and what it accepts, for `clanker <command> --help`.
+    /// One short phrase: the option shape (<name>, <id>, <n>, ...) and the
+    /// purpose, so a reader does not have to cross-reference the command's
+    /// detail block.
+    fn describe(self: Flag) []const u8 {
+        return switch (self) {
+            .provider => "use this provider instead of the configured default",
+            .model => "the model to use, or <provider>/<model> (alias -m)",
+            .session => "resume/continue that saved conversation by id",
+            .goal => "run against a persisted goal by id",
+            .iters => "cap the number of attempts (default 3)",
+            .dry_run => "propose changes without applying them",
+            .tasks => "run only the agent-driven evals, skipping the build gates",
+            .port => "listen port (default 17921)",
+            .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
+            .serve_as => "a hostname this server may present itself as; repeatable",
+            .yes => "confirm destructive actions without prompting",
+            .research_target => "file the agent may edit; repeatable, comma-separated",
+            .research_harness => "shell command whose output contains the metric",
+            .research_metric => "metric key to read (default: score)",
+            .research_direction => "min or max — whether lower or higher is better",
+            .research_pattern => "substring before the number to extract",
+            .research_budget => "per-experiment wall seconds (default 300)",
+            .arena_for => "the position the first combatant defends",
+            .arena_against => "the opposing position; must differ from --for",
+            .arena_for_provider => "which provider argues 'for'",
+            .arena_against_provider => "which provider argues 'against'",
+            .arena_rounds => "round cap (tool default 4, clamped to 12)",
+            .arena_judge => "self or third — who scores the moves",
+            .arena_judge_provider => "who judges; must not be a combatant",
+            .arena_match => "print a stored match instead of running one",
+            .arena_position => "a stance for a battle royale; repeat 3-8 times",
+            .arena_defend => "the implementation or wording to defend (text or file)",
+            .arena_alternative => "the alternative to attack from; replaces --for/--against",
+            .compare_with => "add a model; <provider> or <provider@model>, repeat 2-8 times",
+            .compare_judge => "who scores the answers; auto, none, or a provider",
+            .compare_show => "print a stored comparison instead of running one",
+            .compare_pick => "with --show, record that answer as your pick",
+            .compare_synthesize => "also merge the answers into one extra call",
+            .compare_reveal => "print the label-to-model key even with no verdict",
+            .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
         };
     }
 };
@@ -9106,6 +9147,23 @@ test "a flag the command does not take is refused, not ignored" {
     // The same flag on a command that does take it is fine.
     const ok = try parse(&.{ "clanker", "run", "--model", "x", "do a thing" }, null);
     try std.testing.expectEqualStrings("x", ok.model.?);
+}
+
+test "every flag a command accepts has a help description" {
+    // printCommandHelp renders each flag as a bullet with describe(); a flag
+    // with an empty or missing description would render a bare token with no
+    // purpose, which is the exact gap this help rework is closing.
+    for (std.enums.values(Flag)) |f| {
+        const d = f.describe();
+        try std.testing.expect(d.len > 0);
+        // The description is one phrase, not the flag token echoed back.
+        try std.testing.expect(!std.mem.eql(u8, d, f.name()));
+    }
+    // Every spec's flags also have a description, and the flag set is what
+    // the help lists (no orphan flag that is declared but never described).
+    for (&specs) |*s| {
+        for (s.flags) |f| try std.testing.expect(f.describe().len > 0);
+    }
 }
 
 test "--help after a command asks about that command" {
