@@ -96,13 +96,10 @@ pub const Command = enum {
     arena,
     compare,
     workflow,
-<<<<<<< HEAD
     /// `plugins list|validate|new`: the third-party side of the tool
     /// registry. `src/tools/manifest.zig` is the schema it enforces.
     plugins,
-=======
     schedule,
->>>>>>> origin/main
 };
 
 pub const Options = struct {
@@ -679,13 +676,15 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.room = a;
         } else if (opts.command == .chat and opts.message == null) {
             opts.message = a;
-<<<<<<< HEAD
         } else if (opts.command == .plugins) {
             if (opts.plugins_sub == null) {
                 opts.plugins_sub = a;
             } else if (opts.plugin_target == null) {
                 opts.plugin_target = a;
-=======
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
         } else if (opts.command == .schedule) {
             // Positional-only: <sub> then up to two arguments whose meaning
             // depends on it (add takes a spec and a task, the rest an id).
@@ -695,7 +694,6 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.schedule_arg1 = a;
             } else if (opts.schedule_arg2 == null) {
                 opts.schedule_arg2 = a;
->>>>>>> origin/main
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1231,11 +1229,8 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .arena => try cmdArena(init, opts),
         .compare => try cmdCompare(init, opts),
         .workflow => try cmdWorkflow(init, opts),
-<<<<<<< HEAD
         .plugins => try cmdPlugins(init, opts),
-=======
         .schedule => try cmdSchedule(init, opts),
->>>>>>> origin/main
     }
 }
 

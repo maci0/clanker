@@ -304,9 +304,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // is checked before the id so a request wrong in both ways is told the op is
     // not real: no id would have made it work.
     const known = [_][]const u8{
-        "create",      "add",            "update",         "move",       "claim",
-        "assign",      "close",          "delete",         "log",        "usage",
-        "subtask_add", "subtask_toggle", "subtask_remove", "subtask_depend", "depend_add", "depend_remove",
+        "create",        "add",            "update",         "move",           "claim",
+        "assign",        "close",          "delete",         "log",            "usage",
+        "subtask_add",   "subtask_toggle", "subtask_remove", "subtask_depend", "depend_add",
+        "depend_remove",
     };
     var ok_op = false;
     for (known) |k| {
@@ -396,8 +397,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (!checklistComplete(cards.get(list, req.id).?))
             return lib.fail(out, "finish every checklist item before closing this card");
         break :blk .{ .action = "close", .todo = req.id };
-    }
-    else if (std.mem.eql(u8, op, "delete"))
+    } else if (std.mem.eql(u8, op, "delete"))
         .{ .action = "delete", .todo = req.id }
     else if (std.mem.eql(u8, op, "subtask_add")) blk: {
         const text = std.mem.trim(u8, req.text orelse "", " \t\r\n");
