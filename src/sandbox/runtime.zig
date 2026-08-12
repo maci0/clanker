@@ -1560,6 +1560,17 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
     defer std.testing.allocator.free(listed);
     try std.testing.expect(std.mem.indexOf(u8, listed, id) != null);
     try std.testing.expect(std.mem.indexOf(u8, listed, "queue or direct calls?") != null);
+
+    // The listing also answers structured, which is what the web UI's match
+    // picker reads (GET /api/arena); the text table is for the CLI and an agent.
+    var picker_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer picker_arena.deinit();
+    const listing = try std.json.parseFromSliceLeaky(std.json.Value, picker_arena.allocator(), listed, .{});
+    const entries = listing.object.get("matches").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    try std.testing.expectEqualStrings(id, entries[0].object.get("id").?.string);
+    try std.testing.expectEqualStrings("draw", entries[0].object.get("winner").?.string);
+    try std.testing.expect(entries[0].object.get("headline").?.string.len > 0);
 }
 
 test "arena wasm tool runs a battle royale to a verdict when no provider answers" {

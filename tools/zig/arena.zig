@@ -1134,22 +1134,84 @@ fn jsonNum(obj: std.json.ObjectMap, name: []const u8) []const u8 {
     };
 }
 
+/// Past matches, newest first, as both a text table and a structured array.
+///
+/// The array is what the web UI's match picker reads; the text is what the CLI
+/// and an agent get. Both come off the same ledger lines rather than walking
+/// every match file, which is the reason the ledger exists.
 fn listMatches(out: *lib.Out) !void {
     const ledger = lib.fsRead(ledger_path) catch
-        return lib.okText(out, "(no arena matches yet; start one with a \"question\", \"for\" and \"against\")");
-    var t: std.Io.Writer.Allocating = .init(alloc);
-    defer t.deinit();
-    var count: usize = 0;
+        return emptyList(out, "(no arena matches yet; start one with a \"question\", \"for\" and \"against\")");
+
+    var entries: std.ArrayList(std.json.ObjectMap) = .empty;
+    defer entries.deinit(alloc);
     var it = std.mem.splitScalar(u8, ledger, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue;
         const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, trimmed, .{}) catch continue;
         if (parsed != .object) continue;
-        const doc = parsed.object;
-        try t.writer.print("{s}\t{s}\t{s}\n", .{ jsonStr(doc, "id"), jsonStr(doc, "winner"), jsonStr(doc, "question") });
-        count += 1;
+        try entries.append(alloc, parsed.object);
     }
-    if (count == 0) return lib.okText(out, "(no arena matches yet)");
-    return lib.okText(out, t.written());
+    if (entries.items.len == 0) return emptyList(out, "(no arena matches yet)");
+
+    // Newest first: the ledger is append-ordered, and a picker wants the match
+    // that just finished at the top.
+    std.mem.reverse(std.json.ObjectMap, entries.items);
+
+    var t: std.Io.Writer.Allocating = .init(alloc);
+    defer t.deinit();
+    for (entries.items) |doc| {
+        try t.writer.print("{s}\t{s}\t{s}\n", .{ jsonStr(doc, "id"), jsonStr(doc, "winner"), jsonStr(doc, "question") });
+    }
+
+    var w = out.writer();
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("text");
+    try s.write(t.written());
+    try s.objectField("matches");
+    try s.beginArray();
+    for (entries.items) |doc| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(jsonStr(doc, "id"));
+        try s.objectField("question");
+        try s.write(jsonStr(doc, "question"));
+        try s.objectField("winner");
+        try s.write(jsonStr(doc, "winner"));
+        try s.objectField("reason");
+        try s.write(jsonStr(doc, "reason"));
+        try s.objectField("headline");
+        try s.write(jsonStr(doc, "headline"));
+        if (doc.get("hp")) |hp| if (hp == .array) {
+            try s.objectField("hp");
+            try s.beginArray();
+            for (hp.array.items) |v| try s.write(if (v == .integer) v.integer else 0);
+            try s.endArray();
+        };
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// An empty listing still answers with `matches`, so a caller does not have to
+/// tell "no matches" apart from "this build has no such field".
+fn emptyList(out: *lib.Out, msg: []const u8) !void {
+    var w = out.writer();
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("text");
+    try s.write(msg);
+    try s.objectField("matches");
+    try s.beginArray();
+    try s.endArray();
+    try s.endObject();
+    lib.commit(out, &w);
 }

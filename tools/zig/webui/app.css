@@ -2175,3 +2175,11 @@ h2#session-title {
 @media (max-width: 40rem) {
   .fleet-children, .fleet-child-group, .fleet-note, .fleet-extra-row { margin-left: var(--space-3); }
 }
+
+/* Arena: the match picker rows. The stage reuses .fleet-floor, and the
+   transcript reuses the tool-call card style used everywhere else, so nothing
+   here is a new visual language. */
+.arena-list { display: flex; flex-direction: column; gap: 4px; }
+.arena-pick { display: flex; justify-content: space-between; gap: 12px; text-align: left; width: 100%; }
+.arena-pick[aria-pressed="true"] { border-color: var(--accent, var(--ok)); }
+.arena-pick-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

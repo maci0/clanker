@@ -102,8 +102,9 @@ Kimi-parity) landed inline rather than in a module; `core/icons.js`,
 `core/dialog.js`, `core/usage.js`, `core/status.js`, `core/attachments.js`,
 `core/logs.js`, `core/plugins.js`, `core/palette.js`, `core/modelpicker.js`,
 `core/tools.js` plus `lib/markdown.js`, `lib/graph.js`, `lib/board.js`,
-`features/fleet.js`, `features/board.js`, `features/goals.js`,
-`features/knowledge.js`, `features/prompts.js` are now real modules with
+`features/fleet.js`, `features/arena.js`, `features/board.js`,
+`features/goals.js`, `features/knowledge.js`, `features/prompts.js` are now
+real modules with
 real `import`/`export`, not `window.ck*` bridge globals. `app.js` itself is
 a native ES module (`type="module"`), not a classic deferred script. Every
 module needs three things wired together or a
