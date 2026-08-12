@@ -27,33 +27,31 @@ pub const Run = struct {
     }
 };
 
-/// Writes a minimal single-provider config.json into `dir`, pointed at a mock
+/// Writes a minimal single-provider config.toml into `dir`, pointed at a mock
 /// server on 127.0.0.1:`port`. No `api_key_env`: the field is optional
 /// (`config.zig` accepts a provider with none, e.g. a local Ollama-style
 /// entry), and the mock server never checks auth, so there is nothing to
 /// fake a credential for. `tools_dir` is the real repo's absolute
-/// `tools/manifests` path (`config.json`'s `tools_dir` and every
+/// `tools/manifests` path (`config.toml`'s `tools_dir` and every
 /// descriptor's relative `"wasm"` path are resolved against the process's
 /// cwd with no override flag, so a temp-dir cwd cannot see the real ones
 /// unless pointed at directly — see `linkZigOut` for the wasm half).
 pub fn writeMockConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, port: u16) !void {
-    const json = try std.fmt.allocPrint(gpa,
-        \\{{
-        \\  "default_provider": "e2e-mock",
-        \\  "providers": {{
-        \\    "e2e-mock": {{
-        \\      "kind": "openai_compat",
-        \\      "base_url": "http://127.0.0.1:{d}",
-        \\      "default_model": "mock",
-        \\      "models": {{ "mock": {{ "context_window": 32000, "max_tokens": 4096 }} }}
-        \\    }}
-        \\  }},
-        \\  "agent": {{ "tools_dir": {f} }}
-        \\}}
+    const toml = try std.fmt.allocPrint(gpa,
+        \\default_provider = "e2e-mock"
+        \\
+        \\[providers.e2e-mock]
+        \\kind = "openai_compat"
+        \\base_url = "http://127.0.0.1:{d}"
+        \\default_model = "mock"
+        \\models = {{ mock = {{ context_window = 32000, max_tokens = 4096 }} }}
+        \\
+        \\[agent]
+        \\tools_dir = {f}
         \\
     , .{ port, std.json.fmt(tools_manifests_dir, .{}) });
-    defer gpa.free(json);
-    try dir.writeFile(io, .{ .sub_path = "config.json", .data = json });
+    defer gpa.free(toml);
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
 }
 
 /// Symlinks `dir/zig-out` to the real, already-built `zig-out`, so a tool

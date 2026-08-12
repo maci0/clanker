@@ -194,7 +194,7 @@ pub const Agent = struct {
 };
 
 /// Which agent keys a config file actually set. Used so a partial
-/// `config.local.json` `"agent"` object does not replace the whole agent
+/// `config.local.toml` `"agent"` object does not replace the whole agent
 /// struct (and reset `tools_dir` etc. to struct defaults).
 pub const AgentFields = struct {
     max_iterations: bool = false,
@@ -426,9 +426,8 @@ pub const Config = struct {
         return p;
     }
 
-    /// Loads `file_name` plus `local_file_name` (if present) from `dir`, either
-    /// as TOML or as the `.json` sibling — see `loadFile`. All returned strings
-    /// are allocated in `arena`.
+    /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
+    /// `dir`. All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
         const base = (try loadFile(io, arena, dir, file_name, .required)).?;
         var cfg = base.cfg;
@@ -455,59 +454,28 @@ pub const Config = struct {
 
     const LoadMode = enum { required, optional };
 
-    /// A parsed config file plus the path it actually came from, which is not
-    /// the requested name when the `.json` sibling answered instead.
+    /// A parsed config file plus the path it came from, kept so
+    /// default_provider provenance can name its source file.
     const Loaded = struct { cfg: Config, path: []const u8 };
 
-    /// TOML takes precedence: for `config.toml` (equally, `config.json`) the
-    /// `.toml` file wins, and the `.json` sibling is read only when no `.toml`
-    /// exists. The JSON->TOML migration promised exactly this so an untouched
-    /// `config.local.json` would keep working as an override; the code did not
-    /// do it, and such a file was read by nothing while looking like it was.
-    /// Each candidate is parsed by its own extension, not by the requested one.
+    /// TOML only: the requested file is read and parsed as TOML, full stop.
+    /// A `.json` sibling fallback existed briefly during the JSON->TOML
+    /// migration and was removed on purpose -- TOML is canonical, and a
+    /// half-supported legacy format that only sometimes applies is worse
+    /// than an error telling the user to convert the file.
     fn loadFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, mode: LoadMode) !?Loaded {
-        var candidates: [2][]const u8 = undefined;
-        var n: usize = 0;
-        if (configStem(file_name)) |stem| {
-            candidates[n] = try std.fmt.allocPrint(arena, "{s}.toml", .{stem});
-            n += 1;
-            candidates[n] = try std.fmt.allocPrint(arena, "{s}.json", .{stem});
-            n += 1;
-        } else {
-            // Some other extension: read it as asked, as TOML, as before.
-            candidates[n] = file_name;
-            n += 1;
-        }
-        for (candidates[0..n]) |path| {
-            const raw = dir.readFileAlloc(io, path, arena, .limited(1 << 20)) catch |err| switch (err) {
-                error.FileNotFound => continue,
-                else => return err,
-            };
-            const root = if (std.mem.endsWith(u8, path, ".json"))
-                json.parseFromSliceLeaky(json.Value, arena, raw, .{}) catch |err| {
-                    log.log(.error_, "config {s}: invalid JSON: {s}", .{ path, @errorName(err) });
-                    return err;
-                }
-            else
-                toml_bridge.parseToJsonValue(arena, raw) catch |err| {
-                    log.log(.error_, "config {s}: invalid TOML: {s}", .{ path, @errorName(err) });
-                    return err;
-                };
-            return .{ .cfg = try parseConfig(arena, root), .path = path };
-        }
-        return switch (mode) {
-            .required => error.MissingConfig,
-            .optional => null,
+        const raw = dir.readFileAlloc(io, file_name, arena, .limited(1 << 20)) catch |err| switch (err) {
+            error.FileNotFound => return switch (mode) {
+                .required => error.MissingConfig,
+                .optional => null,
+            },
+            else => return err,
         };
-    }
-
-    /// `"config.local.toml"` -> `"config.local"`. Null when the name carries
-    /// neither config extension, so callers leave it alone.
-    fn configStem(file_name: []const u8) ?[]const u8 {
-        for ([_][]const u8{ ".toml", ".json" }) |ext| {
-            if (std.mem.endsWith(u8, file_name, ext)) return file_name[0 .. file_name.len - ext.len];
-        }
-        return null;
+        const root = toml_bridge.parseToJsonValue(arena, raw) catch |err| {
+            log.log(.error_, "config {s}: invalid TOML: {s}", .{ file_name, @errorName(err) });
+            return err;
+        };
+        return .{ .cfg = try parseConfig(arena, root), .path = file_name };
     }
 
     fn parseConfig(arena: std.mem.Allocator, root: json.Value) !Config {
@@ -1097,7 +1065,7 @@ pub const Config = struct {
 
     fn merge(dst: *Config, src: Config, arena: std.mem.Allocator) !void {
         // Only override the default provider when the local file actually
-        // named one; otherwise a bare config.local.json would clobber the
+        // named one; otherwise a bare config.local.toml would clobber the
         // global default with the struct fallback ("deepseek").
         if (src.default_provider_present) dst.default_provider = src.default_provider;
         var it = src.providers.iterator();
@@ -1107,14 +1075,14 @@ pub const Config = struct {
         // Agent is field-merged: a local file that only sets e.g. sandbox_root
         // must not reset tools_dir (and the rest) to Agent{} defaults — that
         // made every tool disappear when tools_dir fell back to the struct
-        // default instead of config.json's "tools/manifests".
+        // default instead of config.toml's "tools/manifests".
         if (src.agent_present) applyAgentFields(&dst.agent, src.agent, src.agent_fields);
         // Improve is still whole-section: it is small and rarely partial.
         if (src.improve_present) dst.improve = src.improve;
         if (src.peers_present) dst.peers = src.peers;
         if (src.web_present) dst.web = src.web;
         // Only override the instance when the local file actually named one:
-        // a bare config.local.json must not replace a stable name with a
+        // a bare config.local.toml must not replace a stable name with a
         // pid-based default on every restart.
         if (src.instance_present) dst.instance = src.instance;
         if (src.notify_present) dst.notify = src.notify;
@@ -1441,11 +1409,7 @@ test "confirm_writes parses its three values and rejects anything else" {
     try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
-test "a config.local.json override applies when no config.local.toml exists" {
-    // The JSON->TOML migration said an untouched config.local.json keeps
-    // working. It did not: callers ask for "config.local.toml", the read
-    // failed, and the override was silently ignored — so the committed
-    // default_provider stayed in force while the local file said otherwise.
+test "a config.local.json sibling is ignored: TOML is canonical" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1459,47 +1423,13 @@ test "a config.local.json override applies when no config.local.toml exists" {
         .sub_path = "config.toml",
         .data =
         \\default_provider = "committed"
-        \\providers = { committed = { base_url = "https://a.test" }, local = { base_url = "https://b.test" } }
-        \\models = { "committed/m" = { provider = "committed" }, "local/m" = { provider = "local" } }
+        \\providers = { committed = { base_url = "https://a.test" }, from_json = { base_url = "https://c.test" } }
+        \\models = { "committed/m" = { provider = "committed" }, "from_json/m" = { provider = "from_json" } }
         ,
     });
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "config.local.json",
-        .data =
-        \\{ "default_provider": "local" }
-        ,
-    });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualStrings("local", cfg.default_provider);
-    try std.testing.expectEqualStrings("config.local.json", cfg.default_provider_from.?);
-    // The base providers survive a local file that only names a default.
-    try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
-}
-
-test "config.local.toml wins over a config.local.json sibling" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "committed"
-        \\providers = { committed = { base_url = "https://a.test" }, from_toml = { base_url = "https://b.test" }, from_json = { base_url = "https://c.test" } }
-        \\models = { "committed/m" = { provider = "committed" }, "from_toml/m" = { provider = "from_toml" }, "from_json/m" = { provider = "from_json" } }
-        ,
-    });
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "config.local.toml",
-        .data =
-        \\default_provider = "from_toml"
-        ,
-    });
+    // A leftover pre-migration file: it must have no effect at all, not even
+    // as a fallback when no config.local.toml exists. A legacy format that
+    // only sometimes applies is worse than requiring the file be converted.
     try tmp.dir.writeFile(io, .{
         .sub_path = "config.local.json",
         .data =
@@ -1507,8 +1437,8 @@ test "config.local.toml wins over a config.local.json sibling" {
         ,
     });
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
-    try std.testing.expectEqualStrings("from_toml", cfg.default_provider);
-    try std.testing.expectEqualStrings("config.local.toml", cfg.default_provider_from.?);
+    try std.testing.expectEqualStrings("committed", cfg.default_provider);
+    try std.testing.expectEqualStrings("config.toml", cfg.default_provider_from.?);
 }
 
 test "default_provider provenance names the file that set it" {
@@ -1568,12 +1498,12 @@ test "a local override that does not name a default leaves provenance on the bas
         ,
     });
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.local.json",
+        .sub_path = "config.local.toml",
         .data =
         // A local file that redefines a provider repeats its models: merge
         // replaces the whole provider entry, so anything left out is gone.
-        \\{ "providers": { "a": { "base_url": "https://override.test" } },
-        \\  "models": { "a/m": { "provider": "a" } } }
+        \\providers = { a = { base_url = "https://override.test" } }
+        \\models = { "a/m" = { provider = "a" } }
         ,
     });
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");

@@ -7,6 +7,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const log = @import("../util/log.zig");
+const toml_bridge = @import("../util/toml_bridge.zig");
 
 /// A cold `zig build test` can print more than one MiB while rebuilding its
 /// dependency graph. Gate output is retained only until the result is logged
@@ -764,14 +765,17 @@ pub fn gitDenyGuardGate(
         if (std.mem.eql(u8, f, "tools/manifests/git.tool.json")) {
             return .{ .ok = false, .label = "git-deny-guard", .detail = "proposals must not modify the git tool manifest" };
         }
-        if (!std.mem.eql(u8, f, "config.json") and !std.mem.eql(u8, f, "config.local.json")) continue;
+        // TOML is the canonical (and only loaded) config format; the guard
+        // has to inspect exactly what the loader would read, or a proposal
+        // widening exec_pattern_allow through config.toml walks straight
+        // past a guard still watching the retired .json names.
+        if (!std.mem.eql(u8, f, "config.toml") and !std.mem.eql(u8, f, "config.local.toml")) continue;
         var arena_state = std.heap.ArenaAllocator.init(gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, new, .{}) catch {
-            return .{ .ok = false, .label = "git-deny-guard", .detail = "config change is not valid JSON" };
+        const parsed = toml_bridge.parseToJsonValue(arena, new) catch {
+            return .{ .ok = false, .label = "git-deny-guard", .detail = "config change is not valid TOML" };
         };
-        if (std.mem.indexOf(u8, new, "\"exec_pattern_allow\"") == null) continue;
         const obj = switch (parsed) {
             .object => |o| o,
             else => continue,
@@ -801,9 +805,9 @@ pub fn gitDenyGuardGate(
 
 test "gitDenyGuardGate rejects git patterns in exec_pattern_allow" {
     const gpa = std.testing.allocator;
-    const files = [_][]const u8{"config.json"};
+    const files = [_][]const u8{"config.toml"};
     const new_texts = [_][]const u8{
-        \\{"agent":{"exec_pattern_allow":["gh pr create*","git checkout*"]}}
+        \\agent = { exec_pattern_allow = ["gh pr create*", "git checkout*"] }
     };
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
@@ -814,9 +818,9 @@ test "gitDenyGuardGate rejects git patterns in exec_pattern_allow" {
 test "gitDenyGuardGate allows non-git patterns and non-config files" {
     const gpa = std.testing.allocator;
     // Non-git pattern passes.
-    const files = [_][]const u8{"config.json"};
+    const files = [_][]const u8{"config.toml"};
     const new_texts = [_][]const u8{
-        \\{"agent":{"exec_pattern_allow":["gh pr create*"]}}
+        \\agent = { exec_pattern_allow = ["gh pr create*"] }
     };
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(result.ok);
@@ -827,10 +831,10 @@ test "gitDenyGuardGate allows non-git patterns and non-config files" {
     const result2 = gitDenyGuardGate(gpa, &files2, &new_texts2);
     try std.testing.expect(result2.ok);
 
-    // config.local.json is checked too.
-    const files3 = [_][]const u8{"config.local.json"};
+    // config.local.toml is checked too.
+    const files3 = [_][]const u8{"config.local.toml"};
     const new_texts3 = [_][]const u8{
-        \\{"agent":{"exec_pattern_allow":["git push"]}}
+        \\agent = { exec_pattern_allow = ["git push"] }
     };
     const result3 = gitDenyGuardGate(gpa, &files3, &new_texts3);
     try std.testing.expect(!result3.ok);
@@ -951,10 +955,8 @@ test "gitDenyGuardGate rejects changes to the git tool manifest" {
 
 test "gitDenyGuardGate rejects a tab-separated git pattern" {
     const gpa = std.testing.allocator;
-    const files = [_][]const u8{"config.json"};
-    const new_texts = [_][]const u8{
-        \\{"agent":{"exec_pattern_allow":["git\tcheckout"]}}
-    };
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{"agent = { exec_pattern_allow = [\"git\tcheckout\"] }"};
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("git-deny-guard", result.label);
@@ -963,20 +965,20 @@ test "gitDenyGuardGate rejects a tab-separated git pattern" {
 
 test "gitDenyGuardGate allows a git-prefixed tool that is not the git command" {
     const gpa = std.testing.allocator;
-    const files = [_][]const u8{"config.json"};
+    const files = [_][]const u8{"config.toml"};
     const new_texts = [_][]const u8{
-        \\{"agent":{"exec_pattern_allow":["git-gh pr create*","git-status"]}}
+        \\agent = { exec_pattern_allow = ["git-gh pr create*", "git-status"] }
     };
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(result.ok);
 }
 
-test "gitDenyGuardGate rejects invalid JSON in config files" {
+test "gitDenyGuardGate rejects an unparseable config file" {
     const gpa = std.testing.allocator;
-    const files = [_][]const u8{"config.json"};
-    const new_texts = [_][]const u8{"{ this is not json"};
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{"agent = { unbalanced"};
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("git-deny-guard", result.label);
-    try std.testing.expect(std.mem.indexOf(u8, result.detail, "valid JSON") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.detail, "valid TOML") != null);
 }

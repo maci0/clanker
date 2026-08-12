@@ -1,7 +1,7 @@
 {
   "name": "config_view",
   "kind": "task",
-  "description": "config_view must dump the effective config as ok:true with the merged JSON in its text field. config.json is checked into the repo and the tool's fs_prefixes cover both it and config.local.json, so a fresh checkout always has something to dump — unlike the state/-backed tools there is no legitimate empty case, and the assertion can be the ok field alone. It goes red when the fs_prefixes policy stops covering the config files or the merge/serialize path breaks.",
+  "description": "config_view must dump the effective config as ok:true with the merged JSON in its text field. config.toml is checked into the repo and the tool's fs_prefixes cover both it and config.local.toml, so a fresh checkout always has something to dump — unlike the state/-backed tools there is no legitimate empty case, and the assertion can be the ok field alone. It goes red when the fs_prefixes policy stops covering the config files or the merge/serialize path breaks.",
   "prompt": "Use the config_view tool with input {}. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
   "requires_tool": "config_view",
   "criteria": [

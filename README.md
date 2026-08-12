@@ -35,7 +35,7 @@ Set the API key env var for your chosen provider (see [config.toml](config.toml)
 
 ## Configuration
 
-clanker loads **[config.toml](config.toml)** (committed example) and merges **`config.local.toml`** on top when present (gitignored, for machine-local overrides). A `.json` config is also accepted; a `.toml` sibling, when present, always takes precedence over its `.json` counterpart. API keys are never stored in config: each provider points at an env var via `api_key_env`. Copy **[.env.example](.env.example)** to `.env` and fill in the keys for the providers you use; it is loaded automatically when `modules.dotenv` is enabled.
+clanker loads **[config.toml](config.toml)** (committed example) and merges **`config.local.toml`** on top when present (gitignored, for machine-local overrides). TOML is the only supported config format. API keys are never stored in config: each provider points at an env var via `api_key_env`. Copy **[.env.example](.env.example)** to `.env` and fill in the keys for the providers you use; it is loaded automatically when `modules.dotenv` is enabled.
 
 | Key | Purpose |
 |-----|---------|

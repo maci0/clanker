@@ -14,7 +14,7 @@
     "state",
     "build.zig",
     "build.zig.zon",
-    "config.json",
+    "config.toml",
     "README.md",
     "AGENTS.md",
     ".agents",

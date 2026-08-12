@@ -268,7 +268,7 @@ changes as tools are added.
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
 | `zig_check` | `.` | Fast per-file `zig ast-check` and format check, without the full gate |
 | `test_file` | `.` | Run one Zig test file, optionally with `--test-filter` |
-| `config_view` | `config.toml` (or `config.json`) via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
+| `config_view` | `config.toml` via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
 | `roadmap` | `docs/` | Read the roadmap and list the planned (unchecked) items |
 | `history` | `state/` | Review the improve history: successes, failures, summaries |
 | `learnings` | `state/learnings.md` | Read the persisted learnings |
@@ -425,7 +425,7 @@ iter 2
 
 ## Configuration
 
-`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. A `.json` config (the pre-TOML format) is still accepted for either file, but a `.toml` sibling always wins when both exist — `src/config.zig`'s `Config.load` tries `config.toml` first and falls back to `config.json` only if no `.toml` file is present.
+`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. TOML is the only supported config format; a leftover pre-migration `.json` file is ignored entirely (and `clanker doctor` warns about it) rather than half-supported.
 
 A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider` — inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 

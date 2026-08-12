@@ -1,4 +1,4 @@
-//! `clanker phonebook`: scans every peer in config.json's `peers` list for
+//! `clanker phonebook`: scans every peer in config.toml's `peers` list for
 //! its `/.well-known/agent.json` card and prints a name/url/skills/status
 //! table. Read-only network probing of other clankers, distinct from
 //! chatrooms.zig's message fan-out.

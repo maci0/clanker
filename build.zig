@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
     const vaxis_dep = b.dependency("vaxis", .{ .target = exe_target, .optimize = optimize });
     const vaxis_mod = vaxis_dep.module("vaxis");
 
-    // toml: config.json/config.local.json are migrating to TOML. Vendored
+    // toml: parses config.toml/config.local.toml. Vendored
     // (vendor/toml), not fetched — see vendor/toml/README.md.
     const toml_mod = b.createModule(.{
         .root_source_file = b.path("vendor/toml/src/root.zig"),

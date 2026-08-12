@@ -5,7 +5,7 @@
 //!   - chatrooms.jsonl      append-only log of every message in a subscribed
 //!                          room: {"room","from","text","ts","id"}
 //!   - chatrooms-sub.json   runtime subscription overrides: {"rooms":[...]}
-//!                          (merged with config.json "chatrooms"."rooms")
+//!                          (merged with config.toml "chatrooms"."rooms")
 //!   - chatrooms-cursor.json  last message injected into the agent inbox, so a
 //!                          run only surfaces messages not seen yet
 //!
