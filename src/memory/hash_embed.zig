@@ -14,10 +14,17 @@ pub fn normalize(vec: []f32) void {
     for (vec) |*v| v.* = @floatCast(@as(f64, v.*) * inv);
 }
 
+fn hashIndex(hash: u64, len: usize) usize {
+    // Wyhash distributes entropy across all bits, so intentionally retain the
+    // low 32 bits before reducing to the embedding dimension.
+    const low_bits: u32 = @truncate(hash);
+    return @as(usize, low_bits) % len;
+}
+
 fn addToken(vec: []f32, token: []const u8, weight: f32) void {
     if (token.len == 0) return;
     const h = std.hash.Wyhash.hash(0, token);
-    const idx = @as(usize, @as(u32, @truncate(h))) % vec.len;
+    const idx = hashIndex(h, vec.len);
     vec[idx] += weight;
 }
 

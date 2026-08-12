@@ -210,7 +210,7 @@ pub fn parseFileRequest(
 pub fn stripMarkdownFence(raw: []const u8) []const u8 {
     var s = std.mem.trim(u8, raw, " \t\r\n");
     if (s.len >= 3 and std.mem.eql(u8, s[0..3], "```")) {
-        if (std.mem.indexOfScalar(u8, s, '\n')) |nl| {
+        if (std.mem.findScalar(u8, s, '\n')) |nl| {
             s = std.mem.trim(u8, s[nl + 1 ..], " \t\r\n");
         }
     }

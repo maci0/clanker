@@ -177,7 +177,7 @@ test "truncatedPreview does not split a UTF-8 codepoint" {
     // The returned slice must end on a codepoint boundary (no 0x80..0xBF tail).
     try std.testing.expect(got.len == 0 or (got[got.len - 1] & 0xC0) != 0x80);
     // And it must not contain the split continuation byte.
-    try std.testing.expect(std.mem.indexOf(u8, got, &.{0xA9}) == null);
+    try std.testing.expect(std.mem.find(u8, got, &.{0xA9}) == null);
 }
 
 test "truncatedArgs caps at arguments_preview_cap without splitting a codepoint" {

@@ -114,9 +114,9 @@ fn trimLeadingZeros(bytes: []const u8) []const u8 {
 
 /// Decodes the base64 between the BEGIN/END lines of a PEM block.
 fn pemBody(arena: std.mem.Allocator, pem: []const u8) Error![]const u8 {
-    const begin = std.mem.indexOf(u8, pem, "-----BEGIN") orelse return error.PrivateKeyMalformed;
-    const begin_eol = std.mem.indexOfScalarPos(u8, pem, begin, '\n') orelse return error.PrivateKeyMalformed;
-    const end = std.mem.indexOfPos(u8, pem, begin_eol, "-----END") orelse return error.PrivateKeyMalformed;
+    const begin = std.mem.find(u8, pem, "-----BEGIN") orelse return error.PrivateKeyMalformed;
+    const begin_eol = std.mem.findScalarPos(u8, pem, begin, '\n') orelse return error.PrivateKeyMalformed;
+    const end = std.mem.findPos(u8, pem, begin_eol, "-----END") orelse return error.PrivateKeyMalformed;
 
     var clean: std.ArrayList(u8) = .empty;
     for (pem[begin_eol + 1 .. end]) |c| {

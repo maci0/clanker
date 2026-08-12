@@ -682,7 +682,7 @@ pub const Agent = struct {
                 // results of this iteration.
                 var image: ?struct { mime: []const u8, b64: []const u8 } = null;
                 if (self.cfg.modules.multimodal) {
-                    if (std.mem.indexOf(u8, content, "\"image\":{\"mime\":")) |_| {
+                    if (std.mem.find(u8, content, "\"image\":{\"mime\":")) |_| {
                         const img = std.json.parseFromSliceLeaky(ImageResult, self.arena, content, .{ .ignore_unknown_fields = true }) catch null;
                         if (img) |im| {
                             if (im.image) |iv| image = .{ .mime = iv.mime, .b64 = iv.b64 };
@@ -691,7 +691,7 @@ pub const Agent = struct {
                 }
                 if (self.cfg.modules.autolearn) {
                     if (std.mem.startsWith(u8, content, "{\"ok\":false")) {
-                        const kind: []const u8 = if (std.mem.indexOf(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
+                        const kind: []const u8 = if (std.mem.find(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
                         autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, kind, tc.name, errorDetail(self.arena, content));
                     }
                     // Always record the tool invocation (success or failure)
@@ -1270,9 +1270,9 @@ pub const Agent = struct {
         // Find the first code fence marker; if present, extract content between
         // the fences even if prose precedes it (the answer_format eval expects
         // an exact-match answer, not a fenced/prose-wrapped variant).
-        if (std.mem.indexOf(u8, s, "```")) |start| {
+        if (std.mem.find(u8, s, "```")) |start| {
             const after_first = s[start + 3 ..];
-            const body_start = if (std.mem.indexOf(u8, after_first, "\n")) |nl| nl + 1 else 0;
+            const body_start = if (std.mem.find(u8, after_first, "\n")) |nl| nl + 1 else 0;
             var body = after_first[body_start..];
             if (std.mem.lastIndexOf(u8, body, "```")) |end| {
                 body = body[0..end];
@@ -1299,8 +1299,8 @@ pub const Agent = struct {
         // Pick whichever of a JSON object or array appears first in the answer.
         // Preferring objects can misparse an expected array when prose contains
         // an earlier '{'; the answer_format eval needs the exact value.
-        const obj_start = std.mem.indexOfScalar(u8, s, '{');
-        const arr_start = std.mem.indexOfScalar(u8, s, '[');
+        const obj_start = std.mem.findScalar(u8, s, '{');
+        const arr_start = std.mem.findScalar(u8, s, '[');
         if (obj_start != null or arr_start != null) {
             js_start = if (obj_start != null and arr_start != null)
                 @min(obj_start.?, arr_start.?)
@@ -1355,9 +1355,9 @@ pub const Agent = struct {
         // answer in a prose preamble (e.g. "Here is the result:"). For the
         // answer_format eval we need the exact value, so fall back to the last
         // non-empty line and strip a leading "Answer:"/"Result:" prefix.
-        if (std.mem.indexOf(u8, s, "```") == null and
-            std.mem.indexOfScalar(u8, s, '{') == null and
-            std.mem.indexOfScalar(u8, s, '[') == null)
+        if (std.mem.find(u8, s, "```") == null and
+            std.mem.findScalar(u8, s, '{') == null and
+            std.mem.findScalar(u8, s, '[') == null)
         {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
@@ -2775,8 +2775,8 @@ test "capToolResult leaves small results untouched and truncates large ones" {
     const capped = try capToolResult(arena, big);
     try std.testing.expect(capped.len > max_tool_result_bytes); // includes marker
     try std.testing.expect(capped.len < big.len); // but much smaller than original
-    try std.testing.expect(std.mem.indexOf(u8, capped, "truncated") != null);
-    try std.testing.expect(std.mem.indexOf(u8, capped, "Ask for specific parts") != null);
+    try std.testing.expect(std.mem.find(u8, capped, "truncated") != null);
+    try std.testing.expect(std.mem.find(u8, capped, "Ask for specific parts") != null);
     // The first max_tool_result_bytes bytes are preserved.
     try std.testing.expectEqualStrings(big[0..max_tool_result_bytes], capped[0..max_tool_result_bytes]);
 }
@@ -2879,7 +2879,7 @@ test "resumed-session cleanup completes partial tool-call exchanges instead of d
         try std.testing.expectEqual(@as(usize, 5), messages.items.len);
         try std.testing.expectEqualStrings("r1", messages.items[3].content.?);
         try std.testing.expectEqualStrings("b", messages.items[4].tool_call_id.?);
-        try std.testing.expect(std.mem.indexOf(u8, messages.items[4].content.?, "interrupted") != null);
+        try std.testing.expect(std.mem.find(u8, messages.items[4].content.?, "interrupted") != null);
     }
 
     // (3) An orphan tool result whose tool_call_id matches no call is dropped
@@ -2999,15 +2999,15 @@ test "parentAnswerPrompt hands the sub-agent's question the parent's context" {
 
     // The parent's task, its transcript, the question, and the options all
     // reach the answering model.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "refactor the parser") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "I found two candidate modules") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "Which module do I split first?") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "tokenizer.zig") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "grammar.zig") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "refactor the parser") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "I found two candidate modules") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "Which module do I split first?") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "tokenizer.zig") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "grammar.zig") != null);
     // The answer contract matches the peer path: one option, verbatim.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "verbatim") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "verbatim") != null);
     // The system prompt is boilerplate, not context worth forwarding.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "system boilerplate") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "system boilerplate") == null);
 }
 
 test "parentAnswerPrompt clips the transcript to a bounded recent tail" {
@@ -3027,12 +3027,12 @@ test "parentAnswerPrompt clips the transcript to a bounded recent tail" {
 
     const prompt = try parentAnswerPrompt(arena, "task", messages.items, "Q?", &.{ "a", "b" });
     // Recent messages survive; old ones do not ride along.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "msg-29") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "msg-1\n") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "msg-29") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "msg-1\n") == null);
     // Each message is clipped, so one huge message cannot blow the prompt up.
     const over = try arena.alloc(u8, parent_answer_max_msg_bytes + 1);
     @memset(over, 'x');
-    try std.testing.expect(std.mem.indexOf(u8, prompt, over) == null);
+    try std.testing.expect(std.mem.find(u8, prompt, over) == null);
 }
 
 test "answerAsParent answers through the parent's provider" {

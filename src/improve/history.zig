@@ -170,11 +170,11 @@ pub const History = struct {
     /// stringifier in exactly one shape.
     fn statusSplit(line: []const u8, ids: []const []const u8) ?struct { before: []const u8, after: []const u8 } {
         const needle = "\"status\":\"accepted\"";
-        const at = std.mem.indexOf(u8, line, needle) orelse return null;
+        const at = std.mem.find(u8, line, needle) orelse return null;
         for (ids) |id| {
             var id_buf: [128]u8 = undefined;
             const id_field = std.fmt.bufPrint(&id_buf, "\"id\":\"{s}\"", .{id}) catch continue;
-            if (std.mem.indexOf(u8, line, id_field) != null) {
+            if (std.mem.find(u8, line, id_field) != null) {
                 return .{ .before = line[0..at], .after = line[at + needle.len ..] };
             }
         }
@@ -540,7 +540,7 @@ pub const History = struct {
 /// the first error line is the part that says what to do differently.
 fn firstLine(s: []const u8, max: usize) []const u8 {
     const trimmed = std.mem.trim(u8, s, " \t\r\n");
-    const end = std.mem.indexOfScalar(u8, trimmed, '\n') orelse trimmed.len;
+    const end = std.mem.findScalar(u8, trimmed, '\n') orelse trimmed.len;
     return trimmed[0..@min(end, max)];
 }
 
@@ -577,7 +577,7 @@ test "history append + revert round trip" {
     // the log file exists with one line
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(raw);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "test-id-1") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "test-id-1") != null);
 }
 
 test "an edit already accepted is recognised, a different one is not" {
@@ -674,9 +674,9 @@ test "append keeps every prior improvement" {
     // The whole point of the log: an earlier entry is still there after a
     // later one lands. Without this the improvement loop has no memory and
     // re-proposes work it already promoted.
-    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "imp-3") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "imp-1") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "imp-2") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "imp-3") != null);
 
     var lines: usize = 0;
     var it = std.mem.splitScalar(u8, std.mem.trim(u8, raw, "\n"), '\n');
@@ -778,9 +778,9 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
     {
         const summary = try hist.recentSummary(arena, 2);
         // e3 is rejected and has detail; e4 is accepted.
-        try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected: three") != null);
-        try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
-        try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
+        try std.testing.expect(std.mem.find(u8, summary, "- rejected: three") != null);
+        try std.testing.expect(std.mem.find(u8, summary, "rejected because: why not") != null);
+        try std.testing.expect(std.mem.find(u8, summary, "- accepted: four") != null);
     }
 
     {
@@ -834,10 +834,10 @@ test "the class of an accepted change is recorded, rendered, and counted as a st
     try std.testing.expectEqual(@as(usize, 0), try hist.trailingClassStreak(arena, .behavior, 12));
 
     const summary = try hist.recentSummary(arena, 6);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted [test_only]: a third test") != null);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected [inert]: refused") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "- accepted [test_only]: a third test") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "- rejected [inert]: refused") != null);
     // The pre-classification entry has no tag to render.
-    try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: unclassified") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "- accepted: unclassified") != null);
 }
 
 test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
@@ -866,10 +866,10 @@ test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
 
     const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 24));
     defer gpa.free(raw);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"id\":\"big\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"id\":\"big\"") != null);
     // The full detail survives the round trip; a fixed-buffer write would
     // have errored the append and left no entry at all.
-    try std.testing.expect(std.mem.indexOf(u8, raw, big_detail) != null);
+    try std.testing.expect(std.mem.find(u8, raw, big_detail) != null);
 }
 
 test "markReverted flips accepted to reverted surgically and idempotently" {
@@ -913,7 +913,7 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
     // Only the status field of the one matched line changed; the flip is
     // exactly one byte-range substitution on the whole file.
     try std.testing.expectEqual(before.len + "reverted".len - "accepted".len, after.len);
-    try std.testing.expect(std.mem.indexOf(u8, after, "\"id\":\"imp-gone\",\"ts\"") != null);
+    try std.testing.expect(std.mem.find(u8, after, "\"id\":\"imp-gone\",\"ts\"") != null);
     // The untouched lines survive byte-for-byte: the first, and everything
     // after the one flipped line.
     var before_lines = std.mem.splitScalar(u8, before, '\n');
@@ -937,8 +937,8 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
 
     // The rendered history now tells the next run the truth.
     const summary = try hist.recentSummary(arena, 6);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "- reverted [behavior]: gets reverted") != null);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: stays accepted") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "- reverted [behavior]: gets reverted") != null);
+    try std.testing.expect(std.mem.find(u8, summary, "- accepted: stays accepted") != null);
 }
 
 test "firstLine trims, takes the first line, and clips to max" {

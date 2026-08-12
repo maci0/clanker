@@ -429,7 +429,7 @@ pub const Config = struct {
         var want_model = model_name;
         if (want_provider == null) {
             if (want_model) |m| {
-                if (std.mem.indexOfScalar(u8, m, '/')) |slash| {
+                if (std.mem.findScalar(u8, m, '/')) |slash| {
                     const head = m[0..slash];
                     const tail = m[slash + 1 ..];
                     if (head.len > 0 and tail.len > 0 and self.providers.getPtr(head) != null) {
@@ -824,7 +824,7 @@ pub const Config = struct {
     /// `ck_http` compares this exact string with the parsed URL hostname, so
     /// a URL, path, or host:port entry would never grant the intended access.
     fn isBareHost(host: []const u8) bool {
-        return host.len > 0 and std.mem.indexOfAny(u8, host, ":/?#@% \t\r\n") == null;
+        return host.len > 0 and std.mem.findAny(u8, host, ":/?#@% \t\r\n") == null;
     }
 
     fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
@@ -1577,19 +1577,19 @@ pub fn configuredHosts(self: *const Config, arena: std.mem.Allocator, which: []c
 /// `std.Uri.host`, which excludes it, so keeping `:17932` here would deny every
 /// peer that runs on a non-default port.
 pub fn hostOf(url: []const u8) ?[]const u8 {
-    const scheme_end = std.mem.indexOf(u8, url, "://") orelse return null;
+    const scheme_end = std.mem.find(u8, url, "://") orelse return null;
     const rest = url[scheme_end + 3 ..];
-    const end = std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len;
+    const end = std.mem.findAny(u8, rest, "/?#") orelse rest.len;
     var host = rest[0..end];
-    if (std.mem.indexOfScalar(u8, host, '@')) |at| host = host[at + 1 ..];
+    if (std.mem.findScalar(u8, host, '@')) |at| host = host[at + 1 ..];
     if (host.len > 0 and host[0] == '[') {
         // IPv6 literal: the port sits after the closing bracket. std.Uri.host
         // excludes the brackets, so return the raw address or the granted host
         // could never match ck_http's comparison against a peer/providers URL
         // on IPv6.
-        const close = std.mem.indexOfScalar(u8, host, ']') orelse return null;
+        const close = std.mem.findScalar(u8, host, ']') orelse return null;
         host = host[1..close];
-    } else if (std.mem.indexOfScalar(u8, host, ':')) |colon| {
+    } else if (std.mem.findScalar(u8, host, ':')) |colon| {
         host = host[0..colon];
     }
     return if (host.len == 0) null else host;

@@ -208,7 +208,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     while (idx < args.len) : (idx += 1) {
         var a = args[idx];
         if (inline_value == null and a.len > 2 and a[0] == '-' and a[1] == '-') {
-            if (std.mem.indexOfScalar(u8, a, '=')) |eq| {
+            if (std.mem.findScalar(u8, a, '=')) |eq| {
                 split_buf[0] = a[0..eq];
                 split_buf[1] = a[eq + 1 ..];
                 a = split_buf[0];
@@ -446,7 +446,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 // agent CLI takes a bare prompt (`clanker "fix the bug"`).
                 // Only when it cannot be a command name, so a typo'd command
                 // is still reported rather than silently run as a prompt.
-                if (std.mem.indexOfScalar(u8, a, ' ') == null and a.len < 24) {
+                if (std.mem.findScalar(u8, a, ' ') == null and a.len < 24) {
                     setDiag(diag, a);
                     return error.UnknownCommand;
                 }
@@ -609,7 +609,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
 
 fn commandForHelp(name: []const u8) ?Command {
     for (&specs) |*s| {
-        const end = std.mem.indexOfAny(u8, s.usage, " [") orelse s.usage.len;
+        const end = std.mem.findAny(u8, s.usage, " [") orelse s.usage.len;
         if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
     }
     if (std.mem.eql(u8, name, "prune")) return .prune;
@@ -646,7 +646,7 @@ pub fn suggestCommand(input: []const u8) ?[]const u8 {
     var best: ?[]const u8 = null;
     var best_distance: usize = 3;
     for (&specs) |*s| {
-        const end = std.mem.indexOfAny(u8, s.usage, " [") orelse s.usage.len;
+        const end = std.mem.findAny(u8, s.usage, " [") orelse s.usage.len;
         const spelling = s.usage[0..end];
         const distance = editDistance(input, spelling);
         if (distance < best_distance) {
@@ -3042,12 +3042,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         if (rawhttp.requestComplete(total.items)) break;
     }
-    if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| {
+    if (std.mem.find(u8, total.items, "\r\n\r\n")) |hdr_end| {
         const headers_raw = total.items[0..hdr_end];
         const body = total.items[hdr_end + 4 ..];
         var method: []const u8 = "";
         var target: []const u8 = "";
-        if (std.mem.indexOf(u8, headers_raw, "\r\n")) |line_end| {
+        if (std.mem.find(u8, headers_raw, "\r\n")) |line_end| {
             var it = std.mem.tokenizeAny(u8, headers_raw[0..line_end], " ");
             method = it.next() orelse "";
             target = it.next() orelse "";
@@ -3056,7 +3056,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // meant any URL carrying a query string missed its route and 404'd —
         // "/" was fine but "/?v=3" was not, and the board could not name its
         // room until this was special-cased for one endpoint.
-        const path = target[0..(std.mem.indexOfScalar(u8, target, '?') orelse target.len)];
+        const path = target[0..(std.mem.findScalar(u8, target, '?') orelse target.len)];
         request_method = method;
         request_path = path;
         // Preserve a caller's correlation id across proxies and peer agents.
@@ -3291,7 +3291,7 @@ fn storeNotification(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, recor
     try out_list.append(gpa, '\n');
     if (out_list.items.len > notifications_max_bytes) {
         const floor = out_list.items.len - notifications_max_bytes;
-        const newline = std.mem.indexOfScalarPos(u8, out_list.items, floor, '\n') orelse floor;
+        const newline = std.mem.findScalarPos(u8, out_list.items, floor, '\n') orelse floor;
         const keep = @min(newline + 1, out_list.items.len);
         std.mem.copyForwards(u8, out_list.items[0 .. out_list.items.len - keep], out_list.items[keep..]);
         out_list.shrinkRetainingCapacity(out_list.items.len - keep);
@@ -3441,10 +3441,10 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
 
     var room: []const u8 = "";
     var after: i64 = 0;
-    if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+    if (std.mem.findScalar(u8, target, '?')) |q| {
         var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
         while (params.next()) |pair| {
-            if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
+            if (std.mem.findScalar(u8, pair, '=')) |eq| {
                 const k = pair[0..eq];
                 const v = pair[eq + 1 ..];
                 // Decoded, not taken raw: a direct-message room is named
@@ -5035,7 +5035,7 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
     const arena = arena_state.allocator();
 
     const rest = target["/webui/plugins/".len..];
-    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse {
+    const slash = std.mem.findScalar(u8, rest, '/') orelse {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
@@ -5134,10 +5134,10 @@ fn handleBoard(
     // so the op set is the tool's and this file does not get a second opinion
     // about what a valid board operation is.
     var room: []const u8 = "";
-    if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+    if (std.mem.findScalar(u8, target, '?')) |q| {
         var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
         while (params.next()) |pair| {
-            if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
+            if (std.mem.findScalar(u8, pair, '=')) |eq| {
                 if (std.mem.eql(u8, pair[0..eq], "room"))
                     room = percentDecode(arena, pair[eq + 1 ..]) catch pair[eq + 1 ..];
             }
@@ -5304,7 +5304,7 @@ fn handleLogs(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gz
         // Tail only, cut at a line boundary so the view never opens mid-line.
         var tail = if (raw.len > log_tail_bytes) raw[raw.len - log_tail_bytes ..] else raw;
         if (raw.len > log_tail_bytes) {
-            if (std.mem.indexOfScalar(u8, tail, '\n')) |nl| tail = tail[nl + 1 ..];
+            if (std.mem.findScalar(u8, tail, '\n')) |nl| tail = tail[nl + 1 ..];
         }
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer };
@@ -5546,7 +5546,7 @@ const BranchRef = struct { src: []const u8, turn: usize };
 /// way the fork suffix does.
 fn branchSuffix(id: []const u8) ?BranchRef {
     const marker = "/branch/";
-    const at = std.mem.indexOf(u8, id, marker) orelse return null;
+    const at = std.mem.find(u8, id, marker) orelse return null;
     const src = id[0..at];
     const n = id[at + marker.len ..];
     if (n.len == 0) return null;
@@ -5658,10 +5658,10 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     const arena = arena_state.allocator();
 
     var requested: []const u8 = "";
-    if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+    if (std.mem.findScalar(u8, target, '?')) |q| {
         var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
         while (params.next()) |pair| {
-            if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
+            if (std.mem.findScalar(u8, pair, '=')) |eq| {
                 const k = pair[0..eq];
                 const v = pair[eq + 1 ..];
                 if (std.mem.eql(u8, k, "path")) requested = percentDecode(arena, v) catch v;
@@ -6019,7 +6019,7 @@ fn handlePlugins(
         };
         // The name becomes a word in the tool's argument string, so anything
         // with whitespace in it would silently become a different command.
-        if (name.len == 0 or name.len > 64 or std.mem.indexOfAny(u8, name, " \t\r\n") != null) {
+        if (name.len == 0 or name.len > 64 or std.mem.findAny(u8, name, " \t\r\n") != null) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad plugin name\"}");
             return;
         }
@@ -6279,7 +6279,7 @@ fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest:
     }
     if (rest.len == 0 or rest[0] != '/') return null;
     const after_slash = rest[1..];
-    const slash_pos = std.mem.indexOfScalar(u8, after_slash, '/');
+    const slash_pos = std.mem.findScalar(u8, after_slash, '/');
     const col_id = if (slash_pos) |pp| after_slash[0..pp] else after_slash;
     const sub = if (slash_pos) |pp| after_slash[pp..] else "";
 
@@ -6332,11 +6332,11 @@ fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest:
 }
 
 fn extractQueryParam(target: []const u8, key: []const u8) ?[]const u8 {
-    const qpos = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    const qpos = std.mem.findScalar(u8, target, '?') orelse return null;
     const qs = target[qpos + 1 ..];
     var it = std.mem.splitScalar(u8, qs, '&');
     while (it.next()) |pair| {
-        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, pair, '=') orelse continue;
         if (std.mem.eql(u8, pair[0..eq], key)) return pair[eq + 1 ..];
     }
     return null;
@@ -6638,7 +6638,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                                 var score: usize = 0;
                                 var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
                                 while (tq_it.next()) |tok| {
-                                    if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.indexOf(u8, txt, tok) != null) score += 1;
+                                    if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.find(u8, txt, tok) != null) score += 1;
                                 }
                                 if (score == 0) continue;
                                 if (mem_buf.items.len > 80_000) break;
@@ -6667,7 +6667,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                         var score: usize = 0;
                         var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
                         while (tq_it.next()) |tok| {
-                            if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.indexOf(u8, txt, tok) != null) score += 1;
+                            if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.find(u8, txt, tok) != null) score += 1;
                         }
                         if (score == 0) continue;
                         if (mem_buf.items.len > 80_000) break;
@@ -7214,7 +7214,7 @@ fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
 fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
         if (!std.ascii.eqlIgnoreCase(line[0..colon], name)) continue;
         return std.mem.trim(u8, line[colon + 1 ..], " ");
     }
@@ -7261,7 +7261,7 @@ fn unexpectedHost(headers_raw: []const u8, port: u16) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     var authority: ?[]const u8 = null;
     while (lines.next()) |line| {
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
         if (!std.ascii.eqlIgnoreCase(line[0..colon], "host")) continue;
         if (authority != null) return true;
         authority = std.mem.trim(u8, line[colon + 1 ..], " \t");
@@ -7296,7 +7296,7 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
 fn acceptsGzip(headers_raw: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
         if (!std.ascii.eqlIgnoreCase(line[0..colon], "accept-encoding")) continue;
         var codings = std.mem.splitScalar(u8, line[colon + 1 ..], ',');
         while (codings.next()) |coding_raw| {
@@ -7305,7 +7305,7 @@ fn acceptsGzip(headers_raw: []const u8) bool {
             if (!std.ascii.eqlIgnoreCase(coding, "gzip")) continue;
             while (parts.next()) |parameter_raw| {
                 const parameter = std.mem.trim(u8, parameter_raw, " \t");
-                const equals = std.mem.indexOfScalar(u8, parameter, '=') orelse continue;
+                const equals = std.mem.findScalar(u8, parameter, '=') orelse continue;
                 const name = std.mem.trim(u8, parameter[0..equals], " \t");
                 const value = std.mem.trim(u8, parameter[equals + 1 ..], " \t");
                 if (std.ascii.eqlIgnoreCase(name, "q") and isZeroQuality(value)) break;
@@ -7634,22 +7634,22 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
 
     // Explicit id: that goal only, even if not the newest.
     const explicit = try resolveRunTask(arena, io, tmp.dir, "do the thing", "old", false);
-    try std.testing.expect(std.mem.indexOf(u8, explicit, "## Active goal") != null);
-    try std.testing.expect(std.mem.indexOf(u8, explicit, "old objective") != null);
-    try std.testing.expect(std.mem.indexOf(u8, explicit, "do the thing") != null);
-    try std.testing.expect(std.mem.indexOf(u8, explicit, "ship the feature") == null);
+    try std.testing.expect(std.mem.find(u8, explicit, "## Active goal") != null);
+    try std.testing.expect(std.mem.find(u8, explicit, "old objective") != null);
+    try std.testing.expect(std.mem.find(u8, explicit, "do the thing") != null);
+    try std.testing.expect(std.mem.find(u8, explicit, "ship the feature") == null);
 
     // Auto: newest active (updated=50), not the done goal with updated=99.
     const auto = try resolveRunTask(arena, io, tmp.dir, "chat task", null, true);
-    try std.testing.expect(std.mem.indexOf(u8, auto, "ship the feature") != null);
-    try std.testing.expect(std.mem.indexOf(u8, auto, "tests green") != null);
-    try std.testing.expect(std.mem.indexOf(u8, auto, "chat task") != null);
-    try std.testing.expect(std.mem.indexOf(u8, auto, "finished work") == null);
+    try std.testing.expect(std.mem.find(u8, auto, "ship the feature") != null);
+    try std.testing.expect(std.mem.find(u8, auto, "tests green") != null);
+    try std.testing.expect(std.mem.find(u8, auto, "chat task") != null);
+    try std.testing.expect(std.mem.find(u8, auto, "finished work") == null);
 
     // Goal-only: empty task becomes a work order for that goal.
     const goal_only = try resolveRunTask(arena, io, tmp.dir, "", "new", false);
-    try std.testing.expect(std.mem.indexOf(u8, goal_only, "Work on this goal until the completion criterion is met.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, goal_only, "ship the feature") != null);
+    try std.testing.expect(std.mem.find(u8, goal_only, "Work on this goal until the completion criterion is met.") != null);
+    try std.testing.expect(std.mem.find(u8, goal_only, "ship the feature") != null);
 
     // Missing id leaves the task alone (warns on stderr via log).
     const missing = try resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false);
@@ -7970,18 +7970,18 @@ test "webui registry-miss error names tools_dir and does not sole-blame zig buil
     const body = try webuiMissingRegistryError(arena, "tools/no-such-manifests");
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
     const err_msg = parsed.object.get("error").?.string;
-    try std.testing.expect(std.mem.indexOf(u8, err_msg, "tools/no-such-manifests") != null);
-    try std.testing.expect(std.mem.indexOf(u8, err_msg, "registry") != null);
-    try std.testing.expect(std.mem.indexOf(u8, err_msg, "tools_dir") != null);
+    try std.testing.expect(std.mem.find(u8, err_msg, "tools/no-such-manifests") != null);
+    try std.testing.expect(std.mem.find(u8, err_msg, "registry") != null);
+    try std.testing.expect(std.mem.find(u8, err_msg, "tools_dir") != null);
     // Sole-blaming guest rebuilds is the bug this test locks out.
-    try std.testing.expect(std.mem.indexOf(u8, err_msg, "zig build tools") == null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") == null);
+    try std.testing.expect(std.mem.find(u8, err_msg, "zig build tools") == null);
+    try std.testing.expect(std.mem.find(u8, body, "zig build tools") == null);
 }
 
 test "webui wasm-miss error still points at zig build tools" {
     const body = webuiMissingWasmError();
-    try std.testing.expect(std.mem.indexOf(u8, body, "wasm") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") != null);
+    try std.testing.expect(std.mem.find(u8, body, "wasm") != null);
+    try std.testing.expect(std.mem.find(u8, body, "zig build tools") != null);
 }
 
 /// `clanker arena "<question>" --for X --against Y` — one match, non-interactive,

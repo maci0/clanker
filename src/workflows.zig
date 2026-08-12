@@ -122,7 +122,7 @@ pub fn findByName(workflows: []const Workflow, name: []const u8) ?Workflow {
 /// Caller owns the result (arena).
 pub fn instantiate(arena: std.mem.Allocator, body: []const u8, args: []const u8) ![]const u8 {
     // Fast path: no placeholder present.
-    if (std.mem.indexOf(u8, body, "{{") == null and std.mem.indexOf(u8, body, "$ARGUMENTS") == null) {
+    if (std.mem.find(u8, body, "{{") == null and std.mem.find(u8, body, "$ARGUMENTS") == null) {
         if (args.len == 0) return body;
         // No placeholder but args given: append them (Cursor does similarly — extra args become trailing context).
         return try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ body, args });
@@ -179,11 +179,11 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
 
     // Frontmatter: leading `---\n` ... `\n---\n` (or `\n---` at EOF).
     if (std.mem.startsWith(u8, raw, "---")) {
-        const first_nl = std.mem.indexOfScalar(u8, raw, '\n') orelse raw.len;
+        const first_nl = std.mem.findScalar(u8, raw, '\n') orelse raw.len;
         // First line must be exactly "---" (allow trailing spaces).
         const first_line = std.mem.trim(u8, raw[0..first_nl], " \t\r");
         if (std.mem.eql(u8, first_line, "---")) {
-            if (std.mem.indexOf(u8, raw[first_nl + 1 ..], "\n---")) |rel| {
+            if (std.mem.find(u8, raw[first_nl + 1 ..], "\n---")) |rel| {
                 const fm_start = first_nl + 1;
                 const fm_end = fm_start + rel;
                 const fm = raw[fm_start..fm_end];
@@ -195,7 +195,7 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
                 while (lines.next()) |line| {
                     const trimmed = std.mem.trim(u8, line, " \t\r");
                     if (trimmed.len == 0 or trimmed[0] == '#') continue;
-                    const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+                    const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
                     const key = std.mem.trim(u8, trimmed[0..colon], " \t");
                     var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
                     // Strip surrounding quotes.
@@ -251,7 +251,7 @@ fn inferDescription(body: []const u8) []const u8 {
         if (t.len == 0) continue;
         const end = @min(t.len, 120);
         // Cut at sentence end if within budget.
-        if (std.mem.indexOfScalar(u8, t[0..end], '.')) |dot| {
+        if (std.mem.findScalar(u8, t[0..end], '.')) |dot| {
             if (dot >= 20) return t[0 .. dot + 1];
         }
         return t[0..end];
@@ -288,7 +288,7 @@ test "parseWorkflow: no frontmatter infers description from body" {
     const wf = try parseWorkflow(arena, "review", "review.md", raw);
     try std.testing.expectEqualStrings("review", wf.name);
     try std.testing.expectEqualStrings("Code review", wf.description);
-    try std.testing.expect(std.mem.indexOf(u8, wf.body, "Review this") != null);
+    try std.testing.expect(std.mem.find(u8, wf.body, "Review this") != null);
 }
 
 test "parseWorkflow: quoted description and arg_hint aliases" {
@@ -343,8 +343,8 @@ test "catalogText formats with and without arg_hint" {
         .{ .name = "review", .description = "review code", .arg_hint = "", .body = "y", .rel_path = "review.md" },
     };
     const txt = try catalogText(arena, &wfs);
-    try std.testing.expect(std.mem.indexOf(u8, txt, "- plan [feat]: make a plan") != null);
-    try std.testing.expect(std.mem.indexOf(u8, txt, "- review: review code") != null);
+    try std.testing.expect(std.mem.find(u8, txt, "- plan [feat]: make a plan") != null);
+    try std.testing.expect(std.mem.find(u8, txt, "- review: review code") != null);
 }
 
 test "loadAll: missing dir returns empty, not error" {

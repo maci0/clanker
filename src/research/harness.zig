@@ -65,7 +65,7 @@ pub fn extractMetric(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, stdout
             continue;
         }
         var search: usize = 0;
-        while (std.mem.indexOfPos(u8, hay, search, pattern)) |pos| {
+        while (std.mem.findPos(u8, hay, search, pattern)) |pos| {
             const after = hay[pos + pattern.len ..];
             if (parseFirstFloat(after)) |v| return v;
             search = pos + pattern.len;

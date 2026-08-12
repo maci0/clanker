@@ -111,11 +111,11 @@ pub const MockServer = struct {
             if (total.items.len > (1 << 20)) break;
             if (rawhttp.requestComplete(total.items)) break;
         }
-        if (std.mem.indexOf(u8, total.items, "\r\n\r\n")) |hdr_end| {
+        if (std.mem.find(u8, total.items, "\r\n\r\n")) |hdr_end| {
             const headers_raw = total.items[0..hdr_end];
             const body = total.items[hdr_end + 4 ..];
             var target: []const u8 = "";
-            if (std.mem.indexOf(u8, headers_raw, "\r\n")) |line_end| {
+            if (std.mem.find(u8, headers_raw, "\r\n")) |line_end| {
                 var it = std.mem.tokenizeAny(u8, headers_raw[0..line_end], " ");
                 _ = it.next(); // HTTP method, unused
                 target = it.next() orelse "";

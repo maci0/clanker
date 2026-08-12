@@ -193,7 +193,7 @@ fn expandImports(
     depth: usize,
     state: *ImportState,
 ) ImportError![]const u8 {
-    if (std.mem.indexOfScalar(u8, content, '@') == null) return content;
+    if (std.mem.findScalar(u8, content, '@') == null) return content;
 
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
@@ -207,7 +207,7 @@ fn expandImports(
         {
             const line_start = if (i == 0) true else content[i - 1] == '\n';
             if (line_start) {
-                const fence_end = std.mem.indexOfScalarPos(u8, content, i, '\n') orelse content.len;
+                const fence_end = std.mem.findScalarPos(u8, content, i, '\n') orelse content.len;
                 try out.appendSlice(arena, content[i..fence_end]);
                 i = fence_end;
                 in_fence = !in_fence;
@@ -231,8 +231,8 @@ fn expandImports(
                 // count as imports: missing → soft skip (drop the @ref). Bare
                 // tokens (`@README`) expand only when the file exists so that
                 // incidental `@mentions` stay in the text.
-                const path_shaped = std.mem.indexOfScalar(u8, ipath, '/') != null or
-                    std.mem.indexOfScalar(u8, ipath, '.') != null or
+                const path_shaped = std.mem.findScalar(u8, ipath, '/') != null or
+                    std.mem.findScalar(u8, ipath, '.') != null or
                     std.mem.startsWith(u8, ipath, "~");
                 const resolved = try resolveImportPath(arena, parent_file, ipath, state.home);
                 if (try loadExpanded(arena, io, resolved, depth + 1, state)) |imported| {
@@ -588,19 +588,19 @@ test "build includes global, project, and local AGENTS.md sections" {
         .local_instructions_file = local_path,
     }, &.{});
 
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "BASE_PROMPT_MARKER") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Global operator instructions (~/.agents/AGENTS.md)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "GLOBAL_AGENTS_MARKER_abc") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project conventions (AGENTS.md)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "PROJECT_AGENTS_MARKER_xyz") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project-local operator instructions (.agents/AGENTS.md)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "LOCAL_AGENTS_MARKER_def") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "BASE_PROMPT_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "## Global operator instructions (~/.agents/AGENTS.md)") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "GLOBAL_AGENTS_MARKER_abc") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "## Project conventions (AGENTS.md)") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "PROJECT_AGENTS_MARKER_xyz") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "## Project-local operator instructions (.agents/AGENTS.md)") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "LOCAL_AGENTS_MARKER_def") != null);
 
     // Instructions progress from device-wide through shared project rules to
     // local additions for this checkout.
-    const gpos = std.mem.indexOf(u8, prompt, "GLOBAL_AGENTS_MARKER_abc").?;
-    const ppos = std.mem.indexOf(u8, prompt, "PROJECT_AGENTS_MARKER_xyz").?;
-    const lpos = std.mem.indexOf(u8, prompt, "LOCAL_AGENTS_MARKER_def").?;
+    const gpos = std.mem.find(u8, prompt, "GLOBAL_AGENTS_MARKER_abc").?;
+    const ppos = std.mem.find(u8, prompt, "PROJECT_AGENTS_MARKER_xyz").?;
+    const lpos = std.mem.find(u8, prompt, "LOCAL_AGENTS_MARKER_def").?;
     try std.testing.expect(gpos < ppos);
     try std.testing.expect(ppos < lpos);
 }
@@ -652,9 +652,9 @@ test "build omits unavailable or empty instruction layers; project still include
         .project_agents_file = project_path,
         .local_instructions_file = missing_local,
     }, &.{});
-    try std.testing.expect(std.mem.indexOf(u8, p_missing, heading) == null);
-    try std.testing.expect(std.mem.indexOf(u8, p_missing, local_heading) == null);
-    try std.testing.expect(std.mem.indexOf(u8, p_missing, "PROJECT_ONLY_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, p_missing, heading) == null);
+    try std.testing.expect(std.mem.find(u8, p_missing, local_heading) == null);
+    try std.testing.expect(std.mem.find(u8, p_missing, "PROJECT_ONLY_MARKER") != null);
 
     // Empty / whitespace-only file: soft skip.
     const p_empty = try build(arena, io, .{
@@ -665,9 +665,9 @@ test "build omits unavailable or empty instruction layers; project still include
         .project_agents_file = project_path,
         .local_instructions_file = empty_local,
     }, &.{});
-    try std.testing.expect(std.mem.indexOf(u8, p_empty, heading) == null);
-    try std.testing.expect(std.mem.indexOf(u8, p_empty, local_heading) == null);
-    try std.testing.expect(std.mem.indexOf(u8, p_empty, "PROJECT_ONLY_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, p_empty, heading) == null);
+    try std.testing.expect(std.mem.find(u8, p_empty, local_heading) == null);
+    try std.testing.expect(std.mem.find(u8, p_empty, "PROJECT_ONLY_MARKER") != null);
 
     // Empty path string: no global load attempted.
     const p_none = try build(arena, io, .{
@@ -678,9 +678,9 @@ test "build omits unavailable or empty instruction layers; project still include
         .project_agents_file = project_path,
         .local_instructions_file = "",
     }, &.{});
-    try std.testing.expect(std.mem.indexOf(u8, p_none, heading) == null);
-    try std.testing.expect(std.mem.indexOf(u8, p_none, local_heading) == null);
-    try std.testing.expect(std.mem.indexOf(u8, p_none, "PROJECT_ONLY_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, p_none, heading) == null);
+    try std.testing.expect(std.mem.find(u8, p_none, local_heading) == null);
+    try std.testing.expect(std.mem.find(u8, p_none, "PROJECT_ONLY_MARKER") != null);
 }
 
 test "build expands @imports in AGENTS.md; missing import soft-skips" {
@@ -726,12 +726,12 @@ test "build expands @imports in AGENTS.md; missing import soft-skips" {
         .local_instructions_file = "",
     }, &.{});
 
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "Shared conventions.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "IMPORTED_RULES_MARKER") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "After imports.") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "Shared conventions.") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "IMPORTED_RULES_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "After imports.") != null);
     // Missing import dropped, not left as a dangling @path.
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "@nested/does-not-exist.md") == null);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "does-not-exist") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "@nested/does-not-exist.md") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "does-not-exist") == null);
 }
 
 test "build: project @import of local file skips dedicated local section" {
@@ -776,16 +776,16 @@ test "build: project @import of local file skips dedicated local section" {
         .local_instructions_file = local_path,
     }, &.{});
 
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "LOCAL_ONCE_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, prompt, "LOCAL_ONCE_MARKER") != null);
     // Exactly once — not project import + dedicated local section.
     var count: usize = 0;
     var rest = prompt;
-    while (std.mem.indexOf(u8, rest, "LOCAL_ONCE_MARKER")) |pos| {
+    while (std.mem.find(u8, rest, "LOCAL_ONCE_MARKER")) |pos| {
         count += 1;
         rest = rest[pos + 1 ..];
     }
     try std.testing.expectEqual(@as(usize, 1), count);
-    try std.testing.expect(std.mem.indexOf(u8, prompt, "## Project-local operator instructions") == null);
+    try std.testing.expect(std.mem.find(u8, prompt, "## Project-local operator instructions") == null);
 }
 
 test "expandImports leaves @path inside code spans and fences alone" {
@@ -814,9 +814,9 @@ test "expandImports leaves @path inside code spans and fences alone" {
         \\Done.
     ;
     const out = try expandImports(arena, io, md, parent, 0, &state);
-    try std.testing.expect(std.mem.indexOf(u8, out, "SHOULD_NOT_APPEAR") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "`@secret.md`") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "Done.") != null);
+    try std.testing.expect(std.mem.find(u8, out, "SHOULD_NOT_APPEAR") == null);
+    try std.testing.expect(std.mem.find(u8, out, "`@secret.md`") != null);
+    try std.testing.expect(std.mem.find(u8, out, "Done.") != null);
 }
 
 test "resolveImportPath: relative, absolute, tilde" {

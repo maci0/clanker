@@ -297,7 +297,7 @@ test "a report counts what it prints" {
     try std.testing.expectEqual(@as(usize, 1), rep.warnings);
     // The detail is printed when there is one, and the label alone otherwise.
     const text = buf[0..w.end];
-    try std.testing.expect(std.mem.indexOf(u8, text, "iffy") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "detail") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "FAIL") != null);
+    try std.testing.expect(std.mem.find(u8, text, "iffy") != null);
+    try std.testing.expect(std.mem.find(u8, text, "detail") != null);
+    try std.testing.expect(std.mem.find(u8, text, "FAIL") != null);
 }

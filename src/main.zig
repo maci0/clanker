@@ -89,11 +89,11 @@ fn resolveZigLibDir(io: std.Io, gpa: std.mem.Allocator) void {
     var it = std.mem.splitScalar(u8, res.stdout, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (std.mem.indexOf(u8, trimmed, ".lib_dir =")) |idx| {
+        if (std.mem.find(u8, trimmed, ".lib_dir =")) |idx| {
             const rest = trimmed[idx + ".lib_dir =".len ..];
             const after = std.mem.trimStart(u8, rest, " \t\"");
             var end: usize = after.len;
-            if (std.mem.indexOfScalar(u8, after, '"')) |q| end = q;
+            if (std.mem.findScalar(u8, after, '"')) |q| end = q;
             const dir = after[0..end];
             if (dir.len > 0) host.zig_lib_dir = gpa.dupe(u8, dir) catch return;
             return;

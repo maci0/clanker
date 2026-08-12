@@ -29,7 +29,7 @@ pub fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process
         var line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
         if (std.mem.startsWith(u8, line, "export ")) line = std.mem.trimStart(u8, line["export ".len..], " ");
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
         const key = std.mem.trim(u8, line[0..eq], " \t");
         if (key.len == 0) continue;
         var value = std.mem.trim(u8, line[eq + 1 ..], " \t");

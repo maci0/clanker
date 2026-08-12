@@ -360,6 +360,7 @@ test "chat wasm tool executes (send + history via ck_chat)" {
         .state_dir = "",
         .state_base_dir = tmp.dir,
         .config_json = "{\"op\":\"send\"}",
+        .tool_self_name = "chat_send",
     };
 
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
@@ -370,7 +371,7 @@ test "chat wasm tool executes (send + history via ck_chat)" {
 
     const out = try mod.executeTool("{\"room\":\"dev\",\"text\":\"hello from wasm\"}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
 
     // The message must have landed in the (isolated) chatroom log.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -484,6 +485,7 @@ test "board wasm tool folds a room log longer than one history page completely" 
                 .state_dir = "",
                 .state_base_dir = dir,
                 .config_json = config_json,
+                .tool_self_name = "board",
             };
             const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
             defer mod.deinit();
@@ -502,17 +504,17 @@ test "board wasm tool folds a room log longer than one history page completely" 
         defer std.testing.allocator.free(args);
         const out = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", args);
         defer std.testing.allocator.free(out);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
     }
 
     const listed = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"list\"}", "{}");
     defer std.testing.allocator.free(listed);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"ok\":true") != null);
     i = 1;
     while (i <= 25) : (i += 1) {
         const title = try std.fmt.allocPrint(std.testing.allocator, "\"title\":\"card-{d:0>2}\"", .{i});
         defer std.testing.allocator.free(title);
-        try std.testing.expect(std.mem.indexOf(u8, listed, title) != null);
+        try std.testing.expect(std.mem.find(u8, listed, title) != null);
     }
 }
 
@@ -550,6 +552,7 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
                 .state_dir = "",
                 .state_base_dir = dir,
                 .config_json = config_json,
+                .tool_self_name = "board",
             };
             const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
             defer mod.deinit();
@@ -560,19 +563,19 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
     // A bare card first, so the later update has something unassigned to hit.
     const first = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"bare\"}");
     defer std.testing.allocator.free(first);
-    try std.testing.expect(std.mem.indexOf(u8, first, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, first, "\"ok\":true") != null);
 
     // board_add's manifested `assignee` puts the card on someone at creation.
     const second = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"taken\",\"assignee\":\"beta\"}");
     defer std.testing.allocator.free(second);
-    try std.testing.expect(std.mem.indexOf(u8, second, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, second, "\"assignee\":\"beta\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, second, "\"assigned_by\":\"test-clanker\"") != null);
+    try std.testing.expect(std.mem.find(u8, second, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, second, "\"assignee\":\"beta\"") != null);
+    try std.testing.expect(std.mem.find(u8, second, "\"assigned_by\":\"test-clanker\"") != null);
 
     // The bare card is the only one in the first reply; its id leads the entry.
     const lead = "\"cards\":[{\"id\":\"";
-    const start = (std.mem.indexOf(u8, first, lead) orelse return error.TestUnexpectedResult) + lead.len;
-    const end = std.mem.indexOfScalarPos(u8, first, start, '"') orelse return error.TestUnexpectedResult;
+    const start = (std.mem.find(u8, first, lead) orelse return error.TestUnexpectedResult) + lead.len;
+    const end = std.mem.findScalarPos(u8, first, start, '"') orelse return error.TestUnexpectedResult;
     const card_id = first[start..end];
 
     // board_update's manifested `assignee` reassigns (it used to be silently
@@ -581,9 +584,9 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
     defer std.testing.allocator.free(upd);
     const third = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"update\"}", upd);
     defer std.testing.allocator.free(third);
-    try std.testing.expect(std.mem.indexOf(u8, third, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, third, "\"assignee\":\"gamma\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, third, "\"assignee\":\"beta\"") != null); // the other card kept its owner
+    try std.testing.expect(std.mem.find(u8, third, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, third, "\"assignee\":\"gamma\"") != null);
+    try std.testing.expect(std.mem.find(u8, third, "\"assignee\":\"beta\"") != null); // the other card kept its owner
 }
 
 test "chat wasm tool routes roomless todo ops to the private list" {
@@ -620,14 +623,15 @@ test "chat wasm tool routes roomless todo ops to the private list" {
             .cfg = &cfg,
             .private_todos = &todos,
             .config_json = try std.fmt.allocPrint(std.testing.allocator, "{{\"op\":\"{s}\"}}", .{step.op}),
+            .tool_self_name = step.op,
         };
         defer std.testing.allocator.free(@constCast(sb.config_json));
         const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
         defer mod.deinit();
         const out = try mod.executeTool(step.args);
         defer std.testing.allocator.free(out);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, step.expect) != null);
+        try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.find(u8, out, step.expect) != null);
     }
 
     // A sandbox without a list is a host wiring error. Top-level Agent.run
@@ -641,13 +645,14 @@ test "chat wasm tool routes roomless todo ops to the private list" {
         .environ_map = &env_map,
         .cfg = &cfg,
         .config_json = "{\"op\":\"todo_add\"}",
+        .tool_self_name = "todo_add",
     };
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();
     const out = try mod.executeTool("{\"title\":\"nope\"}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "host wiring error") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out, "host wiring error") != null);
 }
 
 fn stubParentAnswer(ctx: *anyopaque, gpa: std.mem.Allocator, question: []const u8, options: []const []const u8) anyerror![]const u8 {
@@ -677,14 +682,15 @@ test "ask_user wasm tool routes {parent:true} to the parent answerer" {
         .network_allow = &.{},
         .environ_map = &env_map,
         .parent_ask = .{ .ctx = undefined, .call = &stubParentAnswer },
+        .tool_self_name = "ask_user",
     };
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();
     const out = try mod.executeTool("{\"question\":\"Which one?\",\"options\":[\"A\",\"B\"],\"parent\":true}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"answer\":\"B\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"answered_by\":\"parent\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"answer\":\"B\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"answered_by\":\"parent\"") != null);
 
     // A top-level run: no parent attached, so the tool says to decide alone
     // instead of pretending someone answered.
@@ -694,13 +700,14 @@ test "ask_user wasm tool routes {parent:true} to the parent answerer" {
         .root_dir = "/tmp/ck-sandbox-test",
         .network_allow = &.{},
         .environ_map = &env_map,
+        .tool_self_name = "ask_user",
     };
     const mod_top = try ToolModule.load(std.testing.allocator, io, &sb_top, wasm);
     defer mod_top.deinit();
     const out_top = try mod_top.executeTool("{\"question\":\"Which one?\",\"options\":[\"A\",\"B\"],\"parent\":true}");
     defer std.testing.allocator.free(out_top);
-    try std.testing.expect(std.mem.indexOf(u8, out_top, "\"ok\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out_top, "no parent to ask") != null);
+    try std.testing.expect(std.mem.find(u8, out_top, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out_top, "no parent to ask") != null);
 }
 
 test "model_stats wasm tool executes (ck_stats host fn)" {
@@ -726,6 +733,7 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
         .cfg = &cfg,
         .state_dir = "",
         .state_base_dir = tmp.dir,
+        .tool_self_name = "model_stats",
     };
 
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/stats.wasm", std.testing.allocator, .limited(1 << 20));
@@ -736,8 +744,8 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
 
     const out = try mod.executeTool("{}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"stats\":[]") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"stats\":[]") != null);
 
     // Seed the log and check aggregation flows through the tool.
     token_stats_mod.append(tmp.dir, io, std.testing.allocator, std.testing.allocator, "", .{
@@ -754,16 +762,16 @@ test "model_stats wasm tool executes (ck_stats host fn)" {
     });
     const out2 = try mod.executeTool("{}");
     defer std.testing.allocator.free(out2);
-    try std.testing.expect(std.mem.indexOf(u8, out2, "\"calls\":1") != null);
+    try std.testing.expect(std.mem.find(u8, out2, "\"calls\":1") != null);
 
     // The CLI asks the same tool for its human-readable table. Keep the
     // structured response above stable for model callers.
     const text_out = try mod.executeTool("{\"args\":\"\"}");
     defer std.testing.allocator.free(text_out);
-    try std.testing.expect(std.mem.indexOf(u8, text_out, "\"text\":") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text_out, "provider        model") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text_out, "kimi-k3") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text_out, "totals") != null);
+    try std.testing.expect(std.mem.find(u8, text_out, "\"text\":") != null);
+    try std.testing.expect(std.mem.find(u8, text_out, "provider        model") != null);
+    try std.testing.expect(std.mem.find(u8, text_out, "kimi-k3") != null);
+    try std.testing.expect(std.mem.find(u8, text_out, "totals") != null);
 }
 
 test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read host fns)" {
@@ -800,20 +808,20 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     ;
     const write_out = try mod.executeTool(write_in);
     defer std.testing.allocator.free(write_out);
-    try std.testing.expect(std.mem.indexOf(u8, write_out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, write_out, "\"ok\":true") != null);
 
     // A run_id crossing a path boundary must be rejected, not silently escape
     // state/runs/.
     const bad_out = try mod.executeTool("{\"write\":{\"run_id\":\"../escape\"}}");
     defer std.testing.allocator.free(bad_out);
-    try std.testing.expect(std.mem.indexOf(u8, bad_out, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, bad_out, "\"ok\":false") != null);
 
     const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod2.deinit();
     const read_out = try mod2.executeTool("{\"args\":\"" ++ run_id ++ "\"}");
     defer std.testing.allocator.free(read_out);
-    try std.testing.expect(std.mem.indexOf(u8, read_out, run_id) != null);
-    try std.testing.expect(std.mem.indexOf(u8, read_out, "tool gate  3 B") != null);
+    try std.testing.expect(std.mem.find(u8, read_out, run_id) != null);
+    try std.testing.expect(std.mem.find(u8, read_out, "tool gate  3 B") != null);
 
     // The parent link survives the round trip: a nested run's graph must
     // still name its caller when read back as JSON (the web UI's view).
@@ -821,7 +829,7 @@ test "cmd_graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_r
     defer mod3.deinit();
     const json_out = try mod3.executeTool("{\"args\":\"json " ++ run_id ++ "\"}");
     defer std.testing.allocator.free(json_out);
-    try std.testing.expect(std.mem.indexOf(u8, json_out, "\\\"parent_run_id\\\":\\\"run-parent\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, json_out, "\\\"parent_run_id\\\":\\\"run-parent\\\"") != null);
 }
 
 test "cmd_sessions and cmd_graph report empty when the state dir does not exist" {
@@ -860,8 +868,8 @@ test "cmd_sessions and cmd_graph report empty when the state dir does not exist"
         defer mod.deinit();
         const out = try mod.executeTool("{}");
         defer std.testing.allocator.free(out);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, c.want) != null);
+        try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.find(u8, out, c.want) != null);
     }
 }
 
@@ -918,22 +926,22 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
     defer mod.deinit();
     const planned = try mod.executeTool("{}");
     defer std.testing.allocator.free(planned);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "Plugin SDK") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "Plugin SDK") != null);
     // Autolearn bullets are open work too — only "## Done" is excluded.
-    try std.testing.expect(std.mem.indexOf(u8, planned, "Optimize the most-used tools") != null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "Shipped thing") == null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "checked item") == null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "sub-bullet") == null);
-    try std.testing.expect(std.mem.indexOf(u8, planned, "no planned items") == null);
+    try std.testing.expect(std.mem.find(u8, planned, "Optimize the most-used tools") != null);
+    try std.testing.expect(std.mem.find(u8, planned, "Shipped thing") == null);
+    try std.testing.expect(std.mem.find(u8, planned, "checked item") == null);
+    try std.testing.expect(std.mem.find(u8, planned, "sub-bullet") == null);
+    try std.testing.expect(std.mem.find(u8, planned, "no planned items") == null);
 
     const mod2 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod2.deinit();
     const all = try mod2.executeTool("{\"list\":\"all\"}");
     defer std.testing.allocator.free(all);
-    try std.testing.expect(std.mem.indexOf(u8, all, "Shipped thing") != null);
-    try std.testing.expect(std.mem.indexOf(u8, all, "checked item") != null);
-    try std.testing.expect(std.mem.indexOf(u8, all, "## Done") != null);
+    try std.testing.expect(std.mem.find(u8, all, "Shipped thing") != null);
+    try std.testing.expect(std.mem.find(u8, all, "checked item") != null);
+    try std.testing.expect(std.mem.find(u8, all, "## Done") != null);
 }
 
 test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
@@ -976,9 +984,9 @@ test "cmd_autolearn wasm tool reports the newest tool_error detail as 'last:'" {
     defer mod.deinit();
     const out = try mod.executeTool("{}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "3 failure(s), last: git exited 128: not a git repository") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "last: git exited 1: usage") == null);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out, "3 failure(s), last: git exited 128: not a git repository") != null);
+    try std.testing.expect(std.mem.find(u8, out, "last: git exited 1: usage") == null);
 }
 
 test "cmd_janitor wasm tool scans and removes only shaped staging directories" {
@@ -1014,12 +1022,12 @@ test "cmd_janitor wasm tool scans and removes only shaped staging directories" {
 
     const scan = try mod.executeTool("{\"op\":\"scan\",\"state_dir\":\"state\"}");
     defer std.testing.allocator.free(scan);
-    try std.testing.expect(std.mem.indexOf(u8, scan, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, scan, "orphaned staging directory") != null);
+    try std.testing.expect(std.mem.find(u8, scan, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, scan, "orphaned staging directory") != null);
 
     const pruned = try mod.executeTool("{\"op\":\"prune\",\"state_dir\":\"state\"}");
     defer std.testing.allocator.free(pruned);
-    try std.testing.expect(std.mem.indexOf(u8, pruned, "Removed 7 B") != null);
+    try std.testing.expect(std.mem.find(u8, pruned, "Removed 7 B") != null);
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/staging/imp-123", .{}));
     _ = try tmp.dir.statFile(io, "state/staging/keep-me/data", .{});
 }
@@ -1057,11 +1065,11 @@ test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
     // escaped newline it would put in the JSON string.
     const out = try mod.executeTool("{\"count\":1}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\\n") == null);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\\n") == null);
     // The author is the one field the format wraps in parens, so its
     // presence says the whole format string survived argv assembly.
-    try std.testing.expect(std.mem.indexOf(u8, out, "(") != null);
+    try std.testing.expect(std.mem.find(u8, out, "(") != null);
 }
 
 test "assemblyscript calc_ts tool executes" {
@@ -1117,8 +1125,8 @@ test "assemblyscript json_tool validates, pretty-prints and minifies" {
     // `"` inside the pretty-printed body comes back as the two bytes `\"`.
     const pretty = try mod.executeTool("{\"json\": \"{\\\"b\\\":1,\\\"a\\\":[1,2]}\", \"mode\": \"pretty\"}");
     defer std.testing.allocator.free(pretty);
-    try std.testing.expect(std.mem.indexOf(u8, pretty, "\\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, pretty, "\\\"b\\\": 1") != null);
+    try std.testing.expect(std.mem.find(u8, pretty, "\\n") != null);
+    try std.testing.expect(std.mem.find(u8, pretty, "\\\"b\\\": 1") != null);
 
     const minified = try mod.executeTool("{\"json\": \"{ \\\"a\\\" : 1 }\", \"mode\": \"minify\"}");
     defer std.testing.allocator.free(minified);
@@ -1126,8 +1134,8 @@ test "assemblyscript json_tool validates, pretty-prints and minifies" {
 
     const invalid = try mod.executeTool("{\"json\": \"{bad}\"}");
     defer std.testing.allocator.free(invalid);
-    try std.testing.expect(std.mem.indexOf(u8, invalid, "\"ok\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, invalid, "line 1") != null);
+    try std.testing.expect(std.mem.find(u8, invalid, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, invalid, "line 1") != null);
 }
 
 test "assemblyscript id_gen produces well-formed uuid4, ulid and short ids" {
@@ -1143,13 +1151,13 @@ test "assemblyscript id_gen produces well-formed uuid4, ulid and short ids" {
     const uuid_out = try mod.executeTool("{\"kind\": \"uuid4\"}");
     defer std.testing.allocator.free(uuid_out);
     // {"ok":true,"text":"........-....-4...-[89ab]...-............"}
-    const u_start = std.mem.indexOf(u8, uuid_out, "\"text\":\"").? + 8;
+    const u_start = std.mem.find(u8, uuid_out, "\"text\":\"").? + 8;
     const uuid = uuid_out[u_start .. u_start + 36];
     try std.testing.expectEqual(@as(u8, '-'), uuid[8]);
     try std.testing.expectEqual(@as(u8, '-'), uuid[13]);
     try std.testing.expectEqual(@as(u8, '4'), uuid[14]);
     try std.testing.expectEqual(@as(u8, '-'), uuid[18]);
-    try std.testing.expect(std.mem.indexOfScalar(u8, "89ab", uuid[19]) != null);
+    try std.testing.expect(std.mem.findScalar(u8, "89ab", uuid[19]) != null);
     try std.testing.expectEqual(@as(u8, '-'), uuid[23]);
 
     // 3 short ids, newline-separated; the wrapper escapes each raw newline
@@ -1166,8 +1174,8 @@ test "assemblyscript id_gen produces well-formed uuid4, ulid and short ids" {
 
     const ulid_out = try mod.executeTool("{\"kind\": \"ulid\"}");
     defer std.testing.allocator.free(ulid_out);
-    const l_start = std.mem.indexOf(u8, ulid_out, "\"text\":\"").? + 8;
-    try std.testing.expectEqual(@as(usize, 26), std.mem.indexOfScalarPos(u8, ulid_out, l_start, '"').? - l_start);
+    const l_start = std.mem.find(u8, ulid_out, "\"text\":\"").? + 8;
+    try std.testing.expectEqual(@as(usize, 26), std.mem.findScalarPos(u8, ulid_out, l_start, '"').? - l_start);
 }
 
 test "assemblyscript text_diff renders a unified diff with hunk headers" {
@@ -1182,9 +1190,9 @@ test "assemblyscript text_diff renders a unified diff with hunk headers" {
 
     const out = try mod.executeTool("{\"a\": \"one\\ntwo\\nthree\\n\", \"b\": \"one\\nTWO\\nthree\\n\", \"context\": 1}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "-two") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "+TWO") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "@@ -1,3 +1,3 @@") != null);
+    try std.testing.expect(std.mem.find(u8, out, "-two") != null);
+    try std.testing.expect(std.mem.find(u8, out, "+TWO") != null);
+    try std.testing.expect(std.mem.find(u8, out, "@@ -1,3 +1,3 @@") != null);
 
     const same = try mod.executeTool("{\"a\": \"x\\n\", \"b\": \"x\\n\"}");
     defer std.testing.allocator.free(same);
@@ -1203,14 +1211,14 @@ test "assemblyscript csv_json round-trips through both directions" {
 
     const to_json = try mod.executeTool("{\"csv\": \"name,age\\nAda,36\\n\\\"Grace, Hopper\\\",85\\n\"}");
     defer std.testing.allocator.free(to_json);
-    try std.testing.expect(std.mem.indexOf(u8, to_json, "\\\"name\\\": \\\"Ada\\\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, to_json, "Grace, Hopper") != null);
+    try std.testing.expect(std.mem.find(u8, to_json, "\\\"name\\\": \\\"Ada\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, to_json, "Grace, Hopper") != null);
 
     const to_csv = try mod.executeTool("{\"json\": \"[{\\\"a\\\":1,\\\"b\\\":\\\"x,y\\\"},{\\\"a\\\":2}]\"}");
     defer std.testing.allocator.free(to_csv);
-    try std.testing.expect(std.mem.indexOf(u8, to_csv, "a,b") != null);
-    try std.testing.expect(std.mem.indexOf(u8, to_csv, "x,y") != null);
-    try std.testing.expect(std.mem.indexOf(u8, to_csv, "2,") != null);
+    try std.testing.expect(std.mem.find(u8, to_csv, "a,b") != null);
+    try std.testing.expect(std.mem.find(u8, to_csv, "x,y") != null);
+    try std.testing.expect(std.mem.find(u8, to_csv, "2,") != null);
 }
 
 fn loadZigOutTool(gpa: std.mem.Allocator, io: std.Io, sb: *host.Sandbox, name: []const u8) !*ToolModule {
@@ -1257,7 +1265,7 @@ test "C tool base64 round-trips encode and decode" {
 
     const bad = try mod.executeTool("{\"text\": \"not!valid\", \"mode\": \"decode\"}");
     defer std.testing.allocator.free(bad);
-    try std.testing.expect(std.mem.indexOf(u8, bad, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, bad, "\"ok\":false") != null);
 }
 
 test "C tool hexdump renders 16-byte rows with an ASCII gutter" {
@@ -1272,8 +1280,8 @@ test "C tool hexdump renders 16-byte rows with an ASCII gutter" {
 
     const out = try mod.executeTool("{\"text\": \"Hi\"}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "00000000: 48 69") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "Hi") != null);
+    try std.testing.expect(std.mem.find(u8, out, "00000000: 48 69") != null);
+    try std.testing.expect(std.mem.find(u8, out, "Hi") != null);
 }
 
 test "C++ tool roman_numeral converts both directions" {
@@ -1296,7 +1304,7 @@ test "C++ tool roman_numeral converts both directions" {
 
     const out_of_range = try mod.executeTool("{\"value\": 4000}");
     defer std.testing.allocator.free(out_of_range);
-    try std.testing.expect(std.mem.indexOf(u8, out_of_range, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out_of_range, "\"ok\":false") != null);
 }
 
 test "C++ tool levenshtein computes edit distance" {
@@ -1335,7 +1343,7 @@ test "C++ tool run_length round-trips encode and decode" {
 
     const malformed = try mod.executeTool("{\"text\": \"abc\", \"mode\": \"decode\"}");
     defer std.testing.allocator.free(malformed);
-    try std.testing.expect(std.mem.indexOf(u8, malformed, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, malformed, "\"ok\":false") != null);
 }
 
 test "a tool with a tiny fuel budget runs out of fuel; the default budget answers" {

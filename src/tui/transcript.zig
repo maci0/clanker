@@ -507,14 +507,14 @@ test "MdStream renders headings, rules, quotes and ordered lists" {
     const out = buf[0..w.end];
 
     // Headings are styled, and the hashes themselves are not echoed.
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[1;4mTitle") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[1mSub") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "# ") == null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[1;4mTitle") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[1mSub") != null);
+    try std.testing.expect(std.mem.find(u8, out, "# ") == null);
     // Quote gets a gutter, the rule becomes a line, list markers keep numbers.
-    try std.testing.expect(std.mem.indexOf(u8, out, "\u{2502} quoted") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\u{2500}\u{2500}\u{2500}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m1.\x1b[0m first") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m2)\x1b[0m second") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\u{2502} quoted") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\u{2500}\u{2500}\u{2500}") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36m1.\x1b[0m first") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36m2)\x1b[0m second") != null);
 }
 
 test "MdStream leaves fenced code untouched" {
@@ -529,7 +529,7 @@ test "MdStream leaves fenced code untouched" {
     md.flush(&w);
     const out = buf[0..w.end];
 
-    try std.testing.expect(std.mem.indexOf(u8, out, "// **not bold**") != null);
+    try std.testing.expect(std.mem.find(u8, out, "// **not bold**") != null);
     // And the fence closes, so following text is not left dim.
     try std.testing.expect(std.mem.endsWith(u8, out, "after\n"));
 }
@@ -542,12 +542,12 @@ test "MdStream consumes the fence language tag instead of printing it" {
     md.flush(&w);
     const out = buf[0..w.end];
 
-    try std.testing.expect(std.mem.indexOf(u8, out, "python") == null);
+    try std.testing.expect(std.mem.find(u8, out, "python") == null);
     // The numeric token is coloured, so it sits between the surrounding
     // source fragments rather than leaving `print(1)` contiguous.
-    try std.testing.expect(std.mem.indexOf(u8, out, "print") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "(") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, ")") != null);
+    try std.testing.expect(std.mem.find(u8, out, "print") != null);
+    try std.testing.expect(std.mem.find(u8, out, "(") != null);
+    try std.testing.expect(std.mem.find(u8, out, ")") != null);
 }
 
 test "MdStream does not mistake a hyphen mid-sentence for a rule" {
@@ -565,7 +565,7 @@ test "MdStream under the mono theme emits no ANSI codes at all" {
     var md: MdStream = .{ .theme = Theme.mono };
     md.feed(&w, "**bold** `code` # heading\n");
     md.flush(&w);
-    try std.testing.expect(std.mem.indexOf(u8, buf[0..w.end], "\x1b") == null);
+    try std.testing.expect(std.mem.find(u8, buf[0..w.end], "\x1b") == null);
 }
 
 test "MdStream strips C0 controls and DEL from prose, keeping newline and tab" {
@@ -587,9 +587,9 @@ test "MdStream strips controls inside a fence too" {
     defer allocator.free(out);
     // The number may be syntax-coloured, but the stripped ESC leaves the
     // printable pieces of its escape sequence intact.
-    try std.testing.expect(std.mem.indexOf(u8, out, "x[") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "Jy") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2J") == null);
+    try std.testing.expect(std.mem.find(u8, out, "x[") != null);
+    try std.testing.expect(std.mem.find(u8, out, "Jy") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[2J") == null);
 }
 
 test "MdStream strips C1 controls but keeps multi-byte codepoints intact" {

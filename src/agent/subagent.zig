@@ -143,17 +143,17 @@ test "the brief tells a sub-agent what it cannot see" {
     });
 
     // The objective, the established facts and the pointers all survive.
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "wire the transform chain") != null);
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "no call site") != null);
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "src/agent/loop.zig") != null);
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "Check whether runChain is reachable.") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "wire the transform chain") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "no call site") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "src/agent/loop.zig") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "Check whether runChain is reachable.") != null);
     // Facts are marked as settled, or the sub-agent spends its budget
     // rediscovering them.
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "do not re-derive") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "do not re-derive") != null);
     // The private todo list is only useful if the sub-agent is told it has one.
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "private todo list") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "private todo list") != null);
     // Likewise the channel back up to the parent.
-    try std.testing.expect(std.mem.indexOf(u8, briefed, "ask_user {\"parent\": true}") != null);
+    try std.testing.expect(std.mem.find(u8, briefed, "ask_user {\"parent\": true}") != null);
 
     // With nothing to hand down, the task is passed through untouched rather
     // than wrapped in an empty preamble.

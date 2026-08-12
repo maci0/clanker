@@ -79,9 +79,9 @@ test "engine records and summarizes findings" {
     try std.testing.expectEqual(@as(usize, 2), e.getFindings().len);
 
     const sum = try e.summarize(arena);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "entry point") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "(src/main.zig)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "standalone note") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "entry point") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "(src/main.zig)") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "standalone note") != null);
 }
 
 test "empty engine summarizes to empty string" {

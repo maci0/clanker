@@ -51,7 +51,7 @@ const Commit = struct { sha: []const u8, subject: []const u8, body: []const u8 }
 pub fn impTag(subject: []const u8) ?[]const u8 {
     const open = std.mem.lastIndexOf(u8, subject, "[imp-") orelse return null;
     const rest = subject[open + 1 ..];
-    const close = std.mem.indexOfScalar(u8, rest, ']') orelse return null;
+    const close = std.mem.findScalar(u8, rest, ']') orelse return null;
     const id = rest[0..close];
     if (id.len <= "imp-".len) return null;
     return id;
@@ -180,7 +180,7 @@ pub fn distinctiveAdds(arena: std.mem.Allocator, adds: []const FileAdds, parents
         };
         var lines: std.ArrayList([]const u8) = .empty;
         for (fa.lines) |line| {
-            if (std.mem.indexOf(u8, parent, line) != null) continue;
+            if (std.mem.find(u8, parent, line) != null) continue;
             try lines.append(arena, line);
         }
         if (lines.items.len > 0) try out.append(arena, .{ .path = fa.path, .lines = try lines.toOwnedSlice(arena) });
@@ -217,7 +217,7 @@ pub fn presence(adds: []const FileAdds, files: anytype) Presence {
         for (fa.lines) |line| {
             total += 1;
             if (content) |c| {
-                if (std.mem.indexOf(u8, c, line) != null) surviving += 1;
+                if (std.mem.find(u8, c, line) != null) surviving += 1;
             }
         }
     }
@@ -231,7 +231,7 @@ pub fn presence(adds: []const FileAdds, files: anytype) Presence {
 fn isRevert(c: Commit) bool {
     if (std.mem.startsWith(u8, c.subject, "Revert ")) return true;
     if (std.ascii.indexOfIgnoreCase(c.subject, "revert of ") != null) return true;
-    if (std.mem.indexOf(u8, c.body, "This reverts commit ") != null) return true;
+    if (std.mem.find(u8, c.body, "This reverts commit ") != null) return true;
     return false;
 }
 
@@ -319,7 +319,7 @@ test "scan resolves the manual multi-sha revert style" {
     try std.testing.expectEqual(@as(usize, 2), found.len);
     try std.testing.expectEqualStrings("imp-111", found[0].id);
     try std.testing.expectEqualStrings("imp-222", found[1].id);
-    try std.testing.expect(std.mem.indexOf(u8, found[0].by, "revert the state sharing") != null);
+    try std.testing.expect(std.mem.find(u8, found[0].by, "revert the state sharing") != null);
 }
 
 test "scan resolves git revert's body footer and quoted subject tag" {

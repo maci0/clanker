@@ -29,7 +29,7 @@ pub fn writeAllFd(fd: std.posix.fd_t, bytes: []const u8) void {
 /// Whether `data` holds a whole request: headers, the blank line, and as many
 /// body bytes as the headers declared.
 pub fn requestComplete(data: []const u8) bool {
-    const hdr_end = std.mem.indexOf(u8, data, "\r\n\r\n") orelse return false;
+    const hdr_end = std.mem.find(u8, data, "\r\n\r\n") orelse return false;
     const declared = parseContentLength(data[0..hdr_end]) orelse 0;
     // Saturating: hdr_end + 4 + declared overflowed usize on a large
     // Content-Length and panicked. A body that cannot fit in memory is treated

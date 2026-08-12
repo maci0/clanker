@@ -152,14 +152,14 @@ fn criterionSatisfied(answer: []const u8, c: Criterion) bool {
     return switch (c) {
         .includes => |subs| blk: {
             for (subs) |s| {
-                if (std.mem.indexOf(u8, answer, s) == null) break :blk false;
+                if (std.mem.find(u8, answer, s) == null) break :blk false;
             }
             break :blk true;
         },
         .equals => |want| std.mem.eql(u8, std.mem.trim(u8, answer, " \t\r\n"), want),
         .excludes => |subs| blk: {
             for (subs) |sub| {
-                if (std.mem.indexOf(u8, answer, sub) != null) break :blk false;
+                if (std.mem.find(u8, answer, sub) != null) break :blk false;
             }
             break :blk true;
         },

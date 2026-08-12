@@ -10,6 +10,13 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 const default_dim: usize = 384;
 
+fn hashIndex(hash: u64, len: usize) usize {
+    // Wyhash distributes entropy across all bits, so intentionally retain the
+    // low 32 bits before reducing to the embedding dimension.
+    const low_bits: u32 = @truncate(hash);
+    return @as(usize, low_bits) % len;
+}
+
 fn hashEmbedInto(text: []const u8, vec: []f32) void {
     @memset(vec, 0);
     var token_buf: [128]u8 = undefined;
@@ -29,7 +36,7 @@ fn hashEmbedInto(text: []const u8, vec: []f32) void {
             if (tlen > 0) {
                 const tok = token_buf[0..tlen];
                 const h = std.hash.Wyhash.hash(0, tok);
-                vec[@as(usize, @as(u32, @truncate(h))) % vec.len] += 1.0;
+                vec[hashIndex(h, vec.len)] += 1.0;
                 if (prev_len > 0) {
                     var bigram: [256]u8 = undefined;
                     const a = prev_buf[0..prev_len];
@@ -37,7 +44,7 @@ fn hashEmbedInto(text: []const u8, vec: []f32) void {
                     bigram[a.len] = ' ';
                     @memcpy(bigram[a.len + 1 .. a.len + 1 + tok.len], tok);
                     const hb = std.hash.Wyhash.hash(0, bigram[0 .. a.len + 1 + tok.len]);
-                    vec[@as(usize, @as(u32, @truncate(hb))) % vec.len] += 0.5;
+                    vec[hashIndex(hb, vec.len)] += 0.5;
                 }
                 @memcpy(prev_buf[0..tlen], tok);
                 prev_len = tlen;

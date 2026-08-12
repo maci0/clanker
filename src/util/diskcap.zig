@@ -67,7 +67,7 @@ pub fn capBuildCache(
 /// contains no traversal.
 pub fn isBuildCachePath(rel: []const u8) bool {
     if (rel.len == 0) return false;
-    if (std.mem.indexOf(u8, rel, "..") != null) return false;
+    if (std.mem.find(u8, rel, "..") != null) return false;
     if (rel[0] == '/') return false;
     const name = if (std.mem.lastIndexOfScalar(u8, rel, '/')) |i| rel[i + 1 ..] else rel;
     return std.mem.eql(u8, name, ".zig-cache");

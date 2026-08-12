@@ -131,16 +131,16 @@ fn nextStdSourceRef(text: []const u8) ?SourceRef {
     const lib = sandbox_host.zig_lib_dir;
     if (lib.len == 0) return null;
     var rest = text;
-    while (std.mem.indexOf(u8, rest, lib)) |at| {
+    while (std.mem.find(u8, rest, lib)) |at| {
         const from = rest[at..];
-        const nl = std.mem.indexOfScalar(u8, from, '\n') orelse from.len;
+        const nl = std.mem.findScalar(u8, from, '\n') orelse from.len;
         const line_text = from[0..nl];
         rest = from[nl..];
 
         // path:line:col
-        const c1 = std.mem.indexOfScalar(u8, line_text, ':') orelse continue;
+        const c1 = std.mem.findScalar(u8, line_text, ':') orelse continue;
         const after = line_text[c1 + 1 ..];
-        const c2 = std.mem.indexOfScalar(u8, after, ':') orelse continue;
+        const c2 = std.mem.findScalar(u8, after, ':') orelse continue;
         const line_no = std.fmt.parseInt(usize, after[0..c2], 10) catch continue;
         if (!std.mem.endsWith(u8, line_text[0..c1], ".zig")) continue;
         return .{ .path = line_text[0..c1], .line = line_no, .rest = rest };
@@ -173,16 +173,16 @@ fn nextSymbol(text: []const u8) ?Found {
 /// generated suffix is stripped: what the reader needs is `SIG`.
 fn nextQuotedType(text: []const u8) ?Found {
     var rest = text;
-    while (std.mem.indexOfScalar(u8, rest, '\'')) |open| {
+    while (std.mem.findScalar(u8, rest, '\'')) |open| {
         rest = rest[open + 1 ..];
-        const close = std.mem.indexOfScalar(u8, rest, '\'') orelse return null;
+        const close = std.mem.findScalar(u8, rest, '\'') orelse return null;
         const inner = rest[0..close];
         rest = rest[close + 1 ..];
         // A type reference, not prose or a member name in quotes.
-        if (std.mem.indexOfScalar(u8, inner, '.') == null) continue;
-        if (std.mem.indexOfScalar(u8, inner, ' ') != null) continue;
+        if (std.mem.findScalar(u8, inner, '.') == null) continue;
+        if (std.mem.findScalar(u8, inner, ' ') != null) continue;
         var name = inner[std.mem.lastIndexOfScalar(u8, inner, '.').? + 1 ..];
-        if (std.mem.indexOf(u8, name, "__")) |cut| name = name[0..cut];
+        if (std.mem.find(u8, name, "__")) |cut| name = name[0..cut];
         if (name.len < 3) continue;
         return .{ .sym = name, .rest = rest };
     }
@@ -191,7 +191,7 @@ fn nextQuotedType(text: []const u8) ?Found {
 
 fn nextStdSymbol(text: []const u8) ?Found {
     var rest = text;
-    while (std.mem.indexOf(u8, rest, "std.")) |at| {
+    while (std.mem.find(u8, rest, "std.")) |at| {
         rest = rest[at + "std.".len ..];
         var end: usize = 0;
         var last_dot: ?usize = null;
@@ -1589,7 +1589,7 @@ pub const Engine = struct {
             }
             if (!touched) continue;
             const data = staged_dir.readFileAlloc(self.ctx.io, inv.file, self.arena, .limited(1 << 22)) catch continue;
-            if (std.mem.indexOf(u8, data, inv.needle) == null) return .{ .file = inv.file, .needle = inv.needle };
+            if (std.mem.find(u8, data, inv.needle) == null) return .{ .file = inv.file, .needle = inv.needle };
         }
         return null;
     }
@@ -1747,9 +1747,9 @@ pub const Engine = struct {
         // and how lib.zig is imported. Keyword scoring will not surface those
         // for an instruction about, say, an "lsp" tool, and the model then
         // guesses — "../lib.zig" instead of "lib.zig", three attempts running.
-        if (std.mem.indexOf(u8, instructions, "tools/zig") != null or
-            std.mem.indexOf(u8, instructions, "WASM tool") != null or
-            std.mem.indexOf(u8, instructions, "wasm tool") != null)
+        if (std.mem.find(u8, instructions, "tools/zig") != null or
+            std.mem.find(u8, instructions, "WASM tool") != null or
+            std.mem.find(u8, instructions, "wasm tool") != null)
         {
             try self.pinNamedFiles("tools/zig/lib.zig tools/zig/learnings.zig", keywords.items, &cands);
         }
@@ -1888,7 +1888,7 @@ pub const Engine = struct {
         var it = std.mem.tokenizeAny(u8, instructions, " \n\r\t,;:'\"()[]{}`*");
         while (it.next()) |tok| {
             const path = std.mem.trim(u8, tok, ".");
-            if (std.mem.indexOfScalar(u8, path, '/') == null) continue;
+            if (std.mem.findScalar(u8, path, '/') == null) continue;
             // .html is here for tools/zig/webui/index.html: the whole web UI is
             // one file, validatePath already lets a proposal write it, and
             // without it in context clanker could edit a page it had never
@@ -1933,10 +1933,10 @@ pub const Engine = struct {
             // about. A keyword in the body only says the word occurs, which a
             // large file does by accident: src/cli.zig matched nearly every
             // instruction purely by being 189 KB.
-            if (std.mem.indexOf(u8, rel, kw) != null) score += 10;
-            if (std.mem.indexOf(u8, data, kw) != null) score += 1;
+            if (std.mem.find(u8, rel, kw) != null) score += 10;
+            if (std.mem.find(u8, data, kw) != null) score += 1;
         }
-        if (std.mem.indexOf(u8, rel, "calculator") != null and std.mem.indexOf(u8, rel, "src") == null) score += 2;
+        if (std.mem.find(u8, rel, "calculator") != null and std.mem.find(u8, rel, "src") == null) score += 2;
         try cands.append(self.arena, .{ .path = try self.arena.dupe(u8, rel), .score = score, .data = data });
     }
 
@@ -1997,7 +1997,7 @@ pub const Engine = struct {
         const prefix = "state/staging/";
         if (!std.mem.startsWith(u8, rel, prefix)) return false;
         const name = rel[prefix.len..];
-        if (std.mem.indexOfScalar(u8, name, '/') != null) return false;
+        if (std.mem.findScalar(u8, name, '/') != null) return false;
         return isImpId(name);
     }
 
@@ -2154,7 +2154,7 @@ fn errorTail(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
     // ("referenced by", "Build Summary", "failed command"), so a plain tail
     // keeps the noise and drops the cause — anchor the window on the first
     // `error:` line instead, with a few lines of lead-in for the location.
-    if (std.mem.indexOf(u8, s, "error:")) |hit| {
+    if (std.mem.find(u8, s, "error:")) |hit| {
         var start = hit;
         var back: usize = 0;
         while (start > 0 and back < 3) {
@@ -2196,7 +2196,7 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
     if (best_start) |bs| {
         if (best_end) |be| {
             const candidate = text[bs..be];
-            if (std.mem.indexOf(u8, candidate, "changes") != null) {
+            if (std.mem.find(u8, candidate, "changes") != null) {
                 return arena.dupe(u8, candidate) catch candidate;
             }
         }
@@ -2214,7 +2214,7 @@ fn parseFailedEvalNames(arena: std.mem.Allocator, detail: []const u8) ![]const [
         const line = std.mem.trim(u8, raw_line, " \t\r");
         if (!std.mem.endsWith(u8, line, "FAIL")) continue;
         // Shape: "<name>: <score> FAIL"
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
         const name = std.mem.trim(u8, line[0..colon], " \t");
         if (name.len == 0) continue;
         try out.append(arena, name);
@@ -2225,14 +2225,14 @@ fn parseFailedEvalNames(arena: std.mem.Allocator, detail: []const u8) ![]const [
 fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
     var s = content;
     if (std.mem.startsWith(u8, s, "```")) {
-        if (std.mem.indexOf(u8, s, "\n")) |nl| s = s[nl + 1 ..];
+        if (std.mem.find(u8, s, "\n")) |nl| s = s[nl + 1 ..];
     }
     s = std.mem.trim(u8, s, " \t\r\n");
     if (std.mem.endsWith(u8, s, "```")) s = s[0 .. s.len - 3];
     s = std.mem.trim(u8, s, " \t\r\n");
     // If the model wrapped the JSON with prose, extract the first {...} block.
     if (s.len > 0 and s[0] != '{') {
-        if (std.mem.indexOfScalar(u8, s, '{')) |i| {
+        if (std.mem.findScalar(u8, s, '{')) |i| {
             s = s[i..];
         }
     }
@@ -2492,7 +2492,7 @@ test "errorTail keeps the diagnosis, not the build-runner noise" {
 
     const tail = try errorTail(arena, buf.items);
     try std.testing.expect(tail.len <= 1500);
-    try std.testing.expect(std.mem.indexOf(u8, tail, "error: cast discards const qualifier") != null);
+    try std.testing.expect(std.mem.find(u8, tail, "error: cast discards const qualifier") != null);
 }
 
 test "errorTail falls back to the end when nothing looks like an error" {
@@ -2537,8 +2537,8 @@ test "a granted file reaches the context, once, in the focus block" {
         defer hist.deinit();
         var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = hist, .instructions = "" };
         const before = try engine.collectContext(budget);
-        try std.testing.expect(std.mem.indexOf(u8, before.bulk, header) == null);
-        try std.testing.expect(std.mem.indexOf(u8, before.focus, header) == null);
+        try std.testing.expect(std.mem.find(u8, before.bulk, header) == null);
+        try std.testing.expect(std.mem.find(u8, before.focus, header) == null);
     }
 
     {
@@ -2556,10 +2556,10 @@ test "a granted file reaches the context, once, in the focus block" {
         const after = try engine.collectContext(budget);
 
         // In the volatile half, so a promotion cannot invalidate the cached bulk.
-        try std.testing.expect(std.mem.indexOf(u8, after.focus, header) != null);
+        try std.testing.expect(std.mem.find(u8, after.focus, header) != null);
         // And exactly once. A file in the focus block used to be emitted into
         // the bulk as well, which for a 310 KB file is 310 KB billed twice.
-        try std.testing.expect(std.mem.indexOf(u8, after.bulk, header) == null);
+        try std.testing.expect(std.mem.find(u8, after.bulk, header) == null);
         try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, after.focus, header));
     }
 }
@@ -2632,7 +2632,7 @@ test "a file named in the instruction is pinned into the context" {
     // A path outside the modifiable surface is not pulled in.
     try engine.pinNamedFiles("do not touch ~/.secrets/key.json or state/plugins.json", &.{}, &cands);
     for (cands.items) |c| {
-        try std.testing.expect(std.mem.indexOf(u8, c.path, ".secrets") == null);
+        try std.testing.expect(std.mem.find(u8, c.path, ".secrets") == null);
     }
 }
 
@@ -2991,5 +2991,5 @@ test "a compile error about a std signature comes back with the declaration" {
     const help = engine.stdSymbolHelp(err);
     try std.testing.expect(help.len > 0);
     // The declaration the compiler pointed at, not a guess at which SIG.
-    try std.testing.expect(std.mem.indexOf(u8, help, "os/linux.zig") != null);
+    try std.testing.expect(std.mem.find(u8, help, "os/linux.zig") != null);
 }

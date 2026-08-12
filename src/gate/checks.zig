@@ -114,7 +114,7 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
         };
         defer gpa.free(content);
         for (forbidden) |marker| {
-            if (std.mem.indexOf(u8, content, marker) != null) {
+            if (std.mem.find(u8, content, marker) != null) {
                 log.log(.warn, "lint: {s} found in {s}", .{ marker, f });
                 hit_w.print("{s} in {s}; ", .{ marker, f }) catch {};
                 hits += 1;
@@ -277,8 +277,8 @@ test "toolDescriptorGate rejects duplicate names and missing wasm" {
     var bad = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
     defer bad.deinit(gpa);
     try std.testing.expect(!bad.ok);
-    try std.testing.expect(std.mem.indexOf(u8, bad.detail, "duplicate tool name") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bad.detail, "references missing") != null);
+    try std.testing.expect(std.mem.find(u8, bad.detail, "duplicate tool name") != null);
+    try std.testing.expect(std.mem.find(u8, bad.detail, "references missing") != null);
 
     // Fix both: unique name that points at a real wasm.
     try tmp.dir.writeFile(io, .{ .sub_path = "manifests/b.tool.json", .data = "{\"name\":\"b\",\"wasm\":\"zig-out/tools/good.wasm\"}" });
@@ -454,7 +454,7 @@ pub fn matchGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, files: []c
             return .{ .ok = false, .label = "match", .detail = if (err == error.FileNotFound) "target file does not exist" else "could not read target file" };
         };
         defer gpa.free(content);
-        if (std.mem.indexOf(u8, content, old) == null) {
+        if (std.mem.find(u8, content, old) == null) {
             return .{ .ok = false, .label = "match", .detail = f };
         }
     }
@@ -526,7 +526,7 @@ pub fn bracketBalanceGate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, f
             }
             const existing = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch break :blk new;
             defer gpa.free(existing);
-            if (std.mem.indexOf(u8, existing, old)) |pos| {
+            if (std.mem.find(u8, existing, old)) |pos| {
                 const combined = gpa.alloc(u8, existing.len - old.len + new.len) catch break :blk new;
                 @memcpy(combined[0..pos], existing[0..pos]);
                 @memcpy(combined[pos..][0..new.len], new);
@@ -980,7 +980,7 @@ test "gitDenyGuardGate rejects an unparseable config file" {
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("git-deny-guard", result.label);
-    try std.testing.expect(std.mem.indexOf(u8, result.detail, "valid TOML") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "valid TOML") != null);
 }
 
 /// Rejects a proposal that would weaken the improve loop's own gating by
@@ -1046,7 +1046,7 @@ test "configWeakeningGate rejects disabling capability_gate" {
     const result = configWeakeningGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("config-weakening", result.label);
-    try std.testing.expect(std.mem.indexOf(u8, result.detail, "capability_gate") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "capability_gate") != null);
 }
 
 test "configWeakeningGate rejects disabling inert_gate" {

@@ -351,7 +351,7 @@ pub const Registry = struct {
     }
 
     fn firstLine(s: []const u8) []const u8 {
-        const line = s[0 .. std.mem.indexOfScalar(u8, s, '\n') orelse s.len];
+        const line = s[0 .. std.mem.findScalar(u8, s, '\n') orelse s.len];
         // Long enough to choose by, short enough that forty of them stay cheap.
         return if (line.len > 160) line[0..160] else line;
     }
@@ -782,8 +782,8 @@ test "config overrides apply only to keys the descriptor opted in" {
 
     // config_json is precomputed once at load, after overrides apply: it must
     // reflect the overridden value, not the raw descriptor.
-    try std.testing.expect(std.mem.indexOf(u8, rlm.config_json, "\"max_depth\":6") != null);
-    try std.testing.expect(std.mem.indexOf(u8, rlm.config_json, "\"secret\":\"keep\"") != null);
+    try std.testing.expect(std.mem.find(u8, rlm.config_json, "\"max_depth\":6") != null);
+    try std.testing.expect(std.mem.find(u8, rlm.config_json, "\"secret\":\"keep\"") != null);
 }
 
 test "a descriptor schema always reaches the provider with a type" {
@@ -890,7 +890,7 @@ test "a tool that calls the model says so in its descriptor" {
 
         var calls_model = false;
         for (calls) |c| {
-            if (std.mem.indexOf(u8, body, c) != null) calls_model = true;
+            if (std.mem.find(u8, body, c) != null) calls_model = true;
         }
         if (!calls_model) continue;
 

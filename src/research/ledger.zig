@@ -4,7 +4,7 @@ pub const Entry = struct { iter: u32, ts: i64, summary: []const u8 = "", ok: boo
 fn tail(text: []const u8, keep: usize) []const u8 {
     if (text.len <= keep) return text;
     const head = text[text.len - keep ..];
-    if (std.mem.indexOfScalar(u8, head, '\n')) |nl| return head[nl + 1 ..];
+    if (std.mem.findScalar(u8, head, '\n')) |nl| return head[nl + 1 ..];
     return head;
 }
 pub fn appendEntry(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, entry: Entry) !void {
@@ -100,7 +100,7 @@ test "isBetter respects direction" {
 }
 test "tail keeps last lines" {
     try std.testing.expectEqualStrings("hello", tail("hello", 10));
-    try std.testing.expect(tail("a\nb\nc\nd\ne\nf", 4).len <= 4 or std.mem.indexOf(u8, tail("a\nb\nc\nd\ne\nf", 4), "\n") != null);
+    try std.testing.expect(tail("a\nb\nc\nd\ne\nf", 4).len <= 4 or std.mem.find(u8, tail("a\nb\nc\nd\ne\nf", 4), "\n") != null);
 }
 test "bestMetric reads ledger" {
     const gpa = std.testing.allocator;

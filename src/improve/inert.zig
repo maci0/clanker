@@ -163,7 +163,7 @@ pub fn testSpans(gpa: std.mem.Allocator, code: []const u8) ![]Span {
     errdefer out.deinit(gpa);
 
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, code, i, "test")) |at| {
+    while (std.mem.findPos(u8, code, i, "test")) |at| {
         i = at + 4;
         if (!wholeToken(code, at, 4)) continue;
         // A test declaration is `test` then an optional name then `{`. Anything
@@ -267,7 +267,7 @@ fn declaredFns(gpa: std.mem.Allocator, code: []const u8) ![][]const u8 {
     errdefer out.deinit(gpa);
 
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, code, i, "fn")) |at| {
+    while (std.mem.findPos(u8, code, i, "fn")) |at| {
         i = at + 2;
         if (!wholeToken(code, at, 2)) continue;
 
@@ -305,7 +305,7 @@ fn contains(list: []const []const u8, name: []const u8) bool {
 /// a unit test does not count as a use.
 fn referencesName(code: []const u8, name: []const u8) bool {
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, code, i, name)) |at| {
+    while (std.mem.findPos(u8, code, i, name)) |at| {
         i = at + name.len;
         if (!wholeToken(code, at, name.len)) continue;
         // Skip the declaration itself. Everything else -- a call, a `&fn`
@@ -531,9 +531,9 @@ test "blankNonCode leaves code and erases everything else" {
     const out = try blankNonCode(gpa, src);
     defer gpa.free(out);
     try std.testing.expectEqual(src.len, out.len);
-    try std.testing.expect(std.mem.indexOf(u8, out, "brace") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "nope") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "const b = 1;") != null);
+    try std.testing.expect(std.mem.find(u8, out, "brace") == null);
+    try std.testing.expect(std.mem.find(u8, out, "nope") == null);
+    try std.testing.expect(std.mem.find(u8, out, "const b = 1;") != null);
 }
 
 test "blankNonCode erases a multiline string literal" {
@@ -543,8 +543,8 @@ test "blankNonCode erases a multiline string literal" {
     const src = "const p =\n    \\\\{\"changes\": [{\n    \\\\}\n;\nfn real() void {}\n";
     const out = try blankNonCode(gpa, src);
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "changes") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "fn real()") != null);
+    try std.testing.expect(std.mem.find(u8, out, "changes") == null);
+    try std.testing.expect(std.mem.find(u8, out, "fn real()") != null);
 }
 
 test "testSpans finds test blocks and nothing else" {
@@ -565,7 +565,7 @@ test "testSpans finds test blocks and nothing else" {
     // The whole block, closing brace included.
     try std.testing.expectEqualStrings("}", code[spans[0].end - 1 .. spans[0].end]);
     // `latest` contains "test" but is not a declaration.
-    try std.testing.expect(std.mem.indexOf(u8, code[spans[0].start..spans[0].end], "latest") == null);
+    try std.testing.expect(std.mem.find(u8, code[spans[0].start..spans[0].end], "latest") == null);
 }
 
 test "nonTestCode drops the cases and keeps the code" {
@@ -581,8 +581,8 @@ test "nonTestCode drops the cases and keeps the code" {
     ;
     const out = try nonTestCode(gpa, src);
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "return a + b;") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "_ = add(1, 2);") == null);
+    try std.testing.expect(std.mem.find(u8, out, "return a + b;") != null);
+    try std.testing.expect(std.mem.find(u8, out, "_ = add(1, 2);") == null);
 }
 
 test "declaredFns names declarations and skips function types and exports" {

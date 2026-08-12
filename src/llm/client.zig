@@ -496,7 +496,7 @@ pub fn chatStream(
         } else try appendResponseBytes(&sse, ctx.gpa, buf[0..n], resp_cap);
         // Process complete frames (data: ... blank line). `frame` is a view
         // into sse.items, so handle it fully before the buffer is shifted.
-        while (std.mem.indexOf(u8, sse.items, "\n\n")) |frame_end| {
+        while (std.mem.find(u8, sse.items, "\n\n")) |frame_end| {
             const frame = sse.items[0..frame_end];
             var frame_done = false;
             var it = std.mem.splitScalar(u8, frame, '\n');
@@ -1210,7 +1210,7 @@ test "vertex stream: no-arg tool call and a frame with no trailing blank line" {
     // The request must target Vertex's streaming verb, not the Anthropic path.
     const captured = mock.lastCaptured().?;
     try std.testing.expect(std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
-    try std.testing.expect(std.mem.indexOf(u8, captured.body, "\"stream\":true") != null);
+    try std.testing.expect(std.mem.find(u8, captured.body, "\"stream\":true") != null);
 }
 
 test "vertex non-stream chat hits rawPredict, not streamRawPredict" {
@@ -1253,7 +1253,7 @@ test "vertex non-stream chat hits rawPredict, not streamRawPredict" {
     const captured = mock.lastCaptured().?;
     try std.testing.expect(std.mem.endsWith(u8, captured.target, ":rawPredict"));
     try std.testing.expect(!std.mem.endsWith(u8, captured.target, ":streamRawPredict"));
-    try std.testing.expect(std.mem.indexOf(u8, captured.body, "\"stream\":true") == null);
+    try std.testing.expect(std.mem.find(u8, captured.body, "\"stream\":true") == null);
 }
 
 test "cached prompt tokens are billed at the cache-read rate" {
@@ -1352,12 +1352,12 @@ test "anthropic api key goes on x-api-key" {
     var buf: [8192]u8 = undefined;
     const headers = try capturedAnthropicHeaders(std.testing.allocator, "sk-ant-api03-secret", &buf);
 
-    try std.testing.expect(std.mem.indexOf(u8, headers, "x-api-key: sk-ant-api03-secret") != null);
-    try std.testing.expect(std.mem.indexOf(u8, headers, "anthropic-version: 2023-06-01") != null);
+    try std.testing.expect(std.mem.find(u8, headers, "x-api-key: sk-ant-api03-secret") != null);
+    try std.testing.expect(std.mem.find(u8, headers, "anthropic-version: 2023-06-01") != null);
     // The oauth beta must not be announced for a plain API key.
-    try std.testing.expect(std.mem.indexOf(u8, headers, oauth_beta) == null);
+    try std.testing.expect(std.mem.find(u8, headers, oauth_beta) == null);
     // std.http.Client writes its built-in header names lowercase.
-    try std.testing.expect(std.mem.indexOf(u8, headers, "authorization:") == null);
+    try std.testing.expect(std.mem.find(u8, headers, "authorization:") == null);
 }
 
 test "anthropic oauth token goes on Authorization with the oauth beta" {
@@ -1366,11 +1366,11 @@ test "anthropic oauth token goes on Authorization with the oauth beta" {
     var buf: [8192]u8 = undefined;
     const headers = try capturedAnthropicHeaders(std.testing.allocator, "sk-ant-oat01-secret", &buf);
 
-    try std.testing.expect(std.mem.indexOf(u8, headers, "authorization: Bearer sk-ant-oat01-secret") != null);
-    try std.testing.expect(std.mem.indexOf(u8, headers, "anthropic-beta: " ++ oauth_beta) != null);
-    try std.testing.expect(std.mem.indexOf(u8, headers, "anthropic-version: 2023-06-01") != null);
+    try std.testing.expect(std.mem.find(u8, headers, "authorization: Bearer sk-ant-oat01-secret") != null);
+    try std.testing.expect(std.mem.find(u8, headers, "anthropic-beta: " ++ oauth_beta) != null);
+    try std.testing.expect(std.mem.find(u8, headers, "anthropic-version: 2023-06-01") != null);
     // The token must not also be sent as an API key; the API rejects both at once.
-    try std.testing.expect(std.mem.indexOf(u8, headers, "x-api-key") == null);
+    try std.testing.expect(std.mem.find(u8, headers, "x-api-key") == null);
 }
 
 test "oauth token prefix matching is version-agnostic" {

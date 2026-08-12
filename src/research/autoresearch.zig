@@ -113,7 +113,7 @@ pub const Loop = struct {
         var ctx_buf: std.ArrayList(u8) = .empty;
         defer ctx_buf.deinit(gpa);
         for (opts.targets) |targ| {
-            if (std.mem.indexOfScalar(u8, targ, '*') != null) continue;
+            if (std.mem.findScalar(u8, targ, '*') != null) continue;
             const content = std.Io.Dir.cwd().readFileAlloc(io, targ, gpa, .limited(64 * 1024)) catch continue;
             defer gpa.free(content);
             try ctx_buf.appendSlice(gpa, "\n--- ");

@@ -248,7 +248,7 @@ fn zigLine(gpa: std.mem.Allocator, line: []const u8, out: *std.ArrayList(Token))
 /// before it so the coloured span starts at `//` rather than at the indent
 /// preceding it.
 fn emitGap(gpa: std.mem.Allocator, gap: []const u8, out: *std.ArrayList(Token)) bool {
-    if (std.mem.indexOf(u8, gap, "//")) |at| {
+    if (std.mem.find(u8, gap, "//")) |at| {
         if (at > 0) out.append(gpa, .{ .text = gap[0..at], .kind = .plain }) catch return false;
         out.append(gpa, .{ .text = gap[at..], .kind = .comment }) catch return false;
     } else {
@@ -287,7 +287,7 @@ pub fn highlightLine(state: *State, gpa: std.mem.Allocator, line: []const u8, ou
     var plain_start: usize = 0;
 
     if (state.in_block_comment) {
-        if (std.mem.indexOf(u8, line, "*/")) |close| {
+        if (std.mem.find(u8, line, "*/")) |close| {
             try out.append(gpa, .{ .text = line[0 .. close + 2], .kind = .comment });
             i = close + 2;
             plain_start = i;
@@ -333,7 +333,7 @@ pub fn highlightLine(state: *State, gpa: std.mem.Allocator, line: []const u8, ou
         // Block comments.
         if (lang.block_comments and c == '/' and i + 1 < line.len and line[i + 1] == '*') {
             try flushPlain(out, gpa, line, plain_start, i);
-            if (std.mem.indexOfPos(u8, line, i + 2, "*/")) |close| {
+            if (std.mem.findPos(u8, line, i + 2, "*/")) |close| {
                 try out.append(gpa, .{ .text = line[i .. close + 2], .kind = .comment });
                 i = close + 2;
             } else {
@@ -621,11 +621,11 @@ test "zig code gets keyword, string, comment and number colors" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "zig", "const x: u32 = 42; // the answer\nconst s = \"hi\";", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[35mconst\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36mu32\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m42\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2m// the answer\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[32m\"hi\"\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[35mconst\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36mu32\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36m42\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[2m// the answer\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[32m\"hi\"\x1b[0m") != null);
 }
 
 test "python hash comments and builtins highlight" {
@@ -633,9 +633,9 @@ test "python hash comments and builtins highlight" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "python", "def f(xs): # iterate\n    return [x for x in xs if x is not None]", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[35mdef\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2m# iterate\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36mNone\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[35mdef\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[2m# iterate\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36mNone\x1b[0m") != null);
 }
 
 test "an invalid zig string does not color the next line" {
@@ -646,8 +646,8 @@ test "an invalid zig string does not color the next line" {
     // Zig has no newline-spanning quoted strings. The compiler tokenizer is
     // deliberately line-local for Zig, so an invalid opening quote cannot
     // colour valid-looking text on the next line as a string.
-    try std.testing.expect(std.mem.indexOf(u8, out, "two") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[32mtwo") == null);
+    try std.testing.expect(std.mem.find(u8, out, "two") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[32mtwo") == null);
 }
 
 test "block comments span lines" {
@@ -655,8 +655,8 @@ test "block comments span lines" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "js", "/* start\nstill comment */\nconst x = 1;", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2mstill comment */\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[35mconst\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[2mstill comment */\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[35mconst\x1b[0m") != null);
 }
 
 test "json mode has no comments and colors booleans" {
@@ -664,11 +664,11 @@ test "json mode has no comments and colors booleans" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "json", "{\"ok\": true, \"n\": 3}", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[32m\"ok\"\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36mtrue\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m3\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[32m\"ok\"\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36mtrue\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36m3\x1b[0m") != null);
     // Nothing is treated as a comment in JSON mode.
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2m") == null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[2m") == null);
 }
 
 test "shell variables and hash comments" {
@@ -676,9 +676,9 @@ test "shell variables and hash comments" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "bash", "export PATH=$HOME/bin # prepend", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36mexport\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m$HOME\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2m# prepend\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36mexport\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36m$HOME\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[2m# prepend\x1b[0m") != null);
 }
 
 test "mono theme emits no ANSI at all" {
@@ -686,7 +686,7 @@ test "mono theme emits no ANSI at all" {
     const style = Style.fromTheme(&theme_mod.Theme.mono);
     const out = try renderAlloc(allocator, "zig", "const x = 1; // c", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b") == null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b") == null);
     try std.testing.expectEqualStrings("const x = 1; // c", out);
 }
 
@@ -695,7 +695,7 @@ test "control bytes are stripped from highlighted code" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "zig", "const \x1b[2Jx = 1;\x07", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "[2Jx") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[2Jx") != null);
     // No raw ESC other than the SGR sequences the highlighter itself wrote.
     var i: usize = 0;
     while (i < out.len) : (i += 1) {
@@ -712,8 +712,8 @@ test "unknown fence language still highlights strings and numbers" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "brainfuck++", "x = \"s\" + 9 // y", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[32m\"s\"\x1b[0m") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[36m9\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[32m\"s\"\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[36m9\x1b[0m") != null);
 }
 
 test "vaxis spans carry styles and strip controls" {
@@ -730,7 +730,7 @@ test "vaxis spans carry styles and strip controls" {
             saw_kw = true;
             try std.testing.expectEqual(vaxis.Color{ .index = 5 }, s.style.fg);
         }
-        try std.testing.expect(std.mem.indexOfScalar(u8, s.text, 0x1b) == null);
+        try std.testing.expect(std.mem.findScalar(u8, s.text, 0x1b) == null);
     }
     try std.testing.expect(saw_kw);
 }
@@ -805,7 +805,7 @@ test "a 24-bit theme reaches both renderers" {
     const style = Style.fromTheme(&theme_mod.Theme.mocha);
     // The ANSI path writes mocha's own sequences, not the built-in magenta.
     try std.testing.expectEqualStrings(theme_mod.Theme.mocha.syn_keyword, style.keyword);
-    try std.testing.expect(std.mem.indexOf(u8, style.string, "38;2;") != null);
+    try std.testing.expect(std.mem.find(u8, style.string, "38;2;") != null);
     // The vaxis path sets the same colour as an rgb cell rather than rounding
     // it to one of the 16 indexed slots.
     const vx = style.vaxisFor(.keyword);

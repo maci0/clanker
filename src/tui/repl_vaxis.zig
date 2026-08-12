@@ -476,11 +476,11 @@ test "generated help mentions every command spelling and help line" {
     const text = try buildCommandHelp(std.testing.allocator);
     defer std.testing.allocator.free(text);
     for (command_registry) |spec| {
-        try std.testing.expect(std.mem.indexOf(u8, text, spec.name) != null);
+        try std.testing.expect(std.mem.find(u8, text, spec.name) != null);
         for (spec.aliases) |alias| {
-            try std.testing.expect(std.mem.indexOf(u8, text, alias) != null);
+            try std.testing.expect(std.mem.find(u8, text, alias) != null);
         }
-        try std.testing.expect(std.mem.indexOf(u8, text, spec.help) != null);
+        try std.testing.expect(std.mem.find(u8, text, spec.help) != null);
     }
 }
 
@@ -845,7 +845,7 @@ const Model = struct {
                     self.lines.append(self.arena, .{ .text = "usage: /workflow <name> [args]  — try /workflows to list", .dim = true }) catch {};
                     return;
                 }
-                const space = std.mem.indexOfScalar(u8, pc.args, ' ');
+                const space = std.mem.findScalar(u8, pc.args, ' ');
                 const wf_name = if (space) |i| std.mem.trim(u8, pc.args[0..i], " \t") else pc.args;
                 const wf_args = if (space) |i| std.mem.trim(u8, pc.args[i + 1 ..], " \t") else "";
                 const prompt = self.expandWorkflow(wf_name, wf_args) catch |err| {

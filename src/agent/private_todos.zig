@@ -177,20 +177,20 @@ test "add, claim, close, list round-trip with private ids" {
     defer list.deinit();
 
     const added = try applyTodoOp(&list, arena, "todo_add", "read the file", null);
-    try std.testing.expect(std.mem.indexOf(u8, added, "\"todo\":\"p1\"") != null);
+    try std.testing.expect(std.mem.find(u8, added, "\"todo\":\"p1\"") != null);
     _ = try applyTodoOp(&list, arena, "todo_add", "write the tests", null);
 
     const claimed = try applyTodoOp(&list, arena, "todo_claim", null, "p1");
-    try std.testing.expect(std.mem.indexOf(u8, claimed, "\"status\":\"claimed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, claimed, "\"yours\":true") != null);
+    try std.testing.expect(std.mem.find(u8, claimed, "\"status\":\"claimed\"") != null);
+    try std.testing.expect(std.mem.find(u8, claimed, "\"yours\":true") != null);
 
     const closed = try applyTodoOp(&list, arena, "todo_close", null, "p1");
-    try std.testing.expect(std.mem.indexOf(u8, closed, "\"status\":\"closed\"") != null);
+    try std.testing.expect(std.mem.find(u8, closed, "\"status\":\"closed\"") != null);
 
     const listed = try applyTodoOp(&list, arena, "todo_list", null, null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"todo\":\"p1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"title\":\"write the tests\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"status\":\"open\"") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"todo\":\"p1\"") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"title\":\"write the tests\"") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"status\":\"open\"") != null);
 }
 
 test "bad arguments answer ok:false instead of erroring" {
@@ -202,12 +202,12 @@ test "bad arguments answer ok:false instead of erroring" {
     defer list.deinit();
 
     const no_title = try applyTodoOp(&list, arena, "todo_add", null, null);
-    try std.testing.expect(std.mem.indexOf(u8, no_title, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, no_title, "\"ok\":false") != null);
     const unknown = try applyTodoOp(&list, arena, "todo_close", null, "p99");
-    try std.testing.expect(std.mem.indexOf(u8, unknown, "unknown todo id") != null);
+    try std.testing.expect(std.mem.find(u8, unknown, "unknown todo id") != null);
     // A shared-list message id must not resolve against the private list.
     const shared_id = try applyTodoOp(&list, arena, "todo_claim", null, "m1");
-    try std.testing.expect(std.mem.indexOf(u8, shared_id, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, shared_id, "\"ok\":false") != null);
 }
 
 test "summary reports progress and is empty for an unused list" {
@@ -224,9 +224,9 @@ test "summary reports progress and is empty for an unused list" {
     _ = try applyTodoOp(&list, arena, "todo_close", null, "p1");
 
     const sum = try summary(&list, arena);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "1/2 closed") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "- [x] p1 step one") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "- [ ] p2 step two") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "1/2 closed") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "- [x] p1 step one") != null);
+    try std.testing.expect(std.mem.find(u8, sum, "- [ ] p2 step two") != null);
 }
 
 test "todo_list reply for a full list of long escaped titles exceeds any fixed buffer" {
@@ -248,9 +248,9 @@ test "todo_list reply for a full list of long escaped titles exceeds any fixed b
     }
 
     const listed = try applyTodoOp(&list, arena, "todo_list", null, null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"ok\":true") != null);
     // The first item's quoted title survives; it would be truncated/panicked
     // in a fixed buffer.
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\\\"\\\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"p1\"") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\\\"\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"p1\"") != null);
 }
