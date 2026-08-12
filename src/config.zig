@@ -253,6 +253,17 @@ pub const Improve = struct {
     /// run each, which is the price of noticing a patch that compiles, passes
     /// every unit test, and breaks a tool an agent depends on.
     capability_gate: bool = true,
+    /// Run an advisory Arena match ("promote this proposal" vs "reject this
+    /// proposal") before the capability evals, as a cheap early read.
+    ///
+    /// Advisory only, and deliberately so: the verdict is logged and can ride
+    /// along with a real gate failure's feedback, but nothing consults it and it
+    /// can never reject a proposal on its own. Making it a gate would hand a
+    /// self-authored proposal a judge it could learn to persuade instead of a
+    /// check it has to pass, which is the shortest path
+    /// docs/prompts/self-improve-safety-review.md exists to catch. Off by
+    /// default: it is several model calls per attempt.
+    arena_advisory: bool = false,
     /// Ceiling on the local zig build cache, checked before each attempt.
     /// The cache only ever grows (zig never prunes it) and each gate run adds
     /// to it; unbounded, it reached 72 GB here and filled the disk, which
@@ -1078,7 +1089,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase" }, "improve");
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "arena_advisory", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
@@ -1086,6 +1097,10 @@ pub const Config = struct {
         if (obj.get("capability_gate")) |k| im.capability_gate = switch (k) {
             .bool => |b| b,
             else => im.capability_gate,
+        };
+        if (obj.get("arena_advisory")) |k| im.arena_advisory = switch (k) {
+            .bool => |b| b,
+            else => im.arena_advisory,
         };
         if (obj.get("max_cache_bytes")) |k| im.max_cache_bytes = @intCast(try jsonInt(k, "max_cache_bytes"));
         if (obj.get("max_context_requests")) |k| {

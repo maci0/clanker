@@ -552,6 +552,7 @@ topic = "updates"
 
 [improve]
 capability_gate = true
+arena_advisory = false
 ```
 
 Fields:
@@ -589,6 +590,7 @@ Fields:
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
   - `capability_gate`: run the deterministic capability evals as a promotion gate (default true).
+  - `arena_advisory`: run an advisory Arena match ("promote this proposal" vs "reject this proposal") before the capability evals (default false). Advisory only by construction: the verdict is logged and can ride along with a real gate failure's feedback, but no gate consults it and it cannot reject a proposal. Costs several model calls per attempt, which is why it is off.
   - `eval_provider`: provider name the staged capability-eval agents run on, so a fast/cheap model can score capability while a stronger one writes patches. Unset uses the loop's own provider.
   - `plan_phase`: plan-then-patch — propose a deduplicated idea list once per run, then implement one idea per iteration (default true).
   - `inert_gate`: reject changes classified as doing nothing observable (default true).

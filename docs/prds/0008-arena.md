@@ -2,10 +2,12 @@
 
 ## Status
 
-Phases 1, 2, 4, 5, 7 and 8 are built: the pairwise match core, `clanker arena`
-/ `/arena`, third-party judging, the web UI arena view, design-review seeding
-(with a worked example below), and Battle Royale mode. Phase 3 (multi-instance
-over a chatroom) and 6 (advisory self-improve wiring) are not.
+Everything except phase 3 is built: the pairwise match core, `clanker arena` /
+`/arena`, third-party judging, the web UI arena view, design-review seeding
+(with a worked example below), the advisory `improve-self` read, and Battle
+Royale mode. Phase 3 (multi-instance over a chatroom) is not: it needs two
+reachable `clanker serve` peers to mean anything, and the PRD's own open
+question about ordering under a partition is unresolved.
 
 Two deviations from what is written below, both deliberate:
 
@@ -397,8 +399,8 @@ Phase 5 — web UI:
 
 Phase 6 — self-improve integration (separate proposal, not this PRD's ship):
 
-- [ ] Advisory-only wiring into `engine.zig`'s feedback path
-- [ ] Explicit test that no gate or invariant can be satisfied by an Arena
+- [x] Advisory-only wiring into `engine.zig`'s feedback path
+- [x] Explicit test that no gate or invariant can be satisfied by an Arena
       verdict alone
 
 Phase 7 — tool/skill design-review use case:
