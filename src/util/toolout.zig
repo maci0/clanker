@@ -14,42 +14,31 @@ const std = @import("std");
 const log = @import("log.zig");
 
 /// True when `out` opens like JSON and does not parse.
-pub fn looksLikeBrokenJson(arena: std.mem.Allocator, out: []const u8) bool {
+pub fn looksLikeBrokenJson(allocator: std.mem.Allocator, out: []const u8) bool {
     const text = std.mem.trimStart(u8, out, " \t\r\n");
     if (text.len == 0) return false;
     if (text[0] != '{' and text[0] != '[') return false;
-    _ = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch return true;
-    return false;
+    return !(std.json.validate(allocator, text) catch return true);
 }
 
-/// Says so, once, naming the tool.
-pub fn warnIfMalformed(arena: std.mem.Allocator, name: []const u8, out: []const u8) void {
-    if (looksLikeBrokenJson(arena, out)) {
+/// Says so, once, naming the tool. Validation only allocates for extreme JSON
+/// nesting and releases that temporary storage before returning.
+pub fn warnIfMalformed(allocator: std.mem.Allocator, name: []const u8, out: []const u8) void {
+    if (looksLikeBrokenJson(allocator, out)) {
         log.log(.warn, "tool '{s}' returned malformed JSON; the caller will see it as written", .{name});
     }
 }
 
-/// Same, for a caller that has no arena to spare.
-pub fn warnIfMalformedAlloc(gpa: std.mem.Allocator, name: []const u8, out: []const u8) void {
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    warnIfMalformed(arena_state.allocator(), name, out);
-}
-
 test "output that opens like JSON and does not parse is reported" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
     // The exact shapes two tools shipped, both from writing a value with
     // print, which emits raw text and quotes nothing.
-    try std.testing.expect(looksLikeBrokenJson(arena, "{\"ok\":true,\"note\":the file has 125 lines}"));
-    try std.testing.expect(looksLikeBrokenJson(arena, "{\"ok\":true,\"stat\",{\"kind\":\"file\"}}"));
-    try std.testing.expect(looksLikeBrokenJson(arena, "[1,2,"));
+    try std.testing.expect(looksLikeBrokenJson(std.testing.allocator, "{\"ok\":true,\"note\":the file has 125 lines}"));
+    try std.testing.expect(looksLikeBrokenJson(std.testing.allocator, "{\"ok\":true,\"stat\",{\"kind\":\"file\"}}"));
+    try std.testing.expect(looksLikeBrokenJson(std.testing.allocator, "[1,2,"));
 
     // Valid JSON, and output that never claimed to be JSON, are both fine.
-    try std.testing.expect(!looksLikeBrokenJson(arena, "{\"ok\":true,\"note\":\"past the end\"}"));
-    try std.testing.expect(!looksLikeBrokenJson(arena, "  {\"a\":[1,2,3]}  "));
-    try std.testing.expect(!looksLikeBrokenJson(arena, "plain text answer"));
-    try std.testing.expect(!looksLikeBrokenJson(arena, ""));
+    try std.testing.expect(!looksLikeBrokenJson(std.testing.allocator, "{\"ok\":true,\"note\":\"past the end\"}"));
+    try std.testing.expect(!looksLikeBrokenJson(std.testing.allocator, "  {\"a\":[1,2,3]}  "));
+    try std.testing.expect(!looksLikeBrokenJson(std.testing.allocator, "plain text answer"));
+    try std.testing.expect(!looksLikeBrokenJson(std.testing.allocator, ""));
 }

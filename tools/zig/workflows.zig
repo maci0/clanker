@@ -91,10 +91,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // When the caller asks with {"name":"x","chain":""} or simply inspects, surface it.
     if (wants_chain) {
         const c = extractChainFrontmatter(lib.alloc, wf.body) catch null;
-        if (c) |cj| {
-            const chain_field = lib.optStr(parsed, "chain") orelse "";
-            if (chain_field.len == 0) return writeOneWithChain(out, wf, cj) else return writeOneWithChain(out, wf, cj);
-        }
+        if (c) |cj| return writeOneWithChain(out, wf, cj);
     }
     if (args.len > 0) {
         const expanded = instantiate(lib.alloc, wf.body, args) catch return lib.fail(out, "could not expand workflow");

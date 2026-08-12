@@ -24,9 +24,20 @@ pub const Session = struct {
 
 const store_dir = "state/sessions";
 
+/// Session ids are path fragments, not arbitrary labels. Enforce the storage
+/// boundary here even when a caller forgets its own input validation.
+pub fn validSessionId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 64) return false;
+    for (id) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+    return true;
+}
+
 /// Writes a session to `base_dir/state/sessions/<id>.json`.
 pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, session: Session) !void {
     _ = arena;
+    if (!validSessionId(session.id)) return error.InvalidSessionId;
     try base.createDirPath(io, store_dir);
 
     // Grows to fit the conversation rather than a fixed cap: a fixed buffer
@@ -122,6 +133,7 @@ pub const StoredSession = struct {
 /// Loads a session from `base_dir/state/sessions/<id>.json`.
 pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) !Session {
     _ = gpa;
+    if (!validSessionId(id)) return error.InvalidSessionId;
     const path = try std.fmt.allocPrint(arena, "{s}/{s}.json", .{ store_dir, id });
     const raw = try base.readFileAlloc(io, path, arena, .limited(1 << 24));
     const stored = try json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true });
@@ -129,7 +141,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     var messages: std.ArrayList(types.Message) = .empty;
     for (stored.messages) |sm| {
         var msg = types.Message{
-            .role = roleFromStr(sm.role),
+            .role = try roleFromStr(sm.role),
             .content = sm.content,
             .tool_call_id = sm.tool_call_id,
         };
@@ -156,6 +168,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 /// record of runs that really happened, and are addressed by run id rather
 /// than by session.
 pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) !void {
+    if (!validSessionId(id)) return error.InvalidSessionId;
     const path = try std.fmt.allocPrint(arena, "{s}/{s}.json", .{ store_dir, id });
     try base.deleteFile(io, path);
 }
@@ -164,6 +177,7 @@ pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, id:
 /// titled "fork of <old title>". A fork is a branch you can abandon without
 /// losing the conversation it came from. Returns the new id (arena-owned).
 pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) ![]const u8 {
+    if (!validSessionId(id)) return error.InvalidSessionId;
     const s = try loadSession(io, gpa, arena, base, id);
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     // Nanosecond suffix keeps two forks of the same session distinct and
@@ -359,11 +373,56 @@ pub fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usiz
     messages.shrinkRetainingCapacity(write);
 }
 
-fn roleFromStr(s: []const u8) types.Role {
-    return if (std.mem.eql(u8, s, "system")) .system else if (std.mem.eql(u8, s, "user")) .user else if (std.mem.eql(u8, s, "assistant")) .assistant else if (std.mem.eql(u8, s, "tool")) .tool else .user;
+fn roleFromStr(s: []const u8) !types.Role {
+    if (std.mem.eql(u8, s, "system")) return .system;
+    if (std.mem.eql(u8, s, "user")) return .user;
+    if (std.mem.eql(u8, s, "assistant")) return .assistant;
+    if (std.mem.eql(u8, s, "tool")) return .tool;
+    return error.InvalidRole;
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "session store rejects ids that can escape its directory" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const bad_id = "../../escaped";
+    try std.testing.expectError(error.InvalidSessionId, saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+        .id = bad_id,
+        .title = "bad",
+        .messages = &.{},
+        .created = 0,
+        .updated = 0,
+    }));
+    try std.testing.expectError(error.InvalidSessionId, loadSession(io, std.testing.allocator, arena, tmp.dir, bad_id));
+    try std.testing.expectError(error.InvalidSessionId, deleteSession(io, arena, tmp.dir, bad_id));
+    try std.testing.expectError(error.InvalidSessionId, forkSession(io, std.testing.allocator, arena, tmp.dir, bad_id));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "escaped.json", .{}));
+}
+
+test "session load rejects an unknown persisted message role" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state/sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/bad-role.json", .data =
+        \\{"id":"bad-role","title":"bad","created":0,"updated":0,"messages":[{"role":"operator","content":"do not reinterpret me"}]}
+    });
+    try std.testing.expectError(error.InvalidRole, loadSession(io, std.testing.allocator, arena, tmp.dir, "bad-role"));
+}
 
 test "compactMessages counts short content and tool-call arguments" {
     var messages: std.ArrayList(types.Message) = .empty;
@@ -847,7 +906,7 @@ pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, 
     var out: std.ArrayList(types.Message) = .empty;
     for (messages_in) |sm| {
         if (sm.content == null or sm.content.?.len == 0) continue;
-        const role = roleFromStr(sm.role);
+        const role = roleFromStr(sm.role) catch continue;
         if (role != .user and role != .assistant) continue;
         try out.append(arena, .{ .role = role, .content = sm.content });
     }

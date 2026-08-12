@@ -1899,7 +1899,7 @@ pub const Agent = struct {
         // tool messages on the sequential path (use-after-free).
         const owned = try self.arena.dupe(u8, out);
         log.log(.info, "tool '{s}' -> {d} bytes in {d}ms", .{ tc.name, out.len, ms });
-        toolout.warnIfMalformed(self.arena, tc.name, owned);
+        toolout.warnIfMalformed(self.ctx.gpa, tc.name, owned);
 
         // Run after-transforms on the result (output filtering / post-processing).
         const transformed = self.runChain(tc.name, .after, owned) catch owned;
@@ -2419,7 +2419,7 @@ const ToolWorker = struct {
         // Checked where the result is produced rather than where it is
         // consumed: the consumers are three different paths, and instrumenting
         // the two obvious ones missed the one that actually runs.
-        toolout.warnIfMalformedAlloc(self.ctx.gpa, self.tool.name, out);
+        toolout.warnIfMalformed(self.ctx.gpa, self.tool.name, out);
         self.out = out;
     }
 };
