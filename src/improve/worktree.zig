@@ -179,6 +179,31 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 
     std.Io.Dir.cwd().createDirPath(io, ".clanker-worktrees") catch {};
 
+    // Prune stale worktree bookkeeping left by a crashed prior run (OOM,
+    // SIGKILL, power loss): without this `git worktree add` fails with
+    // "already exists" and the whole improve-self run is refused.
+    {
+        const prune_argv = [_][]const u8{ "git", "worktree", "prune" };
+        const prune_res = std.process.run(gpa, io, .{ .argv = &prune_argv }) catch null;
+        if (prune_res) |pr| {
+            gpa.free(pr.stdout);
+            gpa.free(pr.stderr);
+        }
+    }
+
+    // If the branch already exists from a prior crashed run, delete it so
+    // the fresh `git worktree add -b` below does not fail with "already
+    // exists". The prune above detached it from any worktree entry; this
+    // removes the dangling ref itself.
+    {
+        const del_argv = [_][]const u8{ "git", "branch", "-D", branch };
+        const del_res = std.process.run(gpa, io, .{ .argv = &del_argv }) catch null;
+        if (del_res) |dr| {
+            gpa.free(dr.stdout);
+            gpa.free(dr.stderr);
+        }
+    }
+
     const argv = [_][]const u8{ "git", "worktree", "add", "-b", branch, path, base_branch };
     const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return error.WorktreeCreateFailed;
     defer gpa.free(res.stdout);
