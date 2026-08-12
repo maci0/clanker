@@ -1639,24 +1639,27 @@ const Model = struct {
         var i: usize = start;
         while (i < view_end and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
+            // Each Line is one logical row (finishTurn/printHelp store the
+            // transcript pre-split on '\n'). The write helpers advance `row`
+            // for their own internal wraps but not past the line, so the loop
+            // steps to the next row itself: without this every short line
+            // (e.g. the whole /help block) overprints the same row.
             if (l.fence_lang) |lang| {
                 var state = syntax.State.init(lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
-                syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs) catch {
+                if (syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs)) {
+                    writeWrappedSegments(ctx, surface, &row, bottom, max.width, segs.items);
+                } else |_| {
                     writeWrapped(surface, &row, bottom, max.width, l.text, dim);
-                    continue;
-                };
-                writeWrappedSegments(ctx, surface, &row, bottom, max.width, segs.items);
-            } else {
-                // Completed lines wrap like the live stream does; writeRow
-                // would clip a long turn's reply to a single terminal row.
-                // Tool cards (dim, left-bar shaped) get their own tint and a
-                // bar-preserving wrap; an error turn's "[error: " prefix gets
-                // its own tint too instead of sharing one grey.
-                if (l.dim and transcript_mod.isToolCardLine(l.text)) {
-                    writeWrappedCard(surface, &row, bottom, max.width, l.text, tool_style);
-                    continue;
                 }
+            } else if (l.dim and transcript_mod.isToolCardLine(l.text)) {
+                // Tool cards (dim, left-bar shaped) get their own tint and a
+                // bar-preserving wrap.
+                writeWrappedCard(surface, &row, bottom, max.width, l.text, tool_style);
+            } else {
+                // An error turn's "[error: " prefix gets its own tint; the
+                // user's echoed prompt gets the accent colour; everything
+                // else is default or dim.
                 const style = if (l.user)
                     prompt_style
                 else if (std.mem.startsWith(u8, l.text, "[error:"))
@@ -1667,6 +1670,7 @@ const Model = struct {
                     vaxis.Style{};
                 writeWrapped(surface, &row, bottom, max.width, l.text, style);
             }
+            row += 1;
         }
         // The live stream renders only at the tail: a scrolled-up window is
         // frozen history, and painting fresh tokens under it would both lie

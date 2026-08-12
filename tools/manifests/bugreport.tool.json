@@ -1,0 +1,52 @@
+{
+  "name": "bugreport",
+  "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity and environment into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls board_add. Use this instead of board_add when the work item is a bug: the template keeps reports consistent and searchable.",
+  "wasm": "zig-out/tools/bugreport.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Short summary of the bug (max 500 chars, [BUG] prefix added automatically)"
+      },
+      "description": {
+        "type": "string",
+        "description": "Detailed explanation of what is wrong"
+      },
+      "steps_to_reproduce": {
+        "type": "string",
+        "description": "Numbered steps to trigger the bug, e.g. '1. Open config\\n2. Set X=Y\\n3. Run build'"
+      },
+      "expected": {
+        "type": "string",
+        "description": "What should happen"
+      },
+      "actual": {
+        "type": "string",
+        "description": "What actually happens"
+      },
+      "severity": {
+        "type": "string",
+        "description": "critical, high, normal (default), or low"
+      },
+      "component": {
+        "type": "string",
+        "description": "Which subsystem or file is affected, e.g. 'src/sandbox/' or 'board'"
+      },
+      "environment": {
+        "type": "string",
+        "description": "OS, Zig version, config, or anything else that matters for reproducing"
+      },
+      "room": {
+        "type": "string",
+        "description": "Board room name; omit for the default 'board' room"
+      }
+    },
+    "required": ["title"]
+  },
+  "tool_call": true,
+  "sequential": true,
+  "fs_prefixes": [],
+  "network_allow": [],
+  "category": "board"
+}
