@@ -280,7 +280,21 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // reasoning traces, plugin toggles) is deliberately neither linked nor
     // copied: a fresh worktree legitimately starts empty and every tool
     // already answers "(nothing yet)" for that case.
-    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl" }) |name| {
+    // Symlink directories that are read-only during an improve run: chain
+    // pipelines and workflow templates. These are never written by improve-self
+    // (the agent reads them via the chain/workflows tools), so a symlink is
+    // safe and avoids duplicating potentially large directories.
+    for ([_][]const u8{ "chains", "workflows" }) |name| {
+        std.Io.Dir.cwd().access(io, name, .{}) catch continue;
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
+        defer gpa.free(target);
+        const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(link_path);
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = true }) catch |err|
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+    }
+
+    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
         // 16 MiB: autolearn's own log cap is 8 MiB (max_log_bytes,
         // src/agent/autolearn.zig) and the trim triggers only past it, so a
         // 4 MiB read limit here didn't truncate -- readFileAlloc errors on
