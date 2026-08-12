@@ -168,7 +168,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// each so a run id can be picked out and rendered.
 fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !void {
     if (names != .array or names.array.items.len == 0)
-        return writeText(out, "(no runs yet — clanker run creates one)");
+        return lib.okText(out, "(no runs yet — clanker run creates one)");
 
     var files: std.ArrayList([]const u8) = .empty;
     for (names.array.items) |item| {
@@ -186,7 +186,7 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
         const line = try std.fmt.allocPrint(alloc, "{s}\t{d}ms\t{d} node(s)\t{s}\n", .{ g.run_id, g.duration_ms, g.nodes.len, g.task });
         try buf.appendSlice(alloc, line);
     }
-    try writeText(out, buf.items);
+    try lib.okText(out, buf.items);
 }
 
 /// The first line of a task, clipped to a picker-sized label on a UTF-8
@@ -264,7 +264,7 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.endObject();
     }
     try s.endArray();
-    try writeText(out, enc.written());
+    try lib.okText(out, enc.written());
 }
 
 /// `json <run-id>`: the whole graph, node by node, for the web UI's chart.
