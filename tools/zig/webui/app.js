@@ -512,6 +512,37 @@ el.railToggle.addEventListener("click", function () {
 });
 el.railScrim.addEventListener("click", function () { setRailOpen(false); });
 
+/* Drag-to-scroll for the chat-history list inside the pinned rail. The list is
+   the one scrollable region in the sidebar; hovering and using the wheel works
+   because it is an overflow container, and this adds the click-and-drag
+   gesture. A small threshold keeps a plain click (which switches a
+   conversation) from being treated as the start of a drag. */
+function enableDragScroll(node) {
+  if (!node) return;
+  var dragging = false, moved = false, startX = 0, startY = 0, startTop = 0;
+  node.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    dragging = true; moved = false;
+    startX = e.clientX; startY = e.clientY; startTop = node.scrollTop;
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!dragging) return;
+    var dx = e.clientX - startX, dy = e.clientY - startY;
+    if (!moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    moved = true;
+    node.scrollTop = startTop - dy;
+    e.preventDefault();
+  });
+  function end() { dragging = false; }
+  window.addEventListener("mouseup", end);
+  /* A drag that ends over a conversation row would otherwise fire the row's
+     click (which switches conversation) on release. Suppress that click when a
+     real drag happened. */
+  node.addEventListener("click", function (e) {
+    if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; }
+  }, true);
+}
+enableDragScroll(el.railList);
 /* Drag-to-scroll on the conversation list. The rail is pinned and only the
    list scrolls, so a pointer drags the history the way a touchscreen does.
    A gesture that barely moves is still a click (it opens that conversation);

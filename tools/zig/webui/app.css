@@ -522,7 +522,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 /* ---- tabs: one view at a time ----
    Everything used to be stacked in one column, so reaching Tools meant
    scrolling past the whole transcript, the run graph and every room. */
-.rail-nav { display: flex; flex-direction: column; gap: 1px; }
+.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
    channel that is engaged. */
 .rail-tab {
@@ -567,7 +567,10 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
     0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
 }
 .rail-tab { position: relative; padding-left: var(--space-5); }
-.rail-context { margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3); }
+.rail-context {
+  margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+}
 .rail-context[hidden] { display: none; }
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
@@ -1912,6 +1915,11 @@ main {
   flex: 1;
 }
 .rail {
+  flex: none; width: 15rem;
+  position: sticky; top: 3.2rem; height: calc(100vh - 3.2rem);
+  display: flex; flex-direction: column; overflow: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
   flex: none; width: 15rem; align-self: stretch;
   position: sticky; top: 0; max-height: 100vh;
   display: flex; flex-direction: column;
@@ -1920,6 +1928,8 @@ main {
   padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
 }
+.rail:hover { scrollbar-color: var(--border) transparent; }
+.rail-head { display: flex; flex-direction: column; gap: var(--space-3); flex: none; }
 /* The rail is pinned: only the conversation list scrolls, not the whole
    sidebar, so the tabs and the chat controls stay put while the history
    moves under the pointer. The list owns the scrollbar. */
@@ -1945,6 +1955,7 @@ main {
   flex: 1; min-height: 0;
   margin-top: var(--space-4); padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 1px;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   overflow-y: auto; overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
@@ -2014,7 +2025,7 @@ h2#session-title {
     transform: translateX(-100%); transition: transform 160ms ease;
     background: var(--bg);
     box-shadow: 0 0 3rem color-mix(in srgb, var(--bg) 70%, transparent);
-    max-height: none;
+    max-height: none; height: auto;
   }
   .rail[data-open="true"] { transform: none; }
   /* Closed means gone: without this, tabbing from the header walked ten
