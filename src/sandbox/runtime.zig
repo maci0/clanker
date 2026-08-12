@@ -1433,7 +1433,8 @@ test "arena wasm tool refuses a match without two distinct sides" {
         .{ .input = "{\"question\":\"q\",\"against\":\"b\"}", .want = "two distinct positions" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\" a \"}", .want = "identical" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"  \"}", .want = "cannot be blank" },
-        .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"c\"]}", .want = "Battle Royale" },
+        .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}", .want = "at most 8" },
+        .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"a\"]}", .want = "identical" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"b\",\"judge\":\"jury\"}", .want = "judge must be" },
     };
     for (cases) |c| {
@@ -1559,4 +1560,62 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
     defer std.testing.allocator.free(listed);
     try std.testing.expect(std.mem.indexOf(u8, listed, id) != null);
     try std.testing.expect(std.mem.indexOf(u8, listed, "queue or direct calls?") != null);
+}
+
+test "arena wasm tool runs a battle royale to a verdict when no provider answers" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/arena.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // Five positions, every call denied: the same forfeit path as the pairwise
+    // test, but exercising the N-combatant loop, the per-combatant seat labels
+    // and the generalised verdict. A royale where nobody lands anything must
+    // still terminate and persist, not hang or fall over on the wider board.
+    const raw = try arenaCall(io, root, wasm, &env_map,
+        \\{"question":"which store?","positions":["json file","append log","sqlite","in-memory","chatroom"],"max_rounds":2}
+    );
+    defer std.testing.allocator.free(raw);
+
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"status\":\"finished\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "battle royale, 5 positions") != null);
+
+    var parsed_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer parsed_arena.deinit();
+    const a = parsed_arena.allocator();
+    const doc = try std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{});
+    const match = doc.object.get("match").?.object;
+    const cs = match.get("combatants").?.array.items;
+    try std.testing.expectEqual(@as(usize, 5), cs.len);
+    // Seats are numbered above pairwise, which is also how a combatant names a
+    // target, so the two have to agree.
+    try std.testing.expectEqualStrings("p1", cs[0].object.get("side").?.string);
+    try std.testing.expectEqualStrings("p5", cs[4].object.get("side").?.string);
+    for (cs) |c| {
+        try std.testing.expectEqual(@as(i64, 100), c.object.get("hp").?.integer);
+        try std.testing.expectEqual(false, c.object.get("eliminated").?.bool);
+    }
+    // Every combatant forfeited in each of the two rounds: 5 x 2 moves.
+    var forfeits: usize = 0;
+    for (match.get("rounds").?.array.items) |r| {
+        for (r.object.get("moves").?.array.items) |mv| {
+            if (mv.object.get("forfeit")) |f| {
+                if (f == .bool and f.bool) forfeits += 1;
+            }
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 10), forfeits);
+    // Nobody took damage, so nobody outargued anybody.
+    try std.testing.expectEqualStrings("draw", match.get("verdict").?.object.get("reason").?.string);
 }
