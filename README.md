@@ -42,7 +42,7 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | Key | Purpose |
 |-----|---------|
 | `default_provider` | Name of the active entry under `providers` |
-| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
+| `providers` | Map of named backends (`kind`, `base_url`, `api_key_env`, optional `auth`, `default_model`, `models` — a map of model name to `max_tokens` / `context_window` / `reasoning_effort` / etc.; per-model settings on the provider itself are rejected, see below) |
 | `agent` | Loop limits, paths, sandbox root, and compaction |
 | `improve` | Self-improvement iteration and context size caps |
 | `instance` | This agent's `name` and `id` |

@@ -8,6 +8,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 ### Added
 
 - Initial CLI, REPL, HTTP, MCP, peer, and sandboxed WASM tool surfaces.
+- Optional per-provider `auth` key (`api_key` / `oauth_static` /
+  `oauth_refresh`), selecting how a credential is acquired independently of the
+  provider's `kind`. Unset keeps the existing auto-detection, so no existing
+  config changes meaning.
 
 ### Compatibility notes
 
