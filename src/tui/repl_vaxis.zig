@@ -22,11 +22,11 @@
 //! picker, `handlePickerKey`, styled like Kimi Code's; `/help`/`?` prints
 //! `printHelp`'s hand-maintained command list, not a generated one), inline
 //! ask_user/approval prompts (falls back to the same "nobody attached"
-//! default a headless run gets), manual scroll-back (the transcript always
-//! shows its tail), and the left-bar tool-card styling from the old
-//! transcript.zig (tool calls render as plain dim lines here). Full list,
-//! with what a fix looks like for each: docs/ROADMAP.md's "vaxis REPL
-//! parity" entry under Planned.
+//! default a headless run gets), and manual scroll-back (the transcript
+//! always shows its tail). Full list, with what a fix looks like for each:
+//! docs/ROADMAP.md's "vaxis REPL parity" entry under Planned. Tool calls
+//! render as the established left-bar cards, built as plain strings by
+//! transcript.zig's card helpers and styled into cells at draw time.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -44,6 +44,8 @@ const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
+// `_mod` because saveConversation has a local named `transcript`.
+const transcript_mod = @import("transcript.zig");
 
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
@@ -95,20 +97,28 @@ fn onToken(delta: []const u8) void {
     bridge_stream_buf.appendSlice(bridge_gpa, clean) catch {};
 }
 
+/// Each batch of calls becomes one left-bar card (transcript.zig's card
+/// builders): the first call opens it, the rest of the batch joins the body,
+/// each call's arguments follow as a truncated one-line preview, and
+/// onToolResult closes it — the agent reports one timing per batch, so
+/// per-call cards would draw open corners nothing ever closes. Name and
+/// arguments are untrusted; the builders control-strip them (CWE-150).
 fn onToolCall(calls: []const types.ToolCall) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    for (calls) |c| {
-        const line = std.fmt.allocPrint(bridge_gpa, "\xe2\x9a\x99 {s}", .{c.name}) catch continue;
-        bridge_tool_lines.append(bridge_gpa, line) catch {};
+    for (calls, 0..) |c, i| {
+        const header = transcript_mod.toolCardHeader(bridge_gpa, c.name, i == 0) catch continue;
+        bridge_tool_lines.append(bridge_gpa, header) catch bridge_gpa.free(header);
+        const body = transcript_mod.toolCardArgs(bridge_gpa, c.arguments) catch null;
+        if (body) |b| bridge_tool_lines.append(bridge_gpa, b) catch bridge_gpa.free(b);
     }
 }
 
 fn onToolResult(elapsed_ms: u64) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    const line = std.fmt.allocPrint(bridge_gpa, "  \xe2\x86\xb3 done in {d}ms", .{elapsed_ms}) catch return;
-    bridge_tool_lines.append(bridge_gpa, line) catch {};
+    const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms) catch return;
+    bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
 }
 
 const RunThreadArgs = struct {
@@ -1079,12 +1089,17 @@ const Model = struct {
             } else {
                 // Completed lines wrap like the live stream does; writeRow
                 // would clip a long turn's reply to a single terminal row.
-                // Tool-call/result lines (dim) and an error turn's "[error: "
-                // prefix each get their own tint instead of sharing one grey.
+                // Tool cards (dim, left-bar shaped) get their own tint and a
+                // bar-preserving wrap; an error turn's "[error: " prefix gets
+                // its own tint too instead of sharing one grey.
+                if (l.dim and transcript_mod.isToolCardLine(l.text)) {
+                    writeWrappedCard(surface, &row, bottom, max.width, l.text, tool_style);
+                    continue;
+                }
                 const style = if (std.mem.startsWith(u8, l.text, "[error:"))
                     err_style
                 else if (l.dim)
-                    (if (std.mem.startsWith(u8, l.text, "\xe2\x9a\x99") or std.mem.startsWith(u8, l.text, "  \xe2\x86\xb3")) tool_style else dim)
+                    dim
                 else
                     vaxis.Style{};
                 writeWrapped(surface, &row, bottom, max.width, l.text, style);
@@ -1210,6 +1225,40 @@ fn writeWrappedSegments(ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16,
             if (w > 0) surface.writeCell(col, row.*, .{ .char = .{ .grapheme = bytes, .width = @intCast(w) }, .style = seg.style });
             col += w;
         }
+    }
+}
+
+/// writeWrapped for a tool-card line: continuation rows re-open with the
+/// card's left bar ("\u{2502}  ") so a long args preview wraps inside the
+/// card instead of spilling flush-left and breaking the shape the card
+/// builders drew. Terminals too narrow for bar + indent + a few glyphs fall
+/// back to the plain wrap rather than filling every row with prefix.
+fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style) void {
+    if (width < 8) return writeWrapped(surface, row, bottom, width, text, style);
+    var col: u16 = 0;
+    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (it.nextCodepointSlice()) |cp| {
+        if (row.* >= bottom) break;
+        if (std.mem.eql(u8, cp, "\n")) {
+            // Card lines are single-line by construction (cardPreview
+            // flattens newlines); handled anyway so a stray one degrades
+            // like writeWrapped instead of overprinting.
+            row.* += 1;
+            col = 0;
+            continue;
+        }
+        if (col >= width) {
+            row.* += 1;
+            col = 0;
+            if (row.* >= bottom) break;
+            var pit = std.unicode.Utf8Iterator{ .bytes = "\u{2502}  ", .i = 0 };
+            while (pit.nextCodepointSlice()) |pcp| {
+                surface.writeCell(col, row.*, .{ .char = .{ .grapheme = pcp, .width = 1 }, .style = style });
+                col += 1;
+            }
+        }
+        surface.writeCell(col, row.*, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
+        col += 1;
     }
 }
 
