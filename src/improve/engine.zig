@@ -1576,6 +1576,28 @@ pub const Engine = struct {
         for (staging_runtime_files) |f| {
             copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch {};
         }
+        // Share the parent tree's zig cache: a fresh staging dir means a cold
+        // .zig-cache, and the gate's build/tools/tests then recompile the
+        // whole tree from scratch on every single proposal -- measured as the
+        // bulk of a 6-7 minute gate cycle. Zig's local cache is content-
+        // addressed and lock-guarded (concurrent builds against one cache are
+        // an ordinary supported case), so sharing it only changes speed, not
+        // verdicts: a staged edit hashes differently and rebuilds exactly
+        // what it invalidates. The link is a leaf entry no ck_fs path ever
+        // traverses (patch_apply writes source paths), so the sandbox's
+        // no-follow walk never sees it. Failure to link just means a cold
+        // build: correct, only slower, hence catch {}.
+        blk: {
+            const root = std.process.currentPathAlloc(self.ctx.io, self.ctx.gpa) catch break :blk;
+            defer self.ctx.gpa.free(root);
+            dir.createDirPath(self.ctx.io, ".zig-cache") catch break :blk;
+            const target = std.fmt.allocPrint(self.ctx.gpa, "{s}/.zig-cache", .{root}) catch break :blk;
+            defer self.ctx.gpa.free(target);
+            const link_path = std.fmt.allocPrint(self.ctx.gpa, "{s}/.zig-cache", .{staging}) catch break :blk;
+            defer self.ctx.gpa.free(link_path);
+            dir.symLink(self.ctx.io, target, link_path, .{}) catch |err|
+                log.log(.warn, "staging cache link failed ({s}); staged builds run cold", .{@errorName(err)});
+        }
     }
 };
 
