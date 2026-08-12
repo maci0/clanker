@@ -345,6 +345,113 @@ pub const MdStream = struct {
     }
 };
 
+// -------------------------------------------------------------- tool cards --
+//
+// The left-bar card from the module doc, as pure line builders. The vaxis
+// REPL stores its transcript as plain strings and styles them into cells at
+// draw time (no ANSI), so the card is built here as text — one place owns
+// the shape and the sanitizing rules — and any surface that renders through
+// strings reuses it instead of redrawing the style from memory.
+
+/// The card glyphs: `╭─` opens, `│` rules the body, `╰─` closes. No right
+/// edge, per the module doc: a left bar can't visually break no matter what
+/// the tool printed.
+pub const card_open = "\u{256d}\u{2500}";
+pub const card_bar = "\u{2502}";
+pub const card_close = "\u{2570}\u{2500}";
+
+/// Byte cap on a card body preview, matching loop.zig's argsPreview: enough
+/// of the arguments to judge the call, never all of them — a whole file
+/// write would drown the transcript.
+pub const card_preview_cap = 400;
+
+/// One-line bounded preview of untrusted text for a card line. Controls are
+/// dropped under the same rule writeSanitized enforces (CWE-150), except
+/// that newline and tab each flatten to one space — a card line is one line
+/// by construction. The cap cuts between code points, never through one (a
+/// split code point is not a shorter preview but a malformed one), and a
+/// cut is marked with "…".
+pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var truncated = false;
+    var i: usize = 0;
+    while (i < bytes.len) {
+        const c = bytes[i];
+        if (c == '\n' or c == '\t') {
+            if (out.items.len >= card_preview_cap) {
+                truncated = true;
+                break;
+            }
+            try out.append(gpa, ' ');
+            i += 1;
+            continue;
+        }
+        if (strippedControl(c)) {
+            i += 1;
+            continue;
+        }
+        if (c == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F) {
+            i += 2;
+            continue;
+        }
+        // Copy whole code points (an invalid lead byte passes through alone,
+        // same as writeSanitized) so the cap check above never splits one.
+        const n: usize = std.unicode.utf8ByteSequenceLength(c) catch 1;
+        const len = @min(n, bytes.len - i);
+        if (out.items.len + len > card_preview_cap) {
+            truncated = true;
+            break;
+        }
+        try out.appendSlice(gpa, bytes[i .. i + len]);
+        i += len;
+    }
+    if (truncated) try out.appendSlice(gpa, "\u{2026}");
+    return out.toOwnedSlice(gpa);
+}
+
+/// The line naming a tool call: "╭─ ⚙ <name>" for the call that opens the
+/// card, "│  ⚙ <name>" for the rest of its batch. A batch of parallel calls
+/// shares one card because the agent reports one timing per batch (see
+/// loop.zig's on_tool_result) — per-call open corners would draw cards that
+/// nothing ever closes. The name is untrusted (the model chose it), so it
+/// takes the same preview pass as the body.
+pub fn toolCardHeader(gpa: std.mem.Allocator, name: []const u8, first: bool) ![]u8 {
+    const clean = try cardPreview(gpa, name);
+    defer gpa.free(clean);
+    if (first) return std.fmt.allocPrint(gpa, card_open ++ " \u{2699} {s}", .{clean});
+    return std.fmt.allocPrint(gpa, card_bar ++ "  \u{2699} {s}", .{clean});
+}
+
+/// A card body line for the call's arguments: "│  <preview>". Null when
+/// there is nothing worth a line — no arguments, or the no-argument call's
+/// literal "{}", which says nothing the header didn't.
+pub fn toolCardArgs(gpa: std.mem.Allocator, args: []const u8) !?[]u8 {
+    const clean = try cardPreview(gpa, args);
+    if (clean.len == 0 or std.mem.eql(u8, clean, "{}")) {
+        gpa.free(clean);
+        return null;
+    }
+    defer gpa.free(clean);
+    return try std.fmt.allocPrint(gpa, card_bar ++ "  {s}", .{clean});
+}
+
+/// The closing line: "╰─ done in <N>ms" — the same wording the plain status
+/// line used, so logs and muscle memory carry over.
+pub fn toolCardFooter(gpa: std.mem.Allocator, elapsed_ms: u64) ![]u8 {
+    return std.fmt.allocPrint(gpa, card_close ++ " done in {d}ms", .{elapsed_ms});
+}
+
+/// True for lines produced by the card builders above, so a renderer that
+/// styles stored lines after the fact (the vaxis REPL) can give card lines
+/// the tool tint and a bar-preserving wrap without carrying extra state
+/// alongside each line.
+pub fn isToolCardLine(text: []const u8) bool {
+    return std.mem.startsWith(u8, text, card_open) or
+        std.mem.startsWith(u8, text, card_bar) or
+        std.mem.startsWith(u8, text, card_close);
+}
+
 // ------------------------------------------------------------------- tests --
 
 fn mdStreamRender(allocator: std.mem.Allocator, chunks: []const []const u8) ![]u8 {
@@ -508,4 +615,69 @@ test "MdStream strips a control held back behind an unresolved marker" {
     const out = try mdStreamRender(allocator, &.{"x`\x1b"});
     defer allocator.free(out);
     try std.testing.expectEqualStrings("x`", out);
+}
+
+test "cardPreview flattens newline and tab, strips controls, keeps short input" {
+    const gpa = std.testing.allocator;
+    // The ESC and DEL drop; the "[31m" behind the ESC stays as inert text,
+    // same contract as writeSanitized.
+    const out = try cardPreview(gpa, "a\nb\tc\x1b[31md\x7f");
+    defer gpa.free(out);
+    try std.testing.expectEqualStrings("a b c[31md", out);
+}
+
+test "cardPreview caps at the preview cap and marks the cut" {
+    const gpa = std.testing.allocator;
+    const out = try cardPreview(gpa, "x" ** 500);
+    defer gpa.free(out);
+    try std.testing.expectEqual(card_preview_cap + "\u{2026}".len, out.len);
+    try std.testing.expect(std.mem.endsWith(u8, out, "\u{2026}"));
+}
+
+test "cardPreview never splits a code point at the cap" {
+    const gpa = std.testing.allocator;
+    // 399 ASCII bytes, then a 4-byte emoji that cannot fit: dropped whole.
+    const out = try cardPreview(gpa, ("y" ** 399) ++ "\u{1F600}" ++ "z");
+    defer gpa.free(out);
+    try std.testing.expectEqualStrings(("y" ** 399) ++ "\u{2026}", out);
+}
+
+test "cardPreview strips C1 controls but keeps multi-byte codepoints" {
+    const gpa = std.testing.allocator;
+    // 0xC2 0x9B is U+009B (CSI), stripped; "©" (0xC2 0xA9) is text.
+    const out = try cardPreview(gpa, "a\xc2\x9bb \xc2\xa9");
+    defer gpa.free(out);
+    try std.testing.expectEqualStrings("ab \xc2\xa9", out);
+}
+
+test "tool card lines carry the left-bar shape and are recognizable" {
+    const gpa = std.testing.allocator;
+    const head = try toolCardHeader(gpa, "read_file", true);
+    defer gpa.free(head);
+    try std.testing.expectEqualStrings("\u{256d}\u{2500} \u{2699} read_file", head);
+
+    const joined = try toolCardHeader(gpa, "list_dir", false);
+    defer gpa.free(joined);
+    try std.testing.expectEqualStrings("\u{2502}  \u{2699} list_dir", joined);
+
+    const body = (try toolCardArgs(gpa, "{\"path\":\"a\"}")).?;
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings("\u{2502}  {\"path\":\"a\"}", body);
+
+    const foot = try toolCardFooter(gpa, 88);
+    defer gpa.free(foot);
+    try std.testing.expectEqualStrings("\u{2570}\u{2500} done in 88ms", foot);
+
+    try std.testing.expect(isToolCardLine(head));
+    try std.testing.expect(isToolCardLine(joined));
+    try std.testing.expect(isToolCardLine(body));
+    try std.testing.expect(isToolCardLine(foot));
+    try std.testing.expect(!isToolCardLine("plain text"));
+    try std.testing.expect(!isToolCardLine("\u{2699} old-style line"));
+}
+
+test "toolCardArgs skips empty and no-argument bodies" {
+    const gpa = std.testing.allocator;
+    try std.testing.expect((try toolCardArgs(gpa, "")) == null);
+    try std.testing.expect((try toolCardArgs(gpa, "{}")) == null);
 }
