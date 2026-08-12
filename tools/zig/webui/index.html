@@ -177,6 +177,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
           </label>
+          <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)">🎙</button>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>
@@ -330,7 +331,6 @@ lamps carry further). The seven named palettes ride the same tokens.
            last column and needed sideways scrolling to find, which is the
            opposite of what a first-run message is for. -->
       <p class="run-empty" id="board-empty" hidden>No cards yet. A card added here goes into the room's log, so every clanker in the room sees it.</p>
-      <div id="card-detail" class="run-detail" role="region" aria-label="Selected card" hidden></div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
     </section>
 
@@ -448,6 +448,10 @@ lamps carry further). The seven named palettes ride the same tokens.
      a datalist of the names that already exist, so picking one is a matter
      of arrow keys rather than retyping it exactly and risking a near-miss
      that quietly forks a new workspace. -->
+<div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
+  <div class="overlay-box" style="max-width: 42rem;"></div>
+</div>
+
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
   <div class="overlay-box">
     <form id="text-prompt-form" class="goal-form">

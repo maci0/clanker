@@ -117,6 +117,7 @@ var el = {
   cardColumn: document.getElementById("card-column"),
   cardAdd: document.getElementById("card-add"),
   cardDetail: document.getElementById("card-detail"),
+  cardDetailBox: document.querySelector("#card-detail .overlay-box"),
   boardMine: document.getElementById("board-mine"),
   boardRefresh: document.getElementById("board-refresh"),
   boardStatus: document.getElementById("board-status"),
@@ -859,6 +860,19 @@ var renderMarkdown = mdRenderMarkdown;
 var highlightInto = mdHighlightInto;
 var buildCodeBlock = mdBuildCodeBlock;
 var finalizeAnswer = mdFinalizeAnswer;
+window.clankerOpenCitation = function(ref){
+  try{
+    var stem = ref.split(":")[0].split("/").pop().split(".")[0];
+    var runsTab = document.getElementById("tab-runs");
+    if (runsTab) runsTab.click();
+    setTimeout(function(){
+      var inp = document.querySelector(".run-graph-search input");
+      if (inp) { inp.value = stem; inp.dispatchEvent(new Event("input", {bubbles:true})); inp.focus(); }
+      var rf = document.getElementById("run-filter");
+      if (rf) { rf.value = ref.split(":")[0]; rf.dispatchEvent(new Event("input", {bubbles:true})); }
+    }, 80);
+  }catch(_){}
+};
 
 function addToolEvent(turn, names) {
   var row = document.createElement("div");
@@ -923,6 +937,19 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   // Announce question via per-turn live region and fleet-status fallback
   var fleetSt = document.getElementById("fleet-status");
   if (fleetSt) fleetSt.textContent = ariaLabel;
+  // Desktop notification when tab is hidden — otherwise ask/confirm dies silently
+  try{
+    if (document.hidden && "Notification" in window) {
+      if (Notification.permission === "granted") {
+        var n = new Notification(ariaLabel, { body: (evt.question || ariaLabel).slice(0,120), tag: "clanker-ask-" + evt.id });
+        n.onclick = function(){ try{ window.focus(); first && first.focus(); }catch(_){} n.close(); };
+        // tiny beep via Web Audio if available
+        try{ var ac = new (window.AudioContext||window.webkitAudioContext)(); var o=ac.createOscillator(); o.frequency.value=880; o.connect(ac.destination); o.start(); setTimeout(function(){ try{o.stop(); ac.close();}catch(_){} }, 180); }catch(_){}
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().catch(function(){});
+      }
+    }
+  }catch(_){}
   var first = group.querySelector("button");
   if (first) first.focus();
 }
@@ -1029,8 +1056,9 @@ function renderStats(turn, stats, task) {
 
   /* Did this layer hold? A turn that produced an answer held; one that was
      stopped, errored or ended early did not. */
+  var stopped = turn.answer.textContent.indexOf("[stopped]") !== -1;
   var failed = turn.answer.querySelector(".failed") !== null ||
-    turn.answer.textContent.indexOf("[stopped]") !== -1 ||
+    stopped ||
     turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
   var held = document.createElement("span");
   held.className = "turn-held";
@@ -1093,6 +1121,46 @@ function renderStats(turn, stats, task) {
     });
     actions.appendChild(regenBtn);
 
+    var branchBtn = document.createElement("button");
+    branchBtn.type = "button";
+    branchBtn.className = "secondary";
+    branchBtn.textContent = "Branch";
+    branchBtn.title = "Fork this conversation at this turn into a new session";
+    branchBtn.addEventListener("click", function () {
+      var forkBtn = document.getElementById("session-fork");
+      if (forkBtn) forkBtn.click();
+    });
+    actions.appendChild(branchBtn);
+
+    // Branch timeline: which forks came from here (like ChatGPT/Cursor)
+    (function(){
+      if (!knownSessions || !knownSessions.length) return;
+      var title = ((turn.root.querySelector(".turn-you") || {}).textContent || "").trim();
+      var forks = knownSessions.filter(function(s){
+        return s.title && s.title.indexOf("fork of") !== -1 && s.id !== sessionId;
+      });
+      // Heuristic: server titles forks as "fork of <original title>" — show any fork when on its parent
+      var meta = currentSessionMeta();
+      var parentTitle = meta ? (meta.title || "") : "";
+      var relevant = forks.filter(function(s){ return parentTitle && s.title.indexOf(parentTitle.slice(0, 24)) !== -1; });
+      if (!relevant.length) relevant = forks.slice(0, 3);
+      if (!relevant.length) return;
+      var bar = document.createElement("div");
+      bar.className = "turn-branches";
+      bar.setAttribute("role", "navigation");
+      bar.setAttribute("aria-label", "Branches from this turn");
+      relevant.forEach(function(s){
+        var chip = document.createElement("button");
+        chip.type = "button"; chip.className = "branch-chip";
+        chip.textContent = (s.title || s.id.slice(0,8)) + " · " + (s.messages || 0) + " msgs";
+        chip.title = "Switch to " + (s.title || s.id);
+        if (s.id === sessionId) chip.setAttribute("data-current", "true");
+        chip.addEventListener("click", function(){ switchSession(s.id); });
+        bar.appendChild(chip);
+      });
+      turn.root.appendChild(bar);
+    })();
+
     var editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.className = "secondary";
@@ -1106,6 +1174,19 @@ function renderStats(turn, stats, task) {
       scrollTo(el.task, "center");
     });
     actions.appendChild(editBtn);
+    if (stopped) {
+      var contBtn = document.createElement("button");
+      contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue";
+      contBtn.title = "Continue this run from where it stopped";
+      contBtn.addEventListener("click", function(){ if(busy) return; el.task.value = "Continue where you left off."; el.form.requestSubmit(); });
+      actions.appendChild(contBtn);
+      var regenEditBtn = document.createElement("button");
+      regenEditBtn.type = "button"; regenEditBtn.className = "secondary"; regenEditBtn.textContent = "Regenerate";
+      regenEditBtn.title = "Run this task again from scratch";
+      regenEditBtn.addEventListener("click", function(){ if(busy) return; el.task.value = task; el.form.requestSubmit(); });
+      actions.appendChild(regenEditBtn);
+      // Edit is already there as Edit & resend — covers the edit leg of the trio
+    }
   }
   turn.foot.appendChild(actions);
 }
@@ -1160,6 +1241,43 @@ el.form.addEventListener("drop", function (e) {
 });
 
 el.task.addEventListener("input", syncControls);
+
+// Voice input — Web Speech API (ChatGPT/OpenWebUI parity)
+(function(){
+  var btn = document.getElementById("voice-btn");
+  if (!btn) return;
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { btn.hidden = true; return; }
+  var rec = null, listening = false;
+  function setListening(on){
+    listening = on;
+    btn.textContent = on ? "●" : "🎙";
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? "Listening — click to stop" : "Voice input (click to start)";
+    el.task.placeholder = on ? "Listening…" : "Ask anything — type / for prompts";
+  }
+  btn.addEventListener("click", function(){
+    if (listening && rec) { try{ rec.stop(); }catch(_){ } return; }
+    rec = new SR();
+    rec.lang = (navigator.language || "en-US");
+    rec.interimResults = true;
+    rec.continuous = false;
+    var base = el.task.value;
+    rec.onstart = function(){ setListening(true); };
+    rec.onend = function(){ setListening(false); };
+    rec.onerror = function(){ setListening(false); el.sessionStatus.textContent = "Voice input failed — check microphone permission."; };
+    rec.onresult = function(e){
+      var transcript = "";
+      for(var i=e.resultIndex;i<e.results.length;i++) transcript += e.results[i][0].transcript;
+      el.task.value = base ? (base + " " + transcript) : transcript;
+      syncControls(); autoGrow();
+      if (e.results[e.results.length-1].isFinal) {
+        el.task.focus();
+      }
+    };
+    try{ rec.start(); }catch(_){ setListening(false); }
+  });
+})();
 
 el.task.addEventListener("keydown", function (e) {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -1422,7 +1540,10 @@ function loadRuns() {
         el.runFilter.value = "";
         renderRunOptions("");
         el.runSelect.value = want;
-        return loadRun(want);
+        var p = loadRun(want);
+        var pn = window._pendingRunNode; window._pendingRunNode = null;
+        if (pn) p.then(function(){ setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(pn) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); });
+        return p;
       }
       var wanted = renderRunOptions(el.runFilter.value);
       if (wanted) return loadRun(wanted);
@@ -1448,6 +1569,7 @@ function showRunsError(message) {
 
 /* One way to open a named run, whether the view has loaded yet or not. */
 function openRun(id) {
+  try { history.replaceState(null, "", "#runs/" + encodeURIComponent(id)); } catch (_) {}
   if (viewLoaded.runs) {
     showView("runs", true);
     el.runFilter.value = "";
@@ -1519,6 +1641,36 @@ function drawRun(g) {
   var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
   copyHead.addEventListener("click", function(){ try{ navigator.clipboard.writeText(g.run_id); copyHead.textContent="Copied"; setTimeout(function(){ copyHead.textContent="Copy id"; }, 1200);}catch(_){} });
   head.appendChild(copyHead);
+  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link";
+  copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
+  copyLink.addEventListener("click", function(){
+    var sel = el.runGraph.querySelector(".run-node.selected");
+    var nodePart = sel && sel.getAttribute("data-label") ? "?node=" + encodeURIComponent(sel.getAttribute("data-label")) : "";
+    var u = location.origin + location.pathname + "#runs/" + encodeURIComponent(g.run_id) + nodePart;
+    try{ navigator.clipboard.writeText(u); copyLink.textContent="Copied"; setTimeout(function(){ copyLink.textContent="Copy link"; }, 1200);}catch(_){ copyText(u, copyLink, "Copy link", head); }
+  });
+  head.appendChild(copyLink);
+  var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html";
+  exportBtn.title = "Download this run as a self-contained HTML file";
+  exportBtn.addEventListener("click", function(){
+    try{
+      var svg = el.runGraph.querySelector("svg.run-edges");
+      var svgHtml = svg ? new XMLSerializer().serializeToString(svg) : "";
+      var detailHtml = el.runDetail.hidden ? "" : el.runDetail.innerHTML;
+      var html = "<!doctype html><meta charset=utf-8><title>" + g.run_id + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + g.run_id + "</h1><p>" + (g.task||"") + " · " + g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + JSON.stringify(g, null, 2).replace(/</g,"&lt;") + "</pre>";
+      var blob = new Blob([html], {type:"text/html"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = url; a.download = g.run_id + ".html";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    }catch(_){ el.runStatus.textContent = "Export failed"; }
+  });
+  head.appendChild(exportBtn);
+  if (g.parent_run_id) {
+    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8);
+    par.title = "Open parent run " + g.parent_run_id;
+    par.addEventListener("click", function(){ openRun(g.parent_run_id); });
+    head.appendChild(par);
+  }
   el.runGraph.appendChild(head);
 
   if (!nodes.length) {
@@ -1549,33 +1701,42 @@ function drawRun(g) {
 
   var graphSearch = document.createElement("div");
   graphSearch.className = "run-graph-search";
-  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap";
+  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
   var graphSearchInput = document.createElement("input");
-  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…";
-  graphSearchInput.setAttribute("aria-label", "Filter graph nodes");
+  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…  —  / to focus";
+  graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
+  graphSearchInput.title = "Filter nodes — / focuses, n/N next match, F failed, j/k next iteration";
   graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
   var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
+  graphNextBtn.title = "Next match (n)";
   var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear";
+  graphClearBtn.title = "Clear filter";
   var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit";
-  graphFitBtn.title = "Fit graph to view";
+  graphFitBtn.title = "Fit graph to view (0)";
   graphSearch.appendChild(graphSearchInput); graphSearch.appendChild(graphNextBtn); graphSearch.appendChild(graphClearBtn); graphSearch.appendChild(graphFitBtn);
+  var graphHint = document.createElement("span"); graphHint.className = "meta"; graphHint.textContent = "/ filter · n next · F failed · j/k iter · arrows walk · +/− zoom · click node to pin link";
+  graphHint.style.fontSize = "11px"; graphHint.style.opacity = "0.75"; graphHint.style.flexBasis = "100%";
+  graphSearch.appendChild(graphHint);
   el.runGraph.appendChild(graphSearch);
   // Trello/Slack-style focus filters — dim non-matches so dense graphs stay scannable
-  var _kindFilter = "";
+  var _kindFilter = (function(){ try{ return localStorage.getItem("clanker.graphKind") || ""; }catch(_){ return ""; } })();
+  var _initSearch = (function(){ try{ return localStorage.getItem("clanker.graphSearch") || ""; }catch(_){ return ""; } })();
   var graphKindBar = document.createElement("div");
   graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "0.35rem"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "0.5rem";
   graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
   [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
     var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label;
-    b.dataset.kind = opt.k; b.setAttribute("aria-pressed", opt.k === "" ? "true" : "false");
+    b.dataset.kind = opt.k; b.setAttribute("aria-pressed", String(opt.k === _kindFilter));
     if (opt.k === "failed") b.title = "Only failed nodes";
     b.addEventListener("click", function(){
       _kindFilter = opt.k;
-      graphKindBar.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", x.dataset.kind === _kindFilter ? "true" : "false"); });
+      try{ localStorage.setItem("clanker.graphKind", _kindFilter); }catch(_){}
+      graphKindBar.querySelectorAll("button").forEach(function(x){ x.setAttribute("aria-pressed", String(x.dataset.kind === _kindFilter)); });
       _matchIdx = -1; doLayout(_searchQ);
     });
     graphKindBar.appendChild(b);
   });
+  if (_initSearch) graphSearchInput.value = _initSearch;
   el.runGraph.appendChild(graphKindBar);
   // Codex-style breadcrumb: iteration / step chips + keyboard tour
   var crumb = document.createElement("div");
@@ -1604,6 +1765,32 @@ function drawRun(g) {
     crumb.appendChild(chip);
   });
   if (built.stages.length) el.runGraph.appendChild(crumb);
+  // Time scrubber / playback — iteration stepper (Codex/Kimi parity)
+  if (built.stages.length > 1) {
+    var maxIter = Math.max.apply(null, built.stages.map(function(s){ return s.iteration; }));
+    var minIter = Math.min.apply(null, built.stages.map(function(s){ return s.iteration; }));
+    var scrubWrap = document.createElement("div");
+    scrubWrap.style.display = "flex"; scrubWrap.style.alignItems = "center"; scrubWrap.style.gap = "0.5rem"; scrubWrap.style.marginBottom = "0.5rem";
+    var scrubLabel = document.createElement("span"); scrubLabel.className = "meta"; scrubLabel.textContent = "Scrub:"; scrubWrap.appendChild(scrubLabel);
+    var scrub = document.createElement("input"); scrub.type = "range"; scrub.min = String(minIter); scrub.max = String(maxIter); scrub.value = String(maxIter); scrub.step = "1";
+    scrub.setAttribute("aria-label", "Scrub iterations"); scrub.style.flex = "1";
+    var scrubOut = document.createElement("span"); scrubOut.className = "meta"; scrubOut.textContent = "iter " + maxIter + " / " + maxIter;
+    scrubWrap.appendChild(scrub); scrubWrap.appendChild(scrubOut);
+    scrub.addEventListener("input", function(){
+      var v = parseInt(scrub.value, 10);
+      scrubOut.textContent = "iter " + v + " / " + maxIter;
+      // dim nodes past scrub point so you can see how the run grew
+      canvas.querySelectorAll(".run-node").forEach(function(n){
+        var iterTag = n.previousElementSibling;
+        // find iter via crumb mapping: nearest llm tag — simpler: use data highlight path via iter
+        var nodeIter = parseInt(n.getAttribute("data-iter") || "0", 10);
+        if (isNaN(nodeIter)) return;
+        n.style.opacity = (nodeIter > v) ? "0.2" : "";
+      });
+      // keep selected detail in sync: if its iter is now hidden, auto-select nearest visible iter
+    });
+    el.runGraph.appendChild(scrubWrap);
+  }
 
   var canvas = document.createElement("div");
   canvas.className = "run-canvas";
@@ -1649,13 +1836,57 @@ function drawRun(g) {
   minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap — click to jump, drag viewport to pan");
   minimap.title = "Click to jump · drag viewport to pan";
   var mmLabel = document.createElement("span"); mmLabel.className = "run-minimap-label"; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
+  var mmCanvas = document.createElement("canvas"); mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
   var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
   minimap.appendChild(mmViewport);
   canvas.appendChild(minimap);
+  function paintMinimap(){
+    try{
+      var ctx = mmCanvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
+      var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
+      // light line for edges (Slack/Qwen-style overview)
+      try{
+        var svg = canvas.querySelector("svg.run-edges");
+        if (svg) {
+          var paths = svg.querySelectorAll("path");
+          ctx.strokeStyle = "rgba(140,140,140,0.35)";
+          ctx.lineWidth = 0.7;
+          paths.forEach(function(p){
+            var d = p.getAttribute("d") || "";
+            var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
+            if (!m) return;
+            var x1 = (parseFloat(m[1]) / sw) * mmCanvas.width;
+            var y1 = (parseFloat(m[2]) / sh) * mmCanvas.height;
+            var x2 = (parseFloat(m[3]) / sw) * mmCanvas.width;
+            var y2 = (parseFloat(m[4]) / sh) * mmCanvas.height;
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          });
+        }
+      }catch(_){}
+      var nodes = canvas.querySelectorAll(".run-node");
+      nodes.forEach(function(n){
+        var x = (n.offsetLeft / sw) * mmCanvas.width;
+        var y = (n.offsetTop / sh) * mmCanvas.height;
+        var w = 6, h = 4;
+        var kind = n.getAttribute("data-kind") || "";
+        if (kind === "llm") ctx.fillStyle = "rgba(11,87,208,0.75)";
+        else if (kind === "tool") ctx.fillStyle = "rgba(5,150,105,0.75)";
+        else if (kind === "final") ctx.fillStyle = "rgba(0,0,0,0.75)";
+        else ctx.fillStyle = "rgba(120,120,120,0.75)";
+        if (n.getAttribute("data-ok") === "false") ctx.fillStyle = "rgba(220,38,38,0.9)";
+        if (n.classList.contains("selected")) { ctx.fillStyle = "rgba(11,87,208,1)"; w = 7; h = 5; }
+        else if (n.hasAttribute("data-highlight")) ctx.fillStyle = "rgba(11,87,208,0.45)";
+        ctx.fillRect(x, y, w, h);
+      });
+    }catch(_){}
+  }
   function updateMinimap(){
     var needsMap = canvas.scrollWidth > canvas.clientWidth + 8 || canvas.scrollHeight > canvas.clientHeight + 8;
     minimap.hidden = !needsMap;
     if (minimap.hidden) return;
+    paintMinimap();
     var sx = canvas.scrollLeft / Math.max(1, canvas.scrollWidth - canvas.clientWidth);
     var sy = canvas.scrollTop / Math.max(1, canvas.scrollHeight - canvas.clientHeight);
     var vw = canvas.clientWidth / Math.max(1, canvas.scrollWidth) * 100;
@@ -1666,12 +1897,22 @@ function drawRun(g) {
     mmViewport.style.height = Math.max(12, vh) + "%";
   }
   canvas.addEventListener("scroll", updateMinimap);
-  // click-to-jump on the map background
+  // click-to-jump: nearest node under cursor focuses & opens its detail (fallback to viewport jump)
   minimap.addEventListener("click", function(e){
     if (e.target === mmViewport) return;
     var rect = minimap.getBoundingClientRect();
     var px = (e.clientX - rect.left) / rect.width;
     var py = (e.clientY - rect.top) / rect.height;
+    var sw = Math.max(1, canvas.scrollWidth), sh = Math.max(1, canvas.scrollHeight);
+    var cx = px * sw, cy = py * sh;
+    var best = null, bestD = Infinity;
+    canvas.querySelectorAll(".run-node").forEach(function(n){
+      var nx = n.offsetLeft + n.offsetWidth/2, ny = n.offsetTop + n.offsetHeight/2;
+      var d = Math.hypot(nx - cx, ny - cy);
+      if (d < bestD) { bestD = d; best = n; }
+    });
+    // within ~60px of a node, treat the minimap click as a node pick
+    if (best && bestD < 60) { best.focus(); best.click(); best.scrollIntoView({block:"center", inline:"center"}); return; }
     canvas.scrollLeft = px * (canvas.scrollWidth - canvas.clientWidth);
     canvas.scrollTop = py * (canvas.scrollHeight - canvas.clientHeight);
   });
@@ -1702,10 +1943,29 @@ function drawRun(g) {
     updateMinimap();
   });
 
+  function syncGraphUrl(){
+    try{
+      var rawHash = location.hash || "";
+      var parsed = parseRunsHash(rawHash) || { id: (lastGraph ? lastGraph.run_id : ""), search:"", kind:"", node:"" };
+      var base = "#runs/" + encodeURIComponent(lastGraph ? lastGraph.run_id : parsed.id);
+      if (!lastGraph || !lastGraph.run_id) base = rawHash.split("?")[0] || base;
+      var params = [];
+      if (_searchQ) params.push("search=" + encodeURIComponent(_searchQ));
+      else if (parsed.search && !canvas.querySelector(".run-node")) params.push("search=" + encodeURIComponent(parsed.search));
+      if (_kindFilter) params.push("kind=" + encodeURIComponent(_kindFilter));
+      else if (parsed.kind && !canvas.querySelector(".run-node")) params.push("kind=" + encodeURIComponent(parsed.kind));
+      var sel = canvas.querySelector(".run-node.selected");
+      var lbl = sel ? sel.getAttribute("data-label") : (parsed.node || window._pendingRunNode || null);
+      if (lbl) params.push("node=" + encodeURIComponent(lbl));
+      var hash = base + (params.length ? "?" + params.join("&") : "");
+      if (location.hash !== hash) history.replaceState(null, "", hash);
+    }catch(_){}
+  }
   function doLayout(q){
     loadD3().then(function () {
-      if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap: minimap, onSelect: function(k,n){ showNodeDetail(k,n); } });
-      try{ updateMinimap(); }catch(_){}
+      if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap: minimap, onSelect: function(k,n){ showNodeDetail(k,n); syncGraphUrl(); } });
+      try{ updateMinimap(); paintMinimap(); }catch(_){}
+      syncGraphUrl();
     }).catch(function (err) {
       var errEl = document.createElement("p");
       errEl.className = "run-empty";
@@ -1735,13 +1995,15 @@ function drawRun(g) {
     fails[_matchIdx].click();
   }
   graphFailedBtn.addEventListener("click", focusNextFailed);
+  _searchQ = _initSearch || "";
   graphSearchInput.addEventListener("input", function(){
     _searchQ = graphSearchInput.value.trim();
+    try{ localStorage.setItem("clanker.graphSearch", graphSearchInput.value); }catch(_){}
     _matchIdx = -1;
     doLayout(_searchQ);
   });
   graphNextBtn.addEventListener("click", focusNextMatch);
-  graphClearBtn.addEventListener("click", function(){ graphSearchInput.value = ""; _searchQ = ""; _matchIdx = -1; doLayout(""); graphSearchInput.focus(); });
+  graphClearBtn.addEventListener("click", function(){ graphSearchInput.value = ""; _searchQ = ""; _matchIdx = -1; try{ localStorage.removeItem("clanker.graphSearch"); }catch(_){} doLayout(""); graphSearchInput.focus(); });
   // Codex-like j/k step tour between iterations
   var _iterIdx = 0;
   function focusIter(dir){
@@ -1752,6 +2014,25 @@ function drawRun(g) {
     chips[_iterIdx].click();
   }
   canvas.addEventListener("keydown", function(e){
+    if (document.activeElement === graphSearchInput) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      e.preventDefault();
+      var nodes = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      if (!nodes.length) return;
+      var at = nodes.indexOf(document.activeElement);
+      var nxt = at === -1 ? 0 : Math.min(nodes.length - 1, at + 1);
+      nodes[nxt].focus();
+      return;
+    }
+    if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      var nodes2 = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      if (!nodes2.length) return;
+      var at2 = nodes2.indexOf(document.activeElement);
+      var prv = at2 <= 0 ? 0 : at2 - 1;
+      nodes2[prv].focus();
+      return;
+    }
     if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomInBtn.click(); }
     else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomOutBtn.click(); }
     else if (e.key === "0") { e.preventDefault(); zoomResetBtn.click(); }
@@ -1760,8 +2041,11 @@ function drawRun(g) {
     else if (e.key === "j") { e.preventDefault(); focusIter(1); }
     else if (e.key === "k") { e.preventDefault(); focusIter(-1); }
     else if (e.key === "Escape") { graphSearchInput.blur(); canvas.focus(); }
+    else if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault(); graphSearchInput.focus(); graphSearchInput.select();
+    }
   });
-  doLayout("");
+  doLayout(_searchQ);
 }
 
 var graphSummaryText = graphSummaryTextMod;
@@ -1861,6 +2145,16 @@ function showNodeDetail(kind, node) {
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
 
+  // Trello/Slack-style quick-jump: if output mentions another run, surface a Jump button in the header too
+  (function(){
+    var m = (node.output || "").match(/\[subagent run:\s*(sub-\d+)\]/);
+    if (m) {
+      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1];
+      j.title = "Open sub-run " + m[1];
+      j.addEventListener("click", function(){ openRun(m[1]); });
+      head.appendChild(j);
+    }
+  })();
   var copyBtn = document.createElement("button");
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
   copyBtn.title = "Copy this node's output";
@@ -1940,11 +2234,35 @@ function showNodeDetail(kind, node) {
     if (!truncated) {
       try { parsed = JSON.parse(node.output); } catch (e) { parsed = undefined; }
     }
-    if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
+    // Unified diff heuristic: has hunk headers + +/- lines — render as Codex-style diff instead of plain text
+    var looksDiff = !truncated && typeof node.output === "string" && /^@@ /m.test(node.output) && /(^\+[^+]|\n\+[^+]|^-[^-]|\n-[^-])/m.test(node.output);
+    if (looksDiff) {
+      var diffWrap = document.createElement("div"); diffWrap.className = "diff-view";
+      var diffHead = document.createElement("div"); diffHead.className = "diff-header"; diffHead.textContent = "Patch"; diffWrap.appendChild(diffHead);
+      node.output.split("\n").forEach(function(line){
+        var row = document.createElement("div"); row.className = "diff-line";
+        var sign = document.createElement("span"); sign.className = "diff-sign";
+        if (line.indexOf("@@")===0) { row.setAttribute("data-kind","hunk"); sign.textContent = "●"; }
+        else if (line.charAt(0)==="+") { row.setAttribute("data-kind","add"); sign.textContent = "+"; }
+        else if (line.charAt(0)==="-") { row.setAttribute("data-kind","del"); sign.textContent = "−"; }
+        else sign.textContent = " ";
+        row.appendChild(sign);
+        var txt = document.createElement("span"); txt.textContent = line; txt.style.flex="1"; txt.style.minWidth="0";
+        row.appendChild(txt); diffWrap.appendChild(row);
+      });
+      out.appendChild(diffWrap);
+    } else if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
       var tree = document.createElement("div");
       tree.className = "json-tree";
       tree.appendChild(buildJsonTree(parsed, null, 0));
-      out.appendChild(tree);
+      var treeBar = document.createElement("div");
+      treeBar.style.display = "flex"; treeBar.style.gap = "0.4rem"; treeBar.style.marginBottom = "0.4rem";
+      var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all";
+      expandAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=true; }); });
+      var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all";
+      collapseAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=false; }); var first = tree.querySelector("details"); if(first) first.open = true; });
+      treeBar.appendChild(expandAll); treeBar.appendChild(collapseAll);
+      out.appendChild(treeBar); out.appendChild(tree);
     } else {
       var outCode = document.createElement("code");
       highlightInto(outCode, null, node.output);
@@ -1953,7 +2271,6 @@ function showNodeDetail(kind, node) {
   }
   el.runDetail.appendChild(out);
 
-  // Keep detail from covering the graph on tall runs (Kimi/Qwen split-pane feel)
   el.runDetail.style.maxHeight = "42vh";
   el.runDetail.style.overflow = "auto";
   scrollTo(el.runDetail, "nearest");
@@ -2611,7 +2928,29 @@ function saveView(name) {
   try { window.localStorage.setItem("clanker.view", name); } catch (e) {}
 }
 
+function parseRunsHash(hash){
+  // accepts #runs/<id>?search=foo&kind=tool&node=label — order-agnostic
+  if (hash.indexOf("#runs/") !== 0) return null;
+  var rest = hash.slice(6);
+  var qAt = rest.indexOf("?");
+  var idPart = qAt===-1 ? rest : rest.slice(0, qAt);
+  var qs = qAt===-1 ? "" : rest.slice(qAt+1);
+  var params = {};
+  qs.split("&").forEach(function(p){ if(!p) return; var kv=p.split("="); try{ params[decodeURIComponent(kv[0])]=kv[1]?decodeURIComponent(kv[1]):"";}catch(_){ params[kv[0]]=kv[1]||""; } });
+  var id=""; try{ id=decodeURIComponent(idPart);}catch(_){ id=idPart; }
+  return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
+}
 function showView(name, focusPanel) {
+  var parsed = parseRunsHash("#" + name);
+  var deepRun = null, deepNode = null, deepSearch=null, deepKind=null;
+  if (parsed) { deepRun = parsed.id; deepNode = parsed.node || null; deepSearch = parsed.search; deepKind = parsed.kind; name = "runs"; }
+  else if (name.indexOf("runs/") === 0) {
+    var rest2 = name.slice(5);
+    var qA2 = rest2.indexOf("?node=");
+    if (qA2 !== -1) { deepRun = decodeURIComponent(rest2.slice(0, qA2)); deepNode = decodeURIComponent(rest2.slice(qA2 + 6)); }
+    else { deepRun = decodeURIComponent(rest2); }
+    name = "runs";
+  }
   if (VIEWS.indexOf(name) === -1) name = "chat";
   // The rooms poll has no idea the view switched away from under it — only
   // document.hidden stopped it before, so leaving Rooms for Chat or Board
@@ -2629,14 +2968,17 @@ function showView(name, focusPanel) {
     // Roving tabindex: the tablist is one stop, arrows move within it.
     tab.tabIndex = on ? 0 : -1;
   });
-  if (window.location.hash !== "#" + name) {
-    // Pushed for a switch someone made, replaced for the initial normalisation
-    // of whatever the URL arrived with. Writing a fragment into the address bar
-    // is a promise that Back returns to where you were, and it did not.
+  // Preserve callgraph filter state in the URL (shareable/bookmarkable) — search/kind from either deep link or active graph
+  var _qs = []; try{ if(deepSearch) _qs.push("search="+encodeURIComponent(deepSearch)); if(deepKind) _qs.push("kind="+encodeURIComponent(deepKind)); }catch(_){}
+  var desiredHash = deepRun ? "#runs/" + encodeURIComponent(deepRun) + ((deepNode||_qs.length) ? "?" + (_qs.join("&") + (deepNode ? (_qs.length?"&":"")+"node="+encodeURIComponent(deepNode) : "")) : "") : "#" + name;
+  if (window.location.hash !== desiredHash) {
     try {
-      if (viewSettled) window.history.pushState(null, "", "#" + name);
-      else window.history.replaceState(null, "", "#" + name);
+      if (viewSettled) window.history.pushState(null, "", desiredHash);
+      else window.history.replaceState(null, "", desiredHash);
     } catch (e) {}
+  }
+  if (deepRun) {
+    if (deepSearch || deepKind) { try{ localStorage.setItem("clanker.graphSearch", deepSearch||""); localStorage.setItem("clanker.graphKind", deepKind||""); }catch(_){} }
   }
   viewSettled = true;
   el.railContext.hidden = name !== "chat";
@@ -2657,6 +2999,12 @@ function showView(name, focusPanel) {
     }
   } else if (name === "rooms" && el.chatRoom.value) {
     startChatPoll(el.chatRoom.value);
+  }
+  if (deepRun) {
+    // preserve ?node= across the async Runs load
+    window._pendingRunNode = deepNode || null;
+    if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
+    else pendingRunId = deepRun;
   }
 }
 
@@ -3287,6 +3635,53 @@ function hidePromptList() {
   el.task.removeAttribute("aria-activedescendant");
 }
 
+var SLASH_CMDS = [
+  { cmd: "/compact", desc: "Drop oldest exchanges to fit context", run: function(){ document.getElementById("session-compact").click(); } },
+  { cmd: "/fork", desc: "Fork this conversation", run: function(){ document.getElementById("session-fork").click(); } },
+  { cmd: "/branch", desc: "Branch from last turn", run: function(){ var b=document.querySelector(".turn:last-child .turn-foot-actions button"); if(b) b.click(); } },
+  { cmd: "/clear", desc: "Start a new conversation", run: function(){ document.getElementById("new-chat").click(); } },
+  { cmd: "/model", desc: "Switch model — e.g. /model gpt-4.1", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
+  { cmd: "/help", desc: "Show keyboard shortcuts", run: function(){ document.getElementById("help-open").click(); } },
+];
+function slashQuery(){
+  var v = el.task.value;
+  if (v.charAt(0) !== "/") return null;
+  var sp = v.indexOf(" ");
+  var head = sp===-1 ? v : v.slice(0, sp);
+  var rest = sp===-1 ? "" : v.slice(sp+1);
+  return { head: head.toLowerCase(), rest: rest, raw: v };
+}
+function renderSlashList(){
+  var q = slashQuery();
+  if (!q) { hideSlashList(); return; }
+  var matches = SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q.head) === 0; });
+  // also match /model sub-query against provider list for hint
+  el.promptList.textContent = "";
+  if (!matches.length) { hideSlashList(); return; }
+  promptIndex = Math.min(promptIndex, matches.length - 1);
+  matches.forEach(function(c, i){
+    var li = document.createElement("li");
+    li.className = "palette-item"; li.id = "prompt-item-" + i;
+    li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===promptIndex));
+    var k = document.createElement("span"); k.className="palette-kind"; k.textContent=c.cmd; li.appendChild(k);
+    var label = document.createElement("span"); label.className="palette-label"; label.textContent=c.desc; li.appendChild(label);
+    li.addEventListener("mousedown", function(e){ e.preventDefault(); useSlash(c, q.rest); });
+    el.promptList.appendChild(li);
+  });
+  el.promptList.hidden = false;
+  el.task.setAttribute("aria-expanded","true");
+  el.task.setAttribute("aria-activedescendant","prompt-item-"+promptIndex);
+}
+function hideSlashList(){ hidePromptList(); }
+function useSlash(entry, arg){
+  hideSlashList();
+  // keep the slash text out of the composer for pure-command entries
+  if (entry.cmd === "/model" && arg) { entry.run(arg); el.task.value=""; }
+  else if (entry.cmd === "/model") { el.task.value=""; entry.run(""); }
+  else { el.task.value=""; entry.run(arg); }
+  syncControls();
+  el.task.focus();
+}
 function usePrompt(text) {
   el.task.value = text;
   hidePromptList();
@@ -3294,16 +3689,18 @@ function usePrompt(text) {
   syncControls();
 }
 
-el.task.addEventListener("input", renderPromptList);
+function taskInputHandler(){ var q=slashQuery(); if(q) renderSlashList(); else renderPromptList(); }
+el.task.addEventListener("input", taskInputHandler);
 el.task.addEventListener("blur", function () { window.setTimeout(hidePromptList, 120); });
 el.task.addEventListener("keydown", function (e) {
+  var isSlash = slashQuery() !== null;
   if (el.promptList.hidden) return;
   var items = el.promptList.querySelectorAll(".palette-item");
   if (!items.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
     promptIndex = (promptIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-    renderPromptList();
+    if(isSlash) renderSlashList(); else renderPromptList();
     return;
   }
   if (e.key === "Escape") {
@@ -3311,9 +3708,7 @@ el.task.addEventListener("keydown", function (e) {
     hidePromptList();
     return;
   }
-  // Delete removes the highlighted prompt, which was otherwise only possible
-  // with a pointer on a 32px glyph inside an option.
-  if (e.key === "Delete") {
+  if (!isSlash && e.key === "Delete") {
     e.preventDefault();
     var doomed = items[promptIndex].querySelector(".palette-label").textContent;
     prompts.splice(prompts.indexOf(doomed), 1);
@@ -3322,10 +3717,14 @@ el.task.addEventListener("keydown", function (e) {
     renderPromptList();
     return;
   }
-  // Shift+Tab belongs to the page, not to this list.
   if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
     e.preventDefault();
-    usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+    if(isSlash){
+      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[promptIndex];
+      if(m) useSlash(m, q2.rest);
+    } else {
+      usePrompt(items[promptIndex].querySelector(".palette-label").textContent);
+    }
   }
 });
 
@@ -3859,9 +4258,12 @@ function cardNode(c) {
   return b;
 }
 
+function cardDetailInner() { return el.cardDetailBox || el.cardDetail; }
 function closeCardDetail() {
-  el.cardDetail.hidden = true;
-  el.cardDetail.textContent = "";
+  if (!el.cardDetail.hidden) closeOverlay(el.cardDetail);
+  else { el.cardDetail.hidden = true; cardDetailInner().textContent = ""; return; }
+  // overlay helper clears hidden after focus restore; also clear inner content
+  cardDetailInner().textContent = "";
 }
 
 /* Unsaved edits to a card's fields, keyed by card id.
@@ -3947,13 +4349,23 @@ function input(id, type, value, placeholder) {
 function showCardDetail(id) {
   var c = cardById(id);
   if (!c) return closeCardDetail();
-  el.cardDetail.textContent = "";
-  el.cardDetail.hidden = false;
+  var box = cardDetailInner();
+  // reopen as modal overlay (Trello-like card modal, Slack-like overlay); board stays put
+  var wasHidden = el.cardDetail.hidden;
+  box.textContent = "";
+  if (wasHidden) {
+    // preserve card id for trap handlers; don't clear content on close until next open
+    openOverlay(el.cardDetail, null);
+    el.cardDetail.setAttribute("aria-labelledby", "card-detail-title");
+  }
+  // scrim click closes
+  el.cardDetail.onclick = function(e){ if (e.target === el.cardDetail) { delete cardDrafts[c.id]; openCardId = null; closeCardDetail(); renderBoard(board); } };
 
   var head = document.createElement("div");
   head.className = "run-detail-head";
   var title = document.createElement("span");
   title.className = "run-detail-title";
+  title.id = "card-detail-title";
   title.textContent = c.title;
   var close = document.createElement("button");
   close.type = "button";
@@ -3962,14 +4374,15 @@ function showCardDetail(id) {
   close.addEventListener("click", function () {
     delete cardDrafts[c.id];
     openCardId = null;
+    closeCardDetail();
     renderBoard(board);
   });
   head.appendChild(title);
   head.appendChild(close);
-  el.cardDetail.appendChild(head);
+  box.appendChild(head);
 
   // ---- fields ----
-  var fields = detailSection(el.cardDetail, "Card");
+  var fields = detailSection(box, "Card");
   var titleIn = input("card-f-title", "text", "");
   titleIn.maxLength = 500;
   bindDraft(titleIn, c.id, "title", c.title);
@@ -4026,6 +4439,19 @@ function showCardDetail(id) {
   });
   fields.appendChild(save);
 
+  var moveRow = document.createElement("div");
+  moveRow.className = "detail-row";
+  var moveSel = document.createElement("select");
+  moveSel.id = "card-f-column";
+  (board.columns || []).forEach(function(col){ var o=document.createElement("option"); o.value=col.id; o.textContent=col.title; moveSel.appendChild(o); });
+  moveSel.value = c.column;
+  var moveBtn = document.createElement("button"); moveBtn.type="button"; moveBtn.className="secondary"; moveBtn.textContent="Move";
+  moveBtn.addEventListener("click", function(){ if(moveSel.value !== c.column) postBoard({op:"move", id:c.id, column: moveSel.value}, "Moved to " + moveSel.value + "."); });
+  moveSel.addEventListener("change", function(){ moveBtn.disabled = moveSel.value === c.column; });
+  moveBtn.disabled = true;
+  moveRow.appendChild(moveSel); moveRow.appendChild(moveBtn);
+  fields.appendChild(moveRow);
+
   var takeIt = document.createElement("button");
   takeIt.type = "button";
   takeIt.className = "secondary";
@@ -4059,7 +4485,7 @@ function showCardDetail(id) {
   fields.appendChild(del);
 
   // ---- subtasks ----
-  var subs = detailSection(el.cardDetail, "Subtasks");
+  var subs = detailSection(box, "Subtasks");
   (c.subtasks || []).forEach(function (s) {
     var row = document.createElement("div");
     row.className = "detail-row";
@@ -4130,7 +4556,7 @@ function showCardDetail(id) {
   subs.appendChild(subIn);
 
   // ---- dependencies ----
-  var deps = detailSection(el.cardDetail, "Waiting on");
+  var deps = detailSection(box, "Waiting on");
   (c.depends_on || []).forEach(function (depId) {
     var dep = cardById(depId);
     var row = document.createElement("div");
@@ -4172,7 +4598,7 @@ function showCardDetail(id) {
   // ---- usage ----
   var usage = c.usage || {};
   if (usage.prompt_tokens || usage.completion_tokens || usage.cost) {
-    var u = detailSection(el.cardDetail, "Cost so far");
+    var u = detailSection(box, "Cost so far");
     var line = document.createElement("p");
     line.className = "meta";
     line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
@@ -4191,7 +4617,7 @@ function showCardDetail(id) {
   }
 
   // ---- log ----
-  var logBox = detailSection(el.cardDetail, "Activity");
+  var logBox = detailSection(box, "Activity");
   var entries = (c.log || []).slice().reverse();
   if (!entries.length) {
     var empty = document.createElement("p");
@@ -4223,6 +4649,8 @@ function showCardDetail(id) {
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
   });
   logBox.appendChild(noteIn);
+  // focus first editable field in the modal (Slack/Trello: opening a card puts you on Title)
+  try { var first = box.querySelector("#card-f-title"); if (first) setTimeout(function(){ first.focus(); first.select(); }, 0); } catch(_){}
 }
 
 el.cardForm.addEventListener("submit", function (e) {
@@ -4329,7 +4757,7 @@ if(topMine) topMine.addEventListener("change", function(){ var b=document.getEle
       var prTd=document.createElement("td"); prTd.textContent=c.priority||"normal"; tr.appendChild(prTd);
       var costTd=document.createElement("td"); costTd.className="num"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
       var actTd=document.createElement("td");
-      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); document.getElementById("card-detail").scrollIntoView({behavior:"smooth", block:"start"}); }); actTd.appendChild(openBtn);
+      var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); }); actTd.appendChild(openBtn);
       if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){
         var claimBtn=document.createElement("button"); claimBtn.type="button"; claimBtn.className="secondary"; claimBtn.textContent="Claim"; claimBtn.style.marginLeft="0.4rem"; claimBtn.addEventListener("click", function(){ postBoard({op:"update", id:c.id, assignee: ((document.getElementById("instance-chip")||{}).textContent||"").trim()}, "Claimed."); }); actTd.appendChild(claimBtn);
       }
@@ -4490,6 +4918,11 @@ paletteBind({
   setOpenCardId: function (id) { openCardId = id; }
 });
 document.addEventListener("keydown", function (e) {
+  // Trello/Slack-style card modal owns focus while open — Esc closes, Tab traps
+  if (el.cardDetail && !el.cardDetail.hidden) {
+    if (e.key === "Escape") { e.preventDefault(); delete cardDrafts[openCardId || ""]; openCardId = null; closeCardDetail(); renderBoard(board); return; }
+    if (e.key === "Tab") { trapOverlayTab(e, el.cardDetail); return; }
+  }
   if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
 
