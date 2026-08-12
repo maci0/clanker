@@ -728,13 +728,14 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json_out);
 }
 
-const HarnessConfigAccess = enum { full, peers, workflows, chains };
+const HarnessConfigAccess = enum { full, providers, peers, workflows, chains };
 
 /// ck_harness_config is a privileged structured view, independent of
 /// fs_prefixes. Grant each shipped caller only the section it consumes and
 /// fail closed for any other guest, including newly added tools.
 fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
-    if (std.mem.eql(u8, tool_name, "config_view") or std.mem.eql(u8, tool_name, "providers")) return .full;
+    if (std.mem.eql(u8, tool_name, "config_view")) return .full;
+    if (std.mem.eql(u8, tool_name, "providers")) return .providers;
     if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "cmd_status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;
@@ -751,7 +752,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
     var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
 
     try s.beginObject();
-    if (access == .full) {
+    if (access == .full or access == .providers) {
         try s.objectField("default_provider");
         try s.write(cfg.default_provider);
 
@@ -766,9 +767,11 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             try s.write(@tagName(p.kind));
             try s.objectField("base_url");
             try s.write(p.base_url);
-            if (p.api_key_env) |e| {
-                try s.objectField("api_key_env");
-                try s.write(e);
+            if (access == .full) {
+                if (p.api_key_env) |e| {
+                    try s.objectField("api_key_env");
+                    try s.write(e);
+                }
             }
             try s.objectField("default_model");
             try s.write(p.default_model);
@@ -3695,7 +3698,7 @@ test "a tool cannot read an environment variable it was not allowed" {
 }
 
 test "harness config access is scoped to each tool's consumed fields" {
-    try std.testing.expectEqual(HarnessConfigAccess.full, harnessConfigAccess("providers").?);
+    try std.testing.expectEqual(HarnessConfigAccess.providers, harnessConfigAccess("providers").?);
     try std.testing.expectEqual(HarnessConfigAccess.peers, harnessConfigAccess("peers").?);
     try std.testing.expectEqual(HarnessConfigAccess.workflows, harnessConfigAccess("workflows").?);
     try std.testing.expectEqual(HarnessConfigAccess.chains, harnessConfigAccess("chain").?);
@@ -3711,6 +3714,12 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.indexOf(u8, workflows, "chains_dir") == null);
     try std.testing.expect(std.mem.indexOf(u8, workflows, "providers") == null);
     try std.testing.expect(std.mem.indexOf(u8, workflows, "peers") == null);
+
+    const providers_json = try harnessConfigJSON(arena, &cfg, .providers);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "default_provider") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "api_key_env") == null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "peers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "agent") == null);
 
     const peers = try harnessConfigJSON(arena, &cfg, .peers);
     try std.testing.expect(std.mem.indexOf(u8, peers, "peers") != null);

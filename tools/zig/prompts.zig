@@ -61,7 +61,6 @@ fn loadAll() []StoredPrompt {
 }
 
 fn saveAll(prompts: []const StoredPrompt) !void {
-    lib.fsMkdir("state") catch {};
     var buf: std.Io.Writer.Allocating = .init(lib.alloc);
     defer buf.deinit();
     var s = std.json.Stringify{ .writer = &buf.writer, .options = .{} };

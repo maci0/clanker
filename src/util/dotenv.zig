@@ -41,7 +41,7 @@ pub fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process
         loaded += 1;
     }
     if (loaded > 0) {
-        log.log(.info, "loaded {d} key(s) from {s}", .{ loaded, path orelse ".env" });
+        log.log(.debug, "loaded {d} key(s) from {s}", .{ loaded, path orelse ".env" });
     }
 }
 

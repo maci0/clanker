@@ -632,12 +632,15 @@ fn printCommandHelp(io: std.Io, cmd: Command) void {
     w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
     if (s.detail.len > 0) w.print("\n{s}\n", .{s.detail}) catch {};
     if (s.flags.len > 0) {
-        w.writeAll("\noptions:\n") catch {};
-        for (s.flags) |f| {
-            w.print("  {s}\n", .{f.name()}) catch {};
+        w.writeAll("\nAccepts: ") catch {};
+        for (s.flags, 0..) |f, i| {
+            if (i > 0) w.writeAll(", ") catch {};
+            w.writeAll(f.name()) catch {};
         }
+        w.writeAll(", --verbose, --help, --version.\n") catch {};
+    } else {
+        w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
     }
-    w.writeAll("\nAlso: --verbose, --help, --version.\n") catch {};
     writeStdOut(io, buf[0..w.end]) catch {};
 }
 
@@ -721,7 +724,7 @@ const specs = [_]Spec{
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
-    .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. Default port 17921." },
+    .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
@@ -1188,14 +1191,10 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
 
-    // Which provider a bare `clanker run` would actually use, and which file
-    // decided that. Printed up front so it is visible even when that provider
-    // is skipped or fails below, and printed for a single-provider check too:
-    // "default=false" invites the question of which one is, so answer it.
     if (cfg.default_provider_from) |from|
-        log.log(.info, "default provider: {s} (from {s})", .{ cfg.default_provider, from })
+        std.debug.print("default provider: {s} (from {s})\n", .{ cfg.default_provider, from })
     else
-        log.log(.info, "default provider: {s} (built-in fallback, no config sets default_provider)", .{cfg.default_provider});
+        std.debug.print("default provider: {s}\n", .{cfg.default_provider});
 
     var rows: std.ArrayList(CheckRow) = .empty;
     var it = cfg.providers.iterator();
@@ -1230,9 +1229,9 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         };
         if (unusable) |reason| {
             if (is_default)
-                log.log(.warn, "{s}: not configured — {s}, nothing sent — default=true, so no provider is usable unqualified", .{ name, reason })
+                log.log(.warn, "{s}: not configured, {s}; this is the default provider, so no provider is usable unqualified", .{ name, reason })
             else
-                log.log(.info, "{s}: not configured — {s}, nothing sent — default=false", .{ name, reason });
+                std.debug.print("  {s}: not configured ({s})\n", .{ name, reason });
             try rows.append(arena, .{
                 .name = name,
                 .status = .not_configured,
@@ -1243,28 +1242,17 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
             continue;
         }
 
-        // Announced before the request goes out, not after it comes back. A
-        // provider's result line can be seconds away; until this line existed
-        // the sweep sat silent through the slowest one in the config and read
-        // as a hang.
         const budget_s = p.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
-        if (budget_s == 0)
-            log.log(.info, "{s}: checking {s} — {s} — no timeout", .{ name, p.base_url, p.activeModelName() })
-        else
-            log.log(.info, "{s}: checking {s} — {s} — timeout {d}s", .{ name, p.base_url, p.activeModelName(), budget_s });
+        std.debug.print("  {s}: checking {s}...\n", .{ name, p.activeModelName() });
 
         const res = pingWithTimeout(io, &ctx, arena, &p, @as(i64, budget_s) * std.time.ms_per_s);
         switch (res.status) {
             .ok => {
                 checked_any = true;
-                log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok) cost={any} — default={}", .{ name, p.activeModelName(), res.ms, res.tokens, res.cost, is_default });
+                std.debug.print("  {s}: ok, {d}ms\n", .{ name, res.ms });
             },
-            .timed_out => log.log(.error_, "{s}: timed out after {d}s, giving up on it — default={}", .{ name, budget_s, is_default }),
-            // Same line the failure path has always printed, for both the
-            // answered-with-an-error and the never-answered case: the detail
-            // text is what tells them apart in prose, the summary's status
-            // column is what tells them apart at a glance.
-            else => log.log(.error_, "{s}: {s} — default={}", .{ name, res.detail, is_default }),
+            .timed_out => std.debug.print("  {s}: timed out after {d}s\n", .{ name, budget_s }),
+            else => std.debug.print("  {s}: {s}\n", .{ name, res.detail }),
         }
         try rows.append(arena, .{
             .name = name,

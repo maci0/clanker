@@ -24,6 +24,18 @@ clanker.registerView({
     var dirty = true;
     var status = van.state("");
 
+    /* Sleep + alarm: an agent with no message for SLEEP_AFTER seconds dozes
+       at its desk (zzZ). With the alarm armed, a room with sleepers gets its
+       wall clock rung at most once per RING_COOLDOWN, and the ring is a real
+       room message (fanned out to peers like any other), not just pixels. */
+    var SLEEP_AFTER = 300;
+    var RING_COOLDOWN = 600;
+    var RING_MS = 4000;
+    var alarmOn = van.state(localStorage.getItem("clanker-office-alarm") === "on");
+
+    function nowSec() { return Math.floor(Date.now() / 1000); }
+    function asleep(a) { return !a.walk && nowSec() - (a.lastSeen || 0) > SLEEP_AFTER; }
+
     var canvas = document.createElement("canvas");
     canvas.className = "office-canvas";
     // Decorative and duplicative by design: the log below says the same thing.
@@ -34,7 +46,18 @@ clanker.registerView({
     var logList = T.ul({ class: "office-log" });
     var head = T.div({ class: "section-head" },
       T.h2("Office"),
-      T.span({ class: "meta" }, function () { return status.val; }));
+      T.span({ class: "meta" }, function () { return status.val; }),
+      T.label({ class: "meta office-alarm" },
+        T.input({
+          type: "checkbox",
+          checked: alarmOn.val ? "" : null,
+          onchange: function (e) {
+            alarmOn.val = !!e.target.checked;
+            localStorage.setItem("clanker-office-alarm", alarmOn.val ? "on" : "off");
+            dirty = true;
+          },
+        }),
+        " alarm clock"));
 
     van.add(container, head, canvas,
       T.p({ class: "meta" }, "One office per room. An avatar walks to the board when an agent moves a card."),
@@ -288,6 +311,7 @@ clanker.registerView({
 
       drawBoard(o, ox, oy);
       drawWhiteboard(o, ox, oy);
+      if (alarmOn.val) drawAlarmClock(o, ox, oy);
 
       (L.plants || []).forEach(function (pl) {
         tile(S_PLANT, ox + pl.x * TILE, oy + pl.y * TILE);
@@ -461,6 +485,64 @@ clanker.registerView({
         ctx2d.fillRect(px + 10, py + 4, 2, 2);
       }
       if (a.bubble) bubble(px, py, a.bubble.slice(0, 30), ox, o_width);
+      else if (asleep(a)) drawZzz(px, py);
+    }
+
+    /* Three z's drifting up from a dozing head. With reduced motion they sit
+       still: the state still reads, only the drift is skipped. */
+    function drawZzz(px, py) {
+      ctx2d.font = "10px ui-monospace, monospace";
+      var t = reduced ? 0 : performance.now() / 1400;
+      for (var i = 0; i < 3; i++) {
+        var ph = reduced ? i * 0.3 : (t + i * 0.33) % 1;
+        var ch = i === 2 ? "Z" : "z";
+        var zx = px + TILE - 8 + ph * 7;
+        var zy = py - ph * 13;
+        var alpha = 0.95 - ph * 0.75;
+        // Drawn twice, shadow then face: the drift crosses the dark board
+        // graphic, where a single dark glyph disappears entirely.
+        ctx2d.fillStyle = "rgba(10,14,28," + alpha.toFixed(2) + ")";
+        ctx2d.fillText(ch, zx + 1, zy + 1);
+        ctx2d.fillStyle = "rgba(190,208,255," + alpha.toFixed(2) + ")";
+        ctx2d.fillText(ch, zx, zy);
+      }
+    }
+
+    /* A little red wall clock, drawn only while the alarm is armed. When a
+       ring is live it judders and shouts; otherwise its hands just tell the
+       actual time, which is what wall clocks are for. */
+    function drawAlarmClock(o, ox, oy) {
+      var L = o.layout;
+      var cx = ox + (L.w - 1.5) * TILE;
+      var cy = oy + 0.55 * TILE;
+      var ringing = performance.now() < o.ringUntil;
+      var jx = ringing && !reduced ? Math.round(Math.sin(performance.now() / 30) * 2) : 0;
+      ctx2d.fillStyle = "#c94f4f";
+      ctx2d.fillRect(cx + jx - 7, cy - 9, 4, 3); // bells
+      ctx2d.fillRect(cx + jx + 3, cy - 9, 4, 3);
+      ctx2d.beginPath();
+      ctx2d.arc(cx + jx, cy, 7, 0, Math.PI * 2);
+      ctx2d.fill();
+      ctx2d.fillStyle = "#f4f4ee";
+      ctx2d.beginPath();
+      ctx2d.arc(cx + jx, cy, 5, 0, Math.PI * 2);
+      ctx2d.fill();
+      ctx2d.strokeStyle = "#1a1a1a";
+      ctx2d.lineWidth = 1;
+      var d = new Date();
+      var mins = d.getMinutes() / 60 * Math.PI * 2 - Math.PI / 2;
+      var hrs = ((d.getHours() % 12) + d.getMinutes() / 60) / 12 * Math.PI * 2 - Math.PI / 2;
+      ctx2d.beginPath();
+      ctx2d.moveTo(cx + jx, cy);
+      ctx2d.lineTo(cx + jx + Math.cos(mins) * 4, cy + Math.sin(mins) * 4);
+      ctx2d.moveTo(cx + jx, cy);
+      ctx2d.lineTo(cx + jx + Math.cos(hrs) * 2.5, cy + Math.sin(hrs) * 2.5);
+      ctx2d.stroke();
+      if (ringing) {
+        ctx2d.fillStyle = "#c94f4f";
+        ctx2d.font = "bold 10px ui-sans-serif, sans-serif";
+        ctx2d.fillText("RRRING", cx - 18, cy - 13);
+      }
     }
 
     /* Past halfway across its office a bubble opens to the left, so it never
@@ -528,15 +610,16 @@ clanker.registerView({
             var cards = (both[0].board && both[0].board.cards) || [];
             var msgs = both[1].messages || [];
             // Who is in this room: everyone who has said anything, plus us.
+            // The newest message per speaker doubles as their awake-ness.
             var names = {};
-            msgs.forEach(function (m) { if (m.from) names[m.from] = true; });
-            if (instanceName) names[instanceName] = true;
+            msgs.forEach(function (m) { if (m.from) names[m.from] = Math.max(names[m.from] || 0, m.ts || 0); });
+            if (instanceName && !(instanceName in names)) names[instanceName] = 0;
             var agents = Object.keys(names).map(function (n) {
-              return { name: n, x: 0, y: 0, bubble: null };
+              return { name: n, x: 0, y: 0, bubble: null, lastSeen: names[n] };
             });
             var cursor = 0;
             msgs.forEach(function (m) { if (m.ts > cursor) cursor = m.ts; });
-            var o = { layout: layoutFor(room, agents.length), cards: cards, agents: agents, cursor: cursor, room: room };
+            var o = { layout: layoutFor(room, agents.length), cards: cards, agents: agents, cursor: cursor, room: room, ringAt: 0, ringUntil: 0 };
             seatAgents(o);
             return o;
           });
@@ -654,13 +737,17 @@ clanker.registerView({
     function agentIn(o, name) {
       for (var i = 0; i < o.agents.length; i++) if (o.agents[i].name === name) return o.agents[i];
       // Somebody who has not spoken in this room before: seat them now.
-      var a = { name: name, x: 0, y: 0, bubble: null };
+      var a = { name: name, x: 0, y: 0, bubble: null, lastSeen: 0 };
       o.agents.push(a);
       seatAgents(o);
       return a;
     }
 
     function applyMessage(o, m) {
+      if (m.from) {
+        var who = agentIn(o, m.from);
+        if ((m.ts || 0) > (who.lastSeen || 0)) who.lastSeen = m.ts;
+      }
       var action = parseAction(m.text);
       if (action) {
         var line = describe(m.from, action);
@@ -701,15 +788,54 @@ clanker.registerView({
       })).then(function () { polling = false; });
     }
 
+    /* Sleep animation needs frames while anyone is dozing or a ring is
+       live; with reduced motion both are drawn static, so no frames. */
+    function stepSleep(now) {
+      if (reduced) return false;
+      var animate = false;
+      offices.forEach(function (o) {
+        if (now < o.ringUntil) { animate = true; return; }
+        o.agents.forEach(function (a) { if (asleep(a)) animate = true; });
+      });
+      return animate;
+    }
+
+    /* The actual wake-up call. One ring per room per cooldown, and only for
+       rooms with someone visibly asleep. The message goes through the normal
+       room send, so subscribed peers receive it like anything else said here.
+       Our own avatar can doze but is never a ring target: the call is sent AS
+       this instance, so ringing for ourselves would wake nobody and refresh
+       our own lastSeen, looping ring -> doze -> ring forever. */
+    function checkAlarm() {
+      if (!alarmOn.val) return;
+      var now = nowSec();
+      offices.forEach(function (o) {
+        var sleepers = o.agents.filter(function (a) { return a.name !== instanceName && asleep(a); })
+          .map(function (a) { return a.name; });
+        if (sleepers.length === 0) return;
+        if (now - (o.ringAt || 0) < RING_COOLDOWN) return;
+        o.ringAt = now;
+        o.ringUntil = performance.now() + RING_MS;
+        say(o.room + ": alarm clock rings for " + sleepers.join(", "));
+        fetch("/api/chat/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room: o.room, text: "⏰ wake up, " + sleepers.join(", ") + "!" }),
+        }).catch(function () {});
+        dirty = true;
+      });
+    }
+
     var last = 0;
     function frame(now) {
       var dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;
-      if (stepAgents(dt) | stepJanitor(dt, now) || dirty) { draw(); dirty = false; }
+      if (stepAgents(dt) | stepJanitor(dt, now) | stepSleep(now) || dirty) { draw(); dirty = false; }
       raf = window.requestAnimationFrame(frame);
     }
     var raf = window.requestAnimationFrame(frame);
     var timer = window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
+    var alarmTimer = window.setInterval(checkAlarm, 5000);
     var janitorTimer = window.setInterval(function () {
       api.getJSON("/api/janitor").then(function (jr) {
         if (!jr || !jr.ok) return;
@@ -725,6 +851,7 @@ clanker.registerView({
       window.cancelAnimationFrame(raf);
       window.clearInterval(timer);
       window.clearInterval(janitorTimer);
+      window.clearInterval(alarmTimer);
     });
 
     window.addEventListener("resize", function () { dirty = true; });
