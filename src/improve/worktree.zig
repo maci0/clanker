@@ -248,7 +248,20 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json" }) |name| {
+    // chains/ is a top-level directory (configurable via agent.chains_dir)
+    // that holds named chain pipeline definitions; without the link an
+    // isolated run's `chain` tool cannot find any saved pipelines.
+    for ([_][]const u8{"chains"}) |name| {
+        const src_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
+        defer gpa.free(src_path);
+        std.Io.Dir.cwd().access(io, name, .{}) catch continue;
+        const link_path2 = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(link_path2);
+        std.Io.Dir.cwd().symLink(io, src_path, link_path2, .{ .is_directory = true }) catch |err|
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+    }
+
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json", "state/sessions" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
