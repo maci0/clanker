@@ -93,6 +93,15 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
+    .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig fmt --check\")" },
+    .{ .file = "src/gate/checks.zig", .needle = "if (hits > 0) {" },
+    .{ .file = "src/gate/checks.zig", .needle = "if (problems.items.len > 0) {" },
+    .{ .file = "src/gate/checks.zig", .needle = "exec_pattern_allow must not name git commands" },
+    .{ .file = "src/gate/checks.zig", .needle = "capability_gate must not be disabled" },
+    // A build.zig change can make `zig build` succeed without installing the
+    // staged executable. Capability evaluation must fail closed in that case,
+    // otherwise removing the binary is enough to skip the entire eval suite.
+    .{ .file = "src/improve/engine.zig", .needle = "staged binary is missing" },
     // The worktree's load-bearing state sharing keeps getting reverted by
     // proposals that reconstruct linkSharedState's arrays from memory
     // instead of the current source (twice in one afternoon, both times a
@@ -1606,8 +1615,8 @@ pub const Engine = struct {
         const probe = try std.fmt.allocPrint(self.ctx.gpa, "{s}/zig-out/bin/clanker", .{staging});
         defer self.ctx.gpa.free(probe);
         std.Io.Dir.cwd().access(self.ctx.io, probe, .{}) catch |err| {
-            log.log(.warn, "capability gate skipped: no staged binary ({s})", .{@errorName(err)});
-            return .{ .ok = true, .label = "capability evals" };
+            log.log(.warn, "capability gate failed: no staged binary ({s})", .{@errorName(err)});
+            return .{ .ok = false, .label = "capability evals", .detail = "staged binary is missing" };
         };
 
         // A configured eval_provider aims the staged eval agents at a fast
@@ -2886,6 +2895,33 @@ test "a patch that guts a gate implementation in checks.zig is rejected too" {
     try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = gutted });
     const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
     try std.testing.expectEqualStrings(".exited => |c| c == 0,", bad.needle);
+}
+
+test "capability gate fails closed when the staged binary is missing" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena_state.allocator(),
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var result = try engine.capabilityGate("path-that-does-not-exist", tmp.dir);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("staged binary is missing", result.detail);
 }
 
 test "the staging remover refuses any path that is not a staging directory" {

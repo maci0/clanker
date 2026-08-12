@@ -1,5 +1,5 @@
 //! memory — WASM guest tool for the memory layer.
-//! Actions: chunk {text,size,overlap,strategy}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids}
+//! Actions: chunk {text,size,overlap,strategy}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids,mode}
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -71,6 +71,45 @@ fn cosine(a: []const f32, b: []const f32) f32 {
     }
     if (na == 0 or nb == 0) return 0;
     return @as(f32, @floatCast(dot / (@sqrt(na) * @sqrt(nb))));
+}
+
+fn keywordScore(query: []const u8, text: []const u8) f32 {
+    var hits: f32 = 0;
+    var total: f32 = 0;
+    var qi: usize = 0;
+    var qbuf: [128]u8 = undefined;
+    var qlen: usize = 0;
+    while (qi <= query.len) : (qi += 1) {
+        const c: u8 = if (qi < query.len) query[qi] else 0;
+        if (qi < query.len and std.ascii.isAlphanumeric(c)) {
+            if (qlen < qbuf.len) {
+                qbuf[qlen] = std.ascii.toLower(c);
+                qlen += 1;
+            }
+        } else {
+            if (qlen >= 2) {
+                total += 1;
+                const tok = qbuf[0..qlen];
+                var ti: usize = 0;
+                while (ti + tok.len <= text.len) : (ti += 1) {
+                    var match = true;
+                    for (tok, 0..) |tc, j| {
+                        if (std.ascii.toLower(text[ti + j]) != tc) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) {
+                        hits += 1;
+                        break;
+                    }
+                }
+            }
+            qlen = 0;
+        }
+    }
+    if (total == 0) return 0;
+    return hits / total;
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
@@ -167,11 +206,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         const top_k: usize = @as(usize, @intFromFloat(lib.optNum(obj, "top_k") orelse 5));
         const threshold: f32 = @as(f32, @floatCast(lib.optNum(obj, "threshold") orelse 0));
+        const mode = lib.optStr(obj, "mode") orelse "vector";
+        const use_keyword = std.mem.eql(u8, mode, "keyword");
         const dim: usize = @as(usize, @intFromFloat(lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim))));
         const d = @min(@max(dim, 16), 1024);
-        const qvec = try lib.alloc.alloc(f32, d);
-        defer lib.alloc.free(qvec);
-        hashEmbedInto(query, qvec);
+        var qvec: ?[]f32 = null;
+        if (!use_keyword) {
+            qvec = try lib.alloc.alloc(f32, d);
+            hashEmbedInto(query, qvec.?);
+        }
+        defer if (qvec) |v| lib.alloc.free(v);
         var filter_ids: std.ArrayList([]const u8) = .empty;
         if (obj.object.get("collection_ids")) |v| {
             if (v == .array) for (v.array.items) |it| {
@@ -219,10 +263,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 const text_v = item.object.get("text") orelse continue;
                 if (text_v != .string) continue;
                 const chunk_id = if (item.object.get("chunk_id")) |v| (if (v == .string) v.string else text_v.string) else text_v.string;
-                const vec = lib.alloc.alloc(f32, d) catch continue;
-                defer lib.alloc.free(vec);
-                hashEmbedInto(text_v.string, vec);
-                const sc = cosine(qvec, vec);
+                const sc = if (use_keyword)
+                    keywordScore(query, text_v.string)
+                else blk: {
+                    const vec = lib.alloc.alloc(f32, d) catch continue;
+                    defer lib.alloc.free(vec);
+                    hashEmbedInto(text_v.string, vec);
+                    break :blk cosine(qvec.?, vec);
+                };
                 if (sc < threshold) continue;
                 const dup_id = lib.alloc.dupe(u8, chunk_id) catch continue;
                 const dup_text = lib.alloc.dupe(u8, text_v.string) catch continue;
