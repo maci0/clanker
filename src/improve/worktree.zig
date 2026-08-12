@@ -167,7 +167,7 @@ pub const Worktree = struct {
             else => false,
         };
         if (!ok) {
-            log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+            log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}; skipping shared-state refresh to avoid mixing stale tracked files with fresh state", .{res.stderr});
             return;
         }
         // git reset --hard removes untracked directories (state/, .env
