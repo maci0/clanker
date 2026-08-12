@@ -22,10 +22,9 @@
 //! picker, `handlePickerKey`, styled like Kimi Code's; `/help`/`?` prints
 //! `printHelp`'s hand-maintained command list, not a generated one), inline
 //! ask_user/approval prompts (falls back to the same "nobody attached"
-//! default a headless run gets), and manual scroll-back (the transcript
-//! always shows its tail). Full list, with what a fix looks like for each:
-//! docs/ROADMAP.md's "vaxis REPL parity" entry under Planned. Tool calls
-//! render as the established left-bar cards, built as plain strings by
+//! default a headless run gets). Full list, with what a fix looks like for
+//! each: docs/ROADMAP.md's "vaxis REPL parity" entry under Planned. Tool
+//! calls render as the established left-bar cards, built as plain strings by
 //! transcript.zig's card helpers and styled into cells at draw time.
 
 const std = @import("std");
@@ -283,7 +282,7 @@ const Model = struct {
     text_field: vxfw.TextField,
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
-    status_buf: [160]u8 = undefined,
+    status_buf: [192]u8 = undefined,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op — there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -307,6 +306,13 @@ const Model = struct {
     last_surface: ?vxfw.Surface = null,
     transcript_top: u16 = 0,
     transcript_bottom: u16 = 0,
+    /// Manual scrollback anchor: null while the transcript follows its tail
+    /// (the default — new output scrolls into view as it arrives). Non-null
+    /// pins the visible window to end at this absolute line index
+    /// (exclusive), so a streaming turn can append to `lines` without
+    /// yanking a reader back down. PgUp/PgDn/Home/End/Esc drive it; the
+    /// draw re-clamps it every frame (a resize changes what fits).
+    view_end: ?usize = null,
 
     /// Submitted-task history for the Up/Down recall every REPL has.
     /// `hist_idx == history.len` means "editing a fresh line", and the
@@ -593,6 +599,10 @@ const Model = struct {
     /// finishTurn's read of self.thread against this store, seeing it still
     /// null and leaking the handle.
     fn submitTask(self: *Model, ctx: *vxfw.EventContext, task: []const u8) !void {
+        // Submitting snaps a scrolled-up view back to the tail: the echoed
+        // task and the streamed reply land there, and hiding them behind a
+        // frozen window would make Enter look like it did nothing.
+        self.view_end = null;
         self.lines.append(self.arena, .{ .text = try std.fmt.allocPrint(self.arena, "clanker> {s}", .{task}) }) catch {};
         self.history.append(self.arena, try self.arena.dupe(u8, task)) catch {};
         self.hist_idx = self.history.items.len;
@@ -695,6 +705,7 @@ const Model = struct {
             \\  /quit, /exit, /q  leave the REPL (bare "exit"/"quit" also work)
             \\keys:
             \\  Up/Down           recall previous input
+            \\  PgUp/PgDn         page the transcript (Home: top; End/Esc: back to tail)
             \\  Ctrl-C            stop the current turn, or quit when idle
             \\  Ctrl-Shift-C      copy the selection (or the input line)
             \\  Ctrl-Shift-V, Shift-Insert   paste from the system clipboard
@@ -821,6 +832,30 @@ const Model = struct {
                 // The picker is modal: every key goes to it, none of the
                 // clipboard/history/quit shortcuts below apply while it's open.
                 if (self.picker_open) return self.handlePickerKey(ctx, key);
+                // Manual scrollback. PgUp/PgDn page the transcript by a
+                // screenful (one line of overlap); Home jumps to the top and
+                // End/Esc return to the tail — but Home/End only act on the
+                // scroll while already scrolled up, so at the tail they keep
+                // their TextField cursor-motion meaning (aliases of
+                // Ctrl-A/Ctrl-E there). The paging math is pure
+                // (`scrollUpEnd` and friends, below tailStart); this just
+                // feeds it the current anchor and last-drawn height.
+                if (key.matches(vaxis.Key.page_up, .{})) {
+                    self.view_end = scrollUpEnd(self.view_end, self.lineCount(), self.availRows());
+                    return ctx.consumeAndRedraw();
+                }
+                if (key.matches(vaxis.Key.page_down, .{})) {
+                    self.view_end = scrollDownEnd(self.view_end, self.lineCount(), self.availRows());
+                    return ctx.consumeAndRedraw();
+                }
+                if (self.view_end != null and key.matches(vaxis.Key.home, .{})) {
+                    self.view_end = scrollHomeEnd(self.lineCount(), self.availRows());
+                    return ctx.consumeAndRedraw();
+                }
+                if (self.view_end != null and (key.matches(vaxis.Key.end, .{}) or key.matches(vaxis.Key.escape, .{}))) {
+                    self.view_end = null;
+                    return ctx.consumeAndRedraw();
+                }
                 // Terminal convention: Ctrl+Shift+C copies the current
                 // selection (mouse-drag, same path as a drag release),
                 // falling back to the whole input line. Plain Ctrl+C keeps
@@ -1019,6 +1054,22 @@ const Model = struct {
         self.text_field.insertSliceAtCursor(text) catch {};
     }
 
+    /// Transcript line count, read under the bridge lock: finishTurn appends
+    /// to `self.lines` from the worker thread while a turn is in flight, and
+    /// the scroll keys land on the UI thread during exactly that window.
+    fn lineCount(self: *Model) usize {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        return self.lines.items.len;
+    }
+
+    /// The transcript height as of the last draw — what one "page" means.
+    /// Zero before the first frame, which the scroll math treats as a
+    /// one-line page.
+    fn availRows(self: *const Model) u16 {
+        return self.transcript_bottom -| self.transcript_top;
+    }
+
     fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
         const self: *Model = @ptrCast(@alignCast(ptr));
         const max = ctx.max.size();
@@ -1045,38 +1096,61 @@ const Model = struct {
         const streaming = bridge_streaming;
         const stream_snapshot = ctx.arena.dupe(u8, bridge_stream_buf.items) catch "";
 
-        const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
-        const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
-            self.provider.name,
-            self.provider.activeModelName(),
-            activity,
-            if (streaming) " thinking" else "ready",
-            if (self.session_id != null) " \xc2\xb7 " else "",
-            self.session_id orelse "",
-        }) catch "clanker (vaxis)";
-        writeRow(surface, 0, status, dim);
-
+        // Layout numbers before the status line: its scroll indicator needs
+        // the transcript height, which is only known once the input box has
+        // claimed its rows.
         const box_h: u16 = 3;
         const box_y = max.height -| box_h;
-        drawBox(surface, 0, box_y, max.width, box_h, rule_style);
-        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
-        var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
-        children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
-
         const top: u16 = 1;
         const bottom = box_y -| 1;
         self.transcript_top = top;
         self.transcript_bottom = bottom;
         const avail_rows: u16 = if (bottom > top) bottom - top else 0;
+
+        // Manual scrollback: while `view_end` is set the visible window is
+        // anchored to an absolute line index, so a streaming turn appends to
+        // `lines` without yanking the reader back to the tail. Re-clamped
+        // every frame — a resize changes `avail_rows`, and once everything
+        // fits on screen the anchor dissolves back to tail-following.
+        const line_count = self.lines.items.len;
+        if (self.view_end != null and line_count <= avail_rows) self.view_end = null;
+        if (self.view_end) |ve| self.view_end = clampViewEnd(ve, line_count, avail_rows);
+        const view_end = self.view_end orelse line_count;
+
+        const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
+        const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
+        // "-N" is how many transcript lines sit below the frozen window —
+        // the reader's distance from the tail, and the cue that the view is
+        // not following new output right now.
+        var scroll_buf: [24]u8 = undefined;
+        const scroll_hint: []const u8 = if (self.view_end != null)
+            std.fmt.bufPrint(&scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
+        else
+            "";
+        const status = std.fmt.bufPrint(&self.status_buf, "clanker (vaxis) \xc2\xb7 {s}/{s} \xc2\xb7 {s}{s}{s}{s}{s} \xc2\xb7 /help for commands \xc2\xb7 Ctrl-C to exit", .{
+            self.provider.name,
+            self.provider.activeModelName(),
+            activity,
+            if (streaming) " thinking" else "ready",
+            scroll_hint,
+            if (self.session_id != null) " \xc2\xb7 " else "",
+            self.session_id orelse "",
+        }) catch "clanker (vaxis)";
+        writeRow(surface, 0, status, dim);
+
+        drawBox(surface, 0, box_y, max.width, box_h, rule_style);
+        const input_surf = try self.text_field.draw(ctx.withConstraints(.{}, .{ .width = max.width -| 4, .height = 1 }));
+        var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
+        children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
+
         var row: u16 = top;
-        const start = tailStart(self.lines.items, avail_rows);
+        const start = tailStart(self.lines.items[0..view_end], avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
         const fence_on = active.reset.len > 0;
         var syn_style = syntax.Style.fromTheme(&active);
         var i: usize = start;
-        while (i < self.lines.items.len and row < bottom) : (i += 1) {
+        while (i < view_end and row < bottom) : (i += 1) {
             const l = self.lines.items[i];
             if (l.fence_lang) |lang| {
                 var state = syntax.State.init(lang);
@@ -1105,7 +1179,10 @@ const Model = struct {
                 writeWrapped(surface, &row, bottom, max.width, l.text, style);
             }
         }
-        if (streaming and row < bottom and stream_snapshot.len > 0) {
+        // The live stream renders only at the tail: a scrolled-up window is
+        // frozen history, and painting fresh tokens under it would both lie
+        // about where they belong and shove the anchored lines around.
+        if (streaming and self.view_end == null and row < bottom and stream_snapshot.len > 0) {
             self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
         }
 
@@ -1179,6 +1256,98 @@ fn tailStart(lines: []const Line, avail_rows: u16) usize {
     const n = lines.len;
     const want: usize = avail_rows;
     return if (n > want) n - want else 0;
+}
+
+// ---------------------------------------------------------------------
+// Manual-scrollback math. All pure over (anchor, line_count, avail_rows)
+// so the paging behaviour is unit-testable without a terminal: the anchor
+// is Model.view_end — null means "follow the tail", non-null is the
+// absolute line index (exclusive) the visible window ends at. Counted in
+// `lines` entries, same rough one-entry-per-row heuristic as tailStart.
+// ---------------------------------------------------------------------
+
+/// One PgUp/PgDn stride: a screenful less one line of overlap so the reader
+/// keeps a continuity line across pages, never less than one row.
+fn scrollPage(avail_rows: u16) usize {
+    return if (avail_rows > 1) avail_rows - 1 else 1;
+}
+
+/// Clamps an anchored window end to what can actually be shown: no earlier
+/// than one full screen from the top (the window always fills from line 0)
+/// and no later than the transcript's end.
+fn clampViewEnd(view_end: usize, line_count: usize, avail_rows: u16) usize {
+    const min_end = @min(line_count, avail_rows);
+    return @max(min_end, @min(view_end, line_count));
+}
+
+/// PgUp: one page up from `cur` (null = following the tail). Returns null —
+/// stay at the tail — when the whole transcript already fits on screen, so
+/// PgUp in a short session is a no-op rather than a stuck anchor.
+fn scrollUpEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
+    if (line_count <= avail_rows) return null;
+    const end = cur orelse line_count;
+    return clampViewEnd(end -| scrollPage(avail_rows), line_count, avail_rows);
+}
+
+/// PgDn: one page down; reaching (or crossing) the tail dissolves the
+/// anchor back to tail-following rather than pinning at the last line.
+fn scrollDownEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
+    const end = cur orelse return null;
+    const new_end = end + scrollPage(avail_rows);
+    if (new_end >= line_count) return null;
+    return clampViewEnd(new_end, line_count, avail_rows);
+}
+
+/// Home: jump to the very top (window [0, avail_rows)); null when there is
+/// no history above the first screen.
+fn scrollHomeEnd(line_count: usize, avail_rows: u16) ?usize {
+    if (line_count <= avail_rows) return null;
+    return avail_rows;
+}
+
+test "scrollPage is a screenful minus one line of overlap, never zero" {
+    try std.testing.expectEqual(@as(usize, 23), scrollPage(24));
+    try std.testing.expectEqual(@as(usize, 1), scrollPage(2));
+    try std.testing.expectEqual(@as(usize, 1), scrollPage(1));
+    try std.testing.expectEqual(@as(usize, 1), scrollPage(0));
+}
+
+test "scrollUpEnd pages up and clamps at the top" {
+    // 100 lines, 24 visible: the first PgUp anchors a page above the tail.
+    try std.testing.expectEqual(@as(?usize, 77), scrollUpEnd(null, 100, 24));
+    // Walking further up clamps so the window still fills from line 0.
+    var end: ?usize = null;
+    for (0..10) |_| end = scrollUpEnd(end, 100, 24);
+    try std.testing.expectEqual(@as(?usize, 24), end);
+    // Nothing above the first screen: stays following the tail.
+    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 10, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollUpEnd(null, 24, 24));
+}
+
+test "scrollDownEnd pages down and dissolves at the tail" {
+    try std.testing.expectEqual(@as(?usize, 47), scrollDownEnd(24, 100, 24));
+    // A page that reaches past the last line returns to tail-following.
+    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(90, 100, 24));
+    // Already at the tail (null anchor): PgDn stays there.
+    try std.testing.expectEqual(@as(?usize, null), scrollDownEnd(null, 100, 24));
+}
+
+test "scrollHomeEnd jumps to the top only when there is history above" {
+    try std.testing.expectEqual(@as(?usize, 24), scrollHomeEnd(100, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollHomeEnd(24, 24));
+    try std.testing.expectEqual(@as(?usize, null), scrollHomeEnd(3, 24));
+}
+
+test "an anchored view end holds its lines while the transcript grows" {
+    // Frozen view: the anchor is an absolute index, so appended lines (a
+    // growing line_count) leave the visible window exactly where it was —
+    // the stick-to-tail behaviour lives entirely in the null anchor.
+    try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 200, 24));
+    try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 500, 24));
+    // A shrunk transcript (or one shorter than the anchor) re-clamps it in.
+    try std.testing.expectEqual(@as(usize, 40), clampViewEnd(50, 40, 24));
+    // And a taller terminal pulls a too-high anchor down to a full window.
+    try std.testing.expectEqual(@as(usize, 30), clampViewEnd(10, 200, 30));
 }
 
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {
