@@ -2536,7 +2536,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         cfg.modules.goal and opts.goal == null,
     );
     const task_text = resolved_task.task;
-    compactMessages(&messages, max_turn_tokens);
+    session.compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
 
     // Answer text streams to stdout as it arrives (identical bytes to the
@@ -2605,7 +2605,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         if (!cfg.modules.sessions) return;
-        compactMessages(&messages, max_session_tokens);
+        session.compactMessages(&messages, session.max_session_tokens);
         try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
             .id = sid,
             .title = title,
@@ -2924,12 +2924,6 @@ fn runDelta(delta: []const u8) void {
 /// configured provider here is 128K); a turn still compacts, just not down to
 /// nothing.
 const max_turn_tokens = 96 * 1024;
-const max_session_tokens = session.max_session_tokens;
-
-/// Session auto-compaction, shared with the REPL — see
-/// `session.compactMessages`.
-const compactMessages = session.compactMessages;
-
 fn cmdSessions(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
@@ -9038,7 +9032,7 @@ test "compactMessages drops oldest non-system messages over token budget" {
     try messages.append(allocator, .{ .role = .user, .content = "aaaa" });
     try messages.append(allocator, .{ .role = .user, .content = "bbbb" });
     try messages.append(allocator, .{ .role = .user, .content = "cccc" });
-    compactMessages(&messages, 2);
+    session.compactMessages(&messages, 2);
     try std.testing.expect(messages.items.len == 2);
 }
 
@@ -9058,7 +9052,7 @@ test "a turn that read a large file does not wipe the conversation" {
     try messages.append(allocator, .{ .role = .tool, .content = big });
     try messages.append(allocator, .{ .role = .assistant, .content = "here is the plan" });
 
-    compactMessages(&messages, max_turn_tokens);
+    session.compactMessages(&messages, max_turn_tokens);
     try std.testing.expectEqual(types.Role.system, messages.items[0].role);
     try std.testing.expectEqualStrings("here is the plan", messages.items[messages.items.len - 1].content.?);
     try std.testing.expect(messages.items.len >= 3);

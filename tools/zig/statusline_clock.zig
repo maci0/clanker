@@ -8,7 +8,7 @@
 //! `/plugins` runtime toggle by design (Registry.Tool.toggleable), so
 //! turning it on means flipping `enabled` to `true` in this tool's manifest
 //! (tools/manifests/statusline_clock.tool.json), not a `/plugins` command.
-//! Input:  {"args": ""}
+//! Input:  {}
 //! Output: {"ok": true, "text": "13:04:22 UTC"}
 
 const std = @import("std");

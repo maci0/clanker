@@ -11,12 +11,12 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
-    if (parsed != .object) return lib.fail(out, "input must be a JSON object with \"engine\" and \"query\"");
+    if (parsed != .object) return lib.fail(out, "input must be a JSON object with \"query\" and optional \"engine\"");
     const obj = parsed.object;
-    const engine = switch (obj.get("engine") orelse return lib.fail(out, "missing engine")) {
+    const engine = if (obj.get("engine")) |value| switch (value) {
         .string => |s| s,
         else => return lib.fail(out, "engine must be a string"),
-    };
+    } else "ast-grep";
     const query = switch (obj.get("query") orelse return lib.fail(out, "missing query")) {
         .string => |s| s,
         else => return lib.fail(out, "query must be a string"),

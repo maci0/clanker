@@ -4,11 +4,7 @@
   "wasm": "zig-out/tools/turn_hook_echo.wasm",
   "input_schema": {
     "type": "object",
-    "properties": {
-      "args": {
-        "type": "string"
-      }
-    }
+    "properties": {}
   },
   "internal": true,
   "turn_hook": true,

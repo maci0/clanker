@@ -11,19 +11,19 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
+    const parsed = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
     const tasks = obj.get("tasks") orelse return lib.fail(out, "missing tasks");
     if (tasks != .array or tasks.array.items.len == 0) return lib.fail(out, "tasks must be a non-empty array of strings");
     // The host reads "tasks"/"provider" straight out of this object; nothing
     // here needs to be re-parsed to forward it.
-    const raw = lib.swarm(input) catch |err| return lib.fail(out, switch (err) {
+    const raw = lib.swarm(input) catch |err| return switch (err) {
         // The host only attaches a subagent runner inside an agent run. Over
         // MCP, or from a one-shot tool call, there is nothing to spawn from.
-        error.NotFound => "swarm runs only inside an agent run; this call has no parent agent to spawn from",
-        error.SandboxDenied => "this tool is not allowed to spawn a swarm",
-        error.TooLarge => "too many tasks for one swarm call, or the combined results were too large",
-        else => @errorName(err),
-    });
+        error.NotFound => lib.fail(out, "swarm runs only inside an agent run; this call has no parent agent to spawn from"),
+        error.SandboxDenied => lib.fail(out, "this tool is not allowed to spawn a swarm"),
+        error.TooLarge => lib.fail(out, "too many tasks for one swarm call, or the combined results were too large"),
+        else => lib.failErr(out, err, "running the swarm"),
+    };
     return lib.okText(out, raw);
 }

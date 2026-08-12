@@ -11,7 +11,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
+    const parsed = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
     const task = switch (obj.get("task") orelse return lib.fail(out, "missing task")) {
         .string => |s| s,
@@ -23,13 +23,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     // The brief travels as-is: the host reads "context" and "files" out of the
     // same object, so nothing has to be re-encoded here.
-    const raw = lib.subagentBriefed(input, task, provider) catch |err| return lib.fail(out, switch (err) {
+    const raw = lib.subagentBriefed(input, task, provider) catch |err| return switch (err) {
         // The host only attaches a runner inside an agent run. Over MCP, or
         // from a one-shot tool call, there is nothing to spawn, and
         // "NotFound" reads as if the task or the provider were missing.
-        error.NotFound => "sub-agents run only inside an agent run; this call has no parent agent to spawn one",
-        error.SandboxDenied => "this tool is not allowed to spawn sub-agents",
-        else => @errorName(err),
-    });
+        error.NotFound => lib.fail(out, "sub-agents run only inside an agent run; this call has no parent agent to spawn one"),
+        error.SandboxDenied => lib.fail(out, "this tool is not allowed to spawn sub-agents"),
+        else => lib.failErr(out, err, "spawning the sub-agent"),
+    };
     return lib.okText(out, raw);
 }

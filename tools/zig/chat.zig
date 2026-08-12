@@ -73,28 +73,27 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // "InvalidArg" alone told a caller nothing: it names neither the field
         // that is missing nor the operation that wanted it, and every chat
         // tool shares this one call site.
-        const detail = switch (err) {
+        return switch (err) {
             error.InvalidArg => if (std.mem.eql(u8, op, "send"))
-                "chat send needs \"room\" (or \"to\" for a direct message) and \"text\""
+                lib.fail(out, "chat send needs \"room\" (or \"to\" for a direct message) and \"text\"")
             else if (std.mem.eql(u8, op, "history"))
-                "chat history needs \"room\", and optionally \"after\" (a timestamp)"
+                lib.fail(out, "chat history needs \"room\", and optionally \"after\" (a timestamp)")
             else if (std.mem.eql(u8, op, "subscribe"))
-                "chat subscribe needs \"room\", and optionally \"on\" (true to join, false to leave)"
+                lib.fail(out, "chat subscribe needs \"room\", and optionally \"on\" (true to join, false to leave)")
             else if (std.mem.eql(u8, op, "react"))
-                "chat react needs \"room\", \"msg_id\", and \"emoji\""
+                lib.fail(out, "chat react needs \"room\", \"msg_id\", and \"emoji\"")
             else if (std.mem.eql(u8, op, "edit"))
-                "chat edit needs \"room\", \"msg_id\", and \"text\""
+                lib.fail(out, "chat edit needs \"room\", \"msg_id\", and \"text\"")
             else if (std.mem.eql(u8, op, "delete"))
-                "chat delete needs \"room\" and \"msg_id\""
+                lib.fail(out, "chat delete needs \"room\" and \"msg_id\"")
             else if (std.mem.eql(u8, op, "topic"))
-                "chat topic needs \"room\" (and \"topic\" to set)"
+                lib.fail(out, "chat topic needs \"room\" (and \"topic\" to set)")
             else if (std.mem.eql(u8, op, "pin"))
-                "chat pin needs \"room\" (and \"msg_id\" to pin/unpin)"
+                lib.fail(out, "chat pin needs \"room\" (and \"msg_id\" to pin/unpin)")
             else
-                "the chat host rejected the arguments for this operation",
-            else => @errorName(err),
+                lib.fail(out, "the chat host rejected the arguments for this operation"),
+            else => lib.failErr(out, err, "running the chat operation"),
         };
-        return lib.fail(out, detail);
     };
     try out.writeAll(result);
 }

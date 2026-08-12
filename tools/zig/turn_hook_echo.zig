@@ -6,7 +6,7 @@
 //! Disabled by default, and (like every `internal: true` tool) exempt from
 //! the `/plugins` runtime toggle — try it by flipping `enabled` to `true` in
 //! this tool's manifest.
-//! Input:  {"args": ""}
+//! Input:  {}
 //! Output: {"ok": true, "text": "..."}
 
 const std = @import("std");
