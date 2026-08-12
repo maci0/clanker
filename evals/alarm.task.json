@@ -1,0 +1,11 @@
+{
+  "name": "alarm",
+  "kind": "task",
+  "description": "The alarm tool's whole lifecycle in one pass: set must persist a reminder and return its id, list must show it as pending with due:false, cancel must remove it, and a second list must come back empty. Exercises the tool's CAS read-modify-write path against state/alarms.json end to end — application logic no build gate touches. It goes red when set stops persisting, ids stop round-tripping to cancel, or a stale-hash retry loop breaks. The eval's staging state dir starts empty, so the final empty list is deterministic.",
+  "prompt": "Use the alarm tool four times, in order: (1) {\"action\":\"set\",\"message\":\"eval reminder\",\"in_minutes\":60}; note the id it returns. (2) {\"action\":\"list\"} — check the alarm you just set is present with due false. (3) {\"action\":\"cancel\",\"id\":\"<the id from step 1>\"}. (4) {\"action\":\"list\"} — check the alarms array is now empty. If every step behaved as described, reply with exactly CLEAN. Otherwise reply with exactly BROKEN and one sentence naming the failing step.",
+  "requires_tool": "alarm",
+  "criteria": [
+    { "includes": ["CLEAN"] },
+    { "excludes": ["BROKEN"] }
+  ]
+}
