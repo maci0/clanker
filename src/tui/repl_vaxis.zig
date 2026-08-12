@@ -259,7 +259,7 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     try std.testing.expectEqual(@as(usize, 2), cands.len);
     try std.testing.expectEqualStrings("kimi-k3", cands[0].provider);
     try std.testing.expectEqualStrings("moonshotai/kimi-k3", cands[0].display); // display overrides the bare model id
-    try std.testing.expectEqualStrings("kimi-k3/moonshotai/kimi-k3  1048576 ctx  $3/15 per 1M", cands[0].label);
+    try std.testing.expectEqualStrings("kimi-k3/moonshotai/kimi-k3  1048576 ctx  $3/$15 per 1M", cands[0].label);
     try std.testing.expectEqual(@as(?f64, 3), cands[0].cost_in);
     try std.testing.expectEqualStrings("deepseek", cands[1].provider);
     try std.testing.expectEqualStrings("deepseek-chat", cands[1].display); // no display set: falls back to the model id

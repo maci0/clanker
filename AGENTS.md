@@ -30,8 +30,8 @@ through a gated loop. Follow these conventions when changing this codebase.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
-  logging and dotenv. Peer notify/phonebook and patch application moved to
-  the sandboxed `peers` and `patch_apply` WASM tools (`tools/zig/`).
+  logging and dotenv. Peer notify/phonebook, patch application, knowledge
+  store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
   `cli.zig`, `config.zig`, `doctor.zig`, and `janitor.zig` sit directly in
   `src/`. A new module with tests must be added to the `comptime` block in

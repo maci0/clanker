@@ -3110,7 +3110,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
             handleKnowledge(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
-            handlePrompts(io, gpa, method, body, stream);
+            handlePrompts(io, gpa, cfg, environ_map, method, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
@@ -5980,105 +5980,66 @@ fn extractQueryParam(target: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
-fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
-    const ps = @import("prompts/store.zig");
+fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    if (std.mem.eql(u8, method, "GET")) {
-        const all = ps.loadAll(io, arena, std.Io.Dir.cwd()) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"load failed\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-        s.beginObject() catch return;
-        s.objectField("ok") catch return;
-        s.write(true) catch return;
-        s.objectField("prompts") catch return;
-        s.beginArray() catch return;
-        for (all) |pp| {
-            s.beginObject() catch return;
-            s.objectField("id") catch return;
-            s.write(pp.id) catch return;
-            s.objectField("title") catch return;
-            s.write(pp.title) catch return;
-            s.objectField("content") catch return;
-            s.write(pp.content) catch return;
-            s.objectField("created") catch return;
-            s.write(pp.created) catch return;
-            s.objectField("updated") catch return;
-            s.write(pp.updated) catch return;
-            s.endObject() catch return;
-        }
-        s.endArray() catch return;
-        s.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
+
+    const tool_input = promptsRouteToToolInput(arena, method, body) orelse {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
         return;
-    }
+    };
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "prompts", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"prompts tool unavailable\"}");
+        return;
+    };
+    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 400 else 200;
+    respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
+}
+
+fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, method, "GET")) return "{\"action\":\"list\"}";
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(struct { id: ?[]const u8 = null, title: []const u8 = "", content: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        if (req.id) |id| {
-            if (!ps.validPromptId(id)) {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}");
-                return;
+        const req = std.json.parseFromSliceLeaky(struct { id: ?[]const u8 = null, title: []const u8 = "", content: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        if (req.id != null) {
+            s.write("update") catch return null;
+            s.objectField("id") catch return null;
+            s.write(req.id.?) catch return null;
+            if (req.title.len > 0) {
+                s.objectField("title") catch return null;
+                s.write(req.title) catch return null;
             }
-            const t = if (req.title.len > 0) req.title else null;
-            const c = if (req.content.len > 0) req.content else null;
-            const pp = ps.update(io, arena, std.Io.Dir.cwd(), id, t, c) catch {
-                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such prompt\"}");
-                return;
-            };
-            var out: std.Io.Writer.Allocating = .init(arena);
-            var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-            s.beginObject() catch return;
-            s.objectField("ok") catch return;
-            s.write(true) catch return;
-            s.objectField("id") catch return;
-            s.write(pp.id) catch return;
-            s.endObject() catch return;
-            respond(stream, 200, "OK", out.written());
-            return;
+            if (req.content.len > 0) {
+                s.objectField("content") catch return null;
+                s.write(req.content) catch return null;
+            }
+        } else {
+            s.write("create") catch return null;
+            s.objectField("title") catch return null;
+            s.write(req.title) catch return null;
+            s.objectField("content") catch return null;
+            s.write(req.content) catch return null;
         }
-        if (req.title.len == 0 or req.title.len > 200 or req.content.len == 0 or req.content.len > 20000) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title 1-200 and content 1-20000 required\"}");
-            return;
-        }
-        const pp = ps.create(io, arena, std.Io.Dir.cwd(), req.title, req.content) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"create failed\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-        s.beginObject() catch return;
-        s.objectField("ok") catch return;
-        s.write(true) catch return;
-        s.objectField("id") catch return;
-        s.write(pp.id) catch return;
-        s.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
-        return;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
     }
     if (std.mem.eql(u8, method, "DELETE")) {
-        const req = std.json.parseFromSliceLeaky(struct { id: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        if (!ps.validPromptId(req.id)) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}");
-            return;
-        }
-        ps.remove(io, arena, std.Io.Dir.cwd(), req.id) catch {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such prompt\"}");
-            return;
-        };
-        respond(stream, 200, "OK", "{\"ok\":true}");
-        return;
+        const req = std.json.parseFromSliceLeaky(struct { id: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("delete") catch return null;
+        s.objectField("id") catch return null;
+        s.write(req.id) catch return null;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
     }
-    respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+    return null;
 }
 
 fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, method: []const u8, body: []const u8, stream: std.Io.net.Stream) void {
