@@ -154,7 +154,10 @@ goal creates its card, lane moves update goal status, and Archive retains the
 goal/card history for future knowledge or autolearn consumers rather than
 deleting it. Keep the board tool as the card/room implementation and
 `state/goals.json` as the structured goal record; reconcile through the durable
-card `goal` id instead of adding a third store.
+card `goal` id instead of adding a third store. Card checklist items form an
+arbitrarily deep parent tree and may also depend on any other item in the same
+card; dependency cycles are invalid, and a card cannot enter Done until every
+checklist item at every depth is complete.
 
 ## Local operator rules (optional)
 

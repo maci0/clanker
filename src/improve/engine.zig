@@ -617,6 +617,12 @@ pub const Engine = struct {
             };
             if (exists or c.old.len != 0) {
                 log.log(.warn, "proposal rejected: '{s}' already exists and may only be added to, not rewritten", .{c.file});
+                const reject_id = self.newId() catch null;
+                if (reject_id) |owned_id| {
+                    defer self.ctx.gpa.free(owned_id);
+                    self.hist.append(owned_id, .failed, opts.instructions, "rewrite an existing eval", &.{c.file}, 0, 0, try std.fmt.allocPrint(self.arena, "\"{s}\" may not be rewritten", .{c.file}), &.{}, null) catch |herr|
+                        log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+                }
                 self.feedback = try std.fmt.allocPrint(
                     self.arena,
                     "You tried to rewrite \"{s}\". Files under evals/ are the gate your own work is measured against: you may create a new one, never change or remove an existing one.\n{s}",

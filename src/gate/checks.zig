@@ -789,27 +789,37 @@ pub fn gitDenyGuardGate(
             .object => |o| o,
             else => continue,
         };
-        const agent = obj.get("agent") orelse continue;
-        const agent_obj = switch (agent) {
-            .object => |o| o,
-            else => continue,
-        };
-        const epa = agent_obj.get("exec_pattern_allow") orelse continue;
-        const arr = switch (epa) {
-            .array => |a| a,
-            else => continue,
-        };
-        for (arr.items) |item| {
-            const s = switch (item) {
-                .string => |str| str,
-                else => continue,
-            };
-            if (std.mem.eql(u8, s, "git") or std.mem.startsWith(u8, s, "git ") or std.mem.startsWith(u8, s, "git\t")) {
-                return .{ .ok = false, .label = "git-deny-guard", .detail = "exec_pattern_allow must not name git commands" };
+        if (obj.get("agent")) |agent_val| {
+            switch (agent_val) {
+                .object => |agent_obj| {
+                    if (hasGitInExecAllow(agent_obj)) |r| return r;
+                },
+                else => {},
             }
         }
+        // Root-level check: the proposal's "new" text may lack the [agent]
+        // header when the replacement targets a single line.
+        if (hasGitInExecAllow(obj)) |r| return r;
     }
     return .{ .ok = true, .label = "git-deny-guard" };
+}
+
+fn hasGitInExecAllow(obj: std.json.ObjectMap) ?GateResult {
+    const epa = obj.get("exec_pattern_allow") orelse return null;
+    const arr = switch (epa) {
+        .array => |a| a,
+        else => return null,
+    };
+    for (arr.items) |item| {
+        const s = switch (item) {
+            .string => |str| str,
+            else => continue,
+        };
+        if (std.mem.eql(u8, s, "git") or std.mem.startsWith(u8, s, "git ") or std.mem.startsWith(u8, s, "git\t")) {
+            return .{ .ok = false, .label = "git-deny-guard", .detail = "exec_pattern_allow must not name git commands" };
+        }
+    }
+    return null;
 }
 
 test "gitDenyGuardGate rejects git patterns in exec_pattern_allow" {
@@ -962,6 +972,16 @@ test "gitDenyGuardGate rejects changes to the git tool manifest" {
     try std.testing.expectEqualStrings("proposals must not modify the git tool manifest", result.detail);
 }
 
+test "gitDenyGuardGate catches a fragment without the [agent] header" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const frag = [_][]const u8{"exec_pattern_allow = [\"git push\"]"};
+    const result = gitDenyGuardGate(gpa, &files, &frag);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+    try std.testing.expectEqualStrings("exec_pattern_allow must not name git commands", result.detail);
+}
+
 test "gitDenyGuardGate rejects a tab-separated git pattern" {
     const gpa = std.testing.allocator;
     const files = [_][]const u8{"config.toml"};
@@ -1016,25 +1036,38 @@ pub fn configWeakeningGate(
             .object => |o| o,
             else => continue,
         };
-        const improve = switch (obj.get("improve") orelse continue) {
-            .object => |o| o,
-            else => continue,
-        };
-        if (isFalse(improve.get("capability_gate")))
-            return .{ .ok = false, .label = "config-weakening", .detail = "capability_gate must not be disabled" };
-        if (isFalse(improve.get("inert_gate")))
-            return .{ .ok = false, .label = "config-weakening", .detail = "inert_gate must not be disabled" };
-        if (improve.get("max_consecutive_test_only")) |v| {
-            switch (v) {
-                .integer => |n| if (n == 0)
-                    return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must not be 0" },
+        if (obj.get("improve")) |imp_val| {
+            switch (imp_val) {
+                .object => |imp| {
+                    if (weakensImprove(imp)) |r| return r;
+                },
                 else => {},
             }
         }
-        if (isFalse(improve.get("plan_phase")))
-            return .{ .ok = false, .label = "config-weakening", .detail = "plan_phase must not be disabled" };
+        // The proposal's "new" text may be a replacement fragment without
+        // the [improve] section header, so "capability_gate = false" parses
+        // as a root-level key. Check here too or the gate is bypassable by
+        // keeping the replacement small.
+        if (weakensImprove(obj)) |r| return r;
     }
     return .{ .ok = true, .label = "config-weakening" };
+}
+
+fn weakensImprove(obj: std.json.ObjectMap) ?GateResult {
+    if (isFalse(obj.get("capability_gate")))
+        return .{ .ok = false, .label = "config-weakening", .detail = "capability_gate must not be disabled" };
+    if (isFalse(obj.get("inert_gate")))
+        return .{ .ok = false, .label = "config-weakening", .detail = "inert_gate must not be disabled" };
+    if (obj.get("max_consecutive_test_only")) |v| {
+        switch (v) {
+            .integer => |n| if (n == 0)
+                return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must not be 0" },
+            else => {},
+        }
+    }
+    if (isFalse(obj.get("plan_phase")))
+        return .{ .ok = false, .label = "config-weakening", .detail = "plan_phase must not be disabled" };
+    return null;
 }
 
 fn isFalse(v: ?std.json.Value) bool {
@@ -1092,6 +1125,31 @@ test "configWeakeningGate allows a harmless improve config change" {
     };
     const result = configWeakeningGate(gpa, &files, &new_texts);
     try std.testing.expect(result.ok);
+}
+
+test "configWeakeningGate catches a fragment without the [improve] header" {
+    const gpa = std.testing.allocator;
+    // A proposal that replaces just the value line produces "new" text
+    // without the [improve] section header. Without the root-level check
+    // this parses as a top-level key the gate never inspects.
+    const files = [_][]const u8{"config.toml"};
+    const frag = [_][]const u8{"capability_gate = false"};
+    const result = configWeakeningGate(gpa, &files, &frag);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "capability_gate") != null);
+
+    const frag2 = [_][]const u8{"inert_gate = false\nplan_phase = true"};
+    const result2 = configWeakeningGate(gpa, &files, &frag2);
+    try std.testing.expect(!result2.ok);
+    try std.testing.expect(std.mem.find(u8, result2.detail, "inert_gate") != null);
+
+    const frag3 = [_][]const u8{"max_consecutive_test_only = 0"};
+    const result3 = configWeakeningGate(gpa, &files, &frag3);
+    try std.testing.expect(!result3.ok);
+
+    const frag4 = [_][]const u8{"plan_phase = false"};
+    const result4 = configWeakeningGate(gpa, &files, &frag4);
+    try std.testing.expect(!result4.ok);
 }
 
 test "configWeakeningGate ignores non-config files" {

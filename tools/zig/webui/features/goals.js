@@ -21,14 +21,16 @@ import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
 var el = null;
 var _showView = null;
 var _getSessionId = null;
+var _switchSession = null;
 
 // ---- goals: what runs are being steered toward -------------------------
 
 export var goalState = state([]);
 
 /* Goal ids the server reports as having a run in flight right now — any tab,
-   any client, not just this browser. Refreshed by every loadGoals; merged
-   with this browser's own goalRuns when deciding what "running" means. */
+   any client, not just this browser — mapped to that run's session id (""
+   when it has none to point at). Refreshed by every loadGoals; merged with
+   this browser's own goalRuns when deciding what "running" means. */
 var runningIds = {};
 
 /* Goals whose mirror card creation has been requested this session, so a
@@ -45,7 +47,7 @@ export function renderGoals(goals) {
 /* Whether anything is working this goal right now: a run streaming into this
    page, or one the server registry attributes to another client. */
 function isGoalRunning(gid) {
-  if (runningIds[gid]) return true;
+  if (Object.prototype.hasOwnProperty.call(runningIds, gid)) return true;
   var run = goalRuns[gid];
   return !!(run && run.status === "running");
 }
@@ -150,8 +152,24 @@ function goalCard(g) {
         UI.button("Work on this", function () { workOnGoal(g); },
           { label: "Work on goal: " + (g.objective || g.id) })));
     }
-    [["Mark done", "done", "Goal marked done."],
-     ["Archive", "archived", "Goal archived and retained for future learning."],
+    if ((g.status || "active") !== "done") {
+      var mirror = cardOfGoal(g);
+      var pendingChecklist = mirror && (mirror.subtasks || []).some(function (s) { return !s.done; });
+      var doneAction = UI.button("Mark done", function () {
+        // The board tool owns the checklist invariant. Move the mirror first
+        // so an incomplete tree is refused before goal state can say "done";
+        // postBoard then synchronizes the accepted move back to this goal.
+        var card = cardOfGoal(g);
+        if (card) postBoard({ op: "move", id: card.id, column: "done" }, "Goal marked done.");
+        else postGoal({ id: g.id, status: "done" }, "Goal marked done.");
+      });
+      if (pendingChecklist) {
+        doneAction.disabled = true;
+        doneAction.title = "Finish every checklist item before marking this goal done.";
+      }
+      actions.push(doneAction);
+    }
+    [["Archive", "archived", "Goal archived and retained for future learning."],
      ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
       if ((g.status || "active") === pair[1]) return;
       actions.push(UI.button(pair[0], function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); }));
@@ -191,7 +209,7 @@ export function loadGoals() {
     .then(readJson)
     .then(function (data) {
       runningIds = {};
-      (data.running || []).forEach(function (id) { runningIds[id] = true; });
+      (data.running || []).forEach(function (r) { runningIds[r.id] = r.session || ""; });
       renderGoals(data.goals || []);
       return mirrorGoalsToBoard(data.goals || []);
     })
@@ -283,13 +301,23 @@ function sendSteer(gid) {
 function renderGoalRunPanel(g) {
   var gid = g.id;
   var run = goalRuns[gid];
-  var remote = !run && runningIds[gid];
+  // runningIds[gid] is a session id string, possibly "" (a run with no
+  // session to point at) — hasOwnProperty is what means "running", not
+  // truthiness, or a sessionless remote run would read as not running.
+  var remote = !run && Object.prototype.hasOwnProperty.call(runningIds, gid);
+  var remoteSession = remote ? runningIds[gid] : "";
   if (!run && !remote) return null;
   var status = run ? run.status : "running";
   var steerable = status === "running";
   return T.div({ class: "goal-run", "data-status": status, "data-goal-run": gid },
     T.div({ class: "goal-run-head" },
       T.span({ class: "goal-run-status" }, remote ? "running (in another session)…" : goalRunStatusLabel(status)),
+      // Only offered when that run actually has a session to open — a
+      // goal-only `--goal` CLI run has none, and there is nowhere to jump to.
+      remote && remoteSession
+        ? UI.button("View session", function () { _switchSession(remoteSession); _showView("chat"); },
+            { label: "Open the conversation this run is streaming into" })
+        : null,
       run && status === "running"
         ? UI.button("Stop", function () { abortGoalRun(gid); },
             { kind: "danger", icon: "strike", label: "Stop this goal run" })
@@ -596,11 +624,13 @@ export function syncCardsFromGoals() {
 
 /* Wires the view to the DOM and the app: `deps.el` is app.js's element map,
    `deps.showView` switches views, `deps.getSessionId` reads the conversation
-   the chat composer is on (a goal run joins that session). */
+   the chat composer is on (a goal run joins that session), `deps.switchSession`
+   opens a conversation by id (used to jump into a remote run's transcript). */
 export function bindGoals(deps) {
   el = deps.el;
   _showView = deps.showView;
   _getSessionId = deps.getSessionId;
+  _switchSession = deps.switchSession;
 
   bind(el.goals, goalState, function (goals) {
     if (!goals.length) {

@@ -3678,6 +3678,12 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
         const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/send");
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/subscribe");
+        const is_chat_react = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/react");
+        const is_chat_edit = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/edit");
+        const is_chat_delete = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/delete");
+        const is_chat_pin = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/pin");
+        const is_chat_topic = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/topic");
+        const is_chat_pins = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/pins");
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/stats");
         const is_metrics = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/metrics");
         const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
@@ -3702,7 +3708,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"a2a module disabled\"}");
         } else if ((is_notify or is_peers) and !cfg.modules.peers) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"peers module disabled\"}");
-        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe) and !cfg.modules.chatrooms) {
+        } else if ((is_chat_message or is_chat_messages or is_chat_rooms or is_chat_send or is_chat_subscribe or is_chat_react or is_chat_edit or is_chat_delete or is_chat_pin or is_chat_topic or is_chat_pins) and !cfg.modules.chatrooms) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"chatrooms module disabled\"}");
         } else if (is_stats and !cfg.modules.token_stats) {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"token_stats module disabled\"}");
@@ -3758,6 +3764,18 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleChatSend(io, gpa, cfg, body, stream);
         } else if (is_chat_subscribe) {
             handleChatSubscribe(io, gpa, cfg, body, stream);
+        } else if (is_chat_react) {
+            handleChatReact(io, gpa, cfg, body, stream);
+        } else if (is_chat_edit) {
+            handleChatEdit(io, gpa, cfg, body, stream);
+        } else if (is_chat_delete) {
+            handleChatDelete(io, gpa, cfg, body, stream);
+        } else if (is_chat_pin) {
+            handleChatPin(io, gpa, cfg, body, stream);
+        } else if (is_chat_topic) {
+            handleChatTopic(io, gpa, cfg, body, stream);
+        } else if (is_chat_pins) {
+            handleChatPins(io, gpa, cfg, target, stream);
         } else if (is_stats) {
             handleStats(io, gpa, cfg, stream);
         } else if (is_plugin_config) {
@@ -4059,6 +4077,31 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
         s.print("{d}", .{m.ts}) catch return;
         s.objectField("id") catch return;
         s.write(m.id) catch return;
+        if (m.thread_ts) |tts| {
+            s.objectField("thread_ts") catch return;
+            s.write(tts) catch return;
+        }
+        if (m.reactions) |rxns| {
+            s.objectField("reactions") catch return;
+            s.beginArray() catch return;
+            for (rxns) |r| {
+                s.beginObject() catch return;
+                s.objectField("emoji") catch return;
+                s.write(r.emoji) catch return;
+                s.objectField("from") catch return;
+                s.write(r.from) catch return;
+                s.endObject() catch return;
+            }
+            s.endArray() catch return;
+        }
+        if (m.edited) |e| {
+            s.objectField("edited") catch return;
+            s.write(e) catch return;
+        }
+        if (m.deleted) |d| {
+            s.objectField("deleted") catch return;
+            s.write(d) catch return;
+        }
         s.endObject() catch return;
     }
     s.endArray() catch return;
@@ -4146,6 +4189,203 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
     respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
+fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatReactBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    const emoji = parsed.emoji orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing emoji\"}");
+        return;
+    };
+    _ = room;
+    const added = chatrooms.toggleReaction(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, emoji, cfg.instance.name) catch |err| {
+        log.log(.error_, "POST /api/chat/react: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"react failed\"}");
+        return;
+    };
+    if (added) {
+        respond(stream, 200, "OK", "{\"ok\":true,\"added\":true}");
+    } else {
+        respond(stream, 200, "OK", "{\"ok\":true,\"added\":false}");
+    }
+}
+
+fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatEditBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    const text = parsed.text orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing text\"}");
+        return;
+    };
+    _ = room;
+    const result = chatrooms.editMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, text, cfg.instance.name) catch |err| {
+        log.log(.error_, "POST /api/chat/edit: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"edit failed\"}");
+        return;
+    };
+    if (result != null) {
+        respond(stream, 200, "OK", "{\"ok\":true}");
+    } else {
+        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
+    }
+}
+
+fn handleChatDelete(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatDeleteBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    _ = room;
+    const ok = chatrooms.deleteMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, cfg.instance.name) catch |err| {
+        log.log(.error_, "POST /api/chat/delete: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"delete failed\"}");
+        return;
+    };
+    if (ok) {
+        respond(stream, 200, "OK", "{\"ok\":true}");
+    } else {
+        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"not your message\"}");
+    }
+}
+
+fn handleChatPin(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatPinBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const msg_id = parsed.msg_id orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
+        return;
+    };
+    _ = parsed.pin; // toggle semantics; the pin field is reserved for future use
+    const pinned = chatrooms.togglePin(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, msg_id) catch |err| {
+        log.log(.error_, "POST /api/chat/pin: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pin failed\"}");
+        return;
+    };
+    if (pinned) {
+        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":true}");
+    } else {
+        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":false}");
+    }
+}
+
+fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(ChatTopicBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return;
+    };
+    const room = parsed.room orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+    const topic = parsed.topic orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing topic\"}");
+        return;
+    };
+    chatrooms.setTopic(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, topic) catch |err| {
+        log.log(.error_, "POST /api/chat/topic: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"topic failed\"}");
+        return;
+    };
+    respond(stream, 200, "OK", "{\"ok\":true}");
+}
+
+fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, target: []const u8, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Parse room from query string: /api/chat/pins?room=...
+    const room = blk: {
+        if (std.mem.indexOf(u8, target, "?room=")) |idx| {
+            const raw = target[idx + 6 ..];
+            // Trim at next & if present
+            const end = std.mem.indexOf(u8, raw, "&") orelse raw.len;
+            break :blk percentDecode(arena, raw[0..end]) catch {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad room param\"}");
+                return;
+            };
+        }
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
+        return;
+    };
+
+    const pins = chatrooms.getPins(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, room) catch |err| {
+        log.log(.error_, "GET /api/chat/pins: {s}", .{@errorName(err)});
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pins failed\"}");
+        return;
+    };
+
+    var buf: [16 * 1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("pins") catch return;
+    s.beginArray() catch return;
+    if (pins) |pin_list| {
+        for (pin_list) |pin| {
+            s.write(pin) catch return;
+        }
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", buf[0..w.end]);
+}
+
 /// Decodes `%XX` escapes and `+` in a query-string value. Invalid escapes are
 /// left as the literal characters they are rather than rejected: this feeds a
 /// room-name comparison, and a name that fails to decode simply fails to match.
@@ -4195,6 +4435,34 @@ const ChatSendBody = struct {
 const ChatSubscribeBody = struct {
     room: ?[]const u8 = null,
     on: bool = true,
+};
+
+const ChatReactBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+    emoji: ?[]const u8 = null,
+};
+
+const ChatEditBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+    text: ?[]const u8 = null,
+};
+
+const ChatDeleteBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+};
+
+const ChatPinBody = struct {
+    room: ?[]const u8 = null,
+    msg_id: ?[]const u8 = null,
+    pin: bool = true,
+};
+
+const ChatTopicBody = struct {
+    room: ?[]const u8 = null,
+    topic: ?[]const u8 = null,
 };
 
 /// GET /api/chat/rooms — room stats + this instance's subscriptions.
@@ -4806,17 +5074,31 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
 /// hear that rather than fill memory.
 const steer_message_cap = 16;
 const goal_id_cap = 64;
+/// Same cap as isSlug enforces on a session id, so any session that could
+/// exist fits.
+const session_id_cap = 64;
 
 const GoalRunSlot = struct {
     /// 0 marks a free slot.
     goal_len: usize = 0,
     goal_buf: [goal_id_cap]u8 = @splat(0),
+    /// The session this run streams into, when it has one (a goal-only
+    /// `--goal` CLI run has none). Carried so a *different* browser/session
+    /// can find and open the live transcript of a run some other client
+    /// started — without this, GET /api/goals could say a goal is running
+    /// but nothing on the page could point at where.
+    session_len: usize = 0,
+    session_buf: [session_id_cap]u8 = @splat(0),
     /// Queued steering messages, serve_gpa-owned, drained oldest-first by
     /// steerPoll and freed by goalRunRelease when the run ends unpolled.
     queue: std.ArrayListUnmanaged([]u8) = .empty,
 
     fn goalId(self: *const GoalRunSlot) []const u8 {
         return self.goal_buf[0..self.goal_len];
+    }
+
+    fn sessionId(self: *const GoalRunSlot) []const u8 {
+        return self.session_buf[0..self.session_len];
     }
 };
 
@@ -4829,15 +5111,19 @@ threadlocal var current_goal_run_slot: ?usize = null;
 
 /// Claims a slot for a goal run starting on this thread. Returns false (and
 /// registers nothing) when the id does not fit or every slot is taken; the
-/// run proceeds unsteerable rather than failing.
-fn goalRunRegister(goal_id: []const u8) bool {
+/// run proceeds unsteerable rather than failing. `session_id` may be empty
+/// (a run with no session to point at still registers, just without one).
+fn goalRunRegister(goal_id: []const u8, session_id: []const u8) bool {
     if (goal_id.len == 0 or goal_id.len > goal_id_cap) return false;
+    if (session_id.len > session_id_cap) return false;
     _ = std.c.pthread_mutex_lock(&goal_run_mutex);
     defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
     for (&goal_run_slots, 0..) |*slot, i| {
         if (slot.goal_len != 0) continue;
         @memcpy(slot.goal_buf[0..goal_id.len], goal_id);
         slot.goal_len = goal_id.len;
+        @memcpy(slot.session_buf[0..session_id.len], session_id);
+        slot.session_len = session_id.len;
         current_goal_run_slot = i;
         return true;
     }
@@ -4859,16 +5145,22 @@ fn goalRunRelease() void {
     slot.* = .{};
 }
 
-/// Writes the ids of every goal with a run in flight as a JSON array, for
-/// GET /api/goals' `running` field.
-fn appendRunningGoalIds(w: *std.Io.Writer) void {
+/// Writes `{"id":..., "session":...}` for every goal with a run in flight, as
+/// a JSON array, for GET /api/goals' `running` field. `session` is "" when
+/// the run has none to point at.
+fn appendRunningGoals(w: *std.Io.Writer) void {
     var s = std.json.Stringify{ .writer = w };
     _ = std.c.pthread_mutex_lock(&goal_run_mutex);
     defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
     s.beginArray() catch return;
     for (&goal_run_slots) |*slot| {
         if (slot.goal_len == 0) continue;
+        s.beginObject() catch return;
+        s.objectField("id") catch return;
         s.write(slot.goalId()) catch return;
+        s.objectField("session") catch return;
+        s.write(slot.sessionId()) catch return;
+        s.endObject() catch return;
     }
     s.endArray() catch return;
 }
@@ -5019,8 +5311,8 @@ test "a finished run moves its goal to review, and only from active" {
 test "goal run registry: register, steer, poll, release" {
     serve_gpa = std.testing.allocator;
     defer serve_gpa = null;
-    try std.testing.expect(!goalRunRegister(""));
-    try std.testing.expect(goalRunRegister("g-123"));
+    try std.testing.expect(!goalRunRegister("", "sess-1"));
+    try std.testing.expect(goalRunRegister("g-123", "sess-1"));
     defer goalRunRelease();
 
     try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "hi"));
@@ -5035,8 +5327,8 @@ test "goal run registry: register, steer, poll, release" {
 
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    appendRunningGoalIds(&w);
-    try std.testing.expectEqualStrings("[\"g-123\"]", buf[0..w.end]);
+    appendRunningGoals(&w);
+    try std.testing.expectEqualStrings("[{\"id\":\"g-123\",\"session\":\"sess-1\"}]", buf[0..w.end]);
     // goalRunRelease (deferred) frees "then right", which was never polled;
     // the testing allocator's leak check is the assertion.
 }
@@ -7351,7 +7643,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    appendRunningGoalIds(&out.writer);
+    appendRunningGoals(&out.writer);
     out.writer.writeAll("}") catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
@@ -7667,9 +7959,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // this connection works it. Registration failing (full table, oversize
         // id) just means this run cannot be steered — not that it cannot run.
         // `resolved.goal_id` so an auto-steered run registers too, not only
-        // one named by explicit id.
+        // one named by explicit id. The session id (may be empty) lets a
+        // different browser/session find and open this run's transcript.
         if (resolved.goal_id) |gid| {
-            if (goalRunRegister(gid)) a.steer_fn = &steerPoll;
+            if (goalRunRegister(gid, req.session)) a.steer_fn = &steerPoll;
         }
         defer goalRunRelease();
         // With a browser on the other end of this stream, ask_user has

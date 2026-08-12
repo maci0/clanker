@@ -3159,7 +3159,7 @@ function loadUsage() {
 /* Extracted to features/goals.js; wired here with the app-level pieces it
    needs: view switching and the conversation the chat composer is on (a
    goal run joins that session). */
-bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; } });
+bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; }, switchSession: switchSession });
 
 // ---- tools: every WASM plugin, and a switch for the optional ones ------
 
@@ -3939,7 +3939,13 @@ bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: f
       if (archBtn) archBtn.textContent = meta && meta.archived ? "Unarchive" : "Archive";
     } catch(_){}
   }
-  setInterval(syncArchiveLabel, 900);
+  // Session metadata changes only when the conversation list is rendered.
+  // Observe that state boundary instead of waking the page every 900ms.
+  var railList = document.getElementById("rail-list");
+  if (railList && typeof MutationObserver !== "undefined") {
+    new MutationObserver(syncArchiveLabel).observe(railList, { childList: true, subtree: true });
+  }
+  syncArchiveLabel();
   if (tog) tog.addEventListener("change", function(){ renderSessionOptions(null); });
   if (importBtn) importBtn.addEventListener("click", function(){
     var inp = document.createElement("input"); inp.type="file"; inp.accept=".json,application/json";
@@ -4147,7 +4153,16 @@ try {
         if (m && meta && meta.title) m.textContent = meta.title + " · " + m.textContent;
       } catch(_){}
     }
-    setInterval(syncSessionMirror, 1200);
+    // The hidden chip is updated by every session switch/new-session path;
+    // mirror those writes directly instead of keeping a permanent timer.
+    var sourceChip = document.getElementById("session-chip");
+    if (sourceChip && typeof MutationObserver !== "undefined") {
+      new MutationObserver(syncSessionMirror).observe(sourceChip, { childList: true, characterData: true, subtree: true });
+    }
+    var sourceSessions = document.getElementById("rail-list");
+    if (sourceSessions && typeof MutationObserver !== "undefined") {
+      new MutationObserver(syncSessionMirror).observe(sourceSessions, { childList: true, subtree: true });
+    }
     syncSessionMirror();
     var sCompact = document.getElementById("settings-compact");
     var sDelete = document.getElementById("settings-delete");

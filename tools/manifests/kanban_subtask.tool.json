@@ -16,7 +16,7 @@
       },
       "op": {
         "type": "string",
-        "description": "subtask_add, subtask_toggle or subtask_remove"
+        "description": "subtask_add, subtask_toggle, subtask_remove or subtask_depend"
       },
       "text": {
         "type": "string",
@@ -33,6 +33,14 @@
       "done": {
         "type": "boolean",
         "description": "Explicit state for subtask_toggle"
+      },
+      "depends_on": {
+        "type": "string",
+        "description": "Another checklist item id on this card, for subtask_depend"
+      },
+      "off": {
+        "type": "boolean",
+        "description": "Remove rather than add the subtask_depend edge"
       },
       "room": {
         "type": "string",

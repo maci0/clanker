@@ -2145,6 +2145,21 @@ h2#session-title {
 .detail-row input[type="checkbox"] { flex: none; }
 .checklist-add input { flex: 1 1 auto; min-width: 0; }
 .checklist-add button { flex: none; }
+.checklist-add[hidden] { display: none; }
+.checklist-tree { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+.checklist-item { min-width: 18rem; }
+.checklist-children { margin-left: var(--space-4); padding-left: var(--space-3); border-left: 1px solid var(--rule); }
+.checklist-deps { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0 0 var(--space-2) 2rem; }
+.checklist-deps .card-flag { display: inline-flex; align-items: center; gap: var(--space-1); }
+.checklist-deps .rail-pin { min-width: 32px; min-height: 32px; padding: 0; }
+.checklist-dependency-add { display: flex; gap: var(--space-2); margin: 0 0 var(--space-2) 2rem; }
+.checklist-dependency-add select { min-width: 0; max-width: 18rem; }
+.detail-row label.subtask[data-blocked="true"] { color: var(--warn-text); }
+@media (max-width: 40rem) {
+  .checklist-children { margin-left: var(--space-2); padding-left: var(--space-2); }
+  .checklist-dependency-add { flex-wrap: wrap; }
+  .checklist-item > .detail-row > .rail-pin { min-width: 44px; min-height: 44px; }
+}
 .detail-row label.subtask {
   flex: 1; min-width: 0; text-transform: none; letter-spacing: normal;
   font-family: var(--sans); font-size: var(--step-0);

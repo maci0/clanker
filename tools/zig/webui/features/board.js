@@ -697,30 +697,86 @@ function showCardDetail(id) {
   });
   fields.appendChild(del);
 
-  // Stored as `subtasks` for tool/API compatibility; on the board these are
-  // checklist items, because each one is independently checked off.
+  // Stored as `subtasks` for tool/API compatibility. `parent` forms an
+  // arbitrary-depth display tree; `depends_on` is a separate graph that may
+  // connect any two nodes in this card.
   var subs = detailSection(box, "Checklist");
-  (c.subtasks || []).forEach(function (s) {
+  var allSubs = c.subtasks || [];
+  var subById = {};
+  var childMap = {};
+  allSubs.forEach(function (s) { subById[s.id] = s; });
+  allSubs.forEach(function (s) {
+    var parent = s.parent && subById[s.parent] ? s.parent : "";
+    if (!childMap[parent]) childMap[parent] = [];
+    childMap[parent].push(s);
+  });
+
+  function checklistBlockers(s) {
+    return (s.depends_on || []).filter(function (id) {
+      return !subById[id] || !subById[id].done;
+    });
+  }
+
+  // Adding `candidate` as a prerequisite of `item` is invalid when the
+  // candidate already reaches item. Keep those cycle-forming choices out of
+  // the picker instead of making the user discover the rule via an error.
+  function dependencyReaches(fromId, wantedId, seen) {
+    if (fromId === wantedId) return true;
+    if (seen[fromId]) return false;
+    seen[fromId] = true;
+    var from = subById[fromId];
+    if (!from) return false;
+    return (from.depends_on || []).some(function (next) {
+      return dependencyReaches(next, wantedId, seen);
+    });
+  }
+
+  function addChecklistItem(inputNode, buttonNode, parentId) {
+    var text = inputNode.value.trim();
+    if (!text) return;
+    buttonNode.disabled = true;
+    var payload = { op: "subtask_add", id: c.id, text: text };
+    if (parentId) payload.parent_subtask_id = parentId;
+    postBoard(payload, parentId ? "Child checklist item added." : "Checklist item added.")
+      .then(function (ok) { if (ok) inputNode.value = ""; })
+      .finally(function () { buttonNode.disabled = false; });
+  }
+
+  function renderChecklistItem(s) {
+    var item = document.createElement("div");
+    item.className = "checklist-item";
     var row = document.createElement("div");
     row.className = "detail-row";
-    var box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = !!s.done;
-    box.id = "sub-" + s.id;
-    box.addEventListener("change", function () {
-      var wanted = box.checked;
+    var tick = document.createElement("input");
+    tick.type = "checkbox";
+    tick.checked = !!s.done;
+    tick.id = "sub-" + s.id;
+    var blocked = checklistBlockers(s);
+    tick.disabled = blocked.length > 0 && !s.done;
+    tick.addEventListener("change", function () {
+      var wanted = tick.checked;
       postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: wanted }, null)
         .then(function (ok) {
-          // The click already moved the box; put it back rather than leave a
+          // The click already moved the checkbox; put it back rather than leave a
           // state the server refused on screen.
-          if (!ok) box.checked = !wanted;
+          if (!ok) tick.checked = !wanted;
         });
     });
     var lab = document.createElement("label");
-    lab.htmlFor = box.id;
+    lab.htmlFor = tick.id;
     lab.textContent = s.text;
     lab.className = "subtask";
     lab.setAttribute("data-done", String(!!s.done));
+    if (blocked.length) {
+      lab.setAttribute("data-blocked", "true");
+      lab.title = "Waiting on: " + blocked.map(function (id) { return subById[id] ? subById[id].text : id; }).join(", ");
+      tick.setAttribute("aria-description", lab.title);
+    }
+    var child = document.createElement("button");
+    child.type = "button";
+    child.className = "rail-pin";
+    child.textContent = "+";
+    child.setAttribute("aria-label", "Add child checklist item under: " + s.text);
     var drop = document.createElement("button");
     drop.type = "button";
     drop.className = "rail-pin";
@@ -729,11 +785,93 @@ function showCardDetail(id) {
     drop.addEventListener("click", function () {
       postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed checklist item: " + s.text);
     });
-    row.appendChild(box);
+    row.appendChild(tick);
     row.appendChild(lab);
+    row.appendChild(child);
     row.appendChild(drop);
-    subs.appendChild(row);
-  });
+    item.appendChild(row);
+
+    if ((s.depends_on || []).length) {
+      var deps = document.createElement("div");
+      deps.className = "checklist-deps";
+      (s.depends_on || []).forEach(function (id) {
+        var dep = document.createElement("span");
+        dep.className = "card-flag";
+        dep.textContent = "waits on " + (subById[id] ? subById[id].text : id);
+        var clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "rail-pin";
+        clear.textContent = "×";
+        clear.setAttribute("aria-label", "Remove dependency on " + (subById[id] ? subById[id].text : id));
+        clear.addEventListener("click", function () {
+          postBoard({ op: "subtask_depend", id: c.id, subtask_id: s.id, depends_on: id, off: true }, "Checklist dependency removed.");
+        });
+        dep.appendChild(clear);
+        deps.appendChild(dep);
+      });
+      item.appendChild(deps);
+    }
+
+    var childForm = document.createElement("div");
+    childForm.className = "detail-row checklist-add";
+    childForm.hidden = true;
+    var childIn = input("child-" + s.id, "text", "", "Add a child item…");
+    childIn.maxLength = 500;
+    var childSave = document.createElement("button");
+    childSave.type = "button";
+    childSave.className = "secondary";
+    childSave.textContent = "Add child";
+    child.addEventListener("click", function () {
+      childForm.hidden = !childForm.hidden;
+      if (!childForm.hidden) childIn.focus();
+    });
+    childSave.addEventListener("click", function () { addChecklistItem(childIn, childSave, s.id); });
+    childIn.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); addChecklistItem(childIn, childSave, s.id); }
+      if (e.key === "Escape") { childForm.hidden = true; child.focus(); }
+    });
+    childForm.appendChild(childIn);
+    childForm.appendChild(childSave);
+    item.appendChild(childForm);
+
+    var candidates = allSubs.filter(function (x) {
+      return x.id !== s.id &&
+        (s.depends_on || []).indexOf(x.id) === -1 &&
+        !dependencyReaches(x.id, s.id, {});
+    });
+    if (candidates.length) {
+      var depForm = document.createElement("div");
+      depForm.className = "checklist-dependency-add";
+      var depSelect = document.createElement("select");
+      depSelect.setAttribute("aria-label", "Dependency for " + s.text);
+      candidates.forEach(function (x) {
+        var option = document.createElement("option");
+        option.value = x.id; option.textContent = "Wait on " + x.text;
+        depSelect.appendChild(option);
+      });
+      var depAdd = document.createElement("button");
+      depAdd.type = "button"; depAdd.className = "secondary"; depAdd.textContent = "Link";
+      depAdd.addEventListener("click", function () {
+        postBoard({ op: "subtask_depend", id: c.id, subtask_id: s.id, depends_on: depSelect.value }, "Checklist dependency added.");
+      });
+      depForm.appendChild(depSelect); depForm.appendChild(depAdd);
+      item.appendChild(depForm);
+    }
+
+    var children = childMap[s.id] || [];
+    if (children.length) {
+      var nested = document.createElement("div");
+      nested.className = "checklist-children";
+      children.forEach(function (x) { nested.appendChild(renderChecklistItem(x)); });
+      item.appendChild(nested);
+    }
+    return item;
+  }
+
+  var tree = document.createElement("div");
+  tree.className = "checklist-tree";
+  (childMap[""] || []).forEach(function (s) { tree.appendChild(renderChecklistItem(s)); });
+  subs.appendChild(tree);
   // Trello-style checklist progress bar (also on card face)
   if ((c.subtasks || []).length) {
     var dN = c.subtasks.filter(function(ss){ return ss.done; }).length;
@@ -766,20 +904,12 @@ function showCardDetail(id) {
   subAdd.type = "button";
   subAdd.className = "secondary";
   subAdd.textContent = "Add item";
-  function addChecklistItem() {
-    var text = subIn.value.trim();
-    if (!text) return;
-    subAdd.disabled = true;
-    postBoard({ op: "subtask_add", id: c.id, text: text }, "Checklist item added.")
-      .then(function (ok) { if (ok) subIn.value = ""; })
-      .finally(function () { subAdd.disabled = false; });
-  }
   subIn.addEventListener("keydown", function (e) {
     if (e.key !== "Enter" || !subIn.value.trim()) return;
     e.preventDefault();
-    addChecklistItem();
+    addChecklistItem(subIn, subAdd, "");
   });
-  subAdd.addEventListener("click", addChecklistItem);
+  subAdd.addEventListener("click", function () { addChecklistItem(subIn, subAdd, ""); });
   var checklistAdd = document.createElement("div");
   checklistAdd.className = "detail-row checklist-add";
   checklistAdd.appendChild(subIn);

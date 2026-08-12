@@ -513,7 +513,11 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             if (s.removed or s.text.len == 0) continue;
             var sub_deps: std.ArrayListUnmanaged([]const u8) = .empty;
             for (s.deps.items) |d| {
-                if (!d.off) try sub_deps.append(arena, d.on);
+                if (d.off) continue;
+                for (c.subtasks.items) |target| {
+                    if (!target.removed and target.text.len > 0 and std.mem.eql(u8, target.id, d.on))
+                        try sub_deps.append(arena, d.on);
+                }
             }
             try subs.append(arena, .{ .id = s.id, .text = s.text, .done = s.done, .parent = s.parent, .depends_on = sub_deps.items });
         }
@@ -803,6 +807,26 @@ test "subtasks, dependencies and cost fold" {
 
     const blocked = try blockedBy(cards, parent, arena);
     try std.testing.expectEqual(@as(usize, 1), blocked.len);
+}
+
+test "checklist items nest and carry independent dependency edges" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const messages = [_]Message{
+        msg("m1", "x", 100, try encodeAdd(arena, "tree")),
+        msg("root", "x", 101, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .text = "root" })),
+        msg("child", "x", 102, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .text = "child", .parent = "root" })),
+        msg("leaf", "x", 103, try encode(arena, .{ .action = "subtask_add", .todo = "m1", .text = "leaf", .parent = "child" })),
+        msg("edge", "x", 104, try encode(arena, .{ .action = "subtask_depend", .todo = "m1", .subtask = "leaf", .on = "root" })),
+    };
+    const folded = try derive(arena, &messages);
+    try std.testing.expectEqual(@as(usize, 3), folded[0].subtasks.len);
+    try std.testing.expectEqualStrings("root", folded[0].subtasks[1].parent);
+    try std.testing.expectEqualStrings("child", folded[0].subtasks[2].parent);
+    try std.testing.expectEqual(@as(usize, 1), folded[0].subtasks[2].depends_on.len);
+    try std.testing.expectEqualStrings("root", folded[0].subtasks[2].depends_on[0]);
 }
 
 test "usage cannot be made to wrap or go negative" {
