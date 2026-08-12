@@ -1,4 +1,4 @@
-# ADR 0007 — Scheduled entries fire on fixed UTC offsets, not on local time
+# ADR 0009 — Scheduled entries fire on fixed UTC offsets, not on local time
 
 ## Status
 

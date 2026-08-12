@@ -79,8 +79,8 @@ pairing), `docs/` (numbering, stale cross-references), and the repository root
       `AGENTS.md`: `main.zig`, `cli.zig`, `config.zig`, `doctor.zig`). Any other
       top-level `src/*.zig` is either misplaced (move it under a subsystem) or
       the convention in `AGENTS.md` is stale and should be updated to match.
-      Name which. (As of writing, `src/workflows.zig` is exactly this case:
-      verify it against the current rule.)
+      Name which. (As of writing, `src/agent/workflows.zig` has been moved
+      under its subsystem directory; verify no stale top-level files remain.)
 - [ ] Every other `.zig` lives under a subsystem directory, and the directory
       name matches what the file is about. A file whose name or contents belong
       to a different subsystem than the one it sits in is a finding.

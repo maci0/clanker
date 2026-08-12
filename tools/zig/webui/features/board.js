@@ -238,7 +238,7 @@ function boardColumn(col, s) {
   var qaTrigger = document.createElement("button");
   qaTrigger.type = "button";
   qaTrigger.className = "board-add-trigger";
-  qaTrigger.innerHTML = '<span class="icon">+</span> Add a card';
+  qaTrigger.innerHTML = '<span class="icon" aria-hidden="true">+</span> Add a card';
 
   // Form (hidden by default, shown on trigger click)
   var qaForm = document.createElement("div");
@@ -384,6 +384,7 @@ function cardNode(c) {
   qaEdit.type = "button";
   qaEdit.innerHTML = "✎";
   qaEdit.title = "Open card";
+  qaEdit.setAttribute("aria-label", "Open card");
   qaEdit.addEventListener("click", function(e) {
     e.stopPropagation();
     openCardId = c.id;
@@ -395,6 +396,7 @@ function cardNode(c) {
   qaMove.type = "button";
   qaMove.innerHTML = "→";
   qaMove.title = "Move to next column";
+  qaMove.setAttribute("aria-label", "Move to next column");
   qaMove.addEventListener("click", function(e) {
     e.stopPropagation();
     if (!board) return;
@@ -450,7 +452,7 @@ function cardNode(c) {
     var due = document.createElement("span");
     due.className = "card-badge";
     due.setAttribute("data-due", ds);
-    due.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 1v3M11 1v3M2 7h12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+    due.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 1v3M11 1v3M2 7h12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
     due.appendChild(document.createTextNode(" " + (ds === "late" ? "Late · " : ds === "soon" ? "Soon · " : "") + fmtDeadline(c.deadline)));
     due.title = "Due " + c.deadline;
     badges.appendChild(due);
@@ -463,7 +465,7 @@ function cardNode(c) {
     var subBadge = document.createElement("span");
     subBadge.className = "card-badge";
     if (doneN === totalN && totalN > 0) subBadge.setAttribute("data-done", "true");
-    subBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    subBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     subBadge.appendChild(document.createTextNode(" " + doneN + "/" + totalN));
     subBadge.title = doneN + " of " + totalN + " checklist items complete";
     badges.appendChild(subBadge);
@@ -475,7 +477,7 @@ function cardNode(c) {
     var bl = document.createElement("span");
     bl.className = "card-badge";
     bl.style.color = "var(--warn-text)";
-    bl.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M4 12L12 4" stroke="currentColor" stroke-width="1.3"/></svg>';
+    bl.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M4 12L12 4" stroke="currentColor" stroke-width="1.3"/></svg>';
     bl.appendChild(document.createTextNode(" " + blocked.length));
     bl.title = "Blocked by " + blocked.length + " card(s)";
     badges.appendChild(bl);
@@ -486,7 +488,7 @@ function cardNode(c) {
     var gf = document.createElement("span");
     gf.className = "card-badge";
     gf.style.color = "var(--accent-text)";
-    gf.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="3" fill="currentColor"/></svg>';
+    gf.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="3" fill="currentColor"/></svg>';
     gf.title = "Mirrors a goal — kept in step with the Goals view";
     badges.appendChild(gf);
     // The same rocket that the "Start work" button shows on the open card,
@@ -502,7 +504,7 @@ function cardNode(c) {
   if ((c.activity || []).length) {
     var actBadge = document.createElement("span");
     actBadge.className = "card-badge";
-    actBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none"><path d="M3 12V4a2 2 0 012-2h6a2 2 0 012 2v5a2 2 0 01-2 2H6l-3 3z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+    actBadge.innerHTML = '<svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 12V4a2 2 0 012-2h6a2 2 0 012 2v5a2 2 0 01-2 2H6l-3 3z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
     actBadge.appendChild(document.createTextNode(" " + c.activity.length));
     actBadge.title = c.activity.length + " activity entries";
     badges.appendChild(actBadge);
@@ -532,6 +534,7 @@ function cardNode(c) {
     bar.setAttribute("aria-valuenow", String(pct2));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
+    bar.setAttribute("aria-label", doneN2 + " of " + totalN2 + " checklist items complete");
     var fill = document.createElement("span");
     fill.style.width = pct2 + "%";
     bar.appendChild(fill);
@@ -794,6 +797,7 @@ function showCardDetail(id) {
   close.className = "card-detail-close";
   close.innerHTML = "✕";
   close.title = "Close";
+  close.setAttribute("aria-label", "Close card detail");
   close.addEventListener("click", function () {
     delete cardDrafts[c.id];
     openCardId = null;

@@ -6,7 +6,7 @@ Shipped. Two layers, meant to be deliberately separate:
 
 - **Private todos** — `todo_add` / `todo_claim` / `todo_close` / `todo_list`
   with no `room`. Routed host-side to the run's own in-memory list
-  (`src/private_todos.zig`, capped at 100 items). `Agent.run` attaches
+  (`src/agent/private_todos.zig`, capped at 100 items). `Agent.run` attaches
   a fresh list for every top-level run and `subagent.runNested` supplies its
   own list for nested work. It is gone when that run ends.
 - **Shared work** — the Kanban board (`docs/prds/0002-kanban-board.md`): cards,
@@ -46,7 +46,7 @@ be both; conflating them was the original `state/board.json` mistake.
 `room` now unconditionally hard-errors (`src/sandbox/host.zig`: "room todo
 lists are board cards now: use kanban_add, kanban_move, kanban_claim or
 kanban_list."); the shared room-list path this doc originally described no
-longer exists. Omitting `room` routes to `src/private_todos.zig`.
+longer exists. Omitting `room` routes to `src/agent/private_todos.zig`.
 `Agent.run` attaches a fresh list for every top-level run and removes it when
 the run returns; `subagent.runNested` attaches a distinct list for its nested
 run. A missing list is therefore a host wiring error, not a cue to pass

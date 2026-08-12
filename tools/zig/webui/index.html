@@ -254,8 +254,9 @@ lamps carry further). The seven named palettes ride the same tokens.
         <div class="run-compare" id="run-compare" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem;" hidden>
           <label for="run-compare-a">Compare</label>
           <select id="run-compare-a"></select>
-          <span class="meta">vs</span>
-          <select id="run-compare-b"></select>
+          <span class="meta" id="run-compare-vs">vs</span>
+          <label class="sr-only" for="run-compare-b">Compare with</label>
+          <select id="run-compare-b" aria-describedby="run-compare-vs"></select>
           <button type="button" class="secondary" id="run-compare-go">Diff</button>
           <button type="button" class="secondary" id="run-compare-clear" hidden>Clear diff</button>
           <span class="meta" id="run-compare-status"></span>
@@ -409,15 +410,15 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <!-- Search bar (hidden by default) -->
         <div class="slack-search-bar" id="chat-search-bar" hidden>
-          <input type="text" id="chat-search-input" placeholder="Search messages…" autocomplete="off">
-          <button type="button" class="slack-btn-icon" id="chat-search-close" title="Close search">✕</button>
+          <input type="text" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
+          <button type="button" class="slack-btn-icon" id="chat-search-close" title="Close search" aria-label="Close search">✕</button>
           <div class="slack-search-results" id="chat-search-results"></div>
         </div>
         <!-- Pinned messages panel (hidden by default) -->
         <div class="slack-pins-panel" id="chat-pins-panel" hidden>
           <div class="slack-pins-head">
             <span>📌 Pinned Messages</span>
-            <button type="button" class="slack-btn-icon" id="chat-pins-close" title="Close pins">✕</button>
+            <button type="button" class="slack-btn-icon" id="chat-pins-close" title="Close pins" aria-label="Close pinned messages">✕</button>
           </div>
           <div class="slack-pins-list" id="chat-pins-list"></div>
         </div>

@@ -218,7 +218,7 @@ pub const Sandbox = struct {
     tool_self_name: []const u8 = "",
     tool_registry: ?*const registry.Registry = null,
     tool_call_depth: u8 = 0,
-    /// A nested run's private todo list (src/private_todos.zig), wired
+    /// A nested run's private todo list (src/agent/private_todos.zig), wired
     /// only by subagent.runNested. When set, todo_* ops that name no "room"
     /// operate on it instead of a shared room list; null for top-level agents.
     private_todos: ?*private_todos_mod.List = null,
@@ -1361,7 +1361,7 @@ const chat_history_page_size = 20;
 /// (ADR 0002, docs/adrs/0002-private-todos-vs-shared-board.md); a todo_* op
 /// naming a "room" now fails with a pointer to the kanban_* tools below.
 /// The only surviving todo_* path is a run's private list (sub-agent runs
-/// only; src/private_todos.zig): same op names and response shapes,
+/// only; src/agent/private_todos.zig): same op names and response shapes,
 /// but in-memory, single-owner, and never fanned out.
 /// The fan-out, subscription filter, and persistence all live host-side so
 /// the WASM module stays thin; the descriptor config pins which op a tool is.

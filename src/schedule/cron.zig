@@ -16,7 +16,7 @@
 //! host. There is no time zone database in this binary, so a real local time
 //! would mean guessing at DST, and an entry that silently fires at the wrong
 //! hour twice a year is worse than one whose offset is written down. See
-//! `docs/adrs/0007-schedule-fires-on-fixed-utc-offsets.md`.
+//! `docs/adrs/0009-schedule-fires-on-fixed-utc-offsets.md`.
 
 const std = @import("std");
 

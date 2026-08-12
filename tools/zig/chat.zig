@@ -19,7 +19,7 @@
 //!
 //! The todo_* ops may omit "room": inside a sub-agent run that targets the
 //! run's private in-memory list instead of a shared room list (the host
-//! routes on the missing field; see src/private_todos.zig).
+//! routes on the missing field; see src/agent/private_todos.zig).
 
 const std = @import("std");
 const lib = @import("lib.zig");

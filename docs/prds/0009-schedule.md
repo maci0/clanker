@@ -71,7 +71,7 @@ system's own cron.
   that can name any argv is a much larger thing to secure than one that names
   a prompt.
 - **Time zones with DST.** Fields are read at a fixed UTC offset the entry
-  carries. There is no tz database in the binary. See ADR 0007.
+  carries. There is no tz database in the binary. See ADR 0009.
 - **Backfill / catch-up.** Missed windows are counted and dropped, never
   replayed. This is Goal 3, stated as a non-goal too because it is the thing a
   future reader is most likely to "fix".

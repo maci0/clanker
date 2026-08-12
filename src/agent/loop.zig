@@ -164,7 +164,7 @@ pub const Agent = struct {
     /// This run's private todo list. `run` creates one for a top-level run;
     /// subagent.runNested attaches its own before calling `run`. Handed to
     /// every tool sandbox so todo_* calls that name no "room" reach it (see
-    /// src/private_todos.zig).
+    /// src/agent/private_todos.zig).
     private_todos: ?*private_todos.List = null,
     /// A nested run's channel to the agent that spawned it, wired by
     /// subagent.runNested and null for top-level agents. Handed to every tool

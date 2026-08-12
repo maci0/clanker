@@ -14,7 +14,7 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
 
 ### Interactive UX (REPL, `clanker run`)
 
@@ -256,7 +256,7 @@ peer keeps the message only when it subscribes to that room.
   `todo_*` with a `room` set now fails with a pointer to the `board_*`
   replacement.
 - Private sub-agent todos: `todo_*` tools called without a `room`
-  operate on a per-nested-run in-memory list (`src/private_todos.zig`),
+  operate on a per-nested-run in-memory list (`src/agent/private_todos.zig`),
   wired only by `subagent.runNested`. Nothing is logged or fanned out; the
   list is discarded when the run returns, and its final state is appended to
   the sub-agent's answer so the parent sees progress even when the run hits
@@ -520,7 +520,7 @@ iter 2
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
-| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`src/agent/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
+| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`tools/zig/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
@@ -587,7 +587,7 @@ Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a
 
 **Cron dialect.** Five fields — `minute hour day-of-month month day-of-week` — each `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those. Sunday is `0` or `7`. Deliberately not accepted, because guessing at a dialect is worse than an error at the point the mistake was made: names (`MON`, `JAN`), `@nicknames` (`@daily`), a seconds field, `L`/`W`/`#`, wrapping ranges (`55-5`), and a step on a bare number (`5/10` — write `5-59/10` or `*/10`). When *both* day fields are restricted the entry fires when **either** matches, as in Vixie cron: `0 0 13 * 5` is "the 13th, and every Friday", not "Friday the 13th". A field counts as unrestricted when it is written `*` or `*/n`; `*/2,15` is a set the writer chose and is treated as one. A spec that parses but can never come around (`0 0 30 2 *`) is refused by `add`.
 
-**Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0007](adrs/0007-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `src/schedule/cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
+**Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0009](adrs/0009-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `src/schedule/cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
 
 **Missed runs fire once and are never backfilled.** An entry's `last_run` records the moment it *ran*, not the slot it ran *for*, so the next window is computed from wake time. A machine that slept through a day of a `*/5` entry fires it exactly once on waking, counts the 286 windows in between into the ledger's `skipped`, and resumes on the normal grid. Backfilling would mean 288 agent runs and a real bill for answers that stopped being interesting hours ago.
 
