@@ -10,12 +10,18 @@ pub const Status = enum {
     accepted,
     rejected,
     failed,
+    /// Accepted, merged, and later undone by a human — recorded after the
+    /// fact by the revert sync, never written by a run directly. A stronger
+    /// refusal than `rejected`: the change passed every gate and a person
+    /// still said no to it.
+    reverted,
 
     pub fn asStr(self: Status) []const u8 {
         return switch (self) {
             .accepted => "accepted",
             .rejected => "rejected",
             .failed => "failed",
+            .reverted => "reverted",
         };
     }
 };
@@ -74,10 +80,22 @@ pub const History = struct {
     /// lints. Without this the loop re-promoted the same one-line insertion
     /// three times.
     pub fn alreadyAccepted(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !bool {
+        return self.anyWithStatus(arena, "accepted", fingerprints);
+    }
+
+    /// True when a human reverted an improvement that made exactly this
+    /// edit. The strongest signal in the log: the change passed every gate,
+    /// merged, and was still undone in review — proposing it again is the
+    /// one outcome that review already refused.
+    pub fn revertedByHuman(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !bool {
+        return self.anyWithStatus(arena, "reverted", fingerprints);
+    }
+
+    fn anyWithStatus(self: *History, arena: std.mem.Allocator, status: []const u8, fingerprints: []const u64) !bool {
         if (fingerprints.len == 0) return false;
         const entries = try self.loadAll(arena);
         for (entries) |e| {
-            if (!std.mem.eql(u8, e.status, "accepted")) continue;
+            if (!std.mem.eql(u8, e.status, status)) continue;
             if (e.changes.len == 0) continue;
             if (e.changes.len != fingerprints.len) continue;
             var all = true;
@@ -91,6 +109,63 @@ pub const History = struct {
             if (all) return true;
         }
         return false;
+    }
+
+    /// Flips the logged status of the given improvement ids from accepted
+    /// to reverted, in place. The rewrite is surgical — only the status
+    /// field of a matched line changes, every other byte is carried through
+    /// — and idempotent: a line already flipped no longer says accepted and
+    /// is left alone. Returns how many entries were flipped.
+    pub fn markReverted(self: *History, ids: []const []const u8) !usize {
+        if (ids.len == 0) return 0;
+
+        // Read-modify-write over the same file `append` serialises on, for
+        // the same reason: a concurrent writer starting from the pre-flip
+        // contents would resurrect the accepted status this just retired.
+        var guard = filelock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
+        defer guard.release();
+
+        const raw = self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch return 0;
+        defer self.gpa.free(raw);
+
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(self.gpa);
+        var flipped: usize = 0;
+        var first = true;
+        var lines = std.mem.splitScalar(u8, raw, '\n');
+        while (lines.next()) |line| {
+            if (!first) try buf.append(self.gpa, '\n');
+            first = false;
+            if (statusSplit(line, ids)) |parts| {
+                try buf.appendSlice(self.gpa, parts.before);
+                try buf.appendSlice(self.gpa, "\"status\":\"reverted\"");
+                try buf.appendSlice(self.gpa, parts.after);
+                flipped += 1;
+            } else {
+                try buf.appendSlice(self.gpa, line);
+            }
+        }
+        if (flipped == 0) return 0;
+        try self.dir().writeFile(self.io, .{ .sub_path = self.logPath(), .data = buf.items });
+        return flipped;
+    }
+
+    /// The line split around its accepted-status field, when the line is an
+    /// accepted entry for one of `ids`. Substring matching, not a JSON
+    /// round-trip: re-stringifying would reorder and reformat every entry it
+    /// touches, and the ids and status are written by this file's own
+    /// stringifier in exactly one shape.
+    fn statusSplit(line: []const u8, ids: []const []const u8) ?struct { before: []const u8, after: []const u8 } {
+        const needle = "\"status\":\"accepted\"";
+        const at = std.mem.indexOf(u8, line, needle) orelse return null;
+        for (ids) |id| {
+            var id_buf: [128]u8 = undefined;
+            const id_field = std.fmt.bufPrint(&id_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            if (std.mem.indexOf(u8, line, id_field) != null) {
+                return .{ .before = line[0..at], .after = line[at + needle.len ..] };
+            }
+        }
+        return null;
     }
 
     /// Appends one JSON line describing an attempt.
@@ -782,6 +857,66 @@ test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
     // The full detail survives the round trip; a fixed-buffer write would
     // have errored the append and left no entry at all.
     try std.testing.expect(std.mem.indexOf(u8, raw, big_detail) != null);
+}
+
+test "markReverted flips accepted to reverted surgically and idempotently" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    const fp = History.changeFingerprint("src/a.zig", "old", "new");
+    try hist.append("imp-kept", .accepted, "i", "stays accepted", &.{"src/a.zig"}, 0, 1, "", &.{}, null);
+    try hist.append("imp-gone", .accepted, "i", "gets reverted", &.{"src/a.zig"}, 0, 1, "", &.{fp}, .behavior);
+    try hist.append("imp-refused", .rejected, "i", "was refused", &.{"src/a.zig"}, 0, 0, "no", &.{}, null);
+
+    const before = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
+    defer gpa.free(before);
+
+    try std.testing.expectEqual(@as(usize, 1), try hist.markReverted(&.{ "imp-gone", "imp-unknown" }));
+
+    const after = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
+    defer gpa.free(after);
+
+    // Only the status field of the one matched line changed; the flip is
+    // exactly one byte-range substitution on the whole file.
+    try std.testing.expectEqual(before.len + "reverted".len - "accepted".len, after.len);
+    try std.testing.expect(std.mem.indexOf(u8, after, "\"id\":\"imp-gone\",\"ts\"") != null);
+    // The untouched lines survive byte-for-byte: the first, and everything
+    // after the one flipped line.
+    var before_lines = std.mem.splitScalar(u8, before, '\n');
+    var after_lines = std.mem.splitScalar(u8, after, '\n');
+    try std.testing.expectEqualStrings(before_lines.next().?, after_lines.next().?);
+    _ = before_lines.next();
+    _ = after_lines.next();
+    try std.testing.expectEqualStrings(before_lines.rest(), after_lines.rest());
+
+    // The flip is what the dup guards read: the edit no longer counts as
+    // accepted, and now counts as human-reverted.
+    try std.testing.expect(!try hist.alreadyAccepted(arena, &.{fp}));
+    try std.testing.expect(try hist.revertedByHuman(arena, &.{fp}));
+
+    // A rejected entry for the id would not flip, and re-running changes
+    // nothing: the matched line no longer says accepted.
+    try std.testing.expectEqual(@as(usize, 0), try hist.markReverted(&.{ "imp-gone", "imp-refused" }));
+
+    // The rendered history now tells the next run the truth.
+    const summary = try hist.recentSummary(arena, 6);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "- reverted [behavior]: gets reverted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: stays accepted") != null);
 }
 
 test "firstLine trims, takes the first line, and clips to max" {

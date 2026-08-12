@@ -21,6 +21,7 @@ const builder = @import("../tools/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const plan_mod = @import("plan.zig");
 const history_mod = @import("history.zig");
+const reverts_mod = @import("reverts.zig");
 const inert = @import("inert.zig");
 const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
@@ -97,6 +98,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // says not to; these make it mechanical. Substring checks, so APPENDING
     // to an array keeps its needle intact -- only removing an entry (or the
     // credential links every gate run depends on) breaks the match.
+    // Reverts are the only post-merge review signal the loop receives; a
+    // patch dropping the sync (or the guard acting on it) would let it
+    // re-land work a person already undid, with every other gate green.
+    .{ .file = "src/improve/engine.zig", .needle = "self.syncReverts(" },
+    .{ .file = "src/improve/engine.zig", .needle = "self.hist.revertedByHuman(" },
     .{ .file = "src/improve/worktree.zig", .needle = "\".env\", \"config.local.toml\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/improvements.jsonl\", \"state/history\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/learnings.md\", \"state/autolearn.jsonl\"" },
@@ -282,6 +288,10 @@ pub const Engine = struct {
         self.hist = history_mod.History.init(self.ctx.gpa, self.ctx.io, std.Io.Dir.cwd(), "state");
         self.instructions = opts.instructions;
         defer self.hist.deinit();
+        // Before anything reads history: the prompts, the planner dedup and
+        // the fingerprint guards must all see reverted work as reverted, not
+        // as the accepted work git says it no longer is.
+        self.syncReverts();
         const before = try self.gateScore();
         log.log(.info, "baseline gate: {d:.2}/{d} passing", .{ before.score, before.total });
 
@@ -604,6 +614,14 @@ pub const Engine = struct {
                 // retrying the same attempt would only spend tokens repeating
                 // the refusal.
                 return .no_change;
+            }
+            // A failure, unlike the accepted case above: the model reached
+            // for work a person deliberately undid, and the next attempt
+            // should hear that and pick something else.
+            if (self.hist.revertedByHuman(dup_arena.allocator(), fingerprints) catch false) {
+                log.log(.warn, "proposal repeats an improvement a human reverted; refusing", .{});
+                self.feedback = "This exact change was merged before, and a human reverted it afterwards. The revert is deliberate review feedback: do not propose this change again in any form. Pick a different improvement.";
+                return .failed;
             }
         }
 
@@ -1142,6 +1160,62 @@ pub const Engine = struct {
         if (!resp.ok) {
             log.log(.error_, "patch_apply tool: {s}", .{resp.@"error"});
             return error.PatchApplyFailed;
+        }
+    }
+
+    /// Reads recent git history for reverts of promoted improvements and
+    /// flips their logged status to reverted. A merge is not the end of a
+    /// change's review: maintainers revert improvement commits after the
+    /// fact, and until that lands back in improvements.jsonl the prompt
+    /// keeps telling the model the work is "already in the source" while
+    /// the source shows it undone — the mismatch that got one improvement
+    /// merged, reverted, re-proposed near-verbatim, re-merged and reverted
+    /// again. Best-effort: no git, no repo, or an unresolvable revert
+    /// message leaves history exactly as it was.
+    fn syncReverts(self: *Engine) void {
+        const argv = [_][]const u8{"git"} ++ reverts_mod.git_log_args;
+        const res = std.process.run(self.ctx.gpa, self.ctx.io, .{
+            .argv = &argv,
+            .stdout_limit = .limited(1 << 22),
+            .stderr_limit = .limited(1 << 16),
+        }) catch |err| {
+            log.log(.warn, "revert sync skipped: git log failed to spawn: {s}", .{@errorName(err)});
+            return;
+        };
+        defer self.ctx.gpa.free(res.stdout);
+        defer self.ctx.gpa.free(res.stderr);
+        const ok = switch (res.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        if (!ok) {
+            log.log(.warn, "revert sync skipped: git log failed (no repo?)", .{});
+            return;
+        }
+
+        var arena_state = std.heap.ArenaAllocator.init(self.ctx.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const found = reverts_mod.scan(arena, res.stdout) catch |err| {
+            log.log(.warn, "revert sync skipped: {s}", .{@errorName(err)});
+            return;
+        };
+        if (found.len == 0) return;
+
+        var ids: std.ArrayList([]const u8) = .empty;
+        defer ids.deinit(self.ctx.gpa);
+        for (found) |r| {
+            ids.append(self.ctx.gpa, r.id) catch return;
+            log.log(.debug, "revert sync: {s} was reverted by \"{s}\"", .{ r.id, r.by });
+        }
+        const flipped = self.hist.markReverted(ids.items) catch |err| {
+            log.log(.warn, "revert sync could not update history: {s}", .{@errorName(err)});
+            return;
+        };
+        // Zero is the steady state: everything git knows about was already
+        // recorded on an earlier run.
+        if (flipped > 0) {
+            log.log(.info, "revert sync: {d} accepted improvement(s) were reverted by a human; recorded as reverted", .{flipped});
         }
     }
 
@@ -2180,7 +2254,10 @@ const improve_user_fmt =
     \\or list that an accepted improvement touched, copy the CURRENT text from
     \\the source above and extend it -- reconstructing it from memory has
     \\silently reverted an accepted improvement before. Work listed as
-    \\rejected failed for the stated reason; do not repeat that mistake. The
+    \\rejected failed for the stated reason; do not repeat that mistake.
+    \\Work listed as reverted was merged and then undone by a human review —
+    \\a stronger no than rejected. Never propose it again in any wording,
+    \\and never rebuild what it did under a different summary. The
     \\tag after the status is what the change turned out to do, decided from
     \\the diff rather than from its summary.
     \\{s}
@@ -2202,8 +2279,9 @@ const plan_user_fmt =
     \\
     \\# Earlier runs on this repository
     \\Everything listed as accepted is already done; everything listed as
-    \\rejected was tried and refused for the stated reason. Neither may
-    \\appear in your plan.
+    \\rejected was tried and refused for the stated reason; everything
+    \\listed as reverted was merged and then undone by a human review — the
+    \\strongest no of the three. None of them may appear in your plan.
     \\{s}
     \\{s}
     \\# Plan first — do NOT send a patch in this reply
