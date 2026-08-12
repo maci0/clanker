@@ -416,9 +416,9 @@ iter 2
 
 ## Configuration
 
-`config.toml` is the primary committed config (TOML format); `config.json` is also supported as a fallback when no `.toml` file exists. `config.local.toml` (or `config.local.json`) overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them.
+`config.json` is the global config; `config.local.json` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them.
 
-A provider declares its backend once and its models in a map. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`) belong to the model rather than the provider, because they differ between models sharing one endpoint. The example below uses JSON; the equivalent TOML lives in the shipped `config.toml`:
+A provider declares its backend once and its models in a map. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
 ```json
 "kimi-k3": {
@@ -435,7 +435,7 @@ A provider declares its backend once and its models in a map. Per-model settings
 
 `default_model` is only needed when a provider declares more than one model; with a single model it is inferred, so naming it twice is unnecessary.
 
-The pre-`models` form is **rejected**, not silently accepted (applies to both TOML and JSON configs):
+The pre-`models` form is **rejected**, not silently accepted:
 
 | In the file | Result |
 |-------------|--------|
@@ -447,9 +447,7 @@ The pre-`models` form is **rejected**, not silently accepted (applies to both TO
 
 Each names the provider and the fix. All five fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
 
-A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load -- it logs `unknown key '<name>' in <section> (ignored -- check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
-
-Both `config.toml` and `config.json` are supported. When both exist, the TOML file wins. The same applies to the local override: `config.local.toml` is preferred over `config.local.json`.
+A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
 Full example:
 
@@ -480,9 +478,9 @@ Full example:
 ```
 
 Fields:
-- `providers`: map of provider name to config (in TOML: `[providers.<name>]` sections; in JSON: a `"providers"` object).
+- `providers`: map of provider name → config.
   - `kind`: `"openai_compat"`, `"anthropic"`, or `"vertex_anthropic"` (Anthropic models via Google Vertex AI: requires `project` + `location`, and either `api_key_env` or `service_account_file`; an env var wins over the service account if both are set).
-  - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model), `models` (map of model name to `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`).
+  - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model), `models` (map of model name → `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`).
   - `kimi-k3` supports reasoning (returns `reasoning` field).
 - `agent`:
   - `max_iterations`: max agent loop iterations.
@@ -544,7 +542,7 @@ Instruction files support Claude-compatible `@path` imports. Relative paths reso
 
 Tools that already understand Claude-style imports (Claude Code, and others that copy it) can expand the same line when they read `AGENTS.md`. Clanker expands imports in all three instruction layers. If root `AGENTS.md` already inlined `.agents/AGENTS.md` via `@`, the dedicated local section is not appended again. Imports inside `` `code spans` `` or fenced code blocks are left literal.
 
-For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig`. This section is kept in sync by hand and can lag.
+For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig` — this section is kept in sync by hand and can lag.
 
 ## HTTP server
 

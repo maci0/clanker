@@ -389,10 +389,10 @@ body {
 
 header {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
-  padding: 0.6rem 1rem; border-bottom: 1px solid var(--rule);
-  background: var(--surface);
+  padding: 0.55rem 0.9rem; border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   position: sticky; top: 0; z-index: 5;
-  backdrop-filter: saturate(1.1) blur(8px);
+  backdrop-filter: saturate(1.15) blur(10px);
 }
 @media (max-width: 34rem) {
   header { padding: 0.7rem 1rem; gap: 0.4rem 0.5rem; }
@@ -536,13 +536,13 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   padding: var(--space-3) 0;
   border-top: 0;
 }
-.turn + .turn { border-top: 1px solid var(--rule); }
+.turn + .turn { border-top: 1px solid color-mix(in srgb, var(--rule) 65%, transparent); }
 /* The job in progress: its strip is powered. */
 .turn[data-live="true"]::before {
   content: "";
-  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
   background: var(--accent);
-  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0.9;
 }
 .turn-depth { display: none; }
 /* What was asked, set as the entry's heading: the text face, not mono,
@@ -853,19 +853,21 @@ h2 {
   color: var(--fg); margin: 0; line-height: 1.3;
 }
 /* ---- runs: the execution graph of a recorded run ---- */
-.runs { margin-top: var(--space-5); }
+.runs { margin-top: var(--space-4); }
 .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }
-.run-picker input[type="search"] { font-family: var(--mono); letter-spacing: 0.01em; line-height: 1.4; }
+.run-picker input[type="search"] { font-family: var(--sans); font-size: 13px; letter-spacing: 0; line-height: 1.4; border-radius: 999px; }
 /* Each label takes a full row so both sit above their own control, the way
    the composer's Task label does — otherwise one wraps above and the other
    lands beside its field. */
 .run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }
-.session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
+.session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
+.session-actions .secondary { min-height: 30px; padding: 0.25rem 0.6rem; font-size: 12px; border-radius: 999px; }
+.session-actions .more > summary { min-height: 30px; padding: 0.25rem 0.6rem; font-size: 12px; border-radius: 999px; }
 select, #run-filter {
-  flex: 0 1 auto; max-width: 100%; min-height: 44px; padding: 0.4rem 0.6rem;
-  font-family: var(--mono); font-size: var(--step-0);
+  flex: 0 1 auto; max-width: 100%; min-height: 40px; padding: 0.35rem 0.7rem;
+  font-family: var(--sans); font-size: 13px;
   background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius);
+  border: 1px solid var(--border); border-radius: 999px;
 }
 #run-filter, #tool-filter, #turn-filter { flex: 1 1 24rem; min-width: 14rem; max-width: 34rem; }
 #board-room, #card-column { max-width: 14rem; }
@@ -1394,29 +1396,33 @@ mark {
 .scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
-/* Transcript empty — compact hero, ChatGPT/Cursor style: no boxed card, centered */
+/* Transcript empty — centered greeting like chatgpt.com / claude.ai */
 #transcript-empty {
-  padding: var(--space-6) 0 var(--space-4);
+  padding: 6vh 0 var(--space-4);
   border: 0; background: transparent; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
 }
+#transcript-empty[hidden] { display: none !important; }
 #transcript-empty p:first-child {
   font-family: var(--sans);
-  font-size: 22px; font-weight: 600; letter-spacing: -0.02em;
-  color: var(--fg); margin: 0 0 var(--space-3); max-width: none;
+  font-size: clamp(20px, 2.4vw, 26px); font-weight: 600; letter-spacing: -0.02em;
+  color: var(--fg); margin: 0; max-width: none;
 }
 #transcript-empty p:first-child + p {
   font-size: var(--step-0);
   color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
-.suggestions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); justify-content: center; }
+.suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 18rem)); gap: var(--space-3); margin-top: var(--space-4); justify-content: center; }
+@media (max-width: 520px) { .suggestions { grid-template-columns: 1fr; } }
 .suggestion {
-  min-height: 34px; padding: 0 0.85rem; text-align: left;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: var(--surface); color: var(--fg-muted);
-  font-family: var(--sans); font-size: 13px; cursor: pointer;
+  min-height: 44px; padding: 0.6rem 0.9rem; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--fg);
+  font-family: var(--sans); font-size: 13px; line-height: 1.35; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
-.suggestion:hover { border-color: var(--border); color: var(--fg); background: var(--surface-2); }
+.suggestion:hover { border-color: var(--border); background: var(--surface-2); }
 /* Staggered entrance for suggestion pills — motion gated */
 .suggestion { animation: suggestion-in 240ms ease-out both; }
 .suggestion:nth-child(1) { animation-delay: 0ms; }
@@ -1498,12 +1504,12 @@ main {
   flex: 1;
 }
 .rail {
-  flex: none; width: 14.5rem; align-self: stretch;
+  flex: none; width: 15rem; align-self: stretch;
   position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
-  background: var(--bg);
-  padding: var(--space-3) var(--space-2);
+  background: var(--surface);
+  padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
 }
 .rail:hover { scrollbar-color: var(--border) transparent; }
@@ -1563,8 +1569,8 @@ main {
 h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
-  /* The conversation's name is prose the user wrote, not an engraving. */
-  font-family: var(--sans); font-size: var(--step-2); text-transform: none; letter-spacing: -0.01em;
+  font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg-muted);
+  text-transform: none; letter-spacing: 0;
 }
 #rail-toggle { display: none; }
 

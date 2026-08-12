@@ -79,7 +79,7 @@ Canonical layout (AGENTS.md; verify drift, do not re-invent):
 ```text
 src/main.zig         entry point, std.process.Init, stack rlimit setup
 src/cli.zig          command dispatch, REPL loop, HTTP server (`clanker serve`)
-src/config.zig       config.toml / config.local.toml (or .json fallback) loading, Provider/Model types
+src/config.zig       config.json / config.local.json loading, Provider/Model types
 src/llm/*            provider adapters (openai_compat, anthropic), HTTP/SSE client
 src/sandbox/*        zwasm runtime wrapper, ck_* host functions, sandbox policy
 src/agent/*          agent loop, system prompt assembly, session store,
