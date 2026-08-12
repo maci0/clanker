@@ -292,7 +292,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // reasoning traces, plugin toggles) is deliberately neither linked nor
     // copied: a fresh worktree legitimately starts empty and every tool
     // already answers "(nothing yet)" for that case.
-    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl" }) |name| {
+    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json" }) |name| {
         // 16 MiB: autolearn's own log cap is 8 MiB (max_log_bytes,
         // src/agent/autolearn.zig) and the trim triggers only past it, so a
         // 4 MiB read limit here didn't truncate -- readFileAlloc errors on
