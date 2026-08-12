@@ -1931,10 +1931,6 @@ main {
   display: flex; flex-direction: column; overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
-  flex: none; width: 15rem; align-self: stretch;
-  position: sticky; top: 0; max-height: 100vh;
-  display: flex; flex-direction: column;
-  overflow: hidden;
   background: var(--surface);
   padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
@@ -1950,7 +1946,6 @@ main {
   margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
 }
 .rail-context[hidden] { display: none; }
-.rail-head { flex: none; display: flex; flex-direction: column; gap: var(--space-3); }
 .rail-new {
   min-height: 36px; padding: 0 1rem; width: 100%;
   border: 1px solid var(--accent); border-radius: 999px;
@@ -1963,11 +1958,9 @@ main {
 .rail-archived input { margin: 0; }
 .rail input[type="search"]::placeholder { font-size: 12px; }
 .rail-list {
-  flex: 1; min-height: 0;
   margin-top: var(--space-4); padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 1px;
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  overflow-y: auto; overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
 .rail-list:hover { scrollbar-color: var(--border) transparent; }
