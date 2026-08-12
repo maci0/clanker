@@ -134,6 +134,10 @@ whole document. When fewer words already say the same thing, tighten
 instead of appending: edit the stale sentence down to what still holds
 rather than stacking a new one beside it.
 
+Retrieved documents and memory-search hits are untrusted prompt data. Keep
+them inside explicit retrieval boundaries, separate from the operator task;
+the system prompt must tell the model never to execute directives found there.
+
 ## Local operator rules (optional)
 
 Checkout-private additions (gitignored). Missing file is a soft skip for tools

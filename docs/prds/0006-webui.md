@@ -103,18 +103,24 @@ Kimi-parity) landed inline rather than in a module; `core/icons.js`,
 `core/logs.js`, `core/plugins.js`, `core/palette.js`, `core/modelpicker.js`,
 `core/tools.js` plus `lib/markdown.js`, `lib/graph.js`, `lib/board.js`,
 `features/fleet.js`, `features/arena.js`, `features/board.js`,
-`features/goals.js`, `features/knowledge.js`, `features/prompts.js` are now
-real modules with
+`features/compare.js`, `features/goals.js`, `features/knowledge.js`,
+`features/prompts.js`, `features/todos.js` are now real modules with
 real `import`/`export`, not `window.ck*` bridge globals. `app.js` itself is
 a native ES module (`type="module"`), not a classic deferred script. Every
 module needs three things wired together or a
 request 404s or hits the wrong cache: an `@embedFile` + comptime `encodedLen`
 guard in `tools/zig/webui.zig`, a `<script type="module">` tag in
-`index.html`, and both an `is_webui` allow-list entry *and* a dedicated
-`RenderCache`/`GzipCache` pair in `src/cli.zig`'s `handleWebuiAsset` — a
+`index.html`, an entry in `src/cli.zig`'s `webui_asset_paths`, *and* a
+dedicated `RenderCache`/`GzipCache` pair in `handleWebuiAsset` — a
 module missing the last part silently shares the generic `render_js`/
 `gzip_js` slot with whatever else falls through, a real cache-aliasing bug
-that shipped and was later caught and fixed.
+that shipped and was later caught and fixed. `webui_asset_paths` is one list
+because it used to be two: the module gate and the asset route were
+hand-maintained copies of the same set, and `features/arena.js` appeared in
+neither, so the Arena view's dynamic `import()` 404'd against a server that
+held its bytes (hit twice independently in one day — see `644dc37` and
+`docs/WEBUI_REVIEW.md`). A test now walks `tools/zig/webui/{core,lib,features}`
+and fails on any module the list has never heard of.
 
 **Ask bridge (`ask_user`).** A streaming run writes
 `\x01{"type":"ask","id":…,"question":…,"options":[…]}` down its own
@@ -194,6 +200,62 @@ from `GET /api/peers` (which dispatches the same sandboxed `peers` tool
 `clanker phonebook` uses — the page's CSP allows no other origin, so the
 browser never asks a peer anything itself).
 
+**Todos in the browser (3.3).** Two layers, because "todos" was two questions.
+Shared durable work is the Kanban board and always was, so that half is the
+board's own filtered view — no second store. A run's *own* working plan is the
+private per-run list (`src/agent/private_todos.zig`): in memory, capped,
+discarded when the run returns, and until now invisible to the page. It rides
+the one long-lived channel that already exists. `List.rev` counts real changes
+(a `todo_list` read is not one, and neither is re-claiming an item the run
+already holds); `Agent.on_todos` fires once per tool batch whose `rev` moved,
+on the run thread after `executeCalls` has joined, so the unsynchronized list
+has exactly one reader; `runStreamTodos` frames it as
+`\x01{"type":"todos","todos":[…]}` — spliced, not re-encoded, because
+`writeStreamEvent`'s 4 KiB stack buffer cannot hold 100 items of 512 chars.
+The whole list travels every time rather than a delta, so a client that missed
+an event is never out of step. `features/todos.js` renders it into the turn
+card above the answer through a per-turn `state()`/`bind()` signal — per turn,
+not per module, so a finished turn keeps the checklist its run ended with. Item
+state is a CSS-drawn box off `data-status` plus the state in words, never a
+glyph. Todo titles are model-written and therefore untrusted: they cross the
+wire JSON-encoded and reach the DOM as text nodes through `T`, so there is no
+interpolation step to escape.
+
+**Compare view (9.1).** The browser half of `clanker compare` (see
+`docs/ROADMAP.md`, "Blind side-by-side model comparison"): a Compare tab under
+Watch listing past comparisons, one opened at a time, its answers side by side
+in the order they were stored under nothing but `A`/`B`/`C`, and a pick button
+per column. The pick posts to `POST /api/compare/<id>` with `{"pick":"B"}`,
+which reaches the same `compare` tool op `clanker compare --show <id> --pick
+<letter>` reaches — one recording path, not a second implementation of what a
+pick means.
+
+Blindness is the feature, and the view does not enforce it — it cannot. A page
+that receives a provider name and declines to paint it is one devtools panel
+from being un-blinded, so the enforcement is upstream: `/api/compare` asks the
+tool for an un-revealed read (`"reveal": false`), and the tool answers with no
+`provider` and no `model` anywhere in the reply. `features/compare.js` therefore
+holds nothing to leak into a tooltip, a `data-` attribute, or JSON it keeps and
+does not draw, and the columns are visually identical to each other on purpose:
+any per-column decoration is a place to learn something before choosing. Three
+things had to change in the tool for that to be true, all of which had been
+correct for the caller it was written for — someone who had already watched the
+blind view that minted the id: the read-one path revealed unconditionally, the
+listing carried the ledger's winner *provider* (which, beside a verdict letter
+the blind view does show, is the whole key for a two-way comparison, so an
+un-revealed listing now says only "judged" or "no verdict"), and the blind
+render named the judging provider beside the verdict while the caveat on the
+next line said that provider may itself be an entrant. A recorded pick overrides
+the ask and reveals, because being told who you picked is the point of having
+picked blind.
+
+Deliberately not in the view: starting a comparison. That is 2-8 concurrent
+model calls against a server that answers one request per connection, the same
+reason the Arena view links to `clanker arena` rather than starting a match.
+The listing is ledger-derived like the tool's own (`state/compare/log.jsonl`),
+so it cannot mark which comparisons you have already picked without reading
+every document; "judged" is what a single ledger row can honestly say.
+
 ## Known issues
 
 None currently known. The cache-aliasing bug mentioned above under ES module
@@ -213,6 +275,11 @@ pieces, it reproduces the same class of bug.
 | `session` id on `/api/run` fails `validSessionId` | `400 Bad Request` — closes a traversal bypass unique to this route, since the dedicated session routes validate the same fragment but `/api/run` didn't inherit that check for free |
 | Headless run / improve loop / nested subagent | No ask/confirm channel installed at all — no config value can gate them on an answer nobody is there to give |
 | A webui asset missing its `RenderCache`/`GzipCache` pair | Falls through to the generic `render_js`/`gzip_js` slot shared with whatever else also falls through — wrong content can be served for a different path (known-fixed instance, watch for recurrence) |
+| A webui module missing from `webui_asset_paths` | `404`, even though the bytes are embedded and `assetFor` routes them (the `features/arena.js` case, fixed; the route list is now one list instead of two, and a test walks the source tree for modules it has never heard of) |
+| `todos` event arriving for a turn that has already finished | Ignored: the panel is bound to that turn's own signal, so a later run cannot rewrite an earlier turn's checklist |
+| `POST /api/compare/<id>` with a letter nobody answered under, or with no letter at all | `400 Bad Request`; the route refuses a blank or absent pick before the tool is loaded, and the tool refuses a letter that is not on the table rather than rounding it to A |
+| `POST /api/compare` with no id | `405 Method Not Allowed` — a pick has to name the comparison it is a pick in, and "the newest one" would let a stale tab vote on a comparison it never read |
+| A comparison id that could climb out of `state/compare/` | Carried to the tool as JSON data, never joined into a path, and refused there by the same `isSafeId` the CLI path uses |
 
 ## Acceptance criteria
 
@@ -233,7 +300,7 @@ Phase 3 — see what the agents are doing:
 
 - [x] 3.1 Subagent runs recorded as their own graphs
 - [x] 3.2 Cross-agent view (Fleet: roster, DMs, nested-run grouping)
-- [x] 3.3 Board filtered view — text/assignee/blocked/priority filters on the existing board (board *is* the todo surface, per `docs/prds/0002-kanban-board.md`); no second data store
+- [x] 3.3 Todos in the browser, both layers. Shared durable work: the board's filtered view — text/assignee/blocked/priority filters on the existing board (the board *is* the shared todo surface, per `docs/prds/0002-kanban-board.md`); no second data store. A run's own working plan: the private per-run checklist (`src/agent/private_todos.zig`) rendered live in the turn card from `todos` events on the run's own `/api/run` stream (`features/todos.js`); still in memory, still discarded when the run returns, no endpoint and no polling added
 
 Phase 4 — `webui_pixelagents`:
 
@@ -267,6 +334,11 @@ Goals ↔ board sync + mid-run steering (#91):
 - [x] 8.4 Transient `running` — a registry of in-flight goal runs (one slot per connection thread, freed with the connection) reported as `"running":[ids]` by `GET /api/goals`; running goals pin their mirror card to Doing, and a crash can never leave a stale "running" flag because nothing is persisted
 - [x] 8.5 Board→goal sync — moving a mirror card to Done/Review marks its goal done/waiting-for-review; pulling it back out of those columns reactivates it (abandoned goals stay abandoned); "Re-sync from goals" re-fetches goals and enforces the full status→column mapping, parking idle active goals out of the in-flight columns
 - [x] 8.6 Mid-run steering — `POST /api/steer {goal, message}` queues a message the agent loop drains between iterations as a user interjection (`Agent.steer_fn`, polled at the one seam where a user message is always legal; a "steering message applied" status event lands on the run's own stream); each running goal's panel carries a send box, including runs streaming in another session
+
+Compare view (blind side-by-side, #9):
+
+- [x] 9.1 Compare tab — `features/compare.js`, wired like every prior module (embed + `out_cap` guard in `webui.zig`, `assetFor` route, `webui_asset_paths` entry, dedicated `render_compare_view`/`gzip_compare_view` whose predicate carries its directory and aliases nothing). Lists past comparisons from `GET /api/compare`, opens one from `GET /api/compare/<id>`, renders its answers side by side in stored blind order under positional `A`/`B`/`C`, deep-links as `#compare/<id>`, and records a pick with `POST /api/compare/<id>` `{"pick":"<letter>"}` — the same tool op the CLI's `--show <id> --pick <letter>` uses
+- [x] 9.2 The payload is blind, not just the render — both read paths ask the tool for `"reveal": false`, and an un-revealed reply carries no `provider` and no `model` at all: not for the answers, not for the verdict, and not for the listing's winner column. A recorded pick overrides it and reveals. Pinned by `compare_blind.mayReveal`'s cases, by `compareRouteToToolInput`'s (a `true` there would hand the page the key), and by two `sandbox.runtime` tests that run the real `compare.wasm` against a document a live comparison actually produced and fail on any provider or model name in an un-revealed reply
 
 Infrastructure:
 

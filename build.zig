@@ -125,7 +125,7 @@ pub fn build(b: *std.Build) void {
     // declares `extern "env"` functions the host test binary cannot link — so
     // the pure ones are listed rather than globbed, which is also what keeps
     // "is this testable" an explicit property of a file.
-    for ([_][]const u8{ "arena_match", "cards", "search_parse" }) |stem| {
+    for ([_][]const u8{ "arena_match", "cards", "compare_blind", "search_parse" }) |stem| {
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
             .target = test_target,

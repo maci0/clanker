@@ -357,10 +357,225 @@ rows.
   descriptions, "4 skills." status, 0 page errors; screenshot
   `docs/assets/webui/skills.png`. Suite `431 pass, 1 skip (432 total)`.
 
+## Todos in the browser — the run's own checklist (2026-08-13)
+
+Phase 3.3, the last open item on the PRD's phase list. "Todos in the browser"
+turned out to be two questions with two different answers, and only one of them
+had been answered:
+
+- **Shared, durable work** is the Kanban board, and always was — room-scoped
+  todo lists were removed once the board covered that need
+  (`docs/prds/0001-chatrooms.md` § Known issues, ADR 0002). The board's
+  filtered view already shipped and is what the earlier `[x]` on 3.3 meant.
+- **A run's own working plan** is the private per-run list
+  (`src/agent/private_todos.zig`): `todo_add`/`todo_claim`/`todo_close`/
+  `todo_list` with no `room`, in memory, capped at 100, discarded when the run
+  returns. Nothing in the browser could see it. That is this slice.
+
+Design constraint that shaped everything: ephemerality is the feature
+(`docs/prds/0003-run-todos.md` § Non-goals), so the browser had to get a
+*window* onto the list, not a store of its own. No endpoint, no polling, no
+persistence — it rides the one long-lived channel that already exists.
+
+- **Server:** `List.rev` counts real changes. A `todo_list` read does not bump
+  it, and neither does re-claiming an item this run already holds or closing
+  an already-closed one — a run that polls its own list would otherwise push an
+  event per poll. `Agent.on_todos` (beside `on_tool_call`/`on_tool_result`)
+  fires once per tool batch whose `rev` moved, at the seam right after
+  `executeCalls` has joined its workers, so the deliberately unsynchronized
+  list has exactly one reader. `private_todos.listJson` is the same
+  `writeTodoArray` `todo_list` uses, so the model and the browser can never be
+  shown different ids, titles or status spellings.
+- **Transport:** `runStreamTodos` writes
+  `\x01{"type":"todos","todos":[…]}` on the run's own `/api/run` stream. The
+  array is spliced rather than re-encoded — `writeStreamEvent` would escape it
+  into a string, and its 4 KiB stack buffer cannot hold 100 items of 512-char
+  titles, so the line is built with `serve_gpa` instead. The whole list travels
+  every time, not a delta: a client that missed an event is never out of step.
+- **View:** `features/todos.js`, wired like every prior module (embed +
+  `out_cap` guard in `webui.zig`, `assetFor` route, `index.html` module tag,
+  `webui_asset_paths` entry, dedicated `render_todos_view`/`gzip_todos_view`
+  whose predicate aliases nothing). A per-turn `state()`/`bind()` signal, not a
+  module-level one — a finished turn must keep the checklist its run ended
+  with, not the next run's. Rendered above the answer through `T`, so every
+  title is a text node. Item state is a CSS box off `data-status` (`--ok-fill`
+  filled + a drawn tick when closed, `--accent` tinted when claimed) plus the
+  state in words beside it; no glyph stands in for an icon, and the panel is
+  `aria-live="polite"`. Palette variables only, so all ten `data-theme` blocks
+  get it for free.
+
+### Two bugs found on the way, both fixed here
+
+- **`features/arena.js` 404'd.** It was `@embedFile`'d and routed in
+  `tools/zig/webui.zig`, but named in neither the `is_webui` module gate nor
+  the `handleWebuiAsset` dispatch condition in `src/cli.zig` — two
+  hand-maintained copies of one set, and the Arena view's dynamic `import()`
+  fell through both. Found independently and fixed upstream in the same window
+  (`644dc37`, "webui: serve features/arena.js from the native server"), which
+  is itself the argument: two people hit the same trap in one day. This slice
+  keeps the fix and removes the trap — both lists now read a single
+  `webui_asset_paths`, and a test walks `tools/zig/webui/{core,lib,features}`
+  and fails on any `.js` the list has never heard of, so the next module cannot
+  repeat it.
+- **Unescaped interpolation in the run `Export .html` path.** `drawRun`'s
+  export builds a self-contained page by string concatenation and wrote
+  `g.run_id` and `g.task` raw into `<title>`, `<h1>` and `<p>`. The task is
+  operator- or agent-written text, and the file is then opened from a blob
+  URL, so markup in a task became markup in the export. The `JSON.stringify`
+  dump further down was already `<`-escaped, which is how the gap in the header
+  stayed invisible. Every interpolated field now goes through
+  `core/utils.js`'s `escapeHtml`.
+
+### Verified
+
+Live, with the configured DeepSeek provider (`providers check deepseek` ok,
+610ms), a real top-level `clanker run` driving `todo_add` x3, `todo_claim`,
+`todo_close`, `todo_list` through the real WASM tools. With `on_todos`
+temporarily probed to stderr, the run emitted exactly three events — the
+`todo_add` batch, the claim, the close — and **none** for the `todo_list` read,
+with the untrusted title `<b>report</b> the count` arriving JSON-encoded and
+intact. The probe was removed before commit.
+
+Not verified live: the browser rendering itself. `clanker serve` dies at
+`accept` (SIGSYS) in this environment, so nothing was clicked through and no
+screenshot was taken. Covered by test instead — `runStreamTodos`' framing
+(one line, `\x01`-prefixed, parses, markup survives as data), the asset route
+(`isWebuiAssetPath` plus the source-tree walk), and the `webui` wasm tool
+actually serving `features/todos.js` and `features/arena.js` with a JS content
+type rather than falling through to the page. Suite `583 pass, 2 skip (585
+total)`; 163/163 build steps.
+
+## Export escaping, finished — the run `Export .html` path (2026-08-13)
+
+Follow-up to "Two bugs found on the way, both fixed here" above. That entry
+fixed the header fields (`<title>`, `<h1>`, `<p>`) and said every interpolated
+field now goes through `core/utils.js`'s `escapeHtml`. One did not: the JSON
+dump at the end of the document still carried its own
+one-character escaper, a bare regex replace of `<` alone, written inline in
+`drawRun`.
+
+- **Why it survived a fix that was looking straight at it.** `<` is the only
+  character that can open a tag, so escaping just `<` really does keep markup
+  out of the `<pre>` — the dump was not an injection hole, and reading the line
+  for injection finds nothing. It is a *fidelity* hole. With `&` left alone, a
+  run whose text contained the literal characters `&lt;script&gt;` renders in
+  the export as `<script>`, and `&amp;` renders as `&`: the file disagrees with
+  the run it claims to be a copy of, in the direction of showing markup that
+  was never there. Order matters too — `&` has to be replaced first, which a
+  chain of replaces gets wrong and a single-pass escaper cannot.
+- **The fix is deletion, not addition.** The dump goes through the same `esc`
+  the header fields already use. There is now exactly one escaper on this path
+  (`escapeHtml`, `[&<>"']` in one pass), which was the intent of the earlier
+  entry; what was left was a second, partial one sitting beside it.
+- **Guarded, because a comment is not a gate.** A source-tree test in
+  `src/cli.zig` ("no webui source hand-rolls a partial HTML escape") walks
+  `tools/zig/webui/{.,core,lib,features}` and fails on a `.replace(/</g`,
+  `.replace(/&/g` or `.replace(/>/g` shaped call in code (comment lines are
+  skipped, so the pattern can still be named where it is explained). It skips
+  outside the repo root, like its `webui_asset_paths` neighbour. Two people
+  have now written a partial escaper into this one function; the third attempt
+  turns the suite red instead.
+
+### Verified
+
+Not in the browser: `clanker serve` still dies at `accept` (SIGSYS) here, so
+nothing was clicked through. Covered by the source-tree gate above, and the
+same escaping question was verified end to end on the native side, where it
+*is* runnable: `clanker session export` (docs/ROADMAP.md, Done) renders a
+transcript through a single-pass Zig escaper of the same five characters, and
+a real export of a live DeepSeek session whose answer was
+`<script>alert("x & y")</script>` was fed to a strict HTML parser — no
+`script` element in the tree, the sequence present only as a text node.
+Suite `608/610 tests passed (2 skipped)`; 169/169 build steps.
+
+## Compare view — the blind side-by-side in the browser (2026-08-13)
+
+The web UI half of `clanker compare`, listed as still open on the roadmap since
+the feature shipped. The REPL `/compare` slash command is the other half and is
+deliberately not in this slice: it is a `src/tui/*` change, and that surface was
+being worked concurrently.
+
+The rendering was the easy part. What this slice is actually about is that the
+`compare` tool's read paths were written for exactly one caller — a person who
+had already watched the blind view that minted the id, which is what
+`clanker compare --show <id>` is — and a browser is not that caller.
+
+- **The payload has to be blind, not the render.** A page that receives a
+  provider name and chooses not to paint it is one devtools panel away from
+  being un-blinded, so "the view is careful" is not a mechanism. `"reveal":
+  false` on a read or a listing now withholds the key from the tool's *reply*:
+  no `provider`, no `model`, not for the answers, not for the verdict.
+  `compare_blind.mayReveal` is the rule, on the host-tested side of the split
+  with the rest of them, and a recorded pick overrides it — being told who you
+  picked is the point of having picked blind.
+- **The listing leaked worse than the read did.** `state/compare/log.jsonl`'s
+  row carries the winning *provider*, and the blind view shows the verdict's
+  *letter*; for a two-way comparison those two facts together are the whole key,
+  and the listing is read before anything is even opened. An un-revealed listing
+  now reports `"judged": true|false` and nothing else about the outcome.
+- **A leak the tests caught, not the review.** The blind render printed
+  `verdict: A (judged by deepseek)` and, on the next line, `caveat: the judge is
+  also an entrant`. Between them that names an entrant. Unreachable from the CLI
+  (a verdict makes `reveal` default to true, so the CLI never renders that line
+  blind) and reachable from exactly the new path. The judge's name is now gated
+  on `reveal`; the caveat, which carries no name, stays either way.
+- **Two gaps in the structured output, filled:** `emit` returned neither the
+  `prompt` nor the recorded `pick`, so a renderer had to scrape both back out of
+  the rendered text block. A renderer that scrapes one field out of prose will
+  eventually scrape another.
+
+- **Server:** `GET /api/compare` (blind listing), `GET /api/compare/<id>` (blind
+  read), `POST /api/compare/<id>` `{"pick":"<letter>"}` (record and reveal), all
+  through `compareRouteToToolInput` — split out of the handler for the reason
+  `arenaRouteToToolInput` was, since `clanker serve` cannot accept a connection
+  here and a route decision reachable only through the listener is a route
+  decision with no test. The pick reaches the same tool op the CLI's
+  `--show <id> --pick <letter>` reaches; nothing about what a pick means is
+  decided client-side. Read-only otherwise: starting a comparison is 2-8
+  concurrent model calls against a server that answers one request per
+  connection, the same reason the Arena view links to `clanker arena`.
+- **View:** `features/compare.js`, wired like every prior module (embed +
+  `out_cap` guard in `webui.zig`, `assetFor` route, `webui_asset_paths` entry,
+  dedicated `render_compare_view`/`gzip_compare_view` whose predicate carries
+  its directory and aliases nothing). Answers render as equal-width columns
+  under nothing but their letter, deliberately identical to each other — any
+  per-column decoration is a place to learn something before choosing. Model
+  text reaches the DOM as text nodes, so there is no interpolation step to
+  escape. Deep-links as `#compare/<id>`, adds a `/compare` composer command
+  beside `/knowledge` and `/prompts`, and holds no timer, so the view has
+  nothing to stop when it is navigated away from. Palette variables only.
+
+### Verified
+
+Live, with the configured DeepSeek provider (`providers check deepseek` ok,
+1140ms): a real `clanker compare "In one sentence, why is the sky blue?" --with
+deepseek@deepseek-v4-flash --with deepseek@deepseek-v4-pro`, two answers and a
+judged verdict, then `--show <id>` and `--show <id> --pick B` against the same
+document. The document that run produced is the fixture the two new
+`sandbox.runtime` tests drive the real `compare.wasm` with, byte for byte —
+a hand-written fixture would only prove the tool agrees with itself. Those
+tests fail on any occurrence of `deepseek`, `deepseek-v4-flash` or
+`deepseek-v4-pro` in an un-revealed reply, which is how the judge-line leak
+above was found.
+
+Not verified live: the browser rendering itself. `clanker serve` dies at
+`accept` (SIGSYS) in this environment, so nothing was clicked through and no
+screenshot was taken. Covered by test instead — the route mapping
+(`compareRouteToToolInput`, including that both read paths ask for
+`"reveal": false`), the asset route (`isWebuiAssetPath` plus the source-tree
+walk), and the `webui` wasm tool actually serving `features/compare.js` with a
+JS content type rather than falling through to the page. Suite
+`613/615 tests passed (2 skipped)`; `169/169` build steps. (Two skips rather
+than one: this ran in a worktree, where `.git` is a file.)
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.
 - If Kimi parity is to extend beyond the documented Phase 6: decompose remaining `app.js` view logic (`features/board.js`, `features/goals.js`), promote `axe-core` into `clanker gate`, and resolve the pre-existing axe handoff items (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — all already logged in the sweep entry. The composer Research toggle from this slice closes the last named parity candidate.
+- The REPL `/compare` slash command — the other half of the comparison surface,
+  left open on the roadmap. `src/tui/*`, and the browser now covers reading a
+  comparison back, so what is missing is a REPL that can start one and show it
+  in place.
 - Kimi Code **harness** parity (open-source CLI, the corrected target): remaining gaps are MCP **client** configuration (clanker already serves MCP; `/mcp-config`-style client management is new), ACP/IDE integration (`kimi acp` equivalent), and lifecycle hooks surfaced from the page. Video input and the skills catalogue just landed; each remaining item is a bounded slice on its own.

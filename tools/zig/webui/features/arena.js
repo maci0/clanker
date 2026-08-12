@@ -62,6 +62,12 @@ function fetchMatch(id, quiet) {
   return fetch("/api/arena/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (data) {
     if (!data || !data.ok || !data.match) throw new Error((data && data.error) || "no such match");
     state.id = id;
+    // The address bar names the open match, so it can be bookmarked and
+    // shared the way #runs/<id> can.
+    try {
+      var want = "#arena/" + encodeURIComponent(id);
+      if (location.hash !== want) history.replaceState(null, "", want);
+    } catch (_) {}
     var wasRunning = state.match && state.match.status === "running";
     state.match = data.match;
     renderMatch();
@@ -84,13 +90,24 @@ function fetchMatch(id, quiet) {
 export function loadArenaView() {
   var status = byId("arena-status");
   if (status) status.textContent = "Loading matches…";
+  // A #arena/<id> deep link (bookmark, palette, another view) names the match
+  // to open; consumed once, the way board/knowledge pending ids are.
+  if (window._pendingArenaId) {
+    state.id = window._pendingArenaId;
+    window._pendingArenaId = null;
+  }
   return fetch("/api/arena").then(function (r) { return r.json(); }).then(function (data) {
     var matches = (data && data.matches) || [];
+    state.matches = matches;
     renderPicker(matches);
     if (!matches.length) {
       if (status) status.textContent = "No matches yet. Run one with: clanker arena \"<question>\" --for X --against Y";
       var stage = byId("arena-stage");
       if (stage) stage.hidden = true;
+      var chips = byId("arena-combatants");
+      if (chips) chips.textContent = "";
+      var graph = byId("arena-graph");
+      if (graph) graph.hidden = true;
       return null;
     }
     // Newest first from the tool, so the top row is the one just finished.
@@ -111,12 +128,21 @@ function renderPicker(matches) {
     row.type = "button";
     row.className = "secondary arena-pick";
     row.setAttribute("aria-pressed", m.id === state.id ? "true" : "false");
+    // The lamp says how it ended at a glance: green a verdict, amber still
+    // running, grey a draw. Same vocabulary as the rest of the panel.
+    var lamp = document.createElement("span");
+    lamp.className = "arena-lamp";
+    var running = !m.winner && !m.headline;
+    lamp.dataset.state = running ? "running" : (m.winner === "draw" ? "draw" : "done");
+    lamp.setAttribute("aria-hidden", "true");
     var q = document.createElement("span");
     q.className = "arena-pick-q";
     q.textContent = m.question || m.id;
+    q.title = m.question || m.id;
     var who = document.createElement("span");
-    who.className = "meta";
-    who.textContent = m.winner ? (m.winner === "draw" ? "draw" : m.winner + " won") : "";
+    who.className = "meta arena-pick-outcome";
+    who.textContent = m.winner ? (m.winner === "draw" ? "draw" : m.winner + " won") : "running";
+    row.appendChild(lamp);
     row.appendChild(q);
     row.appendChild(who);
     row.addEventListener("click", function () {
@@ -151,10 +177,16 @@ function renderTranscript(m) {
     host.appendChild(p);
   });
 
-  (m.rounds || []).forEach(function (r) {
-    var h = document.createElement("h4");
-    h.textContent = "Round " + r.round;
-    host.appendChild(h);
+  (m.rounds || []).forEach(function (r, ri) {
+    var fold = document.createElement("details");
+    fold.className = "arena-round";
+    // The newest round is the one being followed; older rounds fold away so
+    // a long match stays scannable, like the transcript's tool cards.
+    fold.open = ri === (m.rounds.length - 1);
+    var h = document.createElement("summary");
+    h.textContent = "Round " + r.round + " — " + (r.moves || []).length + " move(s)";
+    fold.appendChild(h);
+    host.appendChild(fold);
     (r.moves || []).forEach(function (mv) {
       var card = document.createElement("div");
       card.className = "tool-card";
@@ -185,13 +217,13 @@ function renderTranscript(m) {
         meta.textContent = flags.join(" · ");
         card.appendChild(meta);
       }
-      host.appendChild(card);
+      fold.appendChild(card);
     });
   });
 
   if (m.verdict) {
     var v = document.createElement("div");
-    v.className = "tool-card";
+    v.className = "tool-card arena-verdict";
     var vh = document.createElement("div");
     vh.className = "tool-card-head";
     vh.textContent = "Verdict: " + m.verdict.headline;
@@ -266,9 +298,11 @@ function renderMatch() {
   if (status) {
     var line = statusLine(m);
     if (reducedMotion()) line = "Still frame, respecting reduced motion. " + line;
-    status.textContent = line;
+    if (status.textContent !== line) status.textContent = line;
   }
 
+  renderCombatants(m);
+  renderHpGraph(m);
   renderTranscript(m);
 
   // A new move restarts the pose clock, so the lunge plays on arrival rather
@@ -490,6 +524,128 @@ function drawCompactor(ctx, cv, m, t, ground, cw) {
   // Next loser gets its own pass, one at a time, rather than a pile-up.
   q.i += 1;
   q.started = 0;
+}
+
+/* -------------------------------------------------- combatants and HP graph */
+
+/* One chip per combatant: label, live HP bar, outcome. The DOM version of
+   what the stage draws, so none of it is pixels-only. */
+function renderCombatants(m) {
+  var host = byId("arena-combatants");
+  if (!host) return;
+  host.textContent = "";
+  (m.combatants || []).forEach(function (c, i) {
+    var chip = document.createElement("div");
+    chip.className = "arena-combatant";
+    if (c.eliminated || c.conceded) chip.dataset.out = "true";
+    if (m.verdict && m.verdict.winner === i) chip.dataset.winner = "true";
+    var dot = document.createElement("span");
+    dot.className = "arena-swatch";
+    dot.style.background = colorFor(c.label || String(i));
+    dot.setAttribute("aria-hidden", "true");
+    var name = document.createElement("span");
+    name.className = "arena-combatant-name";
+    name.textContent = c.label || ("#" + (i + 1));
+    if (c.persona) name.title = c.persona;
+    var bar = document.createElement("span");
+    bar.className = "arena-hp";
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label", (c.label || "") + " " + c.hp + " of " + (c.max_hp || 100) + " HP");
+    var fill = document.createElement("span");
+    fill.className = "arena-hp-fill";
+    var frac = (c.max_hp ? c.hp / c.max_hp : 0);
+    fill.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + "%";
+    fill.style.background = hpColor(c.hp, c.max_hp || 100);
+    bar.appendChild(fill);
+    var hp = document.createElement("span");
+    hp.className = "meta";
+    hp.textContent = c.hp + " HP" + (c.eliminated ? " · eliminated" : (c.conceded ? " · conceded" : ""));
+    chip.appendChild(dot);
+    chip.appendChild(name);
+    chip.appendChild(bar);
+    chip.appendChild(hp);
+    host.appendChild(chip);
+  });
+}
+
+/* HP over the match as one stepped line per combatant, on the shared move
+   axis: the transcript's numbers as a picture. Static by nature, so reduced
+   motion needs no special case beyond not existing to animate. */
+function renderHpGraph(m) {
+  var fold = byId("arena-graph");
+  var cv = byId("arena-hp-canvas");
+  var caption = byId("arena-graph-caption");
+  if (!fold || !cv) return;
+  var cs = m.combatants || [];
+  // Series: every combatant starts at max and steps at each of its moves.
+  var moves = [];
+  (m.rounds || []).forEach(function (r) {
+    (r.moves || []).forEach(function (mv) { moves.push(mv); });
+  });
+  if (!moves.length) { fold.hidden = true; return; }
+  fold.hidden = false;
+  var series = cs.map(function (c) { return [c.max_hp || 100]; });
+  moves.forEach(function (mv) {
+    cs.forEach(function (c, i) {
+      var prev = series[i][series[i].length - 1];
+      series[i].push(mv.combatant === i ? mv.hp_after : prev);
+    });
+  });
+  var ctx = cv.getContext("2d");
+  var W = cv.width, H = cv.height;
+  var padL = 26, padR = 8, padT = 8, padB = 16;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#1d2225";
+  ctx.fillRect(0, 0, W, H);
+  var maxHp = 0;
+  cs.forEach(function (c) { maxHp = Math.max(maxHp, c.max_hp || 100); });
+  var nx = series[0].length - 1 || 1;
+  function X(k) { return padL + (W - padL - padR) * (k / nx); }
+  function Y(hp) { return padT + (H - padT - padB) * (1 - hp / maxHp); }
+  // Gridlines at 0/50/100% with axis labels, same ink as the stage.
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.fillStyle = "#8b948b";
+  ctx.font = "9px monospace";
+  ctx.textAlign = "right";
+  [0, 0.5, 1].forEach(function (f) {
+    var y = Y(maxHp * f);
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(W - padR, y);
+    ctx.stroke();
+    ctx.fillText(String(Math.round(maxHp * f)), padL - 3, y + 3);
+  });
+  // Round boundaries as faint verticals, so the x axis means something.
+  var moveIdx = 0;
+  ctx.textAlign = "center";
+  (m.rounds || []).forEach(function (r) {
+    var upto = moveIdx + (r.moves || []).length;
+    var x = X(upto);
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath();
+    ctx.moveTo(x, padT);
+    ctx.lineTo(x, H - padB);
+    ctx.stroke();
+    ctx.fillText("R" + r.round, X(moveIdx + (r.moves || []).length / 2), H - 5);
+    moveIdx = upto;
+  });
+  // The lines themselves, stepped: HP only changes ON a move.
+  series.forEach(function (pts, i) {
+    ctx.strokeStyle = colorFor(cs[i].label || String(i));
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    pts.forEach(function (hp, k) {
+      var x = X(k), y = Y(hp);
+      if (k === 0) ctx.moveTo(x, y);
+      else { ctx.lineTo(x, Y(pts[k - 1])); ctx.lineTo(x, y); }
+    });
+    ctx.stroke();
+  });
+  if (caption) {
+    caption.textContent = cs.map(function (c, i) {
+      return c.label + " " + series[i][series[i].length - 1] + " HP";
+    }).join(" · ") + " after " + moves.length + " moves.";
+  }
 }
 
 /* -------------------------------------------------------------------- bind */

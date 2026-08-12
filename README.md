@@ -63,9 +63,11 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **A2A agent cards** – `.well-known/agent.json` discovery
 - **`/goal`** – persistent structured goals steering agent runs
 - **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/tools`, `/sessions`, `/graph`, `/status`) served by internal WASM tools
+- **Visible cost and context** – every turn closes with `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]` in the REPL and on `clanker run`'s stderr, the status bar carries a running context meter and session cost, and compaction announces itself instead of quietly dropping the exchange you were about to ask about
 - **Inline shell escape** – `!git log --oneline -5` in the REPL runs there and then, printing into the transcript instead of going to the model. Not a shell: one fixed argv through the same `ck_exec` gate the tools go through, so no pipes, globs or `$VAR`, and the child never sees your API keys. Bare `!` lists what it may run
 - **Execution graphs** – every run is recorded to `state/runs/`; replay it with `/graph` or `clanker graph <run-id>`
 - **Arena** – `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
+- **Blind model comparison** – `clanker compare "<prompt>" --with a --with b@model` asks 2-8 configured models the same thing concurrently (`ck_llm_many`) and shows the answers as A, B, C with nothing saying which model wrote which; a judge model or `--pick <letter>` decides, `--synthesize` merges them; the web UI's Compare tab shows the same answers side by side with a pick button per column, and stays blind until you choose
 - **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on
 - **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
 - **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
@@ -79,6 +81,9 @@ For full documentation, see [docs/README.md](docs/README.md).
 The Web UI is a browser interface to the agent: a real multi-turn chat backed
 by the same sessions, providers, tools and execution graphs as the CLI. It is
 served by the internal `webui` WASM tool when `modules.webui` is on (default).
+A run's private checklist shows up live in its turn card as the agent adds,
+claims and closes items, so a multi-step plan is visible while it is worked
+rather than only in the answer.
 
 Start it with `clanker serve` (default port `17921`, `--port` to change it),
 then open the URL it prints (`http://127.0.0.1:17921/webui`):
@@ -105,6 +110,7 @@ task; `clanker --help` prints usage.
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
 | `sessions` | List saved sessions |
+| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript (default `state/exports/<id>.html`) |
 | `tools list` | List registered WASM tools |
 | `eval [name] [--tasks]` | Run evals |
 | `improve-self [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |

@@ -74,6 +74,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
     <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
     <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
+    <button type="button" class="rail-tab" role="tab" id="tab-compare" aria-controls="view-compare" aria-selected="false" tabindex="-1" data-view="compare">Compare</button>
     <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
     <p class="rail-group" role="presentation">Set up</p>
     <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
@@ -89,6 +90,11 @@ lamps carry further). The seven named palettes ride the same tokens.
       <button type="button" class="rail-new" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations</label>
       <input type="search" id="session-filter" placeholder="Filter conversations…" autocomplete="off">
+      <!-- The Archive action tells people to toggle this; without it an
+           archived conversation could never be listed or unarchived again. -->
+      <label class="rail-archived" for="archived-toggle">
+        <input type="checkbox" id="archived-toggle"> Show archived
+      </label>
     </div>
     <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
   </div>
@@ -282,6 +288,10 @@ lamps carry further). The seven named palettes ride the same tokens.
           <h3 id="arena-list-head" class="sr-only">Matches</h3>
           <div id="arena-list" class="arena-list"></div>
         </section>
+        <!-- Who is fighting, in DOM: label, persona, and a real HP bar per
+             combatant. The canvas below repeats this as pixels; this row is
+             what a screen reader (and a reduced-motion session) actually gets. -->
+        <div id="arena-combatants" class="arena-combatants"></div>
         <!-- The canvas is decorative; #arena-status carries the same state in
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
@@ -289,10 +299,47 @@ lamps carry further). The seven named palettes ride the same tokens.
           <canvas id="arena-canvas" width="640" height="200" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
         </div>
         <p class="meta" id="arena-status" role="status" aria-live="polite"></p>
+        <!-- HP over the match, one stepped line per combatant: the same story
+             the transcript tells, as a chart. Decorative for the same reason
+             the stage is; the transcript is the record. -->
+        <details id="arena-graph" class="arena-graph" hidden open>
+          <summary>Match graph — HP by move</summary>
+          <canvas id="arena-hp-canvas" width="640" height="150" aria-hidden="true" style="width:100%;height:auto;image-rendering:pixelated;background: var(--surface-2); border:1px solid var(--rule); border-radius: var(--radius);"></canvas>
+          <p class="meta" id="arena-graph-caption"></p>
+        </details>
         <section aria-labelledby="arena-transcript-head">
           <h3 id="arena-transcript-head" class="sr-only">Move transcript</h3>
           <div id="arena-transcript"></div>
         </section>
+      </div>
+    </section>
+  </div>
+  <!-- Compare: the blind side-by-side. Everything in this panel is filled from
+       an un-revealed read of the comparison (`/api/compare` asks the tool for
+       one), so there is no markup here holding a provider name that CSS or a
+       tooltip could surface early. The key section stays empty until a pick is
+       recorded and the tool reveals. -->
+  <div class="view" id="view-compare" role="tabpanel" aria-labelledby="tab-compare" tabindex="-1" hidden>
+    <section>
+      <div class="section-head">
+        <h2>Compare</h2>
+        <div class="toolbar-actions">
+          <button type="button" class="secondary" id="compare-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="runs">
+        <section aria-labelledby="compare-list-head">
+          <h3 id="compare-list-head" class="sr-only">Comparisons</h3>
+          <div id="compare-list" class="compare-list"></div>
+        </section>
+        <p class="compare-prompt" id="compare-prompt"></p>
+        <p class="meta" id="compare-status" role="status" aria-live="polite"></p>
+        <section aria-labelledby="compare-answers-head">
+          <h3 id="compare-answers-head" class="sr-only">Answers, side by side</h3>
+          <div id="compare-answers" class="compare-answers"></div>
+        </section>
+        <div id="compare-verdict"></div>
+        <section id="compare-key" class="compare-key" hidden></section>
       </div>
     </section>
   </div>
@@ -664,6 +711,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/features/goals.js"></script>
 <script type="module" src="/webui/features/knowledge.js"></script>
 <script type="module" src="/webui/features/prompts.js"></script>
+<script type="module" src="/webui/features/todos.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>

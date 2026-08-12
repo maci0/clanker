@@ -201,8 +201,14 @@ fn jsonString(input: []const u8, name: []const u8) ?[]const u8 {
     return rest[1 .. 1 + end];
 }
 
+// A schema-typed "integer" field is not proof the caller sent a bare number:
+// nothing between the model and this guest validates that, and a quoted
+// "603" is a real shape models produce. Skipping a leading quote here is the
+// difference between silently reading from byte 0 (wrong file location, no
+// error) and honoring what was plainly meant.
 fn jsonUintOpt(input: []const u8, name: []const u8) ?usize {
-    const rest = fieldValue(input, name) orelse return null;
+    var rest = fieldValue(input, name) orelse return null;
+    if (rest.len > 0 and rest[0] == '"') rest = rest[1..];
     var n: usize = 0;
     var digits: usize = 0;
     for (rest) |c| {
@@ -214,7 +220,8 @@ fn jsonUintOpt(input: []const u8, name: []const u8) ?usize {
 }
 
 fn jsonUint(input: []const u8, name: []const u8, fallback: usize) usize {
-    const rest = fieldValue(input, name) orelse return fallback;
+    var rest = fieldValue(input, name) orelse return fallback;
+    if (rest.len > 0 and rest[0] == '"') rest = rest[1..];
     var n: usize = 0;
     var digits: usize = 0;
     for (rest) |c| {
@@ -223,4 +230,16 @@ fn jsonUint(input: []const u8, name: []const u8, fallback: usize) usize {
         digits += 1;
     }
     return if (digits == 0) fallback else n;
+}
+
+test "jsonUintOpt reads a bare number and a quoted one alike" {
+    try std.testing.expectEqual(@as(?usize, 603), jsonUintOpt("{\"start_line\":603}", "start_line"));
+    try std.testing.expectEqual(@as(?usize, 603), jsonUintOpt("{\"start_line\":\"603\"}", "start_line"));
+    try std.testing.expectEqual(@as(?usize, null), jsonUintOpt("{\"path\":\"x\"}", "start_line"));
+}
+
+test "jsonUint falls back only when no digits are present at all" {
+    try std.testing.expectEqual(@as(usize, 40), jsonUint("{\"line_count\":40}", "line_count", 200));
+    try std.testing.expectEqual(@as(usize, 40), jsonUint("{\"line_count\":\"40\"}", "line_count", 200));
+    try std.testing.expectEqual(@as(usize, 200), jsonUint("{}", "line_count", 200));
 }

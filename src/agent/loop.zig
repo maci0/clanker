@@ -185,6 +185,15 @@ pub const Agent = struct {
     /// the wall-clock time spent executing them (e.g. the REPL prints
     /// "done in Nms" under the tool status line).
     on_tool_result: ?*const fn (u64) void = null,
+    /// Optional hook fired after a tool batch that changed this run's private
+    /// todo list, with the list as a bare JSON array (see
+    /// `private_todos.listJson`). Lets a viewer watch the run's own checklist
+    /// while it runs — the list itself is still in-memory and still discarded
+    /// when the run returns, so this is a window, not a second store. Fired on
+    /// the run thread after `executeCalls` has joined its workers, and only on
+    /// an actual change (`List.rev`), so a run that never touches todo_* never
+    /// pays for it.
+    on_todos: ?*const fn ([]const u8) void = null,
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
@@ -474,6 +483,11 @@ pub const Agent = struct {
         // gets a synthetic error result instead of another execution.
         var call_counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
         defer call_counts.deinit(self.ctx.gpa);
+        // Last private-todo revision already reported to `on_todos`. Starts at
+        // the list's current revision rather than 0 so a nested run that
+        // inherits a populated list does not re-announce items the viewer
+        // already has.
+        var last_todos_rev: u32 = if (self.private_todos) |l| l.rev else 0;
         while (iteration < self.max_iterations) : (iteration += 1) {
             if (self.stopRequested()) {
                 log.log(.info, "run stopped at iteration {d}", .{iteration + 1});
@@ -672,6 +686,17 @@ pub const Agent = struct {
             if (self.on_tool_result) |cb| {
                 const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
                 cb(tool_ms);
+            }
+            // The batch has joined, so the private list is quiescent again and
+            // this thread is the only reader. Serializing it costs nothing
+            // unless a todo_* call actually moved it.
+            if (self.on_todos) |cb| {
+                if (self.private_todos) |list| {
+                    if (list.rev != last_todos_rev) {
+                        last_todos_rev = list.rev;
+                        cb(try private_todos.listJson(list, self.arena));
+                    }
+                }
             }
             for (calls, results) |tc, maybe_content| {
                 const content = maybe_content orelse "{\"ok\":true,\"result\":\"\"}";

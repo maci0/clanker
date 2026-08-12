@@ -409,6 +409,49 @@ pub const Theme = struct {
     /// lightened, so it reads as its own theme rather than a tint of Night).
     pub const tokyo_day: Theme = tokyoNightTheme(tokyo_day_palette);
 
+    /// Hackerman: the green-phosphor terminal look, bright green on black,
+    /// amber for numbers/warnings and red for errors so a failure still reads.
+    /// Truecolor; the syntax roles all sit in the green family with a couple
+    /// of accents so code stays legible without leaving the aesthetic.
+    pub const hackerman: Theme = .{
+        .reset = "\x1b[0m",
+        .bold = "\x1b[1m",
+        .italic = "\x1b[3m",
+        .dim = "\x1b[38;2;0;120;0m",
+        .code = "\x1b[38;2;0;255;170m",
+        .heading1 = "\x1b[1m\x1b[38;2;120;255;120m",
+        .heading = "\x1b[1m\x1b[38;2;80;255;80m",
+        .quote = "\x1b[38;2;0;120;0m",
+        .rule = "\x1b[38;2;0;90;0m",
+        .list_num = "\x1b[38;2;0;255;170m",
+        .fence = "\x1b[38;2;0;90;0m",
+        .prompt = "\x1b[38;2;0;255;0m",
+        .tool = "\x1b[38;2;0;255;170m",
+        .err = "\x1b[38;2;255;60;60m",
+        .answer_marker = "\x1b[1m\x1b[38;2;120;255;120m",
+        .ask_question = "\x1b[1m\x1b[38;2;180;255;80m",
+        .ask_pick = "\x1b[1m\x1b[38;2;0;255;170m",
+        .syn_keyword = "\x1b[38;2;120;255;120m",
+        .syn_string = "\x1b[38;2;0;255;170m",
+        .syn_number = "\x1b[38;2;180;255;80m",
+        .syn_builtin = "\x1b[38;2;0;220;140m",
+        .syn_preproc = "\x1b[38;2;180;255;80m",
+        .rgb = .{
+            .keyword = .{ 120, 255, 120 },
+            .string = .{ 0, 255, 170 },
+            .number = .{ 180, 255, 80 },
+            .builtin = .{ 0, 220, 140 },
+            .preproc = .{ 180, 255, 80 },
+            .comment = .{ 0, 120, 0 },
+            .dim = .{ 0, 120, 0 },
+            .tool = .{ 0, 255, 170 },
+            .err = .{ 255, 60, 60 },
+            .rule = .{ 0, 90, 0 },
+            .prompt = .{ 0, 255, 0 },
+            .accent = .{ 80, 255, 80 },
+        },
+    };
+
     /// Every field empty: no SGR codes are ever written, so output stays
     /// identical whether or not the terminal understands color.
     pub const mono: Theme = .{};
@@ -428,6 +471,7 @@ pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Th
         if (std.mem.eql(u8, n, "tokyonight") or std.mem.eql(u8, n, "tokyo-night") or std.mem.eql(u8, n, "tokyonight-night")) return Theme.tokyo_night;
         if (std.mem.eql(u8, n, "storm") or std.mem.eql(u8, n, "tokyonight-storm")) return Theme.tokyo_storm;
         if (std.mem.eql(u8, n, "day") or std.mem.eql(u8, n, "tokyonight-day")) return Theme.tokyo_day;
+        if (std.mem.eql(u8, n, "hackerman")) return Theme.hackerman;
     }
     if (environ_map.get("NO_COLOR")) |v| {
         if (v.len > 0) return Theme.mono;
@@ -449,6 +493,7 @@ pub const names = [_][]const u8{
     "tokyonight",
     "tokyonight-storm",
     "tokyonight-day",
+    "hackerman",
 };
 
 /// Whether `select` recognizes `name` (canonical spelling or a known alias),

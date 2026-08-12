@@ -1,0 +1,19 @@
+{
+  "name": "compare_list",
+  "kind": "task",
+  "description": "compare with {} must list past blind comparisons as ok:true without asking a single model anything - the listing is the deliberately free path, the way providers list is the free sibling of providers check. The assertion is only the ok field, so the case is indifferent to whether this machine has ever run a comparison and to which providers it has configured; it goes red when the state/compare/ fs_prefixes policy, the ledger read, or the listing serialization breaks, failures a green build would otherwise hide.",
+  "prompt": "Use the compare tool with input {}. Do not pass a prompt, an id, or any other field, so that no model is called. Look at the tool's JSON result and reply with only the value of its \"ok\" field: true or false.",
+  "requires_tool": "compare",
+  "criteria": [
+    {
+      "includes": [
+        "true"
+      ]
+    },
+    {
+      "excludes": [
+        "false"
+      ]
+    }
+  ]
+}

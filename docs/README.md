@@ -1,5 +1,8 @@
 # clanker — Reference Documentation
 
+External-project digests (what we can learn from them) live in [docs/digests/](digests/).
+
+
 ## Architecture
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs tools as sandboxed WebAssembly modules via zwasm and improves its own source through a gated loop.
@@ -11,7 +14,7 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run.
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
 
 ### Interactive UX (REPL, `clanker run`)
 
@@ -20,9 +23,13 @@ Both `clanker repl` and `clanker run` render the same live status while a turn i
 - a `⚙ <tool names>` line when a tool batch starts, and a `↳ <ms>` line when it finishes,
 - a bold `›` gutter marking where the model's actual answer begins,
 - the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/cli.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
-- a dim stats footer per turn: prompt/completion tokens, wall time, tok/s, cache hit rate, cost.
+- a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
 
-`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status on stderr, gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
+The vaxis REPL adds two things `clanker run` has no use for, since a one-shot run has no history to lose:
+- a running `ctx <used>/<window> (<pct>%)` meter, the tokens the session has spent, and its cost so far, in the status bar next to the provider/model,
+- a line whenever history is actually dropped. `[history compacted: dropped 12 messages, freed 48 KB]` is the save-time trim against `max_session_tokens`; `[context compacted: N earlier messages replaced by a summary to fit the model window]` is the mid-turn compaction `agent.compact_threshold_bytes` triggers inside the agent loop. Both used to happen silently, which meant a long session could lose the exchange it was about to be asked to remember with nothing on screen.
+
+`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status and the per-turn stats footer on stderr, both gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
 
 ### LLM providers (`src/llm/`)
 
@@ -85,6 +92,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_exec` | Execute a command in the sandbox |
 | `ck_docker` | Run a Docker container (if allowed) |
 | `ck_llm` | One-shot model call; denied unless the descriptor sets `"llm": true` |
+| `ck_llm_many` | One prompt to several provider/model targets at once, each on its own thread, joined before returning: `{"prompt","system","max_tokens","targets":[{"provider","model"}]}` in, a JSON array of `{provider,model,ok,text\|error,ms,tokens}` in target order out. A guest is single-threaded, so a loop of `ck_llm` costs the sum of the models' latencies and this costs the slowest one. One failing target is a failing element, never a failing call. Same `"llm": true` grant and same session token budget as `ck_llm`; capped at 8 targets |
 | `ck_subagent` | Nested bounded agent run; needs a parent agent run to attach to |
 | `ck_ask` | Put a multiple-choice question to the human, when one is attached |
 | `ck_chat` | Send to or read a chatroom |
@@ -95,6 +103,8 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_result` | Write the tool result into the host arena |
 
 Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools/manifests/*.tool.json` control network and filesystem access.
+
+A guest is single-threaded, so anything a tool wants to do concurrently has to be one host call that fans out, not a loop in the guest. That is what `ck_swarm` (nested agents) and `ck_llm_many` (completions) both are; the reasoning, and the alternatives that were weighed, is [docs/adrs/0006](adrs/0006-fan-out-concurrency-belongs-to-the-host.md).
 
 The tool target is `wasm32-freestanding` (not `wasip1`).
 
@@ -237,7 +247,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
-| `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
+| `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
 entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
@@ -295,7 +305,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored, so per-worktree work runs as `git -C .local/worktrees/<wt> add/commit/push <branch>` |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
@@ -311,6 +321,7 @@ changes as tools are added.
 | `subagent` | none | Delegate a task to a nested sub-agent run (own context, bounded iterations, dedicated thread) |
 | `rlm` | none | Recursive Language Model: recursively call a sub-LM over input chunks with bounded depth |
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
+| `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_blind.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
 | `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
@@ -449,6 +460,7 @@ iter 2
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
+| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`src/agent/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `eval [name]` | Run evals |
@@ -460,6 +472,7 @@ iter 2
 | `mcp` | Start the MCP server |
 | `goal` | Design and persist a structured goal |
 | `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
+| `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick. The web UI's Compare tab is the same thing in a browser: the answers side by side and a pick button per column, reading blind and recording through the same tool op |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
 | `chat send <room> "<text>"` | Send a message to a chatroom |
@@ -687,6 +700,8 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |
 | `/api/arena` | GET | List past arena matches |
 | `/api/arena/<id>` | GET | One match: combatants, HP, per-round moves and the verdict. The arena view polls this while a match is running and stops on the verdict |
+| `/api/compare` | GET | List past blind comparisons. Read blind: each row says whether a judge reached a verdict, never whose, since a winning provider name beside a verdict letter is the key to a two-way comparison |
+| `/api/compare/<id>` | GET, POST | GET reads one comparison blind — the answers in their stored order under `A`/`B`/`C`, with no provider or model anywhere in the reply. POST `{"pick":"<letter>"}` records the human's pick through the same tool op `clanker compare --show <id> --pick <letter>` uses, and the reply is revealed |
 | `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
@@ -715,6 +730,8 @@ With `"stream": true`, the response body is `text/plain` and framed line-by-line
 With `"stream": true` the run can also ask: when the agent calls `ask_user`, an `{"type":"ask","id":n,"question":"...","options":[...]}` event goes down the stream and the run blocks until `POST /api/ask` with `{"id": n, "answer": "<one of the options>"}` resolves it — any other answer is refused with 400. An unanswered question times out after `agent.ask_timeout_seconds` (default 120) and the tool gets the same "nobody attached" answer a headless run gets, so a closed tab degrades to the model deciding for itself.
 
 With `agent.confirm_writes` set to `"browser"` or `"always"`, a streaming run also confirms: before a write-capable tool call runs, a `{"type":"confirm","id":n,"tool":"git","args_preview":"...","options":["allow","deny"]}` event goes down the stream and the run blocks until `POST /api/ask` answers `"allow"` or `"deny"` (the same endpoint and the same byte-for-byte option check as `ask`). The preview is the call's arguments truncated to 400 bytes. Anything short of an explicit `"allow"` — a deny, a timeout, a closed tab — refuses the call, and the model is told the user declined rather than left hanging.
+
+A streaming run also reports its own checklist. Whenever a `todo_*` call changes the run's private todo list, a `{"type":"todos","todos":[{"todo":"p1","title":"...","status":"open|claimed|closed"}]}` event goes down the stream and the web UI renders it as a checklist in the turn card. It is the whole list every time, not a delta, so a client that missed an event is never out of step. Nothing is persisted and there is no endpoint to fetch it from: the list lives in memory for the duration of the run (see [prds/0003-run-todos.md](prds/0003-run-todos.md)), and reading it with `todo_list` is not a change, so a run that polls its own list does not emit an event per poll. Shared, durable work is the board (`/api/board`), not this.
 
 `error` events (`{"type":"error","message":"..."}`) can appear instead of `done` if the run fails mid-stream. A client must buffer on `\n` and only treat a *complete* line starting with `0x01` as an event — a naive per-chunk check can split an event across two reads. The web UI's line splitter (`tools/zig/webui/index.html`) is the reference implementation.
 

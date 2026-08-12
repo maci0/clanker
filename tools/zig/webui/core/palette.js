@@ -53,7 +53,7 @@ export function paletteEntries() {
     out.push({ kind: "goal", label: label + st, run: function () { _showView("goals", true); } });
   });
   _refs.allToolsHolder.list.forEach(function (t2) {
-    var label = t.name + (t.description ? "  ·  " + t.description.slice(0, 80) : "");
+    var label = t2.name + (t2.description ? "  ·  " + t2.description.slice(0, 80) : "");
     out.push({ kind: "tool", label: label, run: function () { _showView("tools", true); _showToolDetail(t2); } });
   });
   return out;
