@@ -701,7 +701,17 @@ pub const Config = struct {
     }
 
     fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
-        return std.fmt.allocPrint(arena, "clanker-{d}", .{std.c.getpid()});
+        var seed: u64 = @as(u64, @intCast(std.c.getpid())) *% 0x9e3779b97f4a7c15;
+        var host_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
+        if (std.posix.gethostname(&host_buf)) |host| {
+            for (host) |ch| seed ^= std.hash.Wyhash.hash(0, &[_]u8{ch});
+        } else |_| {}
+        seed ^= std.hash.Wyhash.hash(0, @as([*]const u8, @ptrCast(&seed))[0..8]);
+        var prng = std.Random.DefaultPrng.init(seed);
+        const n = prng.random().intRangeAtMost(u16, 100, 999);
+        const adjectives = [_][]const u8{ "amber", "cobalt", "crimson", "ember", "harbor", "indigo", "juniper", "lark", "moss", "nova", "obsidian", "quill", "river", "sable", "topaz", "willow" };
+        const adj = adjectives[prng.random().intRangeAtMost(usize, 0, adjectives.len - 1)];
+        return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ adj, n });
     }
 
     const ParsedAgent = struct {

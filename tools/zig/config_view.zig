@@ -14,14 +14,6 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
-const Found = struct { name: []const u8, text: []const u8 };
-
-fn readEither(toml_name: []const u8, json_name: []const u8) ?Found {
-    if (lib.fsRead(toml_name) catch null) |t| return .{ .name = toml_name, .text = t };
-    if (lib.fsRead(json_name) catch null) |j| return .{ .name = json_name, .text = j };
-    return null;
-}
-
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     var section: []const u8 = "";
@@ -30,8 +22,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (s == .string) section = s.string;
         }
     }
-    const base = readEither("config.toml", "config.json") orelse return lib.fail(out, "config.toml/config.json unreadable");
-    const local = readEither("config.local.toml", "config.local.json");
+    const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml/config.json unreadable");
+    const local = lib.readConfigFile("config.local");
 
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(lib.alloc);

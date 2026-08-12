@@ -1806,8 +1806,10 @@ function renderChatRooms(rooms) {
     .filter(function (pair) { return pair[1].length; })
     .map(function (pair) {
       return T.optgroup({ label: pair[0] }, pair[1].map(function (r) {
-        return T.option({ value: r.room },
-          chatRoomLabel(r) + (r.messages ? "  ·  " + r.messages : ""));
+        var label = chatRoomLabel(r);
+        if (r.messages) label += "  ·  " + r.messages;
+        if (r.unread) label += " · " + r.unread + " new";
+        return T.option({ value: r.room }, label);
       }));
     }));
 
@@ -1906,10 +1908,14 @@ function pollChat(room) {
       // Measured before anything is appended: whether to follow the
       // conversation depends on where the reader was, not where they end up.
       var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
+      // reset grouping when loading fresh batch (rooms switch already clears, but keep day key fresh)
+      if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = ""; }
       fresh.forEach(function (m) {
         rememberChatId(m.id);
         if (m.ts > chatLastTs) chatLastTs = m.ts;
-        el.chatLog.appendChild(buildChatMessage(m));
+        var node = buildChatMessage(m);
+        if (node._daySep) el.chatLog.appendChild(node._daySep);
+        el.chatLog.appendChild(node);
       });
       // Only chase the bottom for someone already at it. Scrolling a reader
       // away from the message they are part-way through is worse than making
@@ -1942,27 +1948,59 @@ function rememberChatId(id) {
 
 
 
+var _lastChatFrom = null;
+var _lastChatTs = 0;
+function _chatDayKey(ts){ try{ var d=new Date(ts*1000); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }catch(_){ return ""; } }
+var _lastChatDay = "";
 function buildChatMessage(m) {
+  var grouped = (m.from === _lastChatFrom) && (m.ts - _lastChatTs < 300) && (_chatDayKey(m.ts) === _lastChatDay);
   var wrap = document.createElement("div");
   wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
+  if (grouped) wrap.setAttribute("data-grouped", "true");
+
+  // day separator (Slack-style)
+  var dayKey = _chatDayKey(m.ts);
+  if (dayKey && dayKey !== _lastChatDay) {
+    _lastChatDay = dayKey;
+    var sep = document.createElement("div");
+    sep.className = "chat-day";
+    sep.textContent = dayKey;
+    // attach as sibling marker stored on wrap for the caller to insert
+    wrap._daySep = sep;
+  } else if (!grouped) {
+    // keep _lastChatDay current even when grouped
+  }
 
   var meta = document.createElement("div");
   meta.className = "chat-meta";
   var mark = document.createElement("span");
   mark.className = "chat-mark";
   mark.textContent = clankerMark(m.from || "");
-  // Decorative: the name follows it and says the same thing.
   mark.setAttribute("aria-hidden", "true");
   meta.appendChild(mark);
   var from = document.createElement("span");
   from.className = "chat-from";
   from.textContent = m.from;
+  from.setAttribute("data-color", String((function(h){ var v=0; for(var i=0;i<m.from.length;i++) v=(v*31 + m.from.charCodeAt(i))>>>0; return v%8; })(m.from)));
+  // hue per name so different clankers read as different people at a glance (Slack-like)
+  var hues = ["#0b57d0","#7c3aed","#059669","#d97706","#dc2626","#0891b2","#9333ea","#65a30d"];
+  var hue = hues[parseInt(from.getAttribute("data-color"),10)%hues.length];
+  from.style.color = hue;
+  from.style.borderBottom = "2px solid " + hue;
   meta.appendChild(from);
   var time = document.createElement("span");
   time.className = "chat-time";
   time.textContent = formatChatTime(m.ts);
   meta.appendChild(time);
   wrap.appendChild(meta);
+  // Slack-like hover timestamp gutter for grouped messages
+  if (grouped) {
+    var gutter = document.createElement("span");
+    gutter.className = "chat-gutter-time";
+    gutter.textContent = formatChatTime(m.ts);
+    gutter.setAttribute("aria-hidden", "true");
+    wrap.appendChild(gutter);
+  }
 
   var text = document.createElement("div");
   text.className = "chat-text";
@@ -1971,9 +2009,43 @@ function buildChatMessage(m) {
     text.classList.add("chat-action");
     text.textContent = said;
   } else {
+    // Slack-style unfurl: bare URL preview affordance (no fetch, just link styling already does it,
+    // but we add a subtle link card when the message is exactly a URL)
+    var trimmed = m.text.trim();
+    var isBareUrl = /^https?:\/\/\S+$/.test(trimmed);
     text.textContent = m.text;
+    if (isBareUrl) {
+      var linkCard = document.createElement("a");
+      linkCard.href = trimmed;
+      linkCard.target = "_blank";
+      linkCard.rel = "noopener noreferrer";
+      linkCard.className = "chat-unfurl";
+      linkCard.textContent = trimmed;
+      // keep original text too for copy, but add card beneath
+      var unfurl = document.createElement("div");
+      unfurl.style.marginTop = "0.3rem";
+      unfurl.appendChild(linkCard);
+      wrap._unfurl = unfurl;
+    }
   }
   wrap.appendChild(text);
+  if (wrap._unfurl) wrap.appendChild(wrap._unfurl);
+  // Slack-like hover quick actions (copy / emoji) — decorative for now, no wire yet
+  var actions = document.createElement("div");
+  actions.className = "chat-actions";
+  actions.setAttribute("aria-hidden", "true");
+  var copyBtn = document.createElement("button");
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
+  actions.appendChild(copyBtn);
+  var reactBtn = document.createElement("button");
+  reactBtn.type = "button"; reactBtn.className = "secondary"; reactBtn.textContent = "♡";
+  reactBtn.title = "React";
+  actions.appendChild(reactBtn);
+  wrap.appendChild(actions);
+  // update grouping state for next message
+  _lastChatFrom = m.from;
+  _lastChatTs = m.ts;
   return wrap;
 }
 
@@ -2025,11 +2097,28 @@ el.chatRefresh.addEventListener("click", function () {
   loadChatRooms().finally(function () { el.chatRefresh.disabled = false; });
 });
 
+el.chatText.addEventListener("keydown", function(e){
+  if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {
+    // Slack-style @ mention hint — lightweight: show available peers/instance in status
+    var peers = (knownPeers || []).map(function(p){ return p.name || p; }).join(", ");
+    if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " — also: " + peers.split(",").slice(1,2).join("") + "…" : "");
+  }
+});
 el.chatForm.addEventListener("submit", function (e) {
   e.preventDefault();
   var text = el.chatText.value.trim();
   var room = el.chatRoom.value;
   if (!text || !room) return;
+  // Slack-like /slash command affordance (client-side hint); server handles plain text
+  if (text.charAt(0) === "/") {
+    var cmd = text.slice(1).split(/\s+/)[0].toLowerCase();
+    if (cmd === "me" || cmd === "shrug") {
+      text = text.slice(cmd.length + 2);
+      if (!text) { el.chatStatus.textContent = "Usage: /" + cmd + " <message>"; return; }
+      if (cmd === "shrug") text = text + " ¯\\_(ツ)_/¯";
+      text = "_" + text + "_";
+    }
+  }
   // maxlength on the input counts UTF-16 units while the server counts
   // bytes, so multi-byte text passes the browser's check and comes back as a
   // bare HTTP 400. Checked here in the same units the server uses.
@@ -3215,11 +3304,44 @@ function boardColumn(col, s) {
     title: over ? shown.length + " of " + col.wip + ", over the limit" : null
   }, shown.length + (col.wip ? " / " + col.wip : ""));
 
+  // Trello-style empty lane placeholder — with quick-add affordance
+  var items = shown.map(function (c) { return T.li(cardNode(c)); });
+  if (!shown.length) {
+    var emptySlot = document.createElement("li");
+    emptySlot.className = "board-empty-slot";
+    emptySlot.setAttribute("aria-hidden", "true");
+    emptySlot.textContent = "Drop here — or ";
+    var addLink = document.createElement("button");
+    addLink.type = "button"; addLink.className = "secondary";
+    addLink.textContent = "Add card";
+    addLink.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
+    emptySlot.appendChild(addLink);
+    items.push(emptySlot);
+  }
   var list = T.ul({
     class: "board-cards",
     "aria-label": col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards")
-  }, shown.map(function (c) { return T.li(cardNode(c)); }));
+  }, items);
 
+  var quickAdd = T.div({ class: "board-quick-add", hidden: true });
+  var qaInput = document.createElement("input");
+  qaInput.type = "text"; qaInput.placeholder = "Card title…"; qaInput.maxLength = 500;
+  var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Add";
+  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "secondary"; qaCancel.textContent = "✕";
+  quickAdd.appendChild(qaInput); quickAdd.appendChild(qaSave); quickAdd.appendChild(qaCancel);
+  function openQuickAdd(){ quickAdd.hidden = false; qaInput.focus(); }
+  function closeQuickAdd(){ quickAdd.hidden = true; qaInput.value = ""; }
+  qaCancel.addEventListener("click", function(e){ e.stopPropagation(); closeQuickAdd(); });
+  qaInput.addEventListener("keydown", function(e){
+    if (e.key === "Enter" && qaInput.value.trim()) { e.preventDefault(); doCreate(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeQuickAdd(); }
+  });
+  function doCreate(){
+    var t = qaInput.value.trim(); if (!t) return;
+    qaSave.disabled = true;
+    postBoard({ op: "create", title: t, column: col.id }, "Card added to " + col.title + ".").finally(function(){ qaSave.disabled = false; closeQuickAdd(); });
+  }
+  qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
   var colEl = T.section({
     class: "board-col",
     "data-column": col.id,
@@ -3235,8 +3357,55 @@ function boardColumn(col, s) {
   },
     T.div({ class: "board-col-head" },
       T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
+      T.span({ style: "display:flex; gap:0.25rem; align-items:center;" },
+        (function(){
+          var add = document.createElement("button");
+          add.type = "button"; add.className = "secondary"; add.textContent = "+";
+          add.title = "Add card to " + col.title;
+          add.style.minHeight = "24px"; add.style.padding = "0 0.45rem"; add.style.fontSize = "12px"; add.style.borderRadius = "999px";
+          add.addEventListener("click", function(e){
+            e.stopPropagation();
+            // Trello now does inline quick-add, not prompt — open the row input
+            if (quickAdd.hidden) openQuickAdd(); else closeQuickAdd();
+          });
+          var wrap = document.createElement("span");
+          wrap.appendChild(add);
+          var isDone = (col.id === "done" || col.title.toLowerCase() === "done");
+          var isArchived = false;
+          try{ isArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
+          if (isDone) {
+            var arch = document.createElement("button");
+            var archived = isArchived && document.querySelector('[data-column="done"]') && document.querySelector('[data-column="done"]').hidden;
+            // reflect actual hidden state if already applied
+            try{ if (window.clankerBoardArchive) archived = true; }catch(_){}
+            arch.type = "button"; arch.className = "secondary"; arch.textContent = archived ? "Unarchive" : "Archive";
+            arch.title = archived ? "Show done cards again" : "Archive done cards (hide from this view)";
+            arch.style.minHeight = "24px"; arch.style.padding = "0 0.45rem"; arch.style.fontSize = "11px"; arch.style.borderRadius = "999px";
+            arch.addEventListener("click", function(e){
+              e.stopPropagation();
+              var currentlyArchived = false;
+              try{ currentlyArchived = window.localStorage.getItem("clanker.boardArchive") === "1"; }catch(_){}
+              try{ if (window.clankerBoardArchive) currentlyArchived = true; }catch(_){}
+              var nextArchived = !currentlyArchived;
+              try{
+                if (nextArchived) window.localStorage.setItem("clanker.boardArchive", "1");
+                else window.localStorage.removeItem("clanker.boardArchive");
+                window.clankerBoardArchive = nextArchived;
+              }catch(_){}
+              var doneCol2 = document.querySelector('[data-column="done"]');
+              if (doneCol2) doneCol2.hidden = nextArchived;
+              try{ renderBoard(null); }catch(_){}
+              arch.textContent = nextArchived ? "Unarchive" : "Archive";
+              arch.title = nextArchived ? "Show done cards again" : "Archive done cards (hide from this view)";
+            });
+            wrap.appendChild(arch);
+          }
+          return wrap;
+        })()
+      ),
       count),
-    list);
+    list,
+    quickAdd);
   return colEl;
 }
 
@@ -3267,9 +3436,17 @@ function cardNode(c) {
   var b = document.createElement("button");
   b.type = "button";
   b.className = "card";
+  if (c.priority && c.priority !== "normal") b.setAttribute("data-priority", c.priority);
   b.draggable = true;
   b.setAttribute("data-card", c.id);
   if (c.id === openCardId) b.setAttribute("aria-current", "true");
+  // Trello cover strip — priority tint at top edge
+  if (c.priority && c.priority !== "normal") {
+    var cover = document.createElement("div");
+    cover.className = "card-cover";
+    cover.setAttribute("data-priority", c.priority);
+    b.appendChild(cover);
+  }
   // The only way to move a card without a pointer, so it says so rather than
   // living in a source comment.
   b.setAttribute("aria-keyshortcuts", "Control+ArrowLeft Control+ArrowRight");
@@ -3310,14 +3487,58 @@ function cardNode(c) {
   }
   if ((c.subtasks || []).length) {
     var doneN = c.subtasks.filter(function (s) { return s.done; }).length;
+    var totalN = c.subtasks.length;
+    var pct = totalN ? Math.round(doneN / totalN * 100) : 0;
     var prog = document.createElement("span");
     prog.className = "card-progress";
-    prog.textContent = doneN + "/" + c.subtasks.length;
+    prog.textContent = doneN + "/" + totalN + " · " + pct + "%";
     meta.appendChild(prog);
+    var bar = document.createElement("div");
+    bar.className = "card-progress-bar";
+    bar.setAttribute("data-done", String(doneN === totalN && totalN > 0));
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-valuenow", String(pct));
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    var fill = document.createElement("span");
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+    // attach bar outside meta so it spans card width
+    b._progressBar = bar;
   }
+  // Trello-style member avatar (initials) when assigned, Slack-style mention
+  var membersWrap = null;
   if (c.assignee) {
+    membersWrap = document.createElement("span");
+    membersWrap.className = "card-members";
+    var av = document.createElement("span");
+    av.className = "card-member";
+    av.textContent = (c.assignee.trim().charAt(0) || "?").toUpperCase();
+    av.title = c.assignee + " — click to reassign";
+    av.setAttribute("role", "button");
+    av.setAttribute("tabindex", "0");
+    av.addEventListener("click", function(e){
+      e.stopPropagation();
+      var next2 = prompt("Assign to (empty to unassign):", c.assignee || "");
+      if (next2 === null) return;
+      postBoard({ op: "update", id: c.id, assignee: next2.trim() }, next2.trim() ? "Assigned to " + next2.trim() + "." : "Unassigned.");
+    });
+    av.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); av.click(); } });
+    membersWrap.appendChild(av);
+  } else {
     var who = document.createElement("span");
-    who.textContent = c.assignee;
+    who.textContent = "unassigned";
+    who.title = "Unassigned — click to assign";
+    who.style.cursor = "pointer";
+    who.setAttribute("role", "button");
+    who.setAttribute("tabindex", "0");
+    who.addEventListener("click", function(e){
+      e.stopPropagation();
+      var next = prompt("Assign to (empty to unassign):", c.assignee || "");
+      if (next === null) return;
+      postBoard({ op: "update", id: c.id, assignee: next.trim() }, next.trim() ? "Assigned to " + next.trim() + "." : "Unassigned.");
+    });
+    who.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); who.click(); } });
     meta.appendChild(who);
   }
   if (c.usage && c.usage.cost) {
@@ -3325,7 +3546,9 @@ function cardNode(c) {
     cost.textContent = fmtCost(c.usage.cost);
     meta.appendChild(cost);
   }
+  if (membersWrap) meta.appendChild(membersWrap);
   if (meta.childNodes.length) b.appendChild(meta);
+  if (b._progressBar) b.appendChild(b._progressBar);
 
   b.addEventListener("click", function () {
     openCardId = openCardId === c.id ? null : c.id;
@@ -3588,6 +3811,32 @@ function showCardDetail(id) {
     row.appendChild(drop);
     subs.appendChild(row);
   });
+  // Trello-style checklist progress bar (also on card face)
+  if ((c.subtasks || []).length) {
+    var dN = c.subtasks.filter(function(ss){ return ss.done; }).length;
+    var tN = c.subtasks.length;
+    var pct2 = tN ? Math.round(dN / tN * 100) : 0;
+    var track = document.createElement("div");
+    track.className = "card-progress-bar";
+    track.setAttribute("data-done", String(dN === tN && tN>0));
+    track.setAttribute("role", "progressbar");
+    track.setAttribute("aria-valuenow", String(pct2));
+    track.setAttribute("aria-valuemin", "0");
+    track.setAttribute("aria-valuemax", "100");
+    track.setAttribute("aria-label", "Checklist " + dN + " of " + tN);
+    var fill2 = document.createElement("span");
+    fill2.style.width = pct2 + "%";
+    track.appendChild(fill2);
+    var pctLabel = document.createElement("span");
+    pctLabel.className = "card-progress"; pctLabel.textContent = dN + "/" + tN + " · " + pct2 + "%";
+    pctLabel.style.marginLeft = "0.5rem";
+    var progRow = document.createElement("div");
+    progRow.className = "detail-row";
+    progRow.style.alignItems = "center";
+    progRow.appendChild(track); track.style.flex = "1";
+    progRow.appendChild(pctLabel);
+    subs.appendChild(progRow);
+  }
   var subIn = input("card-f-subtask", "text", "", "Add a subtask…");
   subIn.maxLength = 500;
   subIn.addEventListener("keydown", function (e) {

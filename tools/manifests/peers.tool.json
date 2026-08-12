@@ -35,7 +35,9 @@
   },
   "fs_prefixes": [
     "config.json",
-    "config.local.json"
+    "config.local.json",
+    "config.toml",
+    "config.local.toml"
   ],
   "network_from_config": "peers",
   "category": "peers"

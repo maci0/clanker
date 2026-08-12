@@ -33,7 +33,9 @@
   "sequential": true,
   "fs_prefixes": [
     "config.json",
-    "config.local.json"
+    "config.local.json",
+    "config.toml",
+    "config.local.toml"
   ],
   "network_allow": [],
   "network_from_config": "peers",

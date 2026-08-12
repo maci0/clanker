@@ -62,23 +62,27 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return lib.fail(out, "action must be \"phonebook\" or \"notify\"");
 }
 
-/// config.local.json wins over config.json, matching the harness's own merge.
+/// config.local wins over config, matching the harness's own merge.
 fn loadPeers(alloc: std.mem.Allocator) ![]const Peer {
     var peers: []const Peer = &.{};
-    for ([_][]const u8{ "config.json", "config.local.json" }) |path| {
-        const raw = lib.fsRead(path) catch continue;
-        const cfg = std.json.parseFromSliceLeaky(ConfigFile, alloc, raw, .{ .ignore_unknown_fields = true }) catch continue;
-        if (cfg.peers.len > 0) peers = cfg.peers;
+    inline for (.{ "config", "config.local" }) |stem| {
+        if (lib.readConfigFile(stem)) |f| {
+            if (std.json.parseFromSliceLeaky(ConfigFile, alloc, f.text, .{ .ignore_unknown_fields = true }) catch null) |cfg| {
+                if (cfg.peers.len > 0) peers = cfg.peers;
+            }
+        }
     }
     return peers;
 }
 
 fn instanceName(alloc: std.mem.Allocator) []const u8 {
-    for ([_][]const u8{ "config.local.json", "config.json" }) |path| {
-        const raw = lib.fsRead(path) catch continue;
-        const cfg = std.json.parseFromSliceLeaky(ConfigFile, alloc, raw, .{ .ignore_unknown_fields = true }) catch continue;
-        if (cfg.instance) |i| {
-            if (i.name.len > 0) return i.name;
+    inline for (.{ "config.local", "config" }) |stem| {
+        if (lib.readConfigFile(stem)) |f| {
+            if (std.json.parseFromSliceLeaky(ConfigFile, alloc, f.text, .{ .ignore_unknown_fields = true }) catch null) |cfg| {
+                if (cfg.instance) |i| {
+                    if (i.name.len > 0) return i.name;
+                }
+            }
         }
     }
     return "clanker";
