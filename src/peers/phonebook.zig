@@ -33,7 +33,7 @@ pub fn cmdPhonebook(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.peers) {
         log.log(.error_, "peers module is disabled...", .{});
         return error.ModuleDisabled;

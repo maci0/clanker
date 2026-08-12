@@ -221,7 +221,7 @@ fn announce(init: std.process.Init, arena: std.mem.Allocator, cfg: *const config
 pub fn cmdPrune(init: std.process.Init, apply: bool) !void {
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const state_dir = cfg.agent.state_dir;
 
     const candidates = try scan(io, arena, state_dir);

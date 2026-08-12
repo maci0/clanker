@@ -690,6 +690,112 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, h.sandbox.config_json);
 }
 
+/// ck_harness_config() -> the harness's own effective config (providers,
+/// models, instance, peers, default_provider), as JSON. Distinct from
+/// ck_config: that returns this *tool's* descriptor `config` object; this
+/// returns clanker's config.toml/config.local.toml, merged, as the harness
+/// parsed it — regardless of whether the checkout uses TOML or (legacy)
+/// JSON. Guests need this because a wasm32-freestanding module carries no
+/// TOML parser: reading config.toml's raw bytes directly only works for
+/// tools that just display the file (config_view's whole-dump path); a tool
+/// that needs structured fields (peers, providers, cmd_status, ask_user)
+/// goes through the host, which already parsed it once at startup.
+pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const cfg = h.sandbox.cfg orelse return Err.denied;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const json_out = harnessConfigJSON(arena, cfg) catch return Err.too_large;
+    return h.writeResult(bytes, json_out);
+}
+
+/// Serializes the fields of `Config` that guests actually consume. Providers
+/// keep their nested `models` map (the shape guests already parse) even
+/// though the harness itself now stores it distributed that way in memory
+/// from a flat `[models."provider/model"]` table on disk — see
+/// distributeModels in config.zig.
+fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config) ![]const u8 {
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+
+    try s.beginObject();
+    try s.objectField("default_provider");
+    try s.write(cfg.default_provider);
+
+    try s.objectField("providers");
+    try s.beginObject();
+    var pit = cfg.providers.iterator();
+    while (pit.next()) |pkv| {
+        const p = pkv.value_ptr;
+        try s.objectField(pkv.key_ptr.*);
+        try s.beginObject();
+        try s.objectField("kind");
+        try s.write(@tagName(p.kind));
+        try s.objectField("base_url");
+        try s.write(p.base_url);
+        if (p.api_key_env) |e| {
+            try s.objectField("api_key_env");
+            try s.write(e);
+        }
+        try s.objectField("default_model");
+        try s.write(p.default_model);
+        try s.objectField("models");
+        try s.beginObject();
+        var mit = p.models.iterator();
+        while (mit.next()) |mkv| {
+            const m = mkv.value_ptr;
+            try s.objectField(mkv.key_ptr.*);
+            try s.beginObject();
+            try s.objectField("context_window");
+            try s.write(m.context_window);
+            try s.objectField("max_tokens");
+            try s.write(m.max_tokens);
+            if (m.display) |d| {
+                try s.objectField("display");
+                try s.write(d);
+            }
+            if (m.cost_per_1m_input) |c| {
+                try s.objectField("cost_per_1m_input");
+                try s.write(c);
+            }
+            if (m.cost_per_1m_output) |c| {
+                try s.objectField("cost_per_1m_output");
+                try s.write(c);
+            }
+            try s.endObject();
+        }
+        try s.endObject();
+        try s.endObject();
+    }
+    try s.endObject();
+
+    try s.objectField("instance");
+    try s.beginObject();
+    try s.objectField("name");
+    try s.write(cfg.instance.name);
+    try s.objectField("id");
+    try s.write(cfg.instance.id);
+    try s.endObject();
+
+    try s.objectField("peers");
+    try s.beginArray();
+    for (cfg.peers) |p| {
+        try s.beginObject();
+        try s.objectField("name");
+        try s.write(p.name);
+        try s.objectField("url");
+        try s.write(p.url);
+        try s.endObject();
+    }
+    try s.endArray();
+
+    try s.endObject();
+    return w.toOwnedSlice();
+}
+
 /// ck_env(name_ptr, name_len) -> value of the environment variable in the
 /// host arena. Returns Err.not_found when the variable is not set, and
 /// Err.invalid when the name is empty or the memory slice is invalid.

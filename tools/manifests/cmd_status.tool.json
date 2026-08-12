@@ -10,12 +10,7 @@
       }
     }
   },
-  "fs_prefixes": [
-    "config.json",
-    "config.local.json",
-    "config.toml",
-    "config.local.toml"
-  ],
+  "fs_prefixes": [],
   "internal": true,
   "category": "harness"
 }

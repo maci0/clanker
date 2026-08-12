@@ -45,7 +45,6 @@ pub const allowed_prefixes = [_][]const u8{
     "AGENTS.md",
     "build.zig",
     "build.zig.zon",
-    "config.json",
     "config.toml",
 };
 

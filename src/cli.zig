@@ -1,6 +1,7 @@
 //! CLI argument parsing and command implementations.
 
 const std = @import("std");
+const toml = @import("toml");
 const config = @import("config.zig");
 const client = @import("llm/client.zig");
 const providers = @import("llm/providers.zig");
@@ -651,7 +652,7 @@ const specs = [_]Spec{
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can actually reach,\nand finishes with the same checks `clanker doctor` runs." },
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, and improve logs\nbeyond the newest 20. Sessions, goals, learnings and chat history are never touched." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can guard a\nscript or a CI step. Connectivity is `clanker providers check`." },
-    .{ .command = .init, .usage = "init", .blurb = "create config.local.json and state/", .group = .maintain },
+    .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build/test/tools/fmt/lint gates", .group = .maintain },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{.tasks}, .detail = "--tasks runs only the agent-driven evals, skipping the selfhost build gates." },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain },
@@ -744,7 +745,7 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     // The other place that compiles repeatedly, and so the other place the
     // build cache grows without bound.
-    const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch config.Config{};
+    const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch config.Config{};
     _ = diskcap.capBuildCache(gpa, io, std.Io.Dir.cwd(), ".zig-cache", cfg.improve.max_cache_bytes);
     try verifyGates(gpa, io, arena);
 }
@@ -825,8 +826,10 @@ fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8
 /// Memorable auto-generated instance names (adjective-noun), so multi-instance
 /// setups identify each other by names like "clanker-cobalt-otter" instead of
 /// opaque ids.
-const name_adjectives = [_][]const u8{ "amber", "azure", "cobalt", "crimson", "ember", "frost", "golden", "jade", "misty", "onyx", "rustic", "sage", "silver", "stormy", "swift", "velvet" };
-const name_nouns = [_][]const u8{ "badger", "cactus", "dolphin", "falcon", "gecko", "heron", "jaguar", "koala", "lemur", "manta", "narwhal", "otter", "panda", "quokka", "raven", "sloth", "tiger", "viper", "wolf", "zebra" };
+// Futurama-robot flavored: a fresh instance reads like it just clocked in at
+// the Robot Arms Conglomerate, not a wildlife photo caption.
+const name_adjectives = [_][]const u8{ "shiny", "rusty", "chrome", "cosmic", "atomic", "turbo", "neon", "quantum", "vintage", "bionic", "rogue", "sentient", "bootleg", "unlicensed", "reckless", "glitchy" };
+const name_nouns = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
 
 fn friendlyInstanceName(arena: std.mem.Allocator, io: std.Io) !struct { name: []const u8, id: []const u8 } {
     const ts: u64 = @intCast(std.Io.Timestamp.now(io, .real).nanoseconds);
@@ -840,14 +843,24 @@ fn friendlyInstanceName(arena: std.mem.Allocator, io: std.Io) !struct { name: []
 }
 
 const local_template =
-    \\{{
-    \\  "default_provider": "deepseek",
-    \\  "providers": {{
-    \\    "deepseek": {{ "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat", "models": {{ "deepseek-chat": {{ "max_tokens": 2048 }} }} }}
-    \\  }},
-    \\  "instance": {{ "name": "{s}", "id": "{s}" }},
-    \\  "agent": {{ "max_iterations": 12 }}
-    \\}}
+    \\default_provider = "deepseek"
+    \\
+    \\[providers.deepseek]
+    \\kind = "openai_compat"
+    \\base_url = "https://api.deepseek.com"
+    \\api_key_env = "DEEPSEEK_API_KEY"
+    \\default_model = "deepseek-chat"
+    \\
+    \\[models."deepseek/deepseek-chat"]
+    \\provider = "deepseek"
+    \\max_tokens = 2048
+    \\
+    \\[instance]
+    \\name = "{s}"
+    \\id = "{s}"
+    \\
+    \\[agent]
+    \\max_iterations = 12
     \\
 ;
 
@@ -855,7 +868,7 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
     const io = init.io;
     const dir = std.Io.Dir.cwd();
     const arena = init.arena.allocator();
-    const local = "config.local.json";
+    const local = "config.local.toml";
     _ = dir.openFile(io, local, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             const ident = try friendlyInstanceName(arena, io);
@@ -885,7 +898,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
 
     var it = cfg.providers.iterator();
@@ -931,7 +944,7 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
     const provider_name = opts.provider orelse cfg.default_provider;
     const out = std.Io.File.stdout();
@@ -1083,11 +1096,11 @@ fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id:
 }
 
 /// `clanker providers fill <name>` — for a provider already declared in
-/// config.json, print each of its configured models' specs as known by the
-/// models.dev catalog, ready to paste into `models.<name>`. Never writes
-/// config.json itself: reformatting the whole file to insert a few fields
-/// risks losing whatever hand structure/comments-adjacent ordering it had,
-/// so the human stays in the loop for the merge.
+/// config.toml, print each of its configured models' specs as known by the
+/// models.dev catalog, ready to paste as a top-level `[models."<provider>/
+/// <name>"]` table. Never writes config.toml itself: reformatting the whole
+/// file to insert a few fields risks losing whatever hand structure/comment
+/// placement it had, so the human stays in the loop for the merge.
 fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -1096,7 +1109,7 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "usage: clanker providers fill <provider>", .{});
         return error.MissingCatalogQuery;
     };
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const p = try cfg.provider(provider_name);
 
     const body = try httpGet(io, gpa, arena, models_dev_url, null);
@@ -1111,10 +1124,10 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
     while (it.next()) |kv| {
         const model_name = kv.key_ptr.*;
         const cat_model = findCatalogModel(cat_provider, model_name) orelse {
-            try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "// {s}: no catalog match\n", .{model_name}));
+            try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "# {s}: no catalog match\n", .{model_name}));
             continue;
         };
-        try out.writeStreamingAll(io, try renderModelSnippet(arena, model_name, cat_model));
+        try out.writeStreamingAll(io, try renderModelSnippet(arena, provider_name, model_name, cat_model));
     }
 }
 
@@ -1172,29 +1185,48 @@ fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std
     return null;
 }
 
-/// A pastable `"<name>": { ... }` block for `models.<provider>.<name>` in
-/// config.json, built from a models.dev model entry.
-fn renderModelSnippet(arena: std.mem.Allocator, name: []const u8, m: std.json.Value) ![]const u8 {
-    if (m != .object) return std.fmt.allocPrint(arena, "// {s}: malformed catalog entry\n", .{name});
+/// A pastable `[models."<provider>/<name>"]` TOML table, built from a
+/// models.dev model entry. `capabilities` mirrors Kimi Code's config.toml
+/// shape: models.dev's own `reasoning`/`tool_call`/`modalities` fields,
+/// translated to the same tag vocabulary ("thinking", "tool_use", "image_in",
+/// "video_in", "audio_in") clanker's own Model.capabilities expects.
+fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, m: std.json.Value) ![]const u8 {
+    if (m != .object) return std.fmt.allocPrint(arena, "# {s}: malformed catalog entry\n", .{name});
     var fields: std.ArrayList([]const u8) = .empty;
     if (m.object.get("limit")) |l| if (l == .object) {
-        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"context_window\": {d}", .{@as(i64, @trunc(c))}));
-        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"max_tokens\": {d}", .{@as(i64, @trunc(o))}));
+        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @trunc(c))}));
+        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @trunc(o))}));
     };
     if (m.object.get("cost")) |c| if (c == .object) {
-        if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_input\": {d}", .{v}));
-        if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"cost_per_1m_output\": {d}", .{v}));
+        if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
+        if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     };
-    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "  \"display\": \"{s}\"", .{disp}));
+    if (fieldStr(m.object, "name")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = \"{s}\"", .{disp}));
+
+    var caps: std.ArrayList([]const u8) = .empty;
+    if (m.object.get("reasoning")) |r| if (r == .bool and r.bool) try caps.append(arena, "\"thinking\"");
+    if (m.object.get("tool_call")) |t| if (t == .bool and t.bool) try caps.append(arena, "\"tool_use\"");
+    if (m.object.get("modalities")) |mo| if (mo == .object) {
+        if (mo.object.get("input")) |in| if (in == .array) {
+            for (in.array.items) |item| {
+                if (item != .string) continue;
+                if (std.mem.eql(u8, item.string, "image")) try caps.append(arena, "\"image_in\"");
+                if (std.mem.eql(u8, item.string, "video")) try caps.append(arena, "\"video_in\"");
+                if (std.mem.eql(u8, item.string, "audio")) try caps.append(arena, "\"audio_in\"");
+            }
+        };
+    };
+    if (caps.items.len > 0) {
+        const joined = try std.mem.join(arena, ", ", caps.items);
+        try fields.append(arena, try std.fmt.allocPrint(arena, "capabilities = [{s}]", .{joined}));
+    }
 
     var w: std.Io.Writer.Allocating = .init(arena);
-    try w.writer.print("\"{s}\": {{\n", .{name});
-    for (fields.items, 0..) |f, i| {
+    try w.writer.print("[models.\"{s}/{s}\"]\nprovider = \"{s}\"\n", .{ provider_name, name, provider_name });
+    for (fields.items) |f| {
         try w.writer.writeAll(f);
-        if (i < fields.items.len - 1) try w.writer.writeAll(",");
         try w.writer.writeAll("\n");
     }
-    try w.writer.writeAll("}\n");
     return w.toOwnedSlice();
 }
 
@@ -1259,7 +1291,7 @@ fn cmdAutolearn(init: std.process.Init, opts: Options) !void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.autolearn) {
         log.log(.error_, "autolearn module is disabled (modules.autolearn=false in config)", .{});
         return error.ModuleDisabled;
@@ -1549,7 +1581,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
@@ -1937,7 +1969,7 @@ const compactMessages = session.compactMessages;
 
 fn cmdSessions(init: std.process.Init) !void {
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.sessions) {
         log.log(.error_, "sessions module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2044,7 +2076,7 @@ fn printInternalTool(init: std.process.Init, cfg: *const config.Config, tool_nam
 
 fn cmdGraph(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.graphs) {
         log.log(.error_, "graphs module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2057,7 +2089,7 @@ fn cmdGraph(init: std.process.Init, opts: Options) !void {
 fn cmdToolsList(init: std.process.Init, opts: Options) !void {
     _ = opts;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     try printInternalTool(init, &cfg, "cmd_tools", "");
 }
 
@@ -2065,7 +2097,7 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
@@ -2109,7 +2141,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
@@ -2206,7 +2238,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
 fn cmdGoal(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.goal) {
         log.log(.error_, "goal module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2227,7 +2259,7 @@ fn cmdNotify(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.peers) {
         log.log(.error_, "peers module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2273,7 +2305,7 @@ fn cmdMcp(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.mcp) {
         log.log(.error_, "mcp module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2285,7 +2317,7 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.chatrooms or !cfg.chatrooms.on) {
         log.log(.error_, "chatrooms module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2339,7 +2371,7 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
 
 fn cmdStats(init: std.process.Init) !void {
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.token_stats) {
         log.log(.error_, "token_stats module is disabled...", .{});
         return error.ModuleDisabled;
@@ -2389,7 +2421,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const port = opts.port;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
     const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
     // reuse_address lets a restarted `clanker serve` rebind immediately even
@@ -5929,18 +5961,25 @@ test "--model provider/model picks both, and leaves a slashed model id alone" {
     const io = threaded.io();
 
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{
-        \\  "default_provider": "zai",
-        \\  "providers": {
-        \\    "zai": { "base_url": "http://x/v1", "models": { "glm-5.2": {} } },
-        \\    "kimi-k3": { "base_url": "http://y/v1", "models": { "moonshotai/kimi-k3": {} } }
-        \\  }
-        \\}
+        \\default_provider = "zai"
+        \\
+        \\[providers.zai]
+        \\base_url = "http://x/v1"
+        \\
+        \\[providers.kimi-k3]
+        \\base_url = "http://y/v1"
+        \\
+        \\[models."zai/glm-5.2"]
+        \\provider = "zai"
+        \\
+        \\[models."kimi-k3/moonshotai/kimi-k3"]
+        \\provider = "kimi-k3"
+        \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.json", "absent.json");
+    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
 
     // The prefix names a provider, so it selects one.
     const split = try resolveProvider(&cfg, .{ .model = "zai/glm-5.2" });
@@ -6271,24 +6310,30 @@ test "findCatalogModel tries the bare id when the config name carries an OpenRou
     try std.testing.expect(findCatalogModel(provider_entry, "no-such-model") == null);
 }
 
-test "renderModelSnippet emits valid, pasteable JSON with no trailing comma" {
+test "renderModelSnippet emits a valid, pasteable TOML models table" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, fake_models_dev_catalog, .{});
     const model = catalog.object.get("moonshotai").?.object.get("models").?.object.get("kimi-k3").?;
-    const snippet = try renderModelSnippet(arena, "kimi-k3", model);
+    const snippet = try renderModelSnippet(arena, "kimi-k3", "kimi-k3", model);
 
-    // The point of the test: a naive "one field per line, always trailing
-    // comma" writer produces `..."display": "Kimi K3",\n}`, which is not
-    // valid JSON and fails to paste back into config.json.
-    const wrapped = try std.fmt.allocPrint(arena, "{{{s}}}", .{snippet});
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, wrapped, .{});
-    const entry = parsed.object.get("kimi-k3").?;
-    try std.testing.expectEqual(@as(i64, 1048576), entry.object.get("context_window").?.integer);
-    try std.testing.expectEqual(@as(i64, 131072), entry.object.get("max_tokens").?.integer);
-    try std.testing.expectEqualStrings("Kimi K3", entry.object.get("display").?.string);
+    // The point of the test: the snippet has to parse as real TOML (right
+    // quoting on the composite table key, no stray commas — TOML is not
+    // JSON) and paste straight into config.toml as a top-level table.
+    var parser = toml.Parser(toml.Table).init(arena);
+    defer parser.deinit();
+    var result = try parser.parseString(snippet);
+    defer result.deinit();
+    const models = result.value.get("models").?.table;
+    const entry = models.get("kimi-k3/kimi-k3").?.table;
+    try std.testing.expectEqualStrings("kimi-k3", entry.get("provider").?.string);
+    try std.testing.expectEqual(@as(i64, 1048576), entry.get("context_window").?.integer);
+    try std.testing.expectEqual(@as(i64, 131072), entry.get("max_tokens").?.integer);
+    try std.testing.expectEqualStrings("Kimi K3", entry.get("display").?.string);
+    // "reasoning": true on the catalog entry becomes a "thinking" capability.
+    try std.testing.expectEqualStrings("thinking", entry.get("capabilities").?.array.items[0].string);
 }
 
 test "webui registry-miss error names tools_dir and does not sole-blame zig build tools" {
@@ -6319,7 +6364,7 @@ fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var targets: std.ArrayList([]const u8) = .empty;
     defer targets.deinit(gpa);
     for (opts.research_targets) |tt| try targets.append(gpa, tt);

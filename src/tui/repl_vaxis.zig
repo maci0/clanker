@@ -1446,7 +1446,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // screen, so raise the threshold for this command's whole lifetime.
     log.setLevel(.error_);
 
-    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json");
+    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     // `always` has no prompt-rendering path in this REPL yet (see the module
     // doc comment and docs/ROADMAP.md): write-capable tools run ungated here
     // regardless of this setting. Said once, before the alt-screen takes

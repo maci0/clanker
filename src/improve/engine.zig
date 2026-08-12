@@ -175,12 +175,12 @@ fn nextStdSymbol(text: []const u8) ?Found {
 
 /// Copied into staging when present, so the staged binary can actually run.
 /// Never promoted back: neither path passes validatePath.
-const staging_runtime_files = [_][]const u8{ "config.local.json", "config.local.toml", ".env" };
+const staging_runtime_files = [_][]const u8{ "config.local.toml", ".env" };
 
 /// Repeated verbatim to the model whenever it writes somewhere it may not, so
 /// the retry has the whole rule and not just the refusal.
 const surface_rules =
-    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/bin/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.json, config.toml.
+    \\You may change: src/ (but not src/evals/, src/improve/, or src/tools/builder.zig), tools/ (but not tools/bin/, and under tools/manifests/ only *.tool.json), skills/, tests/, docs/, README.md, AGENTS.md, build.zig, build.zig.zon, config.toml.
     \\You may CREATE a new evals/<name>.task.json, which adds a case to the suite your work is graded against. You may never modify or delete an eval that already exists.
 ;
 
@@ -1041,7 +1041,7 @@ pub const Engine = struct {
         // the model re-proposes cases that already exist and the whole
         // iteration is refused.
         try collectCandidates(self, "evals", keywords.items, &cands);
-        for ([_][]const u8{ "build.zig", "build.zig.zon", "config.json", "config.toml" }) |f| {
+        for ([_][]const u8{ "build.zig", "build.zig.zon", "config.toml" }) |f| {
             try collectFile(self, f, keywords.items, &cands);
         }
         // A file the instruction names by path is the one being patched, and
@@ -1477,7 +1477,7 @@ fn stripFences(arena: std.mem.Allocator, content: []const u8) []const u8 {
 // ------------------------------------------------------------- tree utils --
 
 fn copyTreeInto(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rel: []const u8, staging: []const u8) !void {
-    // Handle a plain file root (e.g. build.zig, config.json) directly.
+    // Handle a plain file root (e.g. build.zig, config.toml) directly.
     if (!isDir(base, io, rel)) {
         const data = base.readFileAlloc(io, rel, gpa, .limited(1 << 24)) catch |err| {
             log.log(.warn, "stage copy: read '{s}' failed: {s}", .{ rel, @errorName(err) });

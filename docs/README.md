@@ -38,7 +38,7 @@ Both `clanker repl` and `clanker run` render the same live status while a turn i
 
 Streaming is the Anthropic event vocabulary, not OpenAI's: `content_block_delta` carries `text_delta` for prose and `input_json_delta` fragments for tool arguments, and usage arrives split across `message_start` (input, cache reads) and `message_delta` (output, cumulative). Unknown event types, including `thinking_delta` and `signature_delta`, are ignored rather than treated as errors.
 
-Providers are configured in `config.json` / `config.local.json` (see below).
+Providers are configured in `config.toml` / `config.local.toml` (see below).
 
 ### Sandbox (`src/sandbox/`)
 
@@ -76,6 +76,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_stats` | Token usage recorded so far |
 | `ck_std_api` | Look up a symbol in the Zig standard library source |
 | `ck_config` | Return this tool's `config` object from its descriptor |
+| `ck_harness_config` | Return clanker's own effective config (providers, models, instance, peers) as JSON, merged the way the host loaded it regardless of TOML/JSON source |
 | `ck_result` | Write the tool result into the host arena |
 
 Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools/manifests/*.tool.json` control network and filesystem access.
@@ -254,13 +255,13 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | DuckDuckGo HTML search, up to 8 results with title, url, snippet |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.json`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
-| `peers` | `config.json` | Scan peer agent cards (up/down) or post a message to one peer |
+| `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
 | `zig_check` | `.` | Fast per-file `zig ast-check` and format check, without the full gate |
 | `test_file` | `.` | Run one Zig test file, optionally with `--test-filter` |
-| `config_view` | `config.json`, `config.local.json` | Dump the effective config: providers, models, modules, budgets |
+| `config_view` | `config.toml` (or `config.json`) via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
 | `roadmap` | `docs/` | Read the roadmap and list the planned (unchecked) items |
 | `history` | `state/` | Review the improve history: successes, failures, summaries |
 | `learnings` | `state/learnings.md` | Read the persisted learnings |
@@ -280,7 +281,7 @@ Internal tools, never offered to the model:
 | `cmd_tools` | `tools/manifests/` | List registered tools |
 | `cmd_sessions` | `state/sessions/` | List saved sessions |
 | `cmd_graph` | `state/runs/` | Render the latest execution graph |
-| `cmd_status` | `config.json`, `config.local.json` | Show this instance and its peers |
+| `cmd_status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `cmd_plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
 | `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
@@ -315,7 +316,7 @@ Core tools cannot be switched off: those are the `internal` tools with no `trans
 
 Two descriptor keys widen a tool's reach, both opt-in per tool:
 
-`network_from_config` solves a problem a descriptor cannot: peer and provider hosts live in `config.json`, so no static `network_allow` can name them. A tool that sets `"network_from_config": "peers"` gets the configured peer hosts added to its allowlist at load, and adding a peer to config is enough. The `peers` tool uses this to scan agent cards and post notifications.
+`network_from_config` solves a problem a descriptor cannot: peer and provider hosts live in `config.toml`, so no static `network_allow` can name them. A tool that sets `"network_from_config": "peers"` gets the configured peer hosts added to its allowlist at load, and adding a peer to config is enough. The `peers` tool uses this to scan agent cards and post notifications.
 
 `exec_allow` replaces the harness's default `ck_exec` set (`git`, `rg`, `ast-grep`, `semcode`, `zig`) with a narrower one. The `opencv` tool declares `"exec_allow": ["uv"]`, so it can run exactly one binary and not, say, `git`.
 
@@ -387,7 +388,7 @@ iter 2
 |---------|-------------|
 | `help` | Print usage; `--help` / `-h` anywhere does the same |
 | `version` | Print the version; `--version` anywhere does the same |
-| `init` | Create `config.local.json` and `state/` |
+| `init` | Create `config.local.toml` and `state/` |
 | `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, search the models.dev catalog, or print catalog specs for configured models |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
@@ -416,72 +417,108 @@ iter 2
 
 ## Configuration
 
-`config.json` is the global config; `config.local.json` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them.
+`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. A `.json` config (the pre-TOML format) is still accepted for either file, but a `.toml` sibling always wins when both exist — `src/config.zig`'s `Config.load` tries `config.toml` first and falls back to `config.json` only if no `.toml` file is present.
 
-A provider declares its backend once and its models in a map. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
+A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider` — inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
-```json
-"kimi-k3": {
-  "kind": "openai_compat",
-  "base_url": "https://api.moonshot.ai/v1",
-  "api_key_env": "KIMI_API_KEY",
-  "default_model": "kimi-k3",
-  "models": {
-    "kimi-k3": { "context_window": 1048576, "max_tokens": 16384, "reasoning_effort": "high" },
-    "kimi-k2.7-code": { "context_window": 1048576, "max_tokens": 16384 }
-  }
-}
+```toml
+[providers.kimi-k3]
+kind = "openai_compat"
+base_url = "https://api.moonshot.ai/v1"
+api_key_env = "KIMI_API_KEY"
+default_model = "kimi-k3"
+
+[models."kimi-k3/kimi-k3"]
+provider = "kimi-k3"
+context_window = 1048576
+max_tokens = 16384
+reasoning_effort = "high"
+capabilities = ["thinking", "tool_use"]
+
+[models."kimi-k3/kimi-k2.7-code"]
+provider = "kimi-k3"
+context_window = 1048576
+max_tokens = 16384
 ```
 
-`default_model` is only needed when a provider declares more than one model; with a single model it is inferred, so naming it twice is unnecessary.
+`default_model` is only needed when a provider declares more than one model; with a single model it is inferred, so naming it twice is unnecessary. `capabilities` (e.g. `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`) is informational only — nothing gates on it yet, but it lets a model entry self-document what it supports. `clanker providers fill <name>` prints a ready-to-paste `[models."<provider>/<name>"]` block per configured model, including `capabilities`, from the [models.dev](https://models.dev) catalog (`limit.context` → `context_window`, `cost.input`/`cost.output` → `cost_per_1m_input`/`cost_per_1m_output`, `reasoning`/`tool_call`/`modalities` → `capabilities`); it never writes the file, so a human stays in the loop for the merge.
 
-The pre-`models` form is **rejected**, not silently accepted:
+Providers do not store API keys directly — `api_key_env` names an environment variable instead, loaded from `.env` (`modules.dotenv`) or the process environment.
+
+The pre-`models`-table form is **rejected**, not silently accepted:
 
 | In the file | Result |
 |-------------|--------|
-| `"model": "x"` on the provider | `ProviderLegacyModelFields` — use `"models"` |
+| `model` on the provider | `ProviderLegacyModelFields` — declare the model in the top-level `models` table instead |
 | `max_tokens` / `context_window` / `temperature` / `reasoning_effort` on the provider | `ProviderLegacyModelFields` — move it into the model |
-| no `"models"` at all | `ProviderMissingModel` |
+| `models` nested under the provider (the pre-Kimi-restructure shape) | `ProviderLegacyModelFields` — move it to the top-level `models` table |
+| a `models."<provider>/<model>"` entry naming no `provider`, or whose key doesn't start with `"<provider>/"` | `MissingField` / `ModelKeyProviderMismatch` |
+| a `models` entry naming a `provider` that isn't declared under `providers` | `ModelUnknownProvider` |
+| a provider ending up with no models at all | `ProviderMissingModel` |
 | `default_model` naming an absent entry | `ProviderDefaultModelUnknown` |
 | `default_provider` naming a provider that isn't defined | `DefaultProviderUnknown` |
 
-Each names the provider and the fix. All five fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
+Each names the provider (or model key) and the fix. All fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
 
 A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
+Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `cmd_status`, `ask_user`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser — `config_view` is the exception, since its whole-file dump only needs the raw bytes, not structured fields.
+
 Full example:
 
-```json
-{
-  "default_provider": "deepseek",
-  "providers": {
-    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat", "models": { "deepseek-chat": { "max_tokens": 2048 } } },
-    "muse-spark": { "kind": "anthropic", "base_url": "https://api.musespark.ai/v1", "api_key_env": "MUSE_SPARK_API_KEY", "default_model": "spark-v3", "models": { "spark-v3": {} } }
-  },
-  "agent": {
-    "max_iterations": 12,
-    "compact_threshold_bytes": 30000,
-    "max_total_tokens": 100000,
-    "tools_dir": "tools/manifests",
-    "sandbox_root": "state/sandbox"
-  },
-  "peers": [
-    { "name": "peer1", "url": "http://127.0.0.1:17922" }
-  ],
-  "web": {
-    "allow": ["github.com", "raw.githubusercontent.com"]
-  },
-  "instance": { "name": "clanker-1", "id": "abc" },
-  "notify": { "topic": "updates" },
-  "improve": { "capability_gate": true }
-}
+```toml
+default_provider = "deepseek"
+
+[providers.deepseek]
+kind = "openai_compat"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+default_model = "deepseek-chat"
+
+[providers.muse-spark]
+kind = "anthropic"
+base_url = "https://api.musespark.ai/v1"
+api_key_env = "MUSE_SPARK_API_KEY"
+default_model = "spark-v3"
+
+[models."deepseek/deepseek-chat"]
+provider = "deepseek"
+max_tokens = 2048
+
+[models."muse-spark/spark-v3"]
+provider = "muse-spark"
+
+[agent]
+max_iterations = 12
+compact_threshold_bytes = 30000
+max_total_tokens = 100000
+tools_dir = "tools/manifests"
+sandbox_root = "state/sandbox"
+
+[[peers]]
+name = "peer1"
+url = "http://127.0.0.1:17922"
+
+[web]
+allow = ["github.com", "raw.githubusercontent.com"]
+
+[instance]
+name = "clanker-1"
+id = "abc"
+
+[notify]
+topic = "updates"
+
+[improve]
+capability_gate = true
 ```
 
 Fields:
-- `providers`: map of provider name → config.
+- `providers`: map of provider name → connection settings.
   - `kind`: `"openai_compat"`, `"anthropic"`, or `"vertex_anthropic"` (Anthropic models via Google Vertex AI: requires `project` + `location`, and either `api_key_env` or `service_account_file`; an env var wins over the service account if both are set).
-  - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model), `models` (map of model name → `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`).
+  - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `kimi-k3` supports reasoning (returns `reasoning` field).
+- `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required — which entry under `providers` this belongs to), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`.
 - `agent`:
   - `max_iterations`: max agent loop iterations.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
@@ -491,7 +528,7 @@ Fields:
   - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: base directory for file operations in tools.
   - `git_commit`: commit promoted improvements with git (default true).
-  - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot — `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.json`, not the committed example.
+  - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot — `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.toml`, not the committed example.
   - `exec_pattern_allow`: whole-command-line glob patterns a tool may run through `ck_exec`, e.g. `"gh pr create*"` or `"gh pr merge*"`. When a pattern names a command, that command becomes strict: only an argv matching one of its patterns runs, and the match also overrides the deny tokens for the args it grants (`"gh pr merge"` legitimately contains `"merge"`). Commands with no pattern stay under the deny-list check, so a pattern for `gh` does not widen `git` or anything else. `*` matches any run of characters, including across spaces and empty. The `gh` tool refuses to run at all unless a matching pattern is configured.
   - `seed`: sampling seed.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
@@ -500,7 +537,7 @@ Fields:
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`.
 - `web`: research-host allowlist for `fetch_web` and `web_search` only.
-  - `allow`: hostnames only — no scheme, path, or port. These hosts are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.json`.
+  - `allow`: hostnames only — no scheme, path, or port. These hosts are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.

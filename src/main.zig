@@ -157,7 +157,7 @@ pub fn main(init: std.process.Init) !void {
     // a key, so there is no reason for either to read config.json/.env off
     // disk or print the "loaded N key(s)" line ahead of its own output.
     if (opts.command != .help and opts.command != .version) {
-        const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch null;
+        const early_cfg = config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
         if (early_cfg) |c| {
             if (c.modules.dotenv) dotenv.load(init.io, gpa, init.environ_map);
         } else {
