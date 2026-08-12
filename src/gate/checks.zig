@@ -191,7 +191,13 @@ test "astCheckGate short-circuits when there are no .zig files" {
 
 test "astCheckGate fails on a syntax error with a precise diagnostic" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    // The real process environ, not `.{}`: this test spawns `zig`, and both
+    // the child's PATH search and its inherited environment come from the
+    // spawning Io. With an empty environ the search falls back to std's
+    // default_PATH — which lacks Homebrew's /opt/homebrew/bin on arm64 macs,
+    // failing the spawn with FileNotFound — and a version-manager shim like
+    // anyzig dies without HOME (AppDataDirUnavailable) even when found.
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = std.testing.environ });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -560,7 +566,9 @@ test "fmtGate and formatFiles short-circuit when there is nothing to format" {
 
 test "fmtGate catches unformatted code and formatFiles fixes it" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    // Real environ for the same reason as the astCheckGate spawn test above:
+    // the spawned `zig` needs the parent's PATH and HOME to be found and run.
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = std.testing.environ });
     defer threaded.deinit();
     const io = threaded.io();
 
