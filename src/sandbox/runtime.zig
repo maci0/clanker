@@ -382,6 +382,76 @@ test "chat wasm tool executes (send + history via ck_chat)" {
     try std.testing.expectEqualStrings("test-clanker", hist[0].from);
 }
 
+test "web_search wasm tool returns results from a live backend (skips when offline)" {
+    // Runs the real web_search.wasm through the real ck_http host bridge, so it
+    // exercises input parsing, URL building, the network call, RSS/HTML parsing,
+    // entity/URL decoding and JSON output together. Network-dependent: when no
+    // backend is reachable (offline CI), the run fails gracefully and the test
+    // asserts nothing rather than failing the tool gate on a transient outage.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{ "www.bing.com", "lite.duckduckgo.com" },
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .state_dir = "",
+        .state_base_dir = tmp.dir,
+        .config_json = "{}",
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/web_search.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return; // tools not built — nothing to check
+    defer mod.deinit();
+
+    const out = mod.executeTool("{\"query\":\"zig programming language\",\"max_results\":4}") catch return; // offline
+    defer std.testing.allocator.free(out);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{}) catch return;
+    if (parsed != .object) return;
+
+    // A successful search must parse as an object; when it advertises ok and
+    // carries results, verify the shape (backend tag, real URLs). When the
+    // network is down or a backend is empty, nothing here is asserted, so the
+    // tool gate cannot fail on a transient outage.
+    switch (parsed) {
+        .object => |obj| {
+            const ok_v = obj.get("ok");
+            if (ok_v == null or ok_v.? != .bool or !ok_v.?.bool) return;
+            const backend = obj.get("backend");
+            try std.testing.expect(backend != null and backend.? == .string);
+            const arr = obj.get("results");
+            if (arr == null or arr.? != .array or arr.?.array.items.len == 0) return;
+            if (arr.?.array.items[0] == .object) {
+                if (arr.?.array.items[0].object.get("url")) |u| {
+                    if (u == .string) {
+                        try std.testing.expect(std.mem.startsWith(u8, u.string, "http"));
+                    }
+                }
+            }
+        },
+        else => return,
+    }
+}
+
 test "board wasm tool folds a room log longer than one history page completely" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();

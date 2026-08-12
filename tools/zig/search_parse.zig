@@ -37,7 +37,6 @@ pub fn isBotChallenge(page: []const u8) bool {
 /// Fantasy-land checks are untestable here; only pure logic lives in this
 /// module. The network watchers (Bing serving poisoned results, DDG serving a
 /// challenge) land in web_search.zig where the live fetch happens.
-
 /// Extracts the first `<name>...</name>` region, slicing into `region`.
 fn extractTag(comptime name: []const u8, region: []const u8) ?[]const u8 {
     const open_tag = "<" ++ name ++ ">";
@@ -264,13 +263,7 @@ fn decodeEntity(src: []const u8, dst: []u8) ?EntityDecode {
         }
         if (codepoint == 0 or codepoint > 0x10FFFF) return null;
     } else {
-        codepoint = if (std.mem.eql(u8, body, "amp")) 0x26 else
-            if (std.mem.eql(u8, body, "lt")) 0x3C else
-            if (std.mem.eql(u8, body, "gt")) 0x3E else
-            if (std.mem.eql(u8, body, "quot")) 0x22 else
-            if (std.mem.eql(u8, body, "apos") or std.mem.eql(u8, body, "#39")) 0x27 else
-            if (std.mem.eql(u8, body, "nbsp")) 0xA0 else
-            return null;
+        codepoint = if (std.mem.eql(u8, body, "amp")) 0x26 else if (std.mem.eql(u8, body, "lt")) 0x3C else if (std.mem.eql(u8, body, "gt")) 0x3E else if (std.mem.eql(u8, body, "quot")) 0x22 else if (std.mem.eql(u8, body, "apos") or std.mem.eql(u8, body, "#39")) 0x27 else if (std.mem.eql(u8, body, "nbsp")) 0xA0 else return null;
     }
     const produced = encodeUtf8(codepoint, dst[0..4]);
     return .{ .src_consumed = entity_len, .dst_produced = produced };
