@@ -360,6 +360,35 @@
   --lift-high: 0 2px 4px rgba(55, 96, 191, 0.12), 0 20px 44px -16px rgba(55, 96, 191, 0.40);
 }
 
+/* Hackerman: green-phosphor terminal. Bright green on near-black, amber for
+   warnings and a legible red for danger so a failure still reads through the
+   monochrome-green aesthetic. Matches the TUI theme.zig `hackerman`. */
+:root[data-theme="hackerman"] {
+  --paper: #020a02;
+  --bg: #000000;
+  --surface: var(--paper);
+  --surface-2: #0a160a;
+  --border: #0a5a0a;
+  --rule: #0a3a0a;
+  --fg: #33ff66;
+  --fg-muted: #00aa55;
+  --accent: #50ff50;
+  --accent-dim: #50ff5020;
+  --accent-text: #7cff7c;
+  --on-accent: #001100;
+  --ok: #00ffaa;
+  --ok-fill: #00cc88;
+  --violet: #b4ff50;
+  --violet-text: #b4ff50;
+  --danger: #ff3c3c;
+  --on-danger: #001100;
+  --scrim: rgba(0, 20, 0, 0.78);
+  --warn: #b4ff50;
+  --warn-text: #b4ff50;
+  --lift: 0 1px 2px rgba(0, 255, 0, 0.10), 0 6px 18px -8px rgba(0, 255, 0, 0.35);
+  --lift-high: 0 2px 4px rgba(0, 255, 0, 0.14), 0 20px 44px -16px rgba(0, 255, 0, 0.45);
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -1251,7 +1280,7 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-gutter-time { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: center; }
 .chat-msg:hover .chat-gutter-time { opacity: 1; }
 .chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem 0.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-.chat-msg:hover .chat-actions { display: flex; }
+.chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
 .chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: 11px; border-radius: 999px; }
 .chat-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 .chat-reactions:empty { display: none; }
@@ -1807,6 +1836,8 @@ main {
 }
 .rail-new:hover { background: color-mix(in srgb, var(--accent) 88%, black); border-color: transparent; }
 .rail input[type="search"] { width: 100%; box-sizing: border-box; border-radius: 999px; font-size: 12px; min-height: 32px; }
+.rail-archived { display: flex; align-items: center; gap: var(--space-2); font-family: var(--sans); font-size: 12px; color: var(--fg-muted); cursor: pointer; }
+.rail-archived input { margin: 0; }
 .rail input[type="search"]::placeholder { font-size: 12px; }
 .rail-list {
   margin-top: var(--space-4); padding: 0; list-style: none;
@@ -2278,3 +2309,27 @@ h2#session-title {
 .arena-round > summary { cursor: pointer; font-weight: 600; font-size: 13px; margin: 0.4rem 0; }
 .arena-round .tool-card { margin-left: 0.9rem; }
 .arena-verdict { border-color: var(--accent, var(--ok)); }
+
+/* Compare: the blind side-by-side. Columns are deliberately identical to each
+   other — equal width, one shared surface, no ordering cue beyond the letter —
+   because any per-column decoration is a place a reader could learn something
+   about who wrote which answer before they have picked. Palette variables only,
+   so every data-theme block gets it. */
+.compare-list { display: flex; flex-direction: column; gap: 4px; }
+.compare-row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; }
+.compare-row[aria-pressed="true"] { border-color: var(--accent, var(--ok)); }
+.compare-row-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.compare-row-outcome { flex: none; }
+.compare-prompt { font-weight: 600; margin: 0.6rem 0 0.2rem; }
+.compare-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--space-3, 12px); align-items: start; }
+.compare-answer { display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; }
+.compare-answer[data-picked="true"] { border-color: var(--accent, var(--ok)); }
+.compare-answer[data-winner="true"] .compare-answer-head { color: var(--ok, #2fae4d); }
+.compare-answer-head { margin: 0; font-size: 13px; }
+.compare-answer-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.compare-answer-who { margin: 0; }
+.compare-pick { align-self: flex-start; margin-top: auto; }
+.compare-your-pick { color: var(--ok, #2fae4d); }
+.compare-key-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
+.compare-key-list dt { font-weight: 600; }
+.compare-key-list dd { margin: 0; color: var(--fg-muted); }

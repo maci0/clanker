@@ -1,5 +1,8 @@
 # clanker — Reference Documentation
 
+External-project digests (what we can learn from them) live in [docs/digests/](digests/).
+
+
 ## Architecture
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs tools as sandboxed WebAssembly modules via zwasm and improves its own source through a gated loop.
@@ -20,9 +23,13 @@ Both `clanker repl` and `clanker run` render the same live status while a turn i
 - a `⚙ <tool names>` line when a tool batch starts, and a `↳ <ms>` line when it finishes,
 - a bold `›` gutter marking where the model's actual answer begins,
 - the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/cli.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
-- a dim stats footer per turn: prompt/completion tokens, wall time, tok/s, cache hit rate, cost.
+- a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
 
-`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status on stderr, gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
+The vaxis REPL adds two things `clanker run` has no use for, since a one-shot run has no history to lose:
+- a running `ctx <used>/<window> (<pct>%)` meter, the tokens the session has spent, and its cost so far, in the status bar next to the provider/model,
+- a line whenever history is actually dropped. `[history compacted: dropped 12 messages, freed 48 KB]` is the save-time trim against `max_session_tokens`; `[context compacted: N earlier messages replaced by a summary to fit the model window]` is the mid-turn compaction `agent.compact_threshold_bytes` triggers inside the agent loop. Both used to happen silently, which meant a long session could lose the exchange it was about to be asked to remember with nothing on screen.
+
+`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the spinner/tool status and the per-turn stats footer on stderr, both gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the full live view.
 
 ### LLM providers (`src/llm/`)
 
@@ -240,7 +247,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
-| `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
+| `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
 entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
@@ -453,6 +460,7 @@ iter 2
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions` | List saved sessions |
+| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`src/agent/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `tools list` | List registered tools |
 | `eval [name]` | Run evals |
@@ -464,7 +472,7 @@ iter 2
 | `mcp` | Start the MCP server |
 | `goal` | Design and persist a structured goal |
 | `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
-| `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick |
+| `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick. The web UI's Compare tab is the same thing in a browser: the answers side by side and a pick button per column, reading blind and recording through the same tool op |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
 | `chat send <room> "<text>"` | Send a message to a chatroom |
@@ -729,6 +737,8 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/board` | GET, POST | Read or mutate the shared Kanban board |
 | `/api/arena` | GET | List past arena matches |
 | `/api/arena/<id>` | GET | One match: combatants, HP, per-round moves and the verdict. The arena view polls this while a match is running and stops on the verdict |
+| `/api/compare` | GET | List past blind comparisons. Read blind: each row says whether a judge reached a verdict, never whose, since a winning provider name beside a verdict letter is the key to a two-way comparison |
+| `/api/compare/<id>` | GET, POST | GET reads one comparison blind — the answers in their stored order under `A`/`B`/`C`, with no provider or model anywhere in the reply. POST `{"pick":"<letter>"}` records the human's pick through the same tool op `clanker compare --show <id> --pick <letter>` uses, and the reply is revealed |
 | `/api/janitor` | GET | How much litter (staging copies, run graphs, improve logs) is reclaimable; read-only, never deletes |
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |

@@ -1047,12 +1047,9 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             try s.write(@tagName(p.kind));
             try s.objectField("base_url");
             try s.write(p.base_url);
-            if (access == .full) {
-                if (p.api_key_env) |e| {
-                    try s.objectField("api_key_env");
-                    try s.write(e);
-                }
-            }
+            // api_key_env intentionally excluded from every access level:
+            // env var names pointing to secrets should never cross into
+            // guest memory. The host resolves them in src/llm/client.zig.
             try s.objectField("default_model");
             try s.write(p.default_model);
             try s.objectField("models");
@@ -4351,6 +4348,8 @@ test "harness config access is scoped to each tool's consumed fields" {
 
     const full = try harnessConfigJSON(arena, &cfg, .full);
     try std.testing.expect(std.mem.find(u8, full, "\"modules\"") != null);
+    // No access level, not even .full, should expose api_key_env names.
+    try std.testing.expect(std.mem.find(u8, full, "api_key_env") == null);
 }
 
 test "ck_chat access covers every shipped caller, one op at a time" {

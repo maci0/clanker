@@ -1,7 +1,7 @@
 import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, recencyGroup as utilRecencyGroup, isSafeLinkUrl as utilIsSafeLinkUrl, splitRow as utilSplitRow, prettyJsonIfPossible as utilPrettyJsonIfPossible, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd } from "./core/ui.js";
 import { ICON_PATHS as iconPaths, icon as iconFn } from "./core/icons.js";
-import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod } from "./core/vendor.js";
+import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadD3 as loadD3Mod, loadHljs as loadHljsMod, registerToml as registerTomlMod, reducedMotion as reducedMotionMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { THEMES as THEMESMod, loadTheme as loadThemeMod, applyTheme as applyThemeMod } from "./core/theme.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
@@ -22,7 +22,7 @@ import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugi
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, syncModelSearchLabel as mpSyncLabel, renderModelList as mpRenderList, hideModelList as mpHideList, selectModel as mpSelectModel, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
-import { board, loadBoardRooms, renderBoard, setOpenCardId, cardModalKeyHandler, bindBoard } from "./features/board.js";
+import { board, loadBoardRooms, renderBoard, setOpenCardId, cardById, cardModalKeyHandler, bindBoard } from "./features/board.js";
 import { goalState, loadGoals, bindGoals } from "./features/goals.js";
 import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { loadPromptsView as promptsLoadView, bindPrompts as promptsBind } from "./features/prompts.js";
@@ -192,6 +192,9 @@ var loadHljs = loadHljsMod;
 var registerToml = registerTomlMod;
 var reducedMotion = reducedMotionMod;
 var copyText = copyTextMod;
+/* Without this alias, bare scrollTo(node, block) calls resolved to
+   window.scrollTo(x, y) and jumped the page to the top left. */
+var scrollTo = vendorScrollTo;
 
 var busy = false;
 var controller = null;
@@ -224,20 +227,20 @@ function renderSessionChip() {
     el.composerModel.title = sel ? ("Model: " + sel + " (click to change)") : "Model: default (from config) (click to change)";
   }
 }
-if (typeof window !== "undefined") {
-  document.addEventListener("DOMContentLoaded", function(){
-    var hm = document.getElementById("header-model");
-    var cm = document.getElementById("composer-model");
-    function openModelPicker() {
-      var dest = document.getElementById("task");
-      if (dest) { dest.focus(); dest.scrollIntoView({ behavior: "smooth", block: "center" }); }
-      var ms = document.getElementById("model-search");
-      if (ms) { try { ms.focus(); ms.select(); } catch(_){} }
-    }
-    if (hm) hm.addEventListener("click", openModelPicker);
-    if (cm) cm.addEventListener("click", openModelPicker);
-  });
-}
+/* Wired directly: this whole file already runs inside DOMContentLoaded, and a
+   listener for the same event added during its dispatch never fires. */
+(function(){
+  var hm = document.getElementById("header-model");
+  var cm = document.getElementById("composer-model");
+  function openModelPicker() {
+    var dest = document.getElementById("task");
+    if (dest) { dest.focus(); dest.scrollIntoView({ behavior: scrollPrefersReducedMotion() ? "auto" : "smooth", block: "center" }); }
+    var ms = document.getElementById("model-search");
+    if (ms) { try { ms.focus(); ms.select(); } catch(_){} }
+  }
+  if (hm) hm.addEventListener("click", openModelPicker);
+  if (cm) cm.addEventListener("click", openModelPicker);
+})();
 
 var THEMES = THEMESMod;
 var loadTheme = loadThemeMod;
@@ -1785,6 +1788,10 @@ var buildStages = graphBuildStages;
 
 var lastGraph = null;
 var lastBuilt = null;
+/* drawRun hangs pan/minimap handlers off window; each redraw builds a fresh
+   canvas, so the previous set is aborted here or every redraw would leak five
+   listeners plus the detached subtree their closures retain. */
+var drawRunListeners = null;
 var resizeTimer = null;
 var resizeHandler = function () {
   if (resizeTimer) window.clearTimeout(resizeTimer);
@@ -1808,6 +1815,9 @@ function drawRun(g) {
     el.runDetail.textContent = "";
   }
   lastGraph = g;
+  if (drawRunListeners) drawRunListeners.abort();
+  drawRunListeners = new AbortController();
+  var winSignal = drawRunListeners.signal;
   el.runGraph.textContent = "";
   var nodes = g.nodes || [];
 
@@ -1842,10 +1852,18 @@ function drawRun(g) {
       // — and this is raw string concatenation, not DOM building, so it needs
       // explicit escaping. It did not have it: a task containing markup was
       // written straight into <title>, <h1> and <p> of a file the browser then
-      // opens from a blob URL. The JSON dump below was already escaped, which
-      // is how the gap in the header stayed invisible.
+      // opens from a blob URL.
+      //
+      // The JSON dump below looked escaped and was not, which is how the gap
+      // in the header stayed invisible: it hand-rolled `.replace(/</g,"&lt;")`,
+      // a second escaper covering one of the five characters that matter. `<`
+      // alone does keep markup out of a <pre>, but leaving `&` means every
+      // entity a run's own text contains is decoded on the way back out, so a
+      // tool result holding the literal text "&lt;script&gt;" was shown as
+      // "<script>". One escaper, `core/utils.js`'s escapeHtml, at every
+      // interpolation site including this one.
       var esc = escapeHtml;
-      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + JSON.stringify(g, null, 2).replace(/</g,"&lt;") + "</pre>";
+      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + esc(JSON.stringify(g, null, 2)) + "</pre>";
       var blob = new Blob([html], {type:"text/html"});
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a"); a.href = url; a.download = g.run_id + ".html";
@@ -1992,12 +2010,12 @@ function drawRun(g) {
       canvas.style.cursor = "grabbing";
       e.preventDefault();
     });
-    window.addEventListener("mouseup", function(){ if(isPanning){ isPanning = false; canvas.style.cursor = ""; } });
+    window.addEventListener("mouseup", function(){ if(isPanning){ isPanning = false; canvas.style.cursor = ""; } }, { signal: winSignal });
     window.addEventListener("mousemove", function(e){
       if (!isPanning) return;
       canvas.scrollLeft = startScrollLeft - (e.clientX - startX);
       canvas.scrollTop = startScrollTop - (e.clientY - startY);
-    });
+    }, { signal: winSignal });
     canvas.addEventListener("wheel", function(e){
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
@@ -2118,11 +2136,11 @@ function drawRun(g) {
       var dyRatio = (e.clientY - startY) / rect.height;
       canvas.scrollLeft = startSL + dxRatio * canvas.scrollWidth;
       canvas.scrollTop = startST + dyRatio * canvas.scrollHeight;
-    });
-    window.addEventListener("mouseup", function(){ dragging = false; });
+    }, { signal: winSignal });
+    window.addEventListener("mouseup", function(){ dragging = false; }, { signal: winSignal });
   })();
   // keep in sync after layout / resize
-  window.addEventListener("resize", updateMinimap);
+  window.addEventListener("resize", updateMinimap, { signal: winSignal });
   // Fit button
   graphFitBtn.addEventListener("click", function(){
     canvas.scrollLeft = 0; canvas.scrollTop = 0;
@@ -2691,6 +2709,8 @@ function openChatRoom(room) {
   chatLastTs = 0;
   chatSeen = {};
   chatSeenOrder = [];
+  // An emptied log starts grouping over, day separator included.
+  _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = "";
   chatBackoff = chat_poll_base_ms;
   el.chatText.disabled = false;
   el.chatSend.disabled = false;
@@ -2743,7 +2763,9 @@ function pollChat(room) {
         .filter(function (m) { return !chatSeen[m.id]; })
         .sort(function (a, b) { return a.ts - b.ts; });
       var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
-      if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; _lastChatDay = ""; }
+      // Only sender grouping resets across batches; the day key must persist
+      // or every poll batch would open with a repeat of the same date banner.
+      if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; }
       fresh.forEach(function (m) {
         rememberChatId(m.id);
         if (m.ts > chatLastTs) chatLastTs = m.ts;
@@ -2928,16 +2950,18 @@ function buildChatMessage(m) {
   threadBar.appendChild(replyBtn);
   renderThreads();
   wrap.appendChild(threadBar);
-  // Slack-like hover quick actions (copy / emoji)
+  // Slack-like quick actions (copy / emoji), revealed on hover and
+  // :focus-within, and exposed to AT, so they are reachable by keyboard too.
   var actions = document.createElement("div");
   actions.className = "chat-actions";
-  actions.setAttribute("aria-hidden", "true");
   var copyBtn = document.createElement("button");
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
+  copyBtn.setAttribute("aria-label", "Copy message");
   copyBtn.addEventListener("click", function(e){ e.stopPropagation(); try{ navigator.clipboard.writeText(m.text); }catch(_){} });
   actions.appendChild(copyBtn);
   EMOJIS.forEach(function(emoji){
     var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; b.title="React "+emoji;
+    b.setAttribute("aria-label", "React " + emoji);
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
     actions.appendChild(b);
   });
@@ -3114,11 +3138,16 @@ toolsBind({
 
 // ---- views: one section visible at a time -----------------------------
 
-var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "rooms", "knowledge", "prompts", "tools", "system"];
+var VIEWS = ["chat", "board", "goals", "runs", "fleet", "arena", "compare", "rooms", "knowledge", "prompts", "tools", "system"];
 var arenaModulePromise = null;
 function loadArenaModule() {
   if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
   return arenaModulePromise;
+}
+var compareModulePromise = null;
+function loadCompareModule() {
+  if (!compareModulePromise) compareModulePromise = import("./features/compare.js");
+  return compareModulePromise;
 }
 var fleetModulePromise = null;
 function loadFleetModule() {
@@ -3143,6 +3172,9 @@ var viewLoaders = {
   arena: function () {
     return loadArenaModule().then(function (arena) { arena.bindArena(); return arena.loadArenaView(); });
   },
+  compare: function () {
+    return loadCompareModule().then(function (compare) { compare.bindCompare(); return compare.loadCompareView(); });
+  },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
   // Goals ride along with the board: the board->goal sync (moving a card
@@ -3162,6 +3194,7 @@ var VIEW_CONTAINERS = {
   runs: "run-graph",
   fleet: "fleet-runs",
   arena: "arena-list",
+  compare: "compare-list",
   rooms: "chat-log",
   goals: "goals",
   board: "board",
@@ -3221,7 +3254,10 @@ function showView(name, focusPanel) {
   }
   var pendingBoardCard = null;
   var pendingKnowledgeId = null;
+  var pendingSessionId = null;
+  if (name.indexOf("chat?session=") === 0) { try { pendingSessionId = decodeURIComponent(name.slice(13)); } catch (e) {} name = "chat"; }
   if (name.indexOf("arena/") === 0) { window._pendingArenaId = decodeURIComponent(name.slice(6)); name = "arena"; }
+  if (name.indexOf("compare/") === 0) { window._pendingCompareId = decodeURIComponent(name.slice(8)); name = "compare"; }
   if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "board"; }
   if (name.indexOf("knowledge/") === 0) { pendingKnowledgeId = decodeURIComponent(name.slice(10)); name = "knowledge"; }
   if (pendingBoardCard) window._pendingBoardCard = pendingBoardCard;
@@ -3280,7 +3316,12 @@ function showView(name, focusPanel) {
     }
   } else if (name === "rooms" && el.chatRoom.value) {
     startChatPoll(el.chatRoom.value);
+  } else if (name === "arena" && arenaModulePromise) {
+    // Leaving the arena stops its poll and animation loop; coming back has to
+    // start them again, or the view stays frozen until a manual Refresh.
+    arenaModulePromise.then(function (arena) { arena.loadArenaView(); });
   }
+  if (pendingSessionId) switchSession(pendingSessionId);
   if (deepRun) {
     window._pendingRunNode = deepNode || null;
     if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
@@ -3323,9 +3364,9 @@ function showView(name, focusPanel) {
     var tries = 0;
     (function tryOpen(){
       tries++;
-      if (cardById(pendingBoardCard)) { openCardId = pendingBoardCard; try{ renderBoard(board); }catch(_){} return; }
+      if (cardById(pendingBoardCard)) { setOpenCardId(pendingBoardCard); try{ renderBoard(board); }catch(_){} return; }
       if (tries < 20) setTimeout(tryOpen, 250);
-      else { openCardId = pendingBoardCard; try{ renderBoard(board); }catch(_){} }
+      else { setOpenCardId(pendingBoardCard); try{ renderBoard(board); }catch(_){} }
     })();
   }
 }
@@ -3623,6 +3664,7 @@ var SLASH_CMDS = [
   { cmd: "/model", desc: "Switch model — e.g. /model gpt-4o", run: function(arg){ if(arg){ var s=document.getElementById("model-search"); if(s){ s.value=arg; s.dispatchEvent(new Event("input",{bubbles:true})); s.focus(); } } else { var ms=document.getElementById("model-search"); if(ms) ms.focus(); } } },
   { cmd: "/knowledge", desc: "Open Knowledge collections", run: function(){ showView("knowledge", true); } },
   { cmd: "/prompts", desc: "Open Prompts library", run: function(){ showView("prompts", true); } },
+  { cmd: "/compare", desc: "Open blind model comparisons", run: function(){ showView("compare", true); } },
   { cmd: "/new", desc: "New chat (alias for /clear)", run: function(){ document.getElementById("new-chat").click(); } },
   { cmd: "/help", desc: "Show keyboard shortcuts", run: function(){ document.getElementById("help-open").click(); } },
 ];
@@ -4156,7 +4198,10 @@ function lastView() {
   } catch (e) {}
   return "";
 }
-var openingView = openingHash && VIEWS.indexOf(openingHash) !== -1 ? openingHash : lastView() || "chat";
+/* The full hash is handed to showView, whose prefix parsing resolves deep
+   links (#runs/<id>, #board/<id>, #arena/<id>, #knowledge/<id>,
+   #chat?session=<id>) that a bare view-name check used to drop on load. */
+var openingView = openingHash || lastView() || "chat";
 
 function afterFirstDraw(work) {
   if (window.requestIdleCallback) window.requestIdleCallback(work, { timeout: 2000 });

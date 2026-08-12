@@ -472,7 +472,9 @@ function _toolBucket(label){
 }
 function _floorFrame(ts){
   var cv=byId("fleet-canvas"); var lab=byId("fleet-floor-status");
-  if(!cv || cv.closest && cv.closest("#fleet-floor[hidden]")) { _floorRAF=null; return; }
+  if(!cv || cv.closest && cv.closest("#fleet-floor[hidden]") || !document.body.contains(cv)) { _floorRAF=null; return; }
+  var view=byId("view-fleet");
+  if(view && view.hidden) { _floorRAF=null; return; }
   var ctx=cv.getContext("2d"); if(!ctx){ if(lab) lab.textContent="Canvas unavailable."; return; }
   var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var t = reduced ? _floorState.t : (ts||0);
