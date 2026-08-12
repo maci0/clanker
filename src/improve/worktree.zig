@@ -164,7 +164,17 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     // own state directory inside the runtime state tree. Keeping worktrees in
     // a dedicated ignored directory also lets linkSharedState expose only the
     // few runtime files an isolated run needs.
-    const path = try std.fmt.allocPrint(gpa, ".clanker-worktrees/{s}", .{id});
+    //
+    // Absolute, because the engine chdirs INTO the worktree for the whole
+    // run: any later use of this path (resyncLocalBranch's `git -C`,
+    // cleanup's `git worktree remove`) resolves from a cwd where the
+    // relative form does not exist. Observed live: `git -C
+    // '.clanker-worktrees/<id>'` failing with "No such file or directory"
+    // from inside that very worktree, silently skipping the post-merge
+    // resync.
+    const cwd_path = std.process.currentPathAlloc(io, gpa) catch try gpa.dupe(u8, ".");
+    defer gpa.free(cwd_path);
+    const path = try std.fmt.allocPrint(gpa, "{s}/.clanker-worktrees/{s}", .{ cwd_path, id });
     errdefer gpa.free(path);
 
     std.Io.Dir.cwd().createDirPath(io, ".clanker-worktrees") catch {};
@@ -215,7 +225,16 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // failing the baseline gate of every subsequent run (verified in a
     // scratch worktree; same collision as the staging-side attempt, which is
     // why staging shares the cache via --cache-dir args instead).
-    for ([_][]const u8{ ".env", "config.local.toml", "zig-out", "chains" }) |name| {
+    // zig-out deliberately NOT linked (tried in ad47225's promotion): builds
+    // WRITE into zig-out, so a linked one means the worktree's own baseline
+    // `zig build`/`zig build tools` clobber the main tree's binaries through
+    // the link -- including the clanker binary the main tree is actively
+    // running -- and two trees installing into one zig-out concurrently made
+    // the worktree's baseline gate flaky (observed live: baseline 2/3 in a
+    // fresh worktree). The worktree builds its own zig-out once at run start;
+    // staging already reuses the build cache via --cache-dir, so the link
+    // bought nothing there anyway.
+    for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
@@ -229,7 +248,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json", "state/sessions" }) |name| {
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl", "state/plugin_config.json" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
