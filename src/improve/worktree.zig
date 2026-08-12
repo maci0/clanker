@@ -316,6 +316,12 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
+    // state/runs/ is where the execution graph tool writes run-<id>.json.
+    // It cannot be symlinked (sandboxed tools refuse symlinked components),
+    // so create it as a real directory so graph writes do not fail silently.
+    const runs_dir = try std.fmt.allocPrint(gpa, "{s}/state/runs", .{worktree_path});
+    defer gpa.free(runs_dir);
+    std.Io.Dir.cwd().createDirPath(io, runs_dir) catch {};
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
