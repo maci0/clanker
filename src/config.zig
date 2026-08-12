@@ -124,9 +124,11 @@ pub const Provider = struct {
 pub const Agent = struct {
     /// A review or audit task spends most of its turns reading before it can
     /// answer anything. At 12 those runs ended at the ceiling with no answer
-    /// and the whole run wasted, which costs more than the extra turns would
-    /// have.
-    max_iterations: u32 = 24,
+    /// and the whole run wasted; 24 still bit interactive REPL sessions on
+    /// ordinary multi-file work, and hitting the ceiling discards the whole
+    /// turn (error.MaxIterationsExceeded), so the wasted cost is the full run.
+    /// 50 matches what agentic coding CLIs (grok, kimi) allow per turn.
+    max_iterations: u32 = 50,
     compact_threshold_bytes: usize = 24000,
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn
@@ -2035,7 +2037,7 @@ test "an unknown key in a known section does not fail the load" {
     // A misspelled key only warns (logged, not asserted here); the load must
     // still succeed with the real default rather than silently misbehaving.
     const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
-    try std.testing.expectEqual(@as(u32, 24), cfg.agent.max_iterations);
+    try std.testing.expectEqual(@as(u32, 50), cfg.agent.max_iterations);
 }
 
 test "resolveProvider splits provider/model and keeps opaque slash ids whole" {
