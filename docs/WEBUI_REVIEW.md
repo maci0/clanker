@@ -85,5 +85,5 @@ Previous state: 5511-line `app.js` monolith + `app.css` 1617 lines + `index.html
 
 ## Left / next
 
-- Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/webui-framework-research.md` §4 — now cheaper because imports are real and the serve path is complete.
+- Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.

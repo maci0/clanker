@@ -673,7 +673,7 @@ const Model = struct {
 
     /// The full command set is exactly what `submit` recognizes, so this is
     /// hand-maintained rather than generated — unlike the deleted REPL's
-    /// `cmd_*` catalog (docs/tui-feature-checklist.md item 4), there is no
+    /// `cmd_*` catalog (docs/prds/repl-tui.md), there is no
     /// registry here yet to generate it from. Keep in sync by hand until
     /// there is.
     fn printHelp(self: *Model) void {
