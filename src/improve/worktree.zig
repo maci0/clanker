@@ -178,6 +178,22 @@ pub const Worktree = struct {
             else => false,
         };
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+        // Untracked build artifacts (zig-out/) survive reset --hard: a
+        // previous iteration's `zig build` / `zig build tools` leaves
+        // .wasm and binaries that the next baseline gate would pick up
+        // stale. Remove them so the next iteration rebuilds from scratch.
+        const clean_argv = [_][]const u8{ "git", "-C", self.path, "clean", "-fdx", "zig-out" };
+        const clean_res = std.process.run(gpa, io, .{ .argv = &clean_argv }) catch |err| {
+            log.log(.debug, "improve-self: git clean zig-out after merge-back failed: {s}", .{@errorName(err)});
+            return;
+        };
+        defer gpa.free(clean_res.stdout);
+        defer gpa.free(clean_res.stderr);
+        const clean_ok = switch (clean_res.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        if (!clean_ok) log.log(.debug, "improve-self: git clean zig-out returned non-zero: {s}", .{clean_res.stderr});
     }
 };
 
