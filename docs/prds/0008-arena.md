@@ -80,8 +80,9 @@ the pixel art.
   false`, no image assets) extended to a battle layout, not a new drawing
   framework or asset pipeline.
 - **Not free-for-all by default.** Strict pairwise (2 combatants) is the
-  shipped shape; 3-4 combatant matches are an explicit Open question, not
-  assumed to fall out for free.
+  shipped shape; Battle Royale mode (Design → Battle Royale, Phase 8) is a
+  later, explicitly deferred layer on top, not assumed to fall out for free
+  from the pairwise core.
 
 ## Design
 
@@ -351,12 +352,40 @@ Phase 7 — tool/skill design-review use case:
       file/line-shaped finding style `docs/prompts/*-review.md` prompts
       already report
 
+Phase 8 — Battle Royale mode ("with cheese," 3-8 combatants):
+
+- [ ] `target` field on `attack`/`block`/`counter`, required once a match
+      has more than 2 combatants
+- [ ] Elimination at 0 HP instead of match-end; eliminated combatants stop
+      taking turns and stop being a legal target
+- [ ] Last-standing / highest-HP-at-cap verdict, generalized from pairwise's
+      existing points fallback
+- [ ] Resolved: whether simultaneous multi-attacker targeting is cumulative
+      damage or a holistic per-round judge call (see Open questions)
+
 ## Open questions / future work
 
-- **3-4 combatant matches.** The move protocol and round loop above are
-  written for strict pairwise; a free-for-all changes both "who does a
-  block target" and how HP/judging generalizes. Worth a follow-up once
-  pairwise has real mileage, not designed blind here.
+- **Battle Royale mode ("with cheese").** The 3-8 combatant free-for-all,
+  layered on the pairwise core once it has real mileage (still not the
+  default — see Non-goals). Same move protocol, one addition: `attack`/
+  `block`/`counter` each carry a `target` naming another combatant's
+  position; a move with no `target` when more than 2 combatants are in the
+  match is refused at the tool boundary, same as today's duplicate-position
+  refusal. A round with N combatants is N independent judged exchanges
+  (attacker vs. its one declared target), not a single N-way brawl — the
+  judge call shape stays identical to pairwise, there's just more of them
+  per round. Elimination: a combatant at 0 HP is out for the rest of the
+  match (no longer a legal target, no longer takes a turn) rather than
+  ending the match, so a battle royale actually plays out instead of
+  collapsing to the first knockout. Verdict: last position standing, or
+  highest HP at the round cap if more than one survives — the same
+  judged-on-points fallback pairwise matches already have. The name is a
+  nod, not a spec: the mode is just "more than two combatants," kept
+  because it's the one detail everyone remembers from the meeting where
+  this got approved. Still genuinely open: whether N judged exchanges per
+  round is fair when a combatant is targeted by more than one attacker at
+  once (does it eat cumulative damage from all of them, or does the judge
+  see the round holistically) — not designed blind here.
 - **Cost/fairness across providers.** A free local model arguing against a
   paid frontier model is not a fair fight in the way that matters for a
   judged debate (one side can afford to think longer per move). Whether
