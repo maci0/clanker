@@ -7297,6 +7297,23 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
+/// The webui surfaces a run failure as `[run failed: <message>]`. A bare
+/// provider error ("HTTP 400: decrypt error") tells the user nothing about
+/// which backend or whether it is their config, a harness bug, or the
+/// provider. Prefix the provider name always; when images were attached, add
+/// a hint that the model may not be vision-capable — the most common
+/// image-upload failure class.
+fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {
+    if (!had_images) {
+        return std.fmt.allocPrint(arena, "{s}: {s}", .{ provider_name, detail }) catch detail;
+    }
+    return std.fmt.allocPrint(
+        arena,
+        "{s}: {s} — with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled",
+        .{ provider_name, detail },
+    ) catch detail;
+}
+
 /// Runs one agent task synchronously and returns the final answer as JSON:
 /// {"ok":true,"content":"..."} or {"ok":false,"error":"..."}.
 fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
@@ -7475,7 +7492,16 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // attaches them to the task message exactly as the tool-result image path
     // does. Same module flag as the agent's own image handling, and the 4 MB
     // per-image cap the page promises is enforced here on decoded bytes.
-    if (cfg.modules.multimodal and req.images.len > 0) {
+    const had_images = req.images.len > 0;
+    if (had_images) {
+        // A silent drop here is the worst failure mode: the run "succeeds"
+        // and the model never sees the image. Tell the user the flag to set
+        // instead, so a disabled-multimodal config reads as a config problem
+        // rather than as a backend/upload bug.
+        if (!cfg.modules.multimodal) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"image attachments are disabled: enable modules.multimodal in your config (the composer sent image attachment(s))\"}");
+            return;
+        }
         var imgs: std.ArrayList(types.ImagePart) = .empty;
         for (req.images) |im| {
             if (im.mime.len == 0 or im.b64.len == 0) continue;
@@ -7558,7 +7584,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
-            const detail = err_detail orelse @errorName(err);
+            const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
             writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
             return;
         };
@@ -7598,7 +7624,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     }
 
     const resp = a.run(&messages, final_task, &err_detail) catch |err| {
-        const detail = err_detail orelse @errorName(err);
+        const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
         // Escape `detail` through the JSON stringifier: provider error text
         // can contain quotes, backslashes, or newlines that plain bufPrint
         // interpolation would turn into malformed JSON clients cannot parse.
@@ -8560,6 +8586,25 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqualStrings("", bare.goal);
     const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("g1", with_goal.goal);
+}
+
+test "run failure detail names the provider and hints at vision when images were attached" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Without images the provider name is prepended so the user knows which
+    // backend failed (the 'decrypt error 400' class of bare message).
+    const plain = enrichRunError(arena, "anthropic", false, "HTTP 400: decrypt error");
+    try std.testing.expect(std.mem.startsWith(u8, plain, "anthropic: "));
+    try std.testing.expect(std.mem.find(u8, plain, "HTTP 400: decrypt error") != null);
+
+    // With an attached image the message also points at vision support, so a
+    // failed upload reads as a config/provider issue rather than a mystery.
+    const img = enrichRunError(arena, "ollama", true, "HTTP 400: bad request");
+    try std.testing.expect(std.mem.startsWith(u8, img, "ollama: "));
+    try std.testing.expect(std.mem.find(u8, img, "vision") != null);
+    try std.testing.expect(std.mem.find(u8, img, "modules.multimodal") != null);
 }
 
 test "resolveRunTask attaches explicit and newest-active goals from real goals.json" {
