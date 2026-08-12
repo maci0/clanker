@@ -16,6 +16,11 @@ pub fn build(b: *std.Build) void {
     // hand-copied literal.
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", build_zon.version);
+    // The zig the gates shell out to. `zig fmt` and `zig ast-check` run with
+    // `cwd` set to a staging or temp directory, so a bare "zig" is resolved
+    // against a PATH the spawn does not reliably see; the interpreter running
+    // this build is both the right version and an absolute path.
+    build_options.addOption([]const u8, "zig_exe", b.graph.zig_exe);
 
     // The host, with one adjustment: zwasm links libc, and on a glibc host the
     // crt1.o carries SFrame relocations this lld cannot resolve, so linux

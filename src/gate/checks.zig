@@ -5,6 +5,7 @@
 //! every check passes.
 
 const std = @import("std");
+const build_options = @import("build_options");
 const log = @import("../util/log.zig");
 
 /// A cold `zig build test` can print more than one MiB while rebuilding its
@@ -691,13 +692,44 @@ test "gitDenyGuardGate allows non-git patterns and non-config files" {
     try std.testing.expect(!result3.ok);
 }
 
+/// The absolute path of the zig binary the gates shell out to, or null to fall
+/// back to a bare "zig".
+///
+/// `build_options.zig_exe` — the interpreter that built this binary — comes
+/// first: it is the right version by construction, and it is absolute, which is
+/// what matters here. Every gate runs with `cwd` set to a staging or temp
+/// directory, and a bare "zig" is not reliably found from there: on macOS the
+/// fmt and ast-check gates failed at *spawn*, before zig ever saw the code they
+/// were meant to check, and both of this file's tests failed with it.
+///
+/// The two fixed paths behind it are where zig lives on the machine this loop
+/// usually runs on, kept as a fallback for a binary whose build cache has since
+/// been cleared.
 fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
-    const known_first = [_][]const u8{ "/home/maci/.local/bin/zig", "/home/maci/.zvm/0.16.0/zig" };
+    const known_first = [_][]const u8{ build_options.zig_exe, "/home/maci/.local/bin/zig", "/home/maci/.zvm/0.16.0/zig" };
     for (known_first) |k| {
+        // Relative, or empty on a build that predates the option: `cwd` is not
+        // this process's, so it could not be resolved against anything useful.
+        if (k.len == 0 or k[0] != '/') continue;
         std.Io.Dir.accessAbsolute(io, k, .{ .execute = true }) catch continue;
         return gpa.dupe(u8, k) catch null;
     }
     return null;
+}
+
+test "resolveZigBin finds the zig that built this binary" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Something has to be found, or every gate that shells out is running on
+    // the bare-"zig" fallback that does not survive a changed cwd — which is
+    // the condition skipIfNoSpawnableZig below exists to tolerate, and which
+    // this option is meant to stop happening in the first place.
+    const bin = resolveZigBin(gpa, io) orelse return error.TestExpectedZigBin;
+    defer gpa.free(bin);
+    try std.testing.expect(bin[0] == '/');
 }
 
 /// Turns "the compiler could not even be spawned" into a test skip. The
@@ -707,6 +739,11 @@ fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
 /// test tmp dir — there is no PATH search), so the gate cannot run at all
 /// and the test should skip, not fail the suite on a machine that was never
 /// able to run it. Any other error is a real failure and passes through.
+///
+/// Retained as the backstop it was written to be: with `build_options.zig_exe`
+/// in the list above, resolveZigBin now answers on any machine that still has
+/// the build's compiler, so these skips stop firing and the gates they cover
+/// are actually exercised.
 fn skipIfNoSpawnableZig(err: anyerror) anyerror {
     return switch (err) {
         error.FileNotFound, error.AccessDenied => error.SkipZigTest,
