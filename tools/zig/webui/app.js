@@ -2508,6 +2508,13 @@ function runGoal(g, opts) {
   showView("goals", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
+  // A goal mirrored onto the board follows the run's lifecycle: its card moves
+  // to doing when the run starts, review when it finishes, and back to ready if
+  // it is stopped or fails. workCardAsGoal also moves its card explicitly, so
+  // this only applies where a goal->card link exists (form-created goals).
+  if (goalCardLinks[g.id]) {
+    moveGoalCardToColumn(g.id, "doing");
+  }
   if (opts.onStart) opts.onStart();
 
   var splitter = makeLineSplitter(function (line) {
@@ -2552,6 +2559,7 @@ function runGoal(g, opts) {
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
       el.goalsStatus.textContent = "Goal run finished.";
+      if (goalCardLinks[g.id]) moveGoalCardToColumn(g.id, "review");
       if (opts.onDone) opts.onDone("finished");
     }
   }).catch(function (err) {
@@ -2560,11 +2568,13 @@ function runGoal(g, opts) {
     if (err && err.name === "AbortError") {
       setGoalStatus(g.id, "stopped");
       el.goalsStatus.textContent = "Goal run stopped.";
+      if (goalCardLinks[g.id]) moveGoalCardToColumn(g.id, "ready");
       if (opts.onDone) opts.onDone("stopped");
     } else {
       appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
       setGoalStatus(g.id, "failed");
       el.goalsStatus.textContent = "Goal run failed: " + err.message;
+      if (goalCardLinks[g.id]) moveGoalCardToColumn(g.id, "ready");
       if (opts.onDone) opts.onDone("failed");
     }
   });
@@ -2654,12 +2664,63 @@ function postGoal(payload, status) {
       if (payload && payload.status === "done" && payload.id) {
         moveGoalCardToColumn(payload.id, "done");
       }
+      // A goal created from the Goals view (objective present, no id) is also
+      // mirrored onto the board: it gets a card in the column that matches the
+      // goal's state (backlog for a fresh active goal). The card is the board's
+      // equivalent of the goal, so working on / finishing / closing the goal
+      // later moves it through doing -> review -> done (see runGoal and the
+      // mark-done branch above). Goals created from an existing board card are
+      // skipped here — workCardAsGoal already owns that card and links it.
+      if (payload && payload.objective && payload.id === undefined && payload.column === undefined) {
+        ensureGoalBoardCard(payload.objective, payload.completion_criterion);
+      }
       return d;
     })
     .catch(function (err) {
       el.goalsStatus.textContent = "Goal failed: " + err.message;
       return null;
     });
+}
+
+/* Mirrors a freshly-created goal onto the board: finds the card whose title is
+   the goal's objective (the board mirror created by workCardAsGoal, or an
+   earlier auto-add), or creates one in the backlog column if none exists, then
+   records the goal -> card link so the card follows the goal's lifecycle.
+   Idempotent: a goal whose objective already matches a card is only linked;
+   a goal with no matching card creates one. */
+function ensureGoalBoardCard(objective, criterion) {
+  if (!objective) return;
+  var existing = null;
+  for (var i = 0; i < board.cards.length; i++) {
+    if (board.cards[i].title === objective) { existing = board.cards[i]; break; }
+  }
+  var goalId = bestGoalIdFor(objective);
+  if (existing) {
+    if (goalId) goalCardLinks[goalId] = existing.id;
+    return;
+  }
+  var done = function (d) {
+    if (!d || !d.board) return;
+    var created = null;
+    for (var j = 0; j < d.board.cards.length; j++) {
+      if (d.board.cards[j].title === objective) { created = d.board.cards[j]; break; }
+    }
+    if (created && goalId) goalCardLinks[goalId] = created.id;
+  };
+  postBoard({ op: "create", title: objective, body: criterion, column: "backlog" }, null).then(done);
+}
+
+/* The id of the newest goal carrying `objective`, or null. */
+function bestGoalIdFor(objective) {
+  var goalId = null, best = -1;
+  var goals = goalState.val || [];
+  for (var i = 0; i < goals.length; i++) {
+    if (goals[i].objective === objective && (goals[i].created || 0) > best) {
+      goalId = goals[i].id;
+      best = goals[i].created || 0;
+    }
+  }
+  return goalId;
 }
 
 /* Moves the board card linked to a goal (if any) into `column`. The link is
