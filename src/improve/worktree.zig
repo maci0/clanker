@@ -65,6 +65,11 @@ pub const Worktree = struct {
             error.FileNotFound => {}, // already gone — fine
             else => log.log(.debug, "could not remove leftover dir {s}: {s}", .{ self.path, @errorName(err) }),
         };
+        // If .clanker-worktrees is now empty, remove it so the repo does
+        // not accumulate a stale empty directory across runs. deleteDir
+        // fails on a non-empty directory, which is the desired behaviour
+        // when other worktrees are still active.
+        std.Io.Dir.cwd().deleteDir(io, ".clanker-worktrees") catch {};
         // The branch was successfully merged, so -d (which refuses to
         // delete unmerged branches) is safe and will succeed.
         {
