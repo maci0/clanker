@@ -11,7 +11,7 @@
     "properties": {
       "title": {
         "type": "string",
-        "description": "What needs doing (max 500 chars)"
+        "description": "What needs doing (max 512 chars)"
       },
       "column": {
         "type": "string",

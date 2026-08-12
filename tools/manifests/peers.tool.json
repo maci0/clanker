@@ -1,6 +1,6 @@
 {
   "name": "peers",
-  "description": "Talk to other clanker instances. {\"action\": \"phonebook\"} scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer, or omit \"peer\" to broadcast to every configured peer.",
+  "description": "Talk to other clanker instances. The action defaults to phonebook, which scans every configured peer's agent card and reports up/down; {\"action\": \"notify\", \"peer\": \"<name>\", \"message\": \"...\"} posts a message to one peer, or omit \"peer\" to broadcast to every configured peer.",
   "wasm": "zig-out/tools/peers.wasm",
   "input_schema": {
     "type": "object",
@@ -28,10 +28,7 @@
         "type": "string",
         "description": "Stable notification delivery ID. Reuse it when retrying the same logical notification. If omitted, the tool generates one and echoes it back in the response (even on failure) for you to reuse on retry."
       }
-    },
-    "required": [
-      "action"
-    ]
+    }
   },
   "fs_prefixes": [],
   "network_from_config": "peers",

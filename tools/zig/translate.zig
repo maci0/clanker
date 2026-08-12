@@ -2,8 +2,7 @@
 //! asks the model to translate the human-readable text in the result, and hands
 //! the rewritten payload to the next layer.
 //!
-//! Input:  {"tool": "<wrapped tool>", "phase": "after", "payload": "<json>",
-//!          "prior": ["<transforms already applied>"]}
+//! Input:  {"tool": "<wrapped tool>", "phase": "after", "payload": "<json>"}
 //! Output: {"ok": true, "payload": "<rewritten json>"}
 //!
 //! Settings come from the `config` object in tools/manifests/translate.tool.json:
@@ -24,7 +23,6 @@ const Request = struct {
     tool: []const u8 = "",
     phase: []const u8 = "",
     payload: []const u8 = "",
-    prior: []const []const u8 = &.{},
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

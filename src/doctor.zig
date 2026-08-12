@@ -75,34 +75,6 @@ fn runChecks(
     environ_map: *std.process.Environ.Map,
     rep: *Report,
 ) !void {
-    rep.section("compiler");
-    const zig_ok = blk: {
-        const build_options = @import("build_options");
-        const candidates = [_][]const u8{ build_options.zig_exe, "zig" };
-        for (candidates) |zig_bin| {
-            if (zig_bin.len == 0) continue;
-            const res = std.process.run(arena, io, .{
-                .argv = &.{ zig_bin, "version" },
-                .stdout_limit = .limited(256),
-                .stderr_limit = .limited(256),
-            }) catch continue;
-            defer arena.free(res.stdout);
-            defer arena.free(res.stderr);
-            const ok = switch (res.term) {
-                .exited => |c| c == 0,
-                else => false,
-            };
-            if (ok) {
-                const ver = std.mem.trim(u8, res.stdout, " \t\r\n");
-                rep.line(.ok, "zig compiler", if (ver.len > 0) ver else zig_bin);
-                break :blk true;
-            }
-        }
-        rep.line(.fail, "zig compiler", "could not run 'zig version'; install Zig 0.16+ or check PATH");
-        break :blk false;
-    };
-    _ = zig_ok;
-
     rep.section("config");
     if (!fileExists(io, "config.toml")) {
         rep.line(.fail, "config.toml", "missing; run `clanker setup`");

@@ -982,3 +982,113 @@ test "gitDenyGuardGate rejects an unparseable config file" {
     try std.testing.expectEqualStrings("git-deny-guard", result.label);
     try std.testing.expect(std.mem.indexOf(u8, result.detail, "valid TOML") != null);
 }
+
+/// Rejects a proposal that would weaken the improve loop's own gating by
+/// flipping safety-critical config booleans off. The config loader has no
+/// opinion on these values (they are all ordinary fields), so a proposal
+/// setting `capability_gate = false` passes every other check, gets
+/// promoted, and the next run loads it and skips the capability eval gate
+/// permanently. This is the only thing that catches it.
+pub fn configWeakeningGate(
+    gpa: std.mem.Allocator,
+    files: []const []const u8,
+    new_texts: []const []const u8,
+) GateResult {
+    if (files.len != new_texts.len) return .{ .ok = false, .label = "config-weakening", .detail = "mismatched files/new_text count" };
+    for (files, new_texts) |f, new| {
+        if (!std.mem.eql(u8, f, "config.toml") and !std.mem.eql(u8, f, "config.local.toml")) continue;
+        var arena_state = std.heap.ArenaAllocator.init(gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const parsed = toml_bridge.parseToJsonValue(arena, new) catch {
+            return .{ .ok = false, .label = "config-weakening", .detail = "config change is not valid TOML" };
+        };
+        const obj = switch (parsed) {
+            .object => |o| o,
+            else => continue,
+        };
+        const improve = switch (obj.get("improve") orelse continue) {
+            .object => |o| o,
+            else => continue,
+        };
+        if (isFalse(improve.get("capability_gate")))
+            return .{ .ok = false, .label = "config-weakening", .detail = "capability_gate must not be disabled" };
+        if (isFalse(improve.get("inert_gate")))
+            return .{ .ok = false, .label = "config-weakening", .detail = "inert_gate must not be disabled" };
+        if (improve.get("max_consecutive_test_only")) |v| {
+            switch (v) {
+                .integer => |n| if (n == 0)
+                    return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must not be 0" },
+                else => {},
+            }
+        }
+        if (isFalse(improve.get("plan_phase")))
+            return .{ .ok = false, .label = "config-weakening", .detail = "plan_phase must not be disabled" };
+    }
+    return .{ .ok = true, .label = "config-weakening" };
+}
+
+fn isFalse(v: ?std.json.Value) bool {
+    const val = v orelse return false;
+    return switch (val) {
+        .bool => |b| !b,
+        else => false,
+    };
+}
+
+test "configWeakeningGate rejects disabling capability_gate" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[improve]
+        \\capability_gate = false
+    };
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+    try std.testing.expect(std.mem.indexOf(u8, result.detail, "capability_gate") != null);
+}
+
+test "configWeakeningGate rejects disabling inert_gate" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[improve]
+        \\inert_gate = false
+    };
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+}
+
+test "configWeakeningGate rejects zeroing max_consecutive_test_only" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[improve]
+        \\max_consecutive_test_only = 0
+    };
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+}
+
+test "configWeakeningGate allows a harmless improve config change" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[improve]
+        \\capability_gate = true
+        \\max_consecutive_test_only = 5
+    };
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(result.ok);
+}
+
+test "configWeakeningGate ignores non-config files" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"src/main.zig"};
+    const new_texts = [_][]const u8{"const x = 1;"};
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(result.ok);
+}

@@ -2,7 +2,7 @@
 //! and asks the model to rewrite them according to a configurable
 //! `instruction` template. Generalizes `translate`.
 //!
-//! Input:  {"tool": "...", "phase": "after", "payload": "<json>", "prior": [...]}
+//! Input:  {"tool": "...", "phase": "after", "payload": "<json>"}
 //! Output: {"ok": true, "payload": "<rewritten>"}  or {"ok":false} to decline.
 //!
 //! Settings come from `config` in tools/manifests/mutate.tool.json:
@@ -24,7 +24,6 @@ const Request = struct {
     tool: []const u8 = "",
     phase: []const u8 = "",
     payload: []const u8 = "",
-    prior: []const []const u8 = &.{},
 };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

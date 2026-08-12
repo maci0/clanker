@@ -16,7 +16,7 @@ const lib = @import("lib.zig");
 const Change = struct {
     file: []const u8 = "",
     old: []const u8 = "",
-    new: []const u8 = "",
+    new: ?[]const u8 = null,
 };
 
 const Request = struct {
@@ -35,6 +35,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     for (req.changes) |c| {
         if (c.file.len == 0) return lib.fail(out, "each change needs a non-empty \"file\"");
+        if (c.new == null) return lib.fail(out, "each change needs a \"new\" value");
         applyOne(c) catch |err| return lib.failErr(out, err, c.file);
     }
 
@@ -45,13 +46,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 }
 
 fn applyOne(c: Change) !void {
+    const replacement = c.new.?;
     const current = lib.fsRead(c.file) catch |err| switch (err) {
-        error.NotFound => return lib.fsWrite(c.file, c.new),
+        error.NotFound => return lib.fsWrite(c.file, replacement),
         else => return err,
     };
     const text = try lib.alloc.dupe(u8, current);
     defer lib.alloc.free(text);
-    const patched = try patchOnce(lib.alloc, text, c.old, c.new);
+    const patched = try patchOnce(lib.alloc, text, c.old, replacement);
     defer lib.alloc.free(patched);
     return lib.fsWrite(c.file, patched);
 }

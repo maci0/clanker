@@ -73,6 +73,8 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.fmtGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.lintGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.toolDescriptorGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.gitDenyGuardGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.configWeakeningGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
@@ -753,6 +755,29 @@ pub const Engine = struct {
             log.log(.error_, "staging lint failed: {s}", .{tail});
             try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, tail, fingerprints, null);
             self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the lint gate rejected it:\n{s}\nFix exactly that and re-propose.", .{tail});
+            self.removeTree(staging);
+            return .failed;
+        }
+
+        const gate_files = try proposalChangedPathsSlice(self.ctx.gpa, proposal.changes);
+        defer self.ctx.gpa.free(gate_files);
+        const gate_new_texts = try proposalNewTexts(self.ctx.gpa, proposal.changes);
+        defer self.ctx.gpa.free(gate_new_texts);
+
+        const git_deny = gate_checks.gitDenyGuardGate(self.ctx.gpa, gate_files, gate_new_texts);
+        if (!git_deny.ok) {
+            log.log(.warn, "proposal rejected: {s}", .{git_deny.detail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, git_deny.detail, fingerprints, null);
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the git-deny guard: {s}\nDo not modify git tool manifests or widen exec_pattern_allow.", .{git_deny.detail});
+            self.removeTree(staging);
+            return .failed;
+        }
+
+        const cfg_weak = gate_checks.configWeakeningGate(self.ctx.gpa, gate_files, gate_new_texts);
+        if (!cfg_weak.ok) {
+            log.log(.warn, "proposal rejected: {s}", .{cfg_weak.detail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, cfg_weak.detail, fingerprints, null);
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening guard: {s}\nDo not disable safety gates in config.", .{cfg_weak.detail});
             self.removeTree(staging);
             return .failed;
         }
@@ -2086,6 +2111,12 @@ fn proposalChangedPaths(gpa: std.mem.Allocator, p: proposal_mod.Proposal) ![][]c
 fn proposalChangedPathsSlice(gpa: std.mem.Allocator, changes: []const proposal_mod.Change) ![][]const u8 {
     const out = try gpa.alloc([]const u8, changes.len);
     for (changes, 0..) |c, i| out[i] = c.file;
+    return out;
+}
+
+fn proposalNewTexts(gpa: std.mem.Allocator, changes: []const proposal_mod.Change) ![][]const u8 {
+    const out = try gpa.alloc([]const u8, changes.len);
+    for (changes, 0..) |c, i| out[i] = c.new;
     return out;
 }
 
