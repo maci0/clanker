@@ -574,11 +574,13 @@ pub fn gitDenyGuardGate(
             return .{ .ok = false, .label = "git-deny-guard", .detail = "proposals must not modify the git tool manifest" };
         }
         if (!std.mem.eql(u8, f, "config.json") and !std.mem.eql(u8, f, "config.local.json")) continue;
-        if (std.mem.indexOf(u8, new, "\"exec_pattern_allow\"") == null) continue;
         var arena_state = std.heap.ArenaAllocator.init(gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, new, .{}) catch continue;
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, new, .{}) catch {
+            return .{ .ok = false, .label = "git-deny-guard", .detail = "config change is not valid JSON" };
+        };
+        if (std.mem.indexOf(u8, new, "\"exec_pattern_allow\"") == null) continue;
         const obj = switch (parsed) {
             .object => |o| o,
             else => continue,
@@ -697,4 +699,14 @@ test "gitDenyGuardGate allows a git-prefixed tool that is not the git command" {
     };
     const result = gitDenyGuardGate(gpa, &files, &new_texts);
     try std.testing.expect(result.ok);
+}
+
+test "gitDenyGuardGate rejects invalid JSON in config files" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.json"};
+    const new_texts = [_][]const u8{"{ this is not json"};
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+    try std.testing.expect(std.mem.indexOf(u8, result.detail, "valid JSON") != null);
 }
