@@ -988,7 +988,7 @@ pub const Agent = struct {
     /// Rewrites state/reasoning.jsonl keeping only the newest
     /// `reasoning_keep_lines` lines.
     fn trimReasoningLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator) !void {
-        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(reasoning_max_log_bytes));
+        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(reasoning_max_log_bytes * 2));
         defer gpa.free(raw);
         var lines: std.ArrayList([]const u8) = .empty;
         defer lines.deinit(gpa);

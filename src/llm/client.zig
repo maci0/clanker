@@ -106,8 +106,10 @@ pub fn chat(
         attempt += 1;
         outcome = try doFetch(ctx, &client, url, body, cred, impl, provider, arena, err_detail);
         if (isRetryable(outcome.status) and attempt < max_attempts) {
-            const delay = attempt * std.time.ns_per_s;
-            log.log(.warn, "HTTP {d} from '{s}', retrying in {d}s (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_s, attempt, max_attempts });
+            const base: u64 = @as(u64, attempt) * std.time.ns_per_s;
+            const jitter: u64 = @intCast(@mod(std.Io.Timestamp.now(ctx.io, .awake).nanoseconds, 500_000_000));
+            const delay = base + jitter;
+            log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts });
             ctx.gpa.free(outcome.body);
             // A cancellation during the backoff sleep must abort the retry,
             // not fall through and hammer the provider immediately with no
