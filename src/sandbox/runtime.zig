@@ -1435,6 +1435,11 @@ test "arena wasm tool refuses a match without two distinct sides" {
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"  \"}", .want = "cannot be blank" },
         .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}", .want = "at most 8" },
         .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"a\"]}", .want = "identical" },
+        // Design-review seeding needs something real on both sides, and derives
+        // the positions, so a half-seeded or double-seeded match is refused.
+        .{ .input = "{\"question\":\"q\",\"defend\":\"impl A\"}", .want = "both \\\"defend\\\" and \\\"alternative\\\"" },
+        .{ .input = "{\"question\":\"q\",\"alternative\":\"impl B\"}", .want = "both \\\"defend\\\" and \\\"alternative\\\"" },
+        .{ .input = "{\"question\":\"q\",\"defend\":\"A\",\"alternative\":\"B\",\"for\":\"x\",\"against\":\"y\"}", .want = "derive the positions" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"b\",\"judge\":\"jury\"}", .want = "judge must be" },
     };
     for (cases) |c| {

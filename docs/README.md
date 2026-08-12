@@ -431,7 +431,7 @@ iter 2
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Start the MCP server |
 | `goal` | Design and persist a structured goal |
-| `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--match <id>` prints a stored match |
+| `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
 | `notify <peer> "<message>"` | Send a notification to a peer |
 | `phonebook` | List peer agent cards |
 | `chat send <room> "<text>"` | Send a message to a chatroom |

@@ -2,10 +2,10 @@
 
 ## Status
 
-Phases 1, 2, 4, 5 and 8 are built: the pairwise match core, `clanker arena` /
-`/arena`, third-party judging, the web UI arena view, and Battle Royale mode.
-Phase 3 (multi-instance over a chatroom), 6 (advisory self-improve wiring) and
-7 (design-review seeding) are not.
+Phases 1, 2, 4, 5, 7 and 8 are built: the pairwise match core, `clanker arena`
+/ `/arena`, third-party judging, the web UI arena view, design-review seeding
+(with a worked example below), and Battle Royale mode. Phase 3 (multi-instance
+over a chatroom) and 6 (advisory self-improve wiring) are not.
 
 Two deviations from what is written below, both deliberate:
 
@@ -403,11 +403,11 @@ Phase 6 — self-improve integration (separate proposal, not this PRD's ship):
 
 Phase 7 — tool/skill design-review use case:
 
-- [ ] Match seeding that takes "implementation/wording to defend" +
+- [x] Match seeding that takes "implementation/wording to defend" +
       "alternative to attack from," not bare stances
-- [ ] Worked example against a real past decision (e.g. re-run one of
+- [x] Worked example against a real past decision (e.g. re-run one of
       `wasm-review.md`'s own move-or-stay verdicts as a match, compare)
-- [ ] Verdict transcript format usable as review input, matching the
+- [x] Verdict transcript format usable as review input, matching the
       file/line-shaped finding style `docs/prompts/*-review.md` prompts
       already report
 
@@ -421,6 +421,45 @@ Phase 8 — Battle Royale mode ("with cheese," 3-8 combatants):
       existing points fallback
 - [x] Resolved: whether simultaneous multi-attacker targeting is cumulative
       damage or a holistic per-round judge call (see Open questions)
+
+## Worked example (phase 7)
+
+Re-running one of `docs/prompts/wasm-review.md`'s own move-or-stay decisions as
+a match, to check the mode against a verdict the repo already reached:
+
+```
+clanker arena "Should the deterministic gate runner stay native in
+  src/gate/checks.zig, or move to a WASM tool?" \
+  --defend src/gate/checks.zig \
+  --alternative "Reimplement the gate as a sandboxed WASM tool ..." --rounds 2
+```
+
+`--defend` was given a path, so the real file was read in and travels with the
+match; the finding can then name it. Both sides quoted actual identifiers
+(`runZigArgs`, `resolveZigBin`, `configWeakeningGate`, `skipIfNoSpawnableZig`),
+which is the point of seeding with artifacts rather than stances.
+
+The verdict, in the review shape:
+
+```
+Verdict: for
+Reason: The alternative's "togglable like any other plugin" breaks the gate's
+  non-circumventable safety, which the current implementation preserves by
+  staying outside the protected surface.
+Where: The phrase "togglable like any other plugin" in the proposed approach.
+Respect: The losing side's unaddressed point that runZigArgs uses unsandboxed
+  std.process.run, allowing cache writes or network access; for's counter only
+  disputed the binary-resolution fallbacks, not the lack of isolation.
+Confidence: high
+```
+
+That agrees with the decision already in the tree (`checks.zig` is a trust root
+and stays native, per the review prompt's own step 1). The part a single-pass
+reviewer does not produce is the `Respect` line: the losing side landed a real
+objection about `std.process.run` being unsandboxed that the winner never
+answered, and the finding says so instead of smoothing it over. Two caveats on
+reading too much into one match: both sides shared a provider here, and one
+combatant forfeited a round to an empty completion.
 
 ## Open questions / future work
 
