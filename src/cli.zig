@@ -16,6 +16,7 @@ const worktree_mod = @import("improve/worktree.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
+const session_export = @import("agent/session_export.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
@@ -28,6 +29,10 @@ const rawhttp = @import("util/rawhttp.zig");
 // exclusive to the REPL that's now src/tui/repl_vaxis.zig, and was
 // removed with it.
 const tui_transcript = @import("tui/transcript.zig");
+// The per-turn stats line and the byte/token weight of a conversation, shared
+// with the vaxis REPL so `clanker run`'s footer and the REPL's transcript
+// report a turn in one dialect rather than two.
+const tui_stats = @import("tui/stats.zig");
 const repl_vaxis = @import("tui/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
@@ -62,6 +67,8 @@ pub const Command = enum {
     providers_check,
     run,
     sessions,
+    /// `session export <id>`: one conversation as a self-contained HTML file.
+    session_export,
     tools_list,
     eval,
     improve_self,
@@ -111,6 +118,11 @@ pub const Options = struct {
     /// "subscribe". `room` holds the room name; `message` holds the text (send),
     /// an `after` ts (history) or an on/off token (subscribe).
     chat_sub: []const u8 = "rooms",
+    /// `session export <id> [path]`: where the HTML transcript goes. Absent,
+    /// `session_export.defaultPath` picks `state/exports/<id>.html`. The id
+    /// itself rides in `session`, the field every other command already reads
+    /// a session id out of.
+    session_out: ?[]const u8 = null,
     room: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
     /// `eval --tasks`: only the agent-driven evals, skipping the selfhost
@@ -124,6 +136,12 @@ pub const Options = struct {
     apply: bool = false,
     verbose: bool = false,
     port: u16 = 17921,
+    /// `serve --host <addr>`: the interface to bind the HTTP server to.
+    /// Defaults to 127.0.0.1 (loopback only). `0.0.0.0` (or `::`) makes the
+    /// web UI and HTTP API reachable from the LAN — which also exposes
+    /// whatever the server can do (tool calls, write confirmations) to anyone
+    /// who can reach the port, so prefer a firewall over binding broadly.
+    host: []const u8 = "127.0.0.1",
     /// Set when `--help` followed a command: print that command's help rather
     /// than the whole list.
     help_for: ?Command = null,
@@ -324,6 +342,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                     return error.BadPort;
                 };
                 used = .port;
+            } else if (std.mem.eql(u8, a, "--host")) {
+                opts.host = try takeValue(args, &idx, inline_value, a, diag);
+                used = .host;
             } else if (std.mem.eql(u8, a, "--target")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 const gpa = std.heap.page_allocator;
@@ -482,6 +503,13 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .run;
             } else if (std.mem.eql(u8, a, "sessions")) {
                 opts.command = .sessions;
+            } else if (std.mem.eql(u8, a, "session")) {
+                // Mandatory subcommand, the way `tools list` is: `session`
+                // alone is not a listing (that is `sessions`), so leaving it
+                // to mean something would make the singular and the plural
+                // two spellings of one command.
+                opts.command = .session_export;
+                pending_sub = "export";
             } else if (std.mem.eql(u8, a, "tools")) {
                 opts.command = .tools_list;
                 pending_sub = "list";
@@ -592,6 +620,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.task = a;
         } else if (opts.command == .providers_check and opts.provider == null) {
             opts.provider = a;
+        } else if (opts.command == .session_export and opts.session == null) {
+            opts.session = a;
+        } else if (opts.command == .session_export and opts.session_out == null) {
+            opts.session_out = a;
         } else if (opts.command == .run and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .graph and opts.task == null) {
@@ -676,6 +708,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         return error.MissingArg;
     }
     if (opts.command == .revert and opts.task == null) {
+        setDiag(diag, "<id>");
+        return error.MissingArg;
+    }
+    if (opts.command == .session_export and opts.session == null) {
         setDiag(diag, "<id>");
         return error.MissingArg;
     }
@@ -910,6 +946,7 @@ const Flag = enum {
     dry_run,
     tasks,
     port,
+    host,
     yes,
     research_target,
     research_harness,
@@ -945,6 +982,7 @@ const Flag = enum {
             .dry_run => "--dry-run",
             .tasks => "--tasks",
             .port => "--port",
+            .host => "--host",
             .yes => "--yes",
             .research_target => "--target",
             .research_harness => "--harness",
@@ -1013,10 +1051,11 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
+    .{ .command = .serve, .usage = "serve [--host <addr>] [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host }, .detail = "Binds 127.0.0.1 (loopback) by default.\\n\\n--host <addr>    interface to bind. Default 127.0.0.1; use 0.0.0.0 (or ::)\\n                  to reach the web UI and HTTP API from the LAN. Binding\\n                  broadly exposes whatever the server can do (tool calls,\\n                  write confirmations) to anyone who can reach the port,\\n                  so pair it with a firewall.\\n--port <port>    listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
+    .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
@@ -1079,6 +1118,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .providers_check => try cmdProvidersCheck(init, opts),
         .run => try cmdRun(init, opts),
         .sessions => try cmdSessions(init),
+        .session_export => try cmdSessionExport(init, opts),
         .tools_list => try cmdToolsList(init, opts),
         .eval => try cmdEval(init, opts),
         .improve_self => try cmdImproveSelf(init, opts),
@@ -2287,6 +2327,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // animation to clean up out of a captured log.
     run_answer_started = false;
     run_md = .{};
+    const turn_start = std.Io.Timestamp.now(io, .awake);
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         // Running out of iterations or budget is an outcome, not a crash. The
         // run did real work — often minutes of it and a measurable amount of
@@ -2319,6 +2360,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     try out_w.interface.writeAll("\n");
     try out_w.interface.flush();
 
+    printTurnStats(io, arena, &a, provider, turn_start, messages.items);
+
     if (opts.session) |sid| {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
@@ -2332,6 +2375,45 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             .updated = updated,
         });
     }
+}
+
+/// The turn's receipt on stderr: prompt/completion tokens, wall time, tok/s,
+/// cache hit rate, cost, and how full the context now is. The vaxis REPL
+/// appends the identical string to its transcript, both through
+/// `tui/stats.zig`, so the two surfaces cannot drift into two dialects of the
+/// same numbers.
+///
+/// Two guards, both about not writing a line nobody wants: stderr must be a
+/// terminal (a piped or redirected run keeps the byte-for-byte output it had
+/// before this existed, which is what `clanker run` promises scripts), and
+/// the turn must have reported usage at all.
+fn printTurnStats(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    a: *const agent.Agent,
+    provider: *const config.Provider,
+    started: std.Io.Timestamp,
+    messages: []const types.Message,
+) void {
+    if (!(std.Io.File.stderr().isTty(io) catch false)) return;
+    const model = provider.activeModel();
+    // An unpriced model has an unknown price, not a free one: null drops the
+    // cost segment rather than printing $0.0000 (see tui/stats.zig).
+    const priced = model.cost_per_1m_input != null or model.cost_per_1m_output != null;
+    const elapsed = started.durationTo(std.Io.Timestamp.now(io, .awake));
+    const turn: tui_stats.TurnStats = .{
+        .prompt_tokens = a.stats.total_prompt_tokens,
+        .completion_tokens = a.stats.total_completion_tokens,
+        .cache_hit_tokens = a.stats.total_cache_hit_tokens,
+        .cache_miss_tokens = a.stats.total_cache_miss_tokens,
+        .wall_ms = @intCast(@max(0, @divTrunc(elapsed.nanoseconds, std.time.ns_per_ms))),
+        .cost_usd = if (priced) a.stats.cost else null,
+        .context_tokens = tui_stats.historyTokens(messages),
+        .context_window = model.context_window,
+    };
+    if (!turn.accounted()) return;
+    const line = tui_stats.formatTurn(arena, turn) catch return;
+    std.debug.print("{s}\n", .{line});
 }
 
 const ToolResult = struct { ok: bool = false, text: []const u8 = "", err: []const u8 = "" };
@@ -2539,9 +2621,11 @@ const HotReload = struct {
 /// already used for other REPL cross-cutting state.
 var hot_reload_active: ?*HotReload = null;
 
-fn buildServeArgvTail(arena: std.mem.Allocator, port: u16) ![]const []const u8 {
+fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
+    try argv.append(arena, "--host");
+    try argv.append(arena, bind_addr);
     try argv.append(arena, "--port");
     try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
     return argv.items;
@@ -2607,6 +2691,39 @@ fn cmdSessions(init: std.process.Init) !void {
         return error.ModuleDisabled;
     }
     try printInternalTool(init, &cfg, "cmd_sessions", "");
+}
+
+/// `clanker session export <id> [path]` — one saved conversation written out
+/// as a self-contained HTML transcript.
+///
+/// Native rather than a `cmd_*` WASM tool, unlike its `sessions` neighbour: a
+/// tool's output is a `text` field the CLI prints, and this produces a file
+/// on disk, at a path the caller may name, whose whole point is that it is
+/// larger than the guest's shared output buffer. The rendering itself lives
+/// in `agent/session_export.zig` and is unit-tested there; this only resolves
+/// the id and the destination.
+fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.sessions) return error.ModuleDisabled;
+
+    const id = opts.session orelse return error.MissingArg;
+    if (!session.validSessionId(id)) {
+        log.log(.error_, "not a session id: '{s}'", .{id});
+        return error.InvalidSessionId;
+    }
+    const s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), id) catch |err| {
+        log.log(.error_, "cannot read session '{s}': {s} (clanker sessions lists them)", .{ id, @errorName(err) });
+        return err;
+    };
+    const html = try session_export.render(arena, s);
+    const path = opts.session_out orelse try session_export.defaultPath(arena, id);
+    // Atomic, so re-exporting over a file someone already has open leaves
+    // them the previous complete document rather than half of the new one.
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, html);
+    const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, s.messages.len, html.len });
+    try writeStdOut(io, line);
 }
 
 /// `clanker graph [run-id]` — list persisted execution graphs, or render one
@@ -3337,6 +3454,16 @@ fn cmdRevert(init: std.process.Init, opts: Options) !void {
 
 // ------------------------------------------------------------ serve ------
 
+/// Bind address for `serve`: IPv6 if the host string contains a colon (e.g.
+/// `::` or `::1`), IPv4 otherwise (the default `127.0.0.1`, or `0.0.0.0` for
+/// all interfaces).
+fn parseBindAddr(bind_addr: []const u8, port: u16) !std.Io.net.IpAddress {
+    if (std.mem.indexOfScalar(u8, bind_addr, ':')) |_| {
+        return std.Io.net.IpAddress.parseIp6(bind_addr, port);
+    }
+    return std.Io.net.IpAddress.parseIp4(bind_addr, port);
+}
+
 fn cmdServe(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -3344,7 +3471,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
-    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
+    const addr = try parseBindAddr(opts.host, port);
     // reuse_address lets a restarted `clanker serve` rebind immediately even
     // if a stale socket from a previous instance lingers (AddressInUse).
     var server = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
@@ -3359,18 +3486,27 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // request race to rewrite the same global.
     serve_ask_timeout_ns = @as(u64, cfg.agent.ask_timeout_seconds) * std.time.ns_per_s;
 
-    log.log(.info, "serve listening on 127.0.0.1:{d}", .{port});
+    // host:port for the log line and the clickable URL; IPv6 hosts get
+    // brackets so the URL parses (`http://[::1]:17921/webui`).
+    var hostbuf: [512]u8 = undefined;
+    const needs_bracket = std.mem.indexOfScalar(u8, opts.host, ':') != null;
+    const disp = if (needs_bracket)
+        std.fmt.bufPrint(&hostbuf, "[{s}]:{d}", .{ opts.host, port }) catch "host:port"
+    else
+        std.fmt.bufPrint(&hostbuf, "{s}:{d}", .{ opts.host, port }) catch "host:port";
+
+    log.log(.info, "serve listening on {s}", .{disp});
     // Bare clickable URL (no log prefix) so terminals render it as a link.
-    std.debug.print("http://127.0.0.1:{d}/webui\n", .{port});
+    std.debug.print("http://{s}/webui\n", .{disp});
 
     // Hot-reload: a background thread watches the binary and re-execs into
-    // `serve --port <port>` once a rebuild lands and no request is in
-    // flight (see HotReload doc comment). `reuse_address` on the listen
+    // `serve --host <host> --port <port>` once a rebuild lands and no request
+    // is in flight (see HotReload doc comment). `reuse_address` on the listen
     // socket above lets the new process rebind immediately.
     const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
     if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port));
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host));
     }
 
     while (true) {
@@ -3670,6 +3806,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePrompts(io, gpa, cfg, environ_map, method, body, stream);
         } else if (std.mem.startsWith(u8, path, "/api/arena")) {
             handleArena(io, gpa, cfg, environ_map, method, path, stream);
+        } else if (std.mem.startsWith(u8, path, "/api/compare")) {
+            handleCompare(io, gpa, cfg, environ_map, method, path, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
@@ -5109,6 +5247,7 @@ const webui_asset_paths = [_][]const u8{
     "/webui/lib/markdown.js",
     "/webui/features/arena.js",
     "/webui/features/board.js",
+    "/webui/features/compare.js",
     "/webui/features/fleet.js",
     "/webui/features/goals.js",
     "/webui/features/knowledge.js",
@@ -5147,6 +5286,11 @@ fn handleWebuiAsset(
     // for both would alias the two caches and serve one file for the other's
     // path (the known cache-aliasing bug class; see docs/prds/0006-webui.md).
     const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
+    // Carries its directory for the same reason, and for one more: the
+    // Compare view is the blind side-by-side, so serving another module's
+    // bytes for its path is not only a wrong asset, it is the view that
+    // withholds the key failing to load at all.
+    const is_compare_view = std.mem.endsWith(u8, target, "features/compare.js");
     const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
     const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
     const is_prompts_view = std.mem.endsWith(u8, target, "features/prompts.js");
@@ -5183,8 +5327,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_compare_view) &render_compare_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_compare_view) &gzip_compare_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -5292,16 +5436,11 @@ fn handleRuns(
 /// compact. Counting only `content` here meant Compact aimed at a smaller
 /// figure than the one on screen and reported a result in a different unit: a
 /// transcript full of tool calls could be "compacted" and barely move.
-fn transcriptBytes(msgs: []const types.Message) usize {
-    var n: usize = 0;
-    for (msgs) |m| {
-        if (m.content) |c| n += c.len;
-        if (m.tool_calls) |calls| {
-            for (calls) |tc| n += tc.arguments.len;
-        }
-    }
-    return n;
-}
+///
+/// One implementation, shared with the REPL's compaction notice
+/// (`tui/stats.zig`): the bytes this server reports and the bytes the REPL
+/// says a compaction freed have to be the same measure.
+const transcriptBytes = tui_stats.historyBytes;
 
 /// Drop the oldest messages until the transcript fits under half the configured
 /// threshold. Whole messages only, and the most recent exchange always stays:
@@ -7001,6 +7140,149 @@ test "arena route maps a bare path to a listing and a suffix to one match" {
     );
 }
 
+/// `GET /api/compare` lists past comparisons; `GET /api/compare/<id>` returns
+/// one, read blind; `POST /api/compare/<id>` with `{"pick":"<letter>"}` records
+/// the human's pick and reveals.
+///
+/// Read-mostly for the same reason `/api/arena` is: starting a comparison is
+/// several concurrent model calls and this server answers one request per
+/// connection. The one write it does take is the pick, which is a label and a
+/// file rewrite, and which goes to the same `compare` tool `clanker compare
+/// --show <id> --pick <letter>` calls rather than to a second implementation of
+/// recording a pick.
+fn handleCompare(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    method: []const u8,
+    path: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const tool_input = compareRouteToToolInput(arena, method, path, body) orelse {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    };
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "compare", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"compare tool unavailable\"}");
+        return;
+    };
+    if (!std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) {
+        respond(stream, 200, "OK", result);
+        return;
+    }
+    // A refused read means there is no such comparison; a refused pick means
+    // the letter was not one of the answers on the table. Same tool, two
+    // different things gone wrong, so not the same status.
+    if (std.mem.eql(u8, method, "POST")) {
+        respond(stream, 400, "Bad Request", result);
+    } else {
+        respond(stream, 404, "Not Found", result);
+    }
+}
+
+/// `/api/compare` -> the blind listing, `/api/compare/<id>` -> that comparison
+/// read blind, `POST /api/compare/<id>` -> record `{"pick":"B"}`.
+///
+/// `"reveal": false` on both read paths is the whole point of this mapping. The
+/// browser is the blind view, so it must not be handed a payload naming which
+/// model wrote which answer — not in a tooltip, not in an attribute, and not in
+/// JSON it holds and declines to paint. The tool honours it by withholding the
+/// key from the reply itself, and by overriding it once a pick is on record.
+///
+/// The id travels as JSON data, never spliced into a path, and the tool
+/// validates it with the same `isSafeId` the CLI path uses. Kept separate from
+/// `handleCompare` so the mapping is testable without a socket: `clanker serve`
+/// cannot accept a connection under this sandbox, so a route decision only
+/// reachable through the listener is a route decision with no test.
+fn compareRouteToToolInput(arena: std.mem.Allocator, method: []const u8, path: []const u8, body: []const u8) ?[]const u8 {
+    const prefix = "/api/compare";
+    if (!std.mem.startsWith(u8, path, prefix)) return null;
+    const rest = std.mem.trim(u8, path[prefix.len..], "/");
+
+    if (std.mem.eql(u8, method, "GET")) {
+        if (rest.len == 0) return "{\"reveal\":false}";
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("id") catch return null;
+        s.write(rest) catch return null;
+        s.objectField("reveal") catch return null;
+        s.write(false) catch return null;
+        s.endObject() catch return null;
+        return w.written();
+    }
+    if (std.mem.eql(u8, method, "POST")) {
+        // A pick names a comparison. Without an id there is nothing to record
+        // it against, and inventing one from "the newest" would let a stale tab
+        // vote on a comparison it never read.
+        if (rest.len == 0) return null;
+        const req = std.json.parseFromSliceLeaky(struct { pick: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        const pick = std.mem.trim(u8, req.pick, " \t\r\n");
+        if (pick.len == 0) return null;
+        var w: std.Io.Writer.Allocating = .init(arena);
+        var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        s.beginObject() catch return null;
+        s.objectField("id") catch return null;
+        s.write(rest) catch return null;
+        s.objectField("pick") catch return null;
+        s.write(pick) catch return null;
+        s.endObject() catch return null;
+        return w.written();
+    }
+    return null;
+}
+
+test "compare route keeps a browser read blind and carries a pick through" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The listing: blind, because a ledger row names the winning provider.
+    try std.testing.expectEqualStrings("{\"reveal\":false}", compareRouteToToolInput(arena, "GET", "/api/compare", "").?);
+    try std.testing.expectEqualStrings("{\"reveal\":false}", compareRouteToToolInput(arena, "GET", "/api/compare/", "").?);
+    // Reading one: blind too. This is the assertion the whole view rests on —
+    // a `true` here would hand the page the key it exists not to show.
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"compare-1786550737-ab12cd34\",\"reveal\":false}",
+        compareRouteToToolInput(arena, "GET", "/api/compare/compare-1786550737-ab12cd34", "").?,
+    );
+    // The pick goes to the same tool op the CLI's `--show <id> --pick <letter>`
+    // uses, so there is one recording path rather than two.
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"compare-1786550737-ab12cd34\",\"pick\":\"B\"}",
+        compareRouteToToolInput(arena, "POST", "/api/compare/compare-1786550737-ab12cd34", "{\"pick\":\" B \"}").?,
+    );
+    // Carried as data, not joined into a path, so it reaches the tool's
+    // isSafeId check and is refused there rather than escaping state/compare/.
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"../../etc/passwd\",\"reveal\":false}",
+        compareRouteToToolInput(arena, "GET", "/api/compare/../../etc/passwd", "").?,
+    );
+}
+
+test "compare route refuses a pick it cannot attribute" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // No id: nothing to record the pick against.
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare", "{\"pick\":\"B\"}") == null);
+    // No pick, a blank one, or an unreadable body.
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare/compare-1", "{}") == null);
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare/compare-1", "{\"pick\":\"  \"}") == null);
+    try std.testing.expect(compareRouteToToolInput(arena, "POST", "/api/compare/compare-1", "not json") == null);
+    // Nothing else may reach the tool at all: a DELETE has no meaning here, and
+    // must not fall through to the read that a missing arm would make it.
+    try std.testing.expect(compareRouteToToolInput(arena, "DELETE", "/api/compare/compare-1", "") == null);
+    try std.testing.expect(compareRouteToToolInput(arena, "GET", "/api/arena", "") == null);
+}
+
 fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, method, "GET")) return "{\"action\":\"list\"}";
     if (std.mem.eql(u8, method, "POST")) {
@@ -7592,6 +7874,7 @@ var render_markdown: RenderCache = .{};
 var render_graph: RenderCache = .{};
 var render_board: RenderCache = .{};
 var render_board_view: RenderCache = .{};
+var render_compare_view: RenderCache = .{};
 var render_goals_view: RenderCache = .{};
 var render_knowledge_view: RenderCache = .{};
 var render_prompts_view: RenderCache = .{};
@@ -7629,6 +7912,7 @@ var gzip_markdown: GzipCache = .{};
 var gzip_graph: GzipCache = .{};
 var gzip_board: GzipCache = .{};
 var gzip_board_view: GzipCache = .{};
+var gzip_compare_view: GzipCache = .{};
 var gzip_goals_view: GzipCache = .{};
 var gzip_knowledge_view: GzipCache = .{};
 var gzip_prompts_view: GzipCache = .{};
@@ -7975,6 +8259,15 @@ test "flags take their value in either form" {
     try std.testing.expectEqual(@as(u16, 9099), b.port);
     // An empty value is missing, not empty.
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--port=" }, null));
+
+    // --host: default is loopback; both = and space forms bind the given addr.
+    const h1 = try parse(&.{ "clanker", "serve" }, null);
+    try std.testing.expectEqualStrings("127.0.0.1", h1.host);
+    const h2 = try parse(&.{ "clanker", "serve", "--host", "0.0.0.0" }, null);
+    try std.testing.expectEqualStrings("0.0.0.0", h2.host);
+    const h3 = try parse(&.{ "clanker", "serve", "--host=::" }, null);
+    try std.testing.expectEqualStrings("::", h3.host);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--host=" }, null));
 
     // A following option is not the missing value. Consuming it would hide
     // the actual mistake and reinterpret all remaining arguments.
@@ -8888,6 +9181,7 @@ test "the webui asset route covers every embedded module, arena.js included" {
     // in tools/zig/webui.zig but named in neither list here, so the Arena
     // view's dynamic import() 404'd against a server that had the bytes.
     try std.testing.expect(isWebuiAssetPath("/webui/features/arena.js"));
+    try std.testing.expect(isWebuiAssetPath("/webui/features/compare.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/features/todos.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/app.js"));
     try std.testing.expect(isWebuiAssetPath("/webui/core/ui.js"));
@@ -8925,6 +9219,47 @@ test "no webui module file exists that the asset route has never heard of" {
             if (!isWebuiAssetPath(path)) {
                 std.debug.print("webui module {s} is not in webui_asset_paths; it will 404\n", .{path});
                 return error.UnroutedWebuiModule;
+            }
+        }
+    }
+}
+
+test "no webui source hand-rolls a partial HTML escape" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Source-tree test, skipped outside the repo root like its neighbour
+    // above. The run "Export .html" path in app.js builds a whole document by
+    // string concatenation, and once carried its own one-character escaper
+    // (`.replace(/</g,"&lt;")`) beside core/utils.js's escapeHtml. `<` alone
+    // keeps markup out, so the miss was invisible until a run's text held an
+    // entity and came back decoded. There is one escaper; a second partial
+    // one is the bug, not the fix, so scan for the shape of it.
+    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    defer root.close(io);
+
+    const needles = [_][]const u8{ "replace(/</g", "replace(/&/g", "replace(/>/g" };
+    for ([_][]const u8{ ".", "core", "lib", "features" }) |sub| {
+        var d = root.openDir(io, sub, .{ .iterate = true }) catch continue;
+        defer d.close(io);
+        var it = d.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".js")) continue;
+            const src = d.readFileAlloc(io, entry.name, std.testing.allocator, .limited(4 << 20)) catch continue;
+            defer std.testing.allocator.free(src);
+            var lines = std.mem.splitScalar(u8, src, '\n');
+            while (lines.next()) |line| {
+                // A comment naming the pattern is how it stays explained;
+                // only code counts.
+                if (std.mem.startsWith(u8, std.mem.trim(u8, line, " \t"), "//")) continue;
+                for (needles) |n| {
+                    if (std.mem.find(u8, line, n) != null) {
+                        std.debug.print("webui/{s}/{s} hand-rolls '{s}'; use core/utils.js escapeHtml\n", .{ sub, entry.name, n });
+                        return error.PartialHtmlEscape;
+                    }
+                }
             }
         }
     }

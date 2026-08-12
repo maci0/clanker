@@ -228,6 +228,24 @@ pub fn parseLabel(text: []const u8, n: usize) ?usize {
     return null;
 }
 
+/// Whether a stored comparison may be read back with the label-to-model key
+/// attached.
+///
+/// `clanker compare --show <id>` reveals, and should: whoever names a
+/// comparison by id on the command line already watched the blind view that
+/// minted the id. A browser opening the list has not. So a reader can ask to be
+/// kept blind, and the answer to that ask is not advisory — a payload carrying
+/// providers the page chooses not to paint is exactly as un-blinding as
+/// painting them, because the bytes are in the tab either way, one devtools
+/// panel from being read.
+///
+/// A recorded pick overrides the ask, because that is the moment blindness is
+/// for: the reader has committed, and the whole point of the exercise is to
+/// then be told who they picked.
+pub fn mayReveal(asked_for_reveal: bool, has_pick: bool) bool {
+    return asked_for_reveal or has_pick;
+}
+
 pub const Verdict = struct {
     /// Blind position the judge picked, not the target index. Resolving it back
     /// to a provider is the shell's job, and happens after the answer text has
@@ -475,6 +493,21 @@ test "parseVerdict refuses a judge that named nothing on the table" {
     try std.testing.expectEqual(@as(?Verdict, null), parseVerdict(a, "{\"reason\":\"tie\"}", 2));
     try std.testing.expectEqual(@as(?Verdict, null), parseVerdict(a, "{\"winner\":\"D\"}", 2));
     try std.testing.expectEqual(@as(?Verdict, null), parseVerdict(a, "{\"winner\":7}", 2));
+}
+
+test "mayReveal honours a reader who asked to stay blind" {
+    // The CLI's read-one path: asked to reveal, nothing picked yet, revealed.
+    try std.testing.expect(mayReveal(true, false));
+    // The browser's read-one path: asked to stay blind and nothing picked, so
+    // the key stays out of the payload, not merely out of the render.
+    try std.testing.expect(!mayReveal(false, false));
+}
+
+test "mayReveal opens up once a pick is on record" {
+    // A pick is the reader committing, which is the event blindness was
+    // protecting. Asking to stay blind after it cannot un-commit them.
+    try std.testing.expect(mayReveal(false, true));
+    try std.testing.expect(mayReveal(true, true));
 }
 
 test "isSafeId keeps a comparison id inside its own directory" {

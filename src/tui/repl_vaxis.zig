@@ -55,6 +55,7 @@ const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
+const stats_mod = @import("stats.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
@@ -158,7 +159,9 @@ fn runThreadMain(args: RunThreadArgs) void {
     var err_detail: ?[]const u8 = null;
 
     var a = Agent.init(&self.ctx, self.arena, &self.provider, &self.cfg, &self.reg, self.tool_defs) catch |err| {
-        self.finishTurn(std.fmt.allocPrint(self.arena, "[error: {s}]", .{@errorName(err)}) catch "[error]");
+        // No agent, so no usage to report: the turn line is skipped rather
+        // than printed as a row of zeroes.
+        self.finishTurn(std.fmt.allocPrint(self.arena, "[error: {s}]", .{@errorName(err)}) catch "[error]", null);
         return;
     };
     defer a.deinit();
@@ -167,15 +170,22 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.on_tool_result = onToolResult;
     a.stop_flag = &bridge_stop_flag;
 
+    // Wall time spans the whole turn, tool rounds included, because that is
+    // the wait the person at the keyboard actually sat through.
+    const started = std.Io.Timestamp.now(self.io, .awake);
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
         const text = if (err_detail) |d|
             std.fmt.allocPrint(self.arena, "[error: {s}]", .{d}) catch "[error]"
         else
             std.fmt.allocPrint(self.arena, "[error: {s}]", .{@errorName(err)}) catch "[error]";
-        self.finishTurn(text);
+        // A turn that ran out of iterations or budget still spent real
+        // tokens and real money; report them the same as a turn that
+        // finished. `Agent.run`'s own defer has already folded its stats by
+        // the time it returns, error path included.
+        self.finishTurn(text, self.turnStats(&a, started, messages.items));
         return;
     };
-    self.finishTurn(resp.message.content orelse "");
+    self.finishTurn(resp.message.content orelse "", self.turnStats(&a, started, messages.items));
 }
 
 /// One rendered line of session-permanent transcript (a completed turn's
@@ -812,6 +822,32 @@ const Model = struct {
     tick_count: u32 = 0,
     status_buf: [192]u8 = undefined,
     scroll_buf: [32]u8 = undefined,
+    /// The status line's " running <tool>" phase text. A field rather than a
+    /// draw-local buffer because vaxis cells borrow the slices written into
+    /// them until the frame is flushed, which is after `draw` has returned.
+    phase_buf: [80]u8 = undefined,
+    meter_buf: [64]u8 = undefined,
+    cost_buf: [32]u8 = undefined,
+    tok_buf: [32]u8 = undefined,
+    /// Tokens spent across every turn of this session, accumulated here
+    /// rather than read off `Agent.session_stats` because the REPL builds a
+    /// fresh `Agent` for every turn, so the agent's own session counters
+    /// start from zero each time. Distinct from the context meter beside it:
+    /// this is everything the session has ever sent and received, that is how
+    /// much of it the model can still see.
+    session_tokens: u64 = 0,
+    /// Null until a turn on a priced model lands, so an unpriced session
+    /// shows no cost at all rather than a running $0.00.
+    session_cost: ?f64 = null,
+    /// Estimated tokens of conversation history, refreshed once per completed
+    /// turn. Cached rather than recomputed in `draw`: the status bar repaints
+    /// ~30 times a second while a turn streams, and re-weighing a 100k-token
+    /// history on every frame is real work for a number that only moves when
+    /// a turn ends.
+    context_tokens: usize = 0,
+    /// Mid-turn compaction detector: the summary-marker state as it stood
+    /// when the current turn was submitted (see `stats.summaryState`).
+    summary_before: stats_mod.SummaryState = .{},
     /// `/theme <name>` sets this for the session, overriding `CLANKER_THEME`.
     /// Arena-owned. Null = fall back to the env var (then the default).
     theme_override: ?[]const u8 = null,
@@ -883,10 +919,37 @@ const Model = struct {
         };
     }
 
+    /// Snapshots what the turn just cost. Called on the run thread once
+    /// `Agent.run` has returned, so `a.stats` is final (its own defer folds
+    /// the run's totals before returning, on the error path too).
+    ///
+    /// Cost is deliberately read from the model catalogue rather than from
+    /// `a.stats.cost`: the agent only accumulates cost when the model has
+    /// pricing, so a plain `cost > 0` test cannot tell "this model is free to
+    /// call" from "nobody wrote down what this model charges". Unpriced
+    /// models get null and the segment disappears.
+    fn turnStats(self: *Model, a: *const Agent, started: std.Io.Timestamp, messages: []const types.Message) stats_mod.TurnStats {
+        const elapsed = started.durationTo(std.Io.Timestamp.now(self.io, .awake));
+        const m = self.provider.activeModel();
+        const priced = m.cost_per_1m_input != null or m.cost_per_1m_output != null;
+        return .{
+            .prompt_tokens = a.stats.total_prompt_tokens,
+            .completion_tokens = a.stats.total_completion_tokens,
+            .cache_hit_tokens = a.stats.total_cache_hit_tokens,
+            .cache_miss_tokens = a.stats.total_cache_miss_tokens,
+            .wall_ms = @intCast(@max(0, @divTrunc(elapsed.nanoseconds, std.time.ns_per_ms))),
+            .cost_usd = if (priced) a.stats.cost else null,
+            .context_tokens = stats_mod.historyTokens(messages),
+            .context_window = m.context_window,
+        };
+    }
+
     /// Called from the background run thread once Agent.run returns
     /// (success or error alike): folds the streamed buffer and any tool
-    /// lines into permanent `lines`, clears the live streaming state.
-    fn finishTurn(self: *Model, final_text: []const u8) void {
+    /// lines into permanent `lines`, clears the live streaming state, and
+    /// closes the turn with its stats line (`null` when the turn never
+    /// reached the provider and there is nothing to report).
+    fn finishTurn(self: *Model, final_text: []const u8, turn: ?stats_mod.TurnStats) void {
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
         // Tool lines are allocated from bridge_gpa by the worker callbacks;
@@ -927,6 +990,34 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
         }
         bridge_stream_buf.clearRetainingCapacity();
+
+        // The turn's receipt, last line of the turn: tokens, wall time,
+        // tok/s, cache hit rate, cost and how full the context now is. Same
+        // formatter `clanker run` prints on stderr (`tui/stats.zig`).
+        if (turn) |t| {
+            if (t.accounted()) {
+                self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
+                if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
+                if (stats_mod.formatTurn(self.arena, t)) |line| {
+                    self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+                } else |_| {}
+            }
+        }
+    }
+
+    /// Reports the *other* compaction: the one `Agent.maybeCompactMessages`
+    /// performs inside a turn once the history passes
+    /// `agent.compact_threshold_bytes`, replacing the middle of the
+    /// conversation with an LLM-written summary. That one is not a call this
+    /// file makes, and `Agent` offers no hook for it, so it is detected after
+    /// the fact from the summary message it leaves behind
+    /// (`stats.summaryState`) against the baseline `submitTask` took. Called
+    /// on the UI thread with the worker already joined.
+    fn reportMidTurnCompaction(self: *Model) void {
+        const after = stats_mod.summaryState(self.messages.items);
+        const notice = stats_mod.formatSummaryNotice(self.arena, self.summary_before, after) catch return;
+        if (notice) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        self.summary_before = after;
     }
 
     /// Writes the conversation to `state/sessions/<id>.json`, called after
@@ -938,7 +1029,24 @@ const Model = struct {
     fn persistSession(self: *Model) void {
         const sid = self.session_id orelse return;
         if (!self.cfg.modules.sessions) return;
+        // Compaction is not a save-time detail: it drops the oldest exchanges
+        // out of what the model can still see, permanently, and it used to
+        // happen here with nothing on screen. Weigh the conversation either
+        // side of the call and say so when it actually took something.
+        const before: stats_mod.Compaction = .{
+            .messages_before = self.messages.items.len,
+            .bytes_before = stats_mod.historyBytes(self.messages.items),
+        };
         session_mod.compactMessages(&self.messages, session_mod.max_session_tokens);
+        const measured: stats_mod.Compaction = .{
+            .messages_before = before.messages_before,
+            .messages_after = self.messages.items.len,
+            .bytes_before = before.bytes_before,
+            .bytes_after = stats_mod.historyBytes(self.messages.items),
+        };
+        if (stats_mod.formatCompaction(self.arena, measured)) |maybe_line| {
+            if (maybe_line) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
+        } else |_| {}
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
         session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
             .id = sid,
@@ -1400,6 +1508,9 @@ const Model = struct {
         bridge_stop_flag.store(false, .release);
         bridge_turn_done.store(false, .release);
         errdefer bridge_streaming = false;
+        // Baseline for the mid-turn compaction check the tick handler makes
+        // once the worker is joined.
+        self.summary_before = stats_mod.summaryState(self.messages.items);
 
         const owned_task = try self.arena.dupe(u8, task);
         if (self.session_title.len == 0) {
@@ -1661,8 +1772,12 @@ const Model = struct {
                     bridge_streaming = false;
                     bridge_mutex.unlock(bridge_io);
                     // The worker is joined, so self.messages is stable:
-                    // persist the conversation as it stands after this turn.
+                    // report any compaction the agent did mid-turn, then
+                    // persist the conversation as it stands after this turn
+                    // (which may compact it again, and says so too).
+                    self.reportMidTurnCompaction();
                     self.persistSession();
+                    self.context_tokens = stats_mod.historyTokens(self.messages.items);
                 }
                 bridge_mutex.lockUncancelable(bridge_io);
                 const still_streaming = bridge_streaming;
@@ -2102,11 +2217,16 @@ const Model = struct {
             std.fmt.bufPrint(&self.scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
         else
             "";
-        var phase_buf: [80]u8 = undefined;
+        // A Model field, not a local, for the same reason `status_buf` and
+        // `scroll_buf` are: vaxis cells borrow the grapheme slices written
+        // into them until the frame is flushed, which happens after this
+        // function has returned and its stack frame is gone. The literal
+        // arms below are static strings, but " running <tool>" is formatted
+        // here, and that one was pointing at dead stack by render time.
         const phase: []const u8 = if (!streaming)
             "ready"
         else if (tool_snap_len > 0)
-            std.fmt.bufPrint(&phase_buf, " running {s}", .{tool_snap[0..tool_snap_len]}) catch " tool"
+            std.fmt.bufPrint(&self.phase_buf, " running {s}", .{tool_snap[0..tool_snap_len]}) catch " tool"
         else
             " thinking";
         // The status line is written in coloured segments rather than one
@@ -2123,6 +2243,33 @@ const Model = struct {
         if (activity.len > 0) writeRowAt(surface, 0, &scol, activity, accent_style);
         writeRowAt(surface, 0, &scol, phase, if (streaming) accent_style else prompt_style);
         if (scroll_hint.len > 0) writeRowAt(surface, 0, &scol, scroll_hint, dim);
+        // How full the model's window is, what the session has spent, and
+        // what that cost: the numbers that decide whether to keep going in
+        // this conversation or start a fresh one. Each is omitted when there
+        // is nothing honest to say (no configured context window, no turn
+        // yet, no priced model) rather than shown as a zero.
+        if (stats_mod.contextMeter(&self.meter_buf, self.context_tokens, self.provider.activeModel().context_window)) |meter| {
+            writeRowAt(surface, 0, &scol, dot, dim);
+            writeRowAt(surface, 0, &scol, meter, dim);
+        }
+        if (self.session_tokens > 0) {
+            // Scratch only: `compactCount`'s slice is consumed by the
+            // bufPrint below, whose result lands in the session-lifetime
+            // `tok_buf` the cells actually borrow.
+            var scratch: [32]u8 = undefined;
+            const tok_text = std.fmt.bufPrint(&self.tok_buf, "{s} tok", .{stats_mod.compactCount(&scratch, self.session_tokens)}) catch "";
+            if (tok_text.len > 0) {
+                writeRowAt(surface, 0, &scol, dot, dim);
+                writeRowAt(surface, 0, &scol, tok_text, dim);
+            }
+        }
+        if (self.session_cost) |cost| {
+            const cost_text = std.fmt.bufPrint(&self.cost_buf, "${d:.4}", .{cost}) catch "";
+            if (cost_text.len > 0) {
+                writeRowAt(surface, 0, &scol, dot, dim);
+                writeRowAt(surface, 0, &scol, cost_text, dim);
+            }
+        }
         if (self.session_id) |sid| {
             writeRowAt(surface, 0, &scol, dot, dim);
             writeRowAt(surface, 0, &scol, sid, dim);
@@ -2200,19 +2347,24 @@ const Model = struct {
                 // Tool cards (dim, left-bar shaped) get their own tint and a
                 // bar-preserving wrap.
                 writeWrappedCard(surface, &row, bottom, text_width, l.text, tool_style);
+            } else if (l.user) {
+                // The user's echoed prompt line: accent, no markdown (it is
+                // literal input, not model prose).
+                writeWrapped(surface, &row, bottom, text_width, l.text, prompt_style);
+            } else if (std.mem.startsWith(u8, l.text, "[error:")) {
+                writeWrapped(surface, &row, bottom, text_width, l.text, err_style);
+            } else if (l.dim) {
+                // System notices, usage hints, tool output: plain dim.
+                writeWrapped(surface, &row, bottom, text_width, l.text, dim);
             } else {
-                // An error turn's "[error: " prefix gets its own tint; the
-                // user's echoed prompt gets the accent colour; everything
-                // else is default or dim.
-                const style = if (l.user)
-                    prompt_style
-                else if (std.mem.startsWith(u8, l.text, "[error:"))
-                    err_style
-                else if (l.dim)
-                    dim
-                else
-                    vaxis.Style{};
-                writeWrapped(surface, &row, bottom, text_width, l.text, style);
+                // Model prose: inline markdown (bold/italic/code, headings,
+                // bullets). Falls back to plain on any parse failure.
+                var segs: std.ArrayList(vaxis.Segment) = .empty;
+                if (mdLineSegments(&active, ctx.arena, l.text, &segs)) {
+                    writeWrappedSegments(ctx, surface, &row, bottom, text_width, segs.items);
+                } else |_| {
+                    writeWrapped(surface, &row, bottom, text_width, l.text, vaxis.Style{});
+                }
             }
             row += 1;
         }
@@ -2220,7 +2372,7 @@ const Model = struct {
         // frozen history, and painting fresh tokens under it would both lie
         // about where they belong and shove the anchored lines around.
         if (streaming and self.view_end == null and row < bottom and stream_snapshot.len > 0) {
-            self.writeStream(ctx, surface, &row, bottom, text_width, stream_snapshot, fence_on, &syn_style);
+            self.writeStream(ctx, surface, &row, bottom, text_width, stream_snapshot, fence_on, &syn_style, &active);
         }
 
         if (show_bar) drawScrollbar(surface, max.width - 1, top, bottom, start, view_end, line_count, rule_style, accent_style);
@@ -2287,7 +2439,7 @@ const Model = struct {
     /// same while it streams as it does once folded in (it used to render as
     /// flat unstyled text with the ``` markers showing). `fence_on` is whether
     /// the theme has colour at all; with it off everything falls back to plain.
-    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style) void {
+    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style, active: *const theme_mod.Theme) void {
         _ = self;
         var in_fence = false;
         var fence_lang: []const u8 = "";
@@ -2308,6 +2460,17 @@ const Model = struct {
                 var state = syntax.State.init(fence_lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
                 if (syntax.spansVaxis(&state, syn_style, ctx.arena, line, &segs)) {
+                    writeWrappedSegments(ctx, surface, row, bottom, width, segs.items);
+                } else |_| {
+                    writeWrapped(surface, row, bottom, width, line, .{});
+                }
+            } else if (fence_on) {
+                // Live prose: same inline markdown the completed transcript
+                // gets, so bold/italic/code render as they stream in. A marker
+                // still opening (a `**` with no close yet) stays literal until
+                // the rest arrives.
+                var segs: std.ArrayList(vaxis.Segment) = .empty;
+                if (mdLineSegments(active, ctx.arena, line, &segs)) {
                     writeWrappedSegments(ctx, surface, row, bottom, width, segs.items);
                 } else |_| {
                     writeWrapped(surface, row, bottom, width, line, .{});
@@ -2491,6 +2654,47 @@ test "lineRows counts wrapped rows and honours embedded newlines" {
     try std.testing.expectEqual(@as(usize, 1), lineRows("anything", 0)); // zero width is one row
 }
 
+test "inline markdown splits into styled segments and leaves plain text whole" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const theme = theme_mod.Theme.mocha; // a 24-bit theme, so styles carry colour
+
+    // Bold, italic, and inline code each become their own segment, with the
+    // markers stripped and the surrounding text kept as plain segments.
+    var segs: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "a **b** c `d` e", &segs);
+    var joined: std.ArrayList(u8) = .empty;
+    var bold_seen = false;
+    var code_seen = false;
+    for (segs.items) |s| {
+        try joined.appendSlice(arena, s.text);
+        if (std.mem.eql(u8, s.text, "b")) bold_seen = s.style.bold;
+        if (std.mem.eql(u8, s.text, "d")) code_seen = s.style.fg != .default;
+    }
+    try std.testing.expectEqualStrings("a b c d e", joined.items); // markers gone
+    try std.testing.expect(bold_seen);
+    try std.testing.expect(code_seen);
+
+    // A heading collapses to one bold segment with the # marker stripped.
+    var head: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "## Title", &head);
+    try std.testing.expectEqual(@as(usize, 1), head.items.len);
+    try std.testing.expectEqualStrings("Title", head.items[0].text);
+    try std.testing.expect(head.items[0].style.bold);
+
+    // A bullet emits a marker segment then the inline body.
+    var bul: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "- item", &bul);
+    try std.testing.expectEqualStrings("\xe2\x80\xa2 ", bul.items[0].text);
+
+    // Plain prose with an unmatched marker stays literal, one plain segment.
+    var plain: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "just text with a * star", &plain);
+    try std.testing.expectEqual(@as(usize, 1), plain.items.len);
+    try std.testing.expectEqualStrings("just text with a * star", plain.items[0].text);
+}
+
 test "tailWindow bottom-aligns a short transcript and fills a tall one" {
     const lines = [_]Line{
         .{ .text = "one" },  .{ .text = "two" },  .{ .text = "three" },
@@ -2542,6 +2746,110 @@ fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, styl
         surface.writeCell(col.*, row, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
         col.* += 1;
     }
+}
+
+/// The styles inline markdown renders with, resolved once from the active
+/// theme. A 24-bit theme names exact colours; a 16-colour theme falls back to
+/// the nearest index; `mono` stays attributes-only (bold/italic still read).
+const MdStyles = struct {
+    bold: vaxis.Style,
+    italic: vaxis.Style,
+    code: vaxis.Style,
+    heading: vaxis.Style,
+    bullet: vaxis.Style,
+    plain: vaxis.Style,
+};
+
+fn mdStyles(active: *const theme_mod.Theme) MdStyles {
+    if (active.rgb) |c| return .{
+        .bold = .{ .bold = true },
+        .italic = .{ .italic = true },
+        .code = .{ .fg = .{ .rgb = c.builtin } },
+        .heading = .{ .bold = true, .fg = .{ .rgb = c.accent } },
+        .bullet = .{ .fg = .{ .rgb = c.accent } },
+        .plain = .{},
+    };
+    const on = active.reset.len > 0;
+    return .{
+        .bold = .{ .bold = true },
+        .italic = .{ .italic = true },
+        .code = if (on) .{ .fg = .{ .index = 6 } } else .{},
+        .heading = .{ .bold = true },
+        .bullet = if (on) .{ .fg = .{ .index = 2 } } else .{},
+        .plain = .{},
+    };
+}
+
+/// Parses one line's inline markdown (`**bold**`, `*italic*`/`_italic_`,
+/// `` `code` ``) into styled segments. Text slices point into `text` (the
+/// caller's arena-owned line), so they stay valid until the frame flushes.
+/// An unmatched marker is left literal.
+fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *std.ArrayList(vaxis.Segment)) !void {
+    var i: usize = 0;
+    var seg_start: usize = 0;
+    const flush = struct {
+        fn f(a: std.mem.Allocator, o: *std.ArrayList(vaxis.Segment), s: []const u8, style: vaxis.Style) !void {
+            if (s.len > 0) try o.append(a, .{ .text = s, .style = style });
+        }
+    }.f;
+    while (i < text.len) {
+        const c = text[i];
+        if (c == '`') {
+            if (std.mem.findScalarPos(u8, text, i + 1, '`')) |end| {
+                try flush(arena, out, text[seg_start..i], st.plain);
+                try out.append(arena, .{ .text = text[i + 1 .. end], .style = st.code });
+                i = end + 1;
+                seg_start = i;
+                continue;
+            }
+        } else if (c == '*' and i + 1 < text.len and text[i + 1] == '*') {
+            if (std.mem.findPos(u8, text, i + 2, "**")) |end| {
+                if (end > i + 2) {
+                    try flush(arena, out, text[seg_start..i], st.plain);
+                    try out.append(arena, .{ .text = text[i + 2 .. end], .style = st.bold });
+                    i = end + 2;
+                    seg_start = i;
+                    continue;
+                }
+            }
+        } else if (c == '*' or c == '_') {
+            if (std.mem.findScalarPos(u8, text, i + 1, c)) |end| {
+                if (end > i + 1) {
+                    try flush(arena, out, text[seg_start..i], st.plain);
+                    try out.append(arena, .{ .text = text[i + 1 .. end], .style = st.italic });
+                    i = end + 1;
+                    seg_start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    try flush(arena, out, text[seg_start..], st.plain);
+}
+
+/// Renders one transcript line as inline markdown segments: a `# heading`
+/// becomes bold-accent, a `-`/`*`/`+` bullet gets an accent dot then inline
+/// body, everything else is inline-parsed prose. Line-level only (no
+/// multi-line constructs); a line that is not markdown comes back as one plain
+/// segment, so the caller can always render the result.
+fn mdLineSegments(active: *const theme_mod.Theme, arena: std.mem.Allocator, text: []const u8, out: *std.ArrayList(vaxis.Segment)) !void {
+    const st = mdStyles(active);
+    var h: usize = 0;
+    while (h < text.len and text[h] == '#') h += 1;
+    if (h >= 1 and h <= 6 and h < text.len and text[h] == ' ') {
+        try out.append(arena, .{ .text = std.mem.trimStart(u8, text[h..], " "), .style = st.heading });
+        return;
+    }
+    var indent: usize = 0;
+    while (indent < text.len and text[indent] == ' ') indent += 1;
+    if (indent + 1 < text.len and (text[indent] == '-' or text[indent] == '*' or text[indent] == '+') and text[indent + 1] == ' ') {
+        if (indent > 0) try out.append(arena, .{ .text = text[0..indent], .style = st.plain });
+        try out.append(arena, .{ .text = "\xe2\x80\xa2 ", .style = st.bullet }); // "• "
+        try appendInline(arena, text[indent + 2 ..], st, out);
+        return;
+    }
+    try appendInline(arena, text, st, out);
 }
 
 /// Writes styled segments with grapheme-accurate widths, wrapping at the
@@ -2801,6 +3109,35 @@ test "stripControls returns the input slice unchanged when nothing to drop" {
     try std.testing.expectEqual(clean.ptr, stripControls(std.testing.allocator, clean).ptr);
 }
 
+test "the stats and compaction lines route down the plain dim draw branch" {
+    // `draw` picks a style per transcript line by inspecting the text: a tool
+    // card gets the tool tint and a bar-preserving wrap, an "[error:" prefix
+    // gets the error tint, everything else is plain dim. The turn line and
+    // the compaction notices are meant to be that last case, and they are
+    // bracketed strings, so pin it rather than discover it as a wrong colour.
+    const turn = try stats_mod.formatTurn(std.testing.allocator, .{
+        .prompt_tokens = 1234,
+        .completion_tokens = 567,
+        .wall_ms = 4200,
+    });
+    defer std.testing.allocator.free(turn);
+    const compacted = (try stats_mod.formatCompaction(std.testing.allocator, .{
+        .messages_before = 20,
+        .messages_after = 8,
+        .bytes_before = 100_000,
+        .bytes_after = 50_672,
+    })).?;
+    defer std.testing.allocator.free(compacted);
+
+    for ([_][]const u8{ turn, compacted }) |line| {
+        try std.testing.expect(!transcript_mod.isToolCardLine(line));
+        try std.testing.expect(!std.mem.startsWith(u8, line, "[error:"));
+        // And nothing here can be mistaken for input the user typed.
+        try std.testing.expect(parseCommand(line) == null);
+        try std.testing.expect(parseShellEscape(line) == null);
+    }
+}
+
 test "stripControls drops control bytes but keeps newline and tab" {
     const dirty = "a\x01b\nc\x7Fd\te";
     const got = stripControls(std.testing.allocator, dirty);
@@ -2914,6 +3251,11 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         }
     }
     model.model_candidates = buildModelCandidates(arena, &model.cfg) catch &.{};
+    // A resumed conversation already occupies part of the window, so the
+    // meter and the mid-turn compaction baseline start from what was loaded
+    // rather than from zero.
+    model.context_tokens = stats_mod.historyTokens(model.messages.items);
+    model.summary_before = stats_mod.summaryState(model.messages.items);
     defer model.text_field.deinit();
 
     // Save on every exit path: app.run returns for /quit and for Ctrl-C while

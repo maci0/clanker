@@ -756,6 +756,7 @@ test "webui wasm tool serves every module the asset route names" {
         .{ .path = "/webui/features/todos.js", .marker = "renderTurnTodos" },
         .{ .path = "/webui/features/arena.js", .marker = "export" },
         .{ .path = "/webui/features/prompts.js", .marker = "export" },
+        .{ .path = "/webui/features/compare.js", .marker = "loadCompareView" },
     }) |case| {
         const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"path\":\"{s}\"}}", .{case.path});
         defer std.testing.allocator.free(args);
@@ -1791,6 +1792,133 @@ test "compare wasm tool lists nothing on a fresh sandbox and refuses a traversin
         try std.testing.expect(std.mem.find(u8, outp, "\"ok\":false") != null);
         try std.testing.expect(std.mem.find(u8, outp, "no such comparison") != null);
     }
+}
+
+/// A real comparison, byte for byte off `state/compare/` after
+/// `clanker compare "In one sentence, why is the sky blue?"
+/// --with deepseek@deepseek-v4-flash --with deepseek@deepseek-v4-pro` against
+/// the live DeepSeek provider on 2026-08-13. Written by `compare.zig`'s own
+/// `persist`, not by hand: the point of the tests below is what the web UI's
+/// read path does to a document the tool actually produced, and a fixture
+/// invented here would only prove the two agree with each other.
+const compare_fixture_id = "compare-1786554094-848a3169";
+const compare_fixture =
+    \\{"id":"compare-1786554094-848a3169","prompt":"In one sentence, why is the sky blue?","entrants":[{"label":"A","provider":"deepseek","model":"deepseek-v4-flash","ok":true,"ms":2651,"tokens":195,"answer":"The sky appears blue because air molecules scatter sunlight in all directions, and since blue light has a shorter wavelength, it is scattered much more efficiently than other colors, making it the dominant light we see from the sky."},{"label":"B","provider":"deepseek","model":"deepseek-v4-pro","ok":true,"ms":2228,"tokens":201,"answer":"The sky appears blue because molecules in Earth’s atmosphere scatter shorter wavelengths of sunlight, especially blue light, more strongly than longer wavelengths."}],"judge":{"provider":"deepseek","caveat":"the judge is also an entrant, so it may recognise its own answer","winner":"A","winner_provider":"deepseek","winner_model":"deepseek-v4-flash","reason":"Answer A more thoroughly explains the scattering mechanism and why blue specifically dominates, while remaining accurate and directly responsive."}}
+;
+/// The matching ledger line, the same one `appendLedger` wrote for it.
+const compare_fixture_ledger =
+    \\{"id":"compare-1786554094-848a3169","prompt":"In one sentence, why is the sky blue?","entrants":2,"winner":"deepseek"}
+;
+
+/// Everything a reader could act on to learn who wrote which answer. The model
+/// names are the key itself; "deepseek" is the provider that appears in the
+/// entrants, the judge and the ledger's winner column alike.
+const compare_identity_needles = [_][]const u8{ "deepseek-v4-flash", "deepseek-v4-pro", "deepseek" };
+
+fn expectNoCompareIdentity(where: []const u8, out: []const u8) !void {
+    for (compare_identity_needles) |needle| {
+        if (std.mem.find(u8, out, needle)) |at| {
+            std.debug.print("{s} leaked \"{s}\" at byte {d}:\n{s}\n", .{ where, needle, at, out });
+            return error.BlindComparisonLeaked;
+        }
+    }
+}
+
+test "compare wasm tool keeps a stored comparison blind for a reader who asked to be" {
+    // The web UI's read path, end to end against a real stored document: this
+    // is the property the Compare view is built on, and the only way to hold it
+    // is for the payload itself to carry no provider and no model — a page can
+    // decline to paint a field, but it cannot decline to have received it.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state/compare");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/compare/" ++ compare_fixture_id ++ ".json", .data = compare_fixture });
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/compare/log.jsonl", .data = compare_fixture_ledger ++ "\n" });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/compare.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // The listing the view opens with. The ledger's winner column names the
+    // winning provider, which would un-blind every row in it before one was
+    // even clicked, so an un-revealed listing reports "judged" and no more.
+    const listed = try compareCall(io, root, wasm, &env_map, "{\"reveal\":false}");
+    defer std.testing.allocator.free(listed);
+    try std.testing.expect(std.mem.find(u8, listed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"judged\":true") != null);
+    try std.testing.expect(std.mem.find(u8, listed, compare_fixture_id) != null);
+    try expectNoCompareIdentity("blind listing", listed);
+
+    // The comparison itself, read blind.
+    const blind = try compareCall(io, root, wasm, &env_map, "{\"id\":\"" ++ compare_fixture_id ++ "\",\"reveal\":false}");
+    defer std.testing.allocator.free(blind);
+    try std.testing.expect(std.mem.find(u8, blind, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, blind, "\"revealed\":false") != null);
+    // Blind, not empty: both answers are there under their positional letters,
+    // the judge's verdict is there as a letter, and the prompt is structured so
+    // the view never has to scrape it back out of the rendered text.
+    try std.testing.expect(std.mem.find(u8, blind, "\"label\":\"A\"") != null);
+    try std.testing.expect(std.mem.find(u8, blind, "\"label\":\"B\"") != null);
+    try std.testing.expect(std.mem.find(u8, blind, "\"winner\":\"A\"") != null);
+    try std.testing.expect(std.mem.find(u8, blind, "why is the sky blue") != null);
+    try std.testing.expect(std.mem.find(u8, blind, "Rayleigh") == null); // neither answer said it
+    try expectNoCompareIdentity("blind read", blind);
+
+    // And the same read with the default: `clanker compare --show <id>` reveals,
+    // because whoever names an id already watched the blind view that minted it.
+    const shown = try compareCall(io, root, wasm, &env_map, "{\"id\":\"" ++ compare_fixture_id ++ "\"}");
+    defer std.testing.allocator.free(shown);
+    try std.testing.expect(std.mem.find(u8, shown, "\"revealed\":true") != null);
+    try std.testing.expect(std.mem.find(u8, shown, "deepseek-v4-flash") != null);
+}
+
+test "compare wasm tool reveals a stored comparison once a pick is recorded" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state/compare");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/compare/" ++ compare_fixture_id ++ ".json", .data = compare_fixture });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/compare.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // The pick the browser's button posts is the pick the CLI's
+    // `--show <id> --pick <letter>` records: one op, one tool, one code path.
+    const picked = try compareCall(io, root, wasm, &env_map, "{\"id\":\"" ++ compare_fixture_id ++ "\",\"pick\":\"B\"}");
+    defer std.testing.allocator.free(picked);
+    try std.testing.expect(std.mem.find(u8, picked, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, picked, "\"revealed\":true") != null);
+    // Structured, so the view can say who you picked without reading the prose.
+    try std.testing.expect(std.mem.find(u8, picked, "\"pick\":{\"label\":\"B\",\"provider\":\"deepseek\",\"model\":\"deepseek-v4-pro\"}") != null);
+
+    // Recorded, not just reported: the document on disk carries it, and asking
+    // to stay blind afterwards cannot un-commit a reader who has already chosen.
+    const after = try compareCall(io, root, wasm, &env_map, "{\"id\":\"" ++ compare_fixture_id ++ "\",\"reveal\":false}");
+    defer std.testing.allocator.free(after);
+    try std.testing.expect(std.mem.find(u8, after, "\"revealed\":true") != null);
+    try std.testing.expect(std.mem.find(u8, after, "\"label\":\"B\",\"provider\":\"deepseek\",\"model\":\"deepseek-v4-pro\"") != null);
+
+    // A letter nobody answered under is refused rather than rounded to A.
+    const bad = try compareCall(io, root, wasm, &env_map, "{\"id\":\"" ++ compare_fixture_id ++ "\",\"pick\":\"Z\"}");
+    defer std.testing.allocator.free(bad);
+    try std.testing.expect(std.mem.find(u8, bad, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, bad, "not one of the answers on the table") != null);
 }
 
 test "arena wasm tool runs a battle royale to a verdict when no provider answers" {
