@@ -63,6 +63,17 @@ const self_authored_notice =
     \\
 ;
 
+/// Truncates `s` to at most `max_bytes` bytes without splitting a UTF-8
+/// codepoint. The learnings section is capped to a fixed byte budget, and a
+/// note written mid-codepoint would otherwise dangle a continuation byte into
+/// the system prompt as invalid UTF-8, which is sent to the provider as-is.
+fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
+    if (s.len <= max_bytes) return s;
+    var end = max_bytes;
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
 /// Resolves the path to device-global operator instructions.
 /// Config override wins; otherwise `$HOME/.agents/AGENTS.md` when `home` is set.
 /// Returns null when neither yields a path (caller omits the section).
@@ -374,7 +385,7 @@ pub fn build(
         if (l.len > 0) {
             try buf.appendSlice(arena, "## Learnings (persistent memory)\n\n" ++ self_authored_notice);
             if (l.len > 4096) {
-                try buf.appendSlice(arena, l[0..4096]);
+                try buf.appendSlice(arena, capUtf8(l, 4096));
                 try buf.appendSlice(arena, "...");
             } else {
                 try buf.appendSlice(arena, l);
@@ -449,6 +460,22 @@ test "resolveGlobalInstructionsPath: override wins, home default, empty is null"
 
     const parts = PromptParts{ .system_prompt_file = "", .skills_dir = "", .learnings_file = "" };
     try std.testing.expectEqualStrings(".agents/AGENTS.md", parts.local_instructions_file);
+}
+
+test "capUtf8 never splits a codepoint" {
+    // At or under the cap the input is returned unchanged.
+    try std.testing.expectEqualStrings("hello", capUtf8("hello", 100));
+
+    // ASCII truncates at the byte cap.
+    try std.testing.expectEqualStrings("hel", capUtf8("hello", 3));
+
+    // "é" is 2 bytes (0xC3 0xA9). A cap of 3 lands mid-é; the cut backs up
+    // to "hé" so no dangling continuation byte is emitted.
+    try std.testing.expectEqualStrings("hé", capUtf8("héllo", 3));
+    // A cap inside a lone multi-byte codepoint yields the empty string.
+    try std.testing.expectEqualStrings("", capUtf8("é", 1));
+    // A cap that lands exactly on a codepoint end keeps it whole.
+    try std.testing.expectEqualStrings("é", capUtf8("é", 2));
 }
 
 /// Path under cwd into a testing.tmpDir (matches sandbox runtime tests).
