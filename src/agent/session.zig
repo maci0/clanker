@@ -1072,3 +1072,10 @@ test "deleteSession on a missing session returns FileNotFound without touching t
     try std.testing.expectError(error.FileNotFound, deleteSession(io, arena, tmp.dir, "nope"));
     try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, "state", .{}));
 }
+
+test "compactMessages is a no-op on an empty message list" {
+    var messages: std.ArrayList(types.Message) = .empty;
+    defer messages.deinit(std.testing.allocator);
+    compactMessages(&messages, 0);
+    try std.testing.expectEqual(@as(usize, 0), messages.items.len);
+}
