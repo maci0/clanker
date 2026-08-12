@@ -951,7 +951,7 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    if (!std.mem.startsWith(u8, path, "/v1.") or std.mem.findAny(u8, path, "\r\n") != null) {
+    if (!std.mem.startsWith(u8, path, "/v1.") or std.mem.indexOfAny(u8, path, "\r\n") != null) {
         log.log(.warn, "[docker] path denied: '{s}'", .{path});
         return Err.denied;
     }
@@ -997,7 +997,7 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 
     // Strip headers and write the body into the host arena.
     const r = resp.items;
-    if (std.mem.find(u8, r, "\r\n\r\n")) |hdr_end| {
+    if (std.mem.indexOf(u8, r, "\r\n\r\n")) |hdr_end| {
         const body = r[hdr_end + 4 ..];
         return h.writeResult(bytes, body);
     }
@@ -1229,8 +1229,18 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 }
 
 fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
-    if (std.mem.startsWith(u8, tool_name, "board"))
+    // The board is one guest (board.wasm) behind eleven manifest names, and it
+    // needs two ops rather than one: it replicates each card into its room with
+    // "send" and folds that room's log back with "history" on every read.
+    // Matched exactly, or on the "board_" prefix — a bare startsWith("board")
+    // also grants any future tool whose name merely begins that way.
+    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "board_"))
         return std.mem.eql(u8, op, "send") or std.mem.eql(u8, op, "history");
+    // The janitor announces what it pruned into the room. Like the board it
+    // ignores a failed chat call, so being denied here cost it its
+    // announcements silently rather than failing the prune.
+    if (std.mem.eql(u8, tool_name, "cmd_janitor")) return std.mem.eql(u8, op, "send");
+
     const allowed_op: ?[]const u8 = if (std.mem.eql(u8, tool_name, "chat_send"))
         "send"
     else if (std.mem.eql(u8, tool_name, "chat_history"))
@@ -1701,9 +1711,9 @@ fn fsGrepFile(
     var start: usize = 0;
     while (start < data.len) {
         if (count.* >= fs_grep_max_results) return;
-        const end = std.mem.findScalarPos(u8, data, start, '\n') orelse data.len;
+        const end = std.mem.indexOfScalarPos(u8, data, start, '\n') orelse data.len;
         const line = data[start..end];
-        if (std.mem.find(u8, line, pattern) != null) {
+        if (std.mem.indexOf(u8, line, pattern) != null) {
             const display = if (line.len > fs_grep_max_line) line[0..fs_grep_max_line] else line;
             s.beginObject() catch return error.OutOfMemory;
             s.objectField("file") catch return error.OutOfMemory;
@@ -2124,9 +2134,9 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
             break;
         }
     }
-    if (op) return std.mem.find(u8, arg, t) != null;
+    if (op) return std.mem.indexOf(u8, arg, t) != null;
     var i: usize = 0;
-    while (std.mem.findPos(u8, arg, i, t)) |p| {
+    while (std.mem.indexOfPos(u8, arg, i, t)) |p| {
         const before = p == 0 or !isWordChar(arg[p - 1]);
         const after = p + t.len >= arg.len or !isWordChar(arg[p + t.len]);
         if (before and after) return true;
@@ -2254,7 +2264,7 @@ const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 /// path, PATH is unset, or nothing on it matches — never a hard failure, so
 /// exec_allow commands that behave fine today keep behaving the same way.
 fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
-    if (std.mem.findScalar(u8, cmd, '/') != null) return null;
+    if (std.mem.indexOfScalar(u8, cmd, '/') != null) return null;
     const path_val = environ_map.get("PATH") orelse return null;
     var it = std.mem.splitScalar(u8, path_val, ':');
     while (it.next()) |dir| {
@@ -2297,9 +2307,7 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     const std_dir = std.fmt.allocPrint(h.sandbox.gpa, "{s}/std", .{zig_lib_dir}) catch return Err.invalid;
     defer h.sandbox.gpa.free(std_dir);
     const argv = [_][]const u8{ "rg", "-n", "-F", "--max-count", "40", sym, std_dir };
-    var child_env = execEnvironment(h.sandbox.gpa, h.sandbox) catch return Err.invalid;
-    defer child_env.deinit();
-    const res = std.process.run(h.sandbox.gpa, h.sandbox.io, .{ .argv = &argv, .environ_map = &child_env }) catch return Err.invalid;
+    const res = std.process.run(h.sandbox.gpa, h.sandbox.io, .{ .argv = &argv }) catch return Err.invalid;
     defer h.sandbox.gpa.free(res.stdout);
     defer h.sandbox.gpa.free(res.stderr);
     if (res.stdout.len == 0) return Err.not_found;
@@ -3048,7 +3056,7 @@ fn safeJoinSecure(sb: *const Sandbox, sub_path: []const u8) ![]u8 {
     // This is deliberately no-follow so the symlink itself is visible.
     var end: usize = if (full.len > 0 and full[0] == '/') 1 else 0;
     while (end < full.len) {
-        end = std.mem.findScalarPos(u8, full, end, '/') orelse full.len;
+        end = std.mem.indexOfScalarPos(u8, full, end, '/') orelse full.len;
         if (end > 0) {
             const stat = std.Io.Dir.cwd().statFile(sb.io, full[0..end], .{ .follow_symlinks = false }) catch |err| switch (err) {
                 error.FileNotFound => break,
@@ -3841,22 +3849,72 @@ test "harness config access is scoped to each tool's consumed fields" {
     const cfg = config_mod.Config{};
 
     const workflows = try harnessConfigJSON(arena, &cfg, .workflows);
-    try std.testing.expect(std.mem.find(u8, workflows, "workflows_dir") != null);
-    try std.testing.expect(std.mem.find(u8, workflows, "chains_dir") == null);
-    try std.testing.expect(std.mem.find(u8, workflows, "providers") == null);
-    try std.testing.expect(std.mem.find(u8, workflows, "peers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "workflows_dir") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "chains_dir") == null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "providers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "peers") == null);
 
     const providers_json = try harnessConfigJSON(arena, &cfg, .providers);
-    try std.testing.expect(std.mem.find(u8, providers_json, "default_provider") != null);
-    try std.testing.expect(std.mem.find(u8, providers_json, "api_key_env") == null);
-    try std.testing.expect(std.mem.find(u8, providers_json, "peers") == null);
-    try std.testing.expect(std.mem.find(u8, providers_json, "agent") == null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "default_provider") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "api_key_env") == null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "peers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, providers_json, "agent") == null);
 
     const peers = try harnessConfigJSON(arena, &cfg, .peers);
-    try std.testing.expect(std.mem.find(u8, peers, "peers") != null);
-    try std.testing.expect(std.mem.find(u8, peers, "instance") != null);
-    try std.testing.expect(std.mem.find(u8, peers, "providers") == null);
-    try std.testing.expect(std.mem.find(u8, peers, "agent") == null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "peers") != null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "instance") != null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "providers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "agent") == null);
+}
+
+test "ck_chat access covers every shipped caller, one op at a time" {
+    // Each chat_* / todo_* manifest gets exactly the op it is named for, and
+    // nothing else.
+    const single = [_]struct { tool: []const u8, op: []const u8 }{
+        .{ .tool = "chat_send", .op = "send" },
+        .{ .tool = "chat_history", .op = "history" },
+        .{ .tool = "chat_rooms", .op = "rooms" },
+        .{ .tool = "chat_subscribe", .op = "subscribe" },
+        .{ .tool = "todo_add", .op = "todo_add" },
+        .{ .tool = "todo_claim", .op = "todo_claim" },
+        .{ .tool = "todo_close", .op = "todo_close" },
+        .{ .tool = "todo_list", .op = "todo_list" },
+    };
+    for (single) |c| {
+        try std.testing.expect(chatAccessAllowed(c.tool, c.op));
+        try std.testing.expect(!chatAccessAllowed(c.tool, "send") or std.mem.eql(u8, c.op, "send"));
+        try std.testing.expect(!chatAccessAllowed(c.tool, "rooms") or std.mem.eql(u8, c.op, "rooms"));
+    }
+
+    // board.wasm is registered under eleven manifest names and needs two ops:
+    // "send" replicates a card into the room, "history" folds that log back on
+    // read. Granting one op per tool broke replication silently, because the
+    // board ignores a failed chat call — so this is pinned per name, not just
+    // for the bare "board".
+    for ([_][]const u8{
+        "board",        "board_add",     "board_claim",  "board_cost",
+        "board_delete", "board_depend",  "board_list",   "board_log",
+        "board_move",   "board_subtask", "board_update",
+    }) |tool| {
+        try std.testing.expect(chatAccessAllowed(tool, "send"));
+        try std.testing.expect(chatAccessAllowed(tool, "history"));
+        // Not a blanket grant: the board has no business subscribing or
+        // enumerating rooms.
+        try std.testing.expect(!chatAccessAllowed(tool, "rooms"));
+        try std.testing.expect(!chatAccessAllowed(tool, "subscribe"));
+        try std.testing.expect(!chatAccessAllowed(tool, "todo_add"));
+    }
+
+    // The janitor announces what it pruned, and only that.
+    try std.testing.expect(chatAccessAllowed("cmd_janitor", "send"));
+    try std.testing.expect(!chatAccessAllowed("cmd_janitor", "history"));
+
+    // Fail closed for anything else, including a name that merely looks close.
+    for ([_][]const u8{ "", "chat", "boardroom", "unrelated", "arena" }) |tool| {
+        for ([_][]const u8{ "send", "history", "rooms", "subscribe", "todo_add" }) |op| {
+            try std.testing.expect(!chatAccessAllowed(tool, op));
+        }
+    }
 }
 
 test "parallel appends to one file all land" {
