@@ -23,7 +23,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const alloc = std.heap.wasm_allocator;
+    const alloc = lib.alloc;
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{}) catch
         return lib.fail(out, "input must be a JSON object");
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");

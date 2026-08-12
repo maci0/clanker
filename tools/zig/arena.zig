@@ -130,36 +130,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
 // ------------------------------------------------------------ input helpers
 
-/// A string field, or null when absent, the wrong type, or blank. Blank and
-/// absent are the same thing for every field this tool takes.
-fn strField(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
-    const v = obj.get(name) orelse return null;
-    if (v != .string) return null;
-    const s = std.mem.trim(u8, v.string, " \t\r\n");
-    return if (s.len == 0) null else s;
-}
+const strField = lib.strFieldTrimmed;
+const uintField = lib.uintFieldMap;
 
 fn strOr(obj: std.json.ObjectMap, name: []const u8, fallback: []const u8) []const u8 {
     return strField(obj, name) orelse fallback;
 }
 
-fn uintField(obj: std.json.ObjectMap, name: []const u8) ?u32 {
-    const v = obj.get(name) orelse return null;
-    return switch (v) {
-        .integer => |n| if (n > 0) @intCast(@min(n, std.math.maxInt(u32))) else null,
-        .float => |f| if (f >= 1.0) @intFromFloat(f) else null,
-        else => null,
-    };
-}
-
-/// Match ids are derived, not taken from the caller, so a caller can never aim
-/// a match file anywhere. Content-seeded so two matches started in the same
-/// second on different questions do not collide.
 fn newId(question: []const u8) ![]const u8 {
-    const secs: u64 = @intFromFloat(@max(0.0, lib.nowSeconds()));
-    var hasher = std.hash.Wyhash.init(secs);
-    hasher.update(question);
-    return std.fmt.allocPrint(alloc, "arena-{d}-{x}", .{ secs, hasher.final() & 0xffff_ffff });
+    return lib.prefixedId("arena", question);
 }
 
 const royale_sides = [m.max_combatants][]const u8{ "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8" };
@@ -183,11 +162,8 @@ fn labelFor(i: usize, n: usize, provider: []const u8) []const u8 {
 
 // ------------------------------------------------------------- judge picking
 
-const HarnessProvider = struct { default_model: []const u8 = "" };
-const HarnessConfig = struct {
-    default_provider: []const u8 = "",
-    providers: std.json.ArrayHashMap(HarnessProvider) = .{},
-};
+const HarnessProvider = lib.HarnessProvider;
+const HarnessConfig = lib.HarnessConfig;
 
 /// Resolves a combatant's provider to the name a judge has to differ from: an
 /// unset provider is the configured default, and a judge sharing that is not a
@@ -208,7 +184,7 @@ const JudgeChoice = struct { provider: []const u8, downgrade: []const u8 };
 /// enough Battle Royale can therefore use up every configured provider, which
 /// is exactly when the downgrade matters.
 fn pickJudge(requested: []const u8, providers: []const []const u8) JudgeChoice {
-    const cfg = std.json.parseFromSliceLeaky(HarnessConfig, alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch HarnessConfig{};
+    const cfg = lib.parseHarnessConfig();
 
     const fighting = struct {
         fn any(ps: []const []const u8, default_provider: []const u8, name: []const u8) bool {
@@ -1093,7 +1069,7 @@ fn render(
     defer t.deinit();
     try renderText(&t.writer, setup, combatants, moves, rounds_played, final);
 
-    var w = out.writer();
+    var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");
@@ -1175,7 +1151,7 @@ fn readMatch(out: *lib.Out, id: []const u8) !void {
     // The stored document is already the canonical shape a reader wants, so it
     // is spliced in verbatim: re-encoding it through Stringify would only be a
     // chance to drift from the writer that produced it.
-    var w = out.writer();
+    var w = lib.writer(out);
     try w.writeAll("{\"ok\":true,\"text\":");
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.write(text);
@@ -1225,10 +1201,7 @@ fn renderStored(raw: []const u8) ![]const u8 {
     return t.written();
 }
 
-fn jsonStr(obj: std.json.ObjectMap, name: []const u8) []const u8 {
-    const v = obj.get(name) orelse return "";
-    return if (v == .string) v.string else "";
-}
+const jsonStr = lib.jsonStrField;
 
 fn jsonNum(obj: std.json.ObjectMap, name: []const u8) []const u8 {
     const v = obj.get(name) orelse return "?";
@@ -1270,7 +1243,7 @@ fn listMatches(out: *lib.Out) !void {
         try t.writer.print("{s}\t{s}\t{s}\n", .{ jsonStr(doc, "id"), jsonStr(doc, "winner"), jsonStr(doc, "question") });
     }
 
-    var w = out.writer();
+    var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");
@@ -1307,7 +1280,7 @@ fn listMatches(out: *lib.Out) !void {
 /// An empty listing still answers with `matches`, so a caller does not have to
 /// tell "no matches" apart from "this build has no such field".
 fn emptyList(out: *lib.Out, msg: []const u8) !void {
-    var w = out.writer();
+    var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");

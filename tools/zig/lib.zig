@@ -851,6 +851,127 @@ pub fn toolCall(name: []const u8, args_json: []const u8) ToolCallError![]const u
     };
 }
 
+// ------------------------------------------------ shared parsing helpers --
+
+/// A string field from an ObjectMap, trimmed of whitespace. Returns null when
+/// absent, wrong type, or blank.
+pub fn strFieldTrimmed(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
+    const v = obj.get(name) orelse return null;
+    if (v != .string) return null;
+    const s = std.mem.trim(u8, v.string, " \t\r\n");
+    return if (s.len == 0) null else s;
+}
+
+/// An unsigned integer field from an ObjectMap, accepting JSON integers and
+/// floats >= 1. Returns null when absent, wrong type, or <= 0.
+pub fn uintFieldMap(obj: std.json.ObjectMap, name: []const u8) ?u32 {
+    const v = obj.get(name) orelse return null;
+    return switch (v) {
+        .integer => |n| if (n > 0) @intCast(@min(n, std.math.maxInt(u32))) else null,
+        .float => |f| if (f >= 1.0) @intFromFloat(f) else null,
+        else => null,
+    };
+}
+
+/// A boolean field from an ObjectMap, with a fallback default.
+pub fn boolFieldMap(obj: std.json.ObjectMap, name: []const u8, fallback: bool) bool {
+    const v = obj.get(name) orelse return fallback;
+    return switch (v) {
+        .bool => |x| x,
+        else => fallback,
+    };
+}
+
+/// A string field from an ObjectMap, returning "" when absent or not a string.
+/// Unlike `strFieldTrimmed`, does not trim whitespace.
+pub fn jsonStrField(obj: std.json.ObjectMap, name: []const u8) []const u8 {
+    const v = obj.get(name) orelse return "";
+    return if (v == .string) v.string else "";
+}
+
+/// Harness provider/config structs for tools that need to enumerate configured
+/// providers (arena, compare). Parsed from `harnessConfig()` with
+/// `ignore_unknown_fields`.
+pub const HarnessProvider = struct { default_model: []const u8 = "" };
+pub const HarnessConfig = struct {
+    default_provider: []const u8 = "",
+    providers: std.json.ArrayHashMap(HarnessProvider) = .{},
+};
+
+/// Generates a time-and-content-seeded id with the given prefix,
+/// e.g. "arena-1723456789-a1b2c3d4". Two calls in the same second with
+/// different seed text produce different ids.
+pub fn prefixedId(prefix: []const u8, seed_text: []const u8) ![]const u8 {
+    const secs: u64 = @intFromFloat(@max(0.0, nowSeconds()));
+    var hasher = std.hash.Wyhash.init(secs);
+    hasher.update(seed_text);
+    return std.fmt.allocPrint(alloc, "{s}-{d}-{x}", .{ prefix, secs, hasher.final() & 0xffff_ffff });
+}
+
+pub fn parseHarnessConfig() HarnessConfig {
+    return std.json.parseFromSliceLeaky(HarnessConfig, alloc, harnessConfig(), .{ .ignore_unknown_fields = true }) catch HarnessConfig{};
+}
+
+/// Strips a fenced code block (```json ... ```), returning just the inner
+/// content. Models asked for JSON commonly wrap it in fences.
+pub fn stripFence(raw: []const u8) []const u8 {
+    var s = std.mem.trim(u8, raw, " \t\r\n");
+    if (!std.mem.startsWith(u8, s, "```")) return s;
+    s = s[3..];
+    if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
+    if (std.mem.lastIndexOf(u8, s, "```")) |close| s = s[0..close];
+    return std.mem.trim(u8, s, " \t\r\n");
+}
+
+/// Finds the outermost `{...}` span, honouring strings and escapes so a brace
+/// inside `"text"` does not end the object early. Returns null when there is
+/// no balanced object.
+pub fn objectSpan(s: []const u8) ?[]const u8 {
+    const start = std.mem.findScalar(u8, s, '{') orelse return null;
+    var depth: usize = 0;
+    var in_string = false;
+    var escaped = false;
+    var i = start;
+    while (i < s.len) : (i += 1) {
+        const c = s[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (in_string) {
+            switch (c) {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                else => {},
+            }
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                if (depth == 0) return null;
+                depth -= 1;
+                if (depth == 0) return s[start .. i + 1];
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+/// Returns true when `id` contains only safe path characters (alphanumeric,
+/// dash, underscore) and is 1..64 bytes. Used for ids that land in a file path.
+pub fn isSafeId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 64) return false;
+    for (id) |c| {
+        const ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or
+            (c >= '0' and c <= '9') or c == '-' or c == '_';
+        if (!ok) return false;
+    }
+    return true;
+}
+
 /// Host-provided random u64.
 pub fn random() u64 {
     return ck_random();

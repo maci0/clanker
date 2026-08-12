@@ -98,23 +98,15 @@ pub const Reply = struct {
     target: ?[]const u8 = null,
 };
 
-/// Strips a fenced code block, if the reply is wrapped in one. Models asked
-/// for JSON commonly answer with ```json … ```, and treating that as a parse
-/// failure would score a perfectly good move as a weak attack.
 fn stripFence(raw: []const u8) []const u8 {
     var s = std.mem.trim(u8, raw, " \t\r\n");
     if (!std.mem.startsWith(u8, s, "```")) return s;
     s = s[3..];
-    // Skip the info string ("json", "JSON", …) up to the first newline.
     if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
     if (std.mem.lastIndexOf(u8, s, "```")) |close| s = s[0..close];
     return std.mem.trim(u8, s, " \t\r\n");
 }
 
-/// Finds the outermost `{…}` span, honouring strings and escapes so a brace
-/// inside `"text"` does not end the object early. Returns null when there is
-/// no balanced object — prose with a stray `{` is a parse failure, not an
-/// object.
 fn objectSpan(s: []const u8) ?[]const u8 {
     const start = std.mem.findScalar(u8, s, '{') orelse return null;
     var depth: usize = 0;
@@ -139,9 +131,6 @@ fn objectSpan(s: []const u8) ?[]const u8 {
             '"' => in_string = true,
             '{' => depth += 1,
             '}' => {
-                // `start` is a '{', so depth is at least 1 here; the guard is
-                // for ReleaseSmall, where an underflow would wrap silently
-                // instead of trapping.
                 if (depth == 0) return null;
                 depth -= 1;
                 if (depth == 0) return s[start .. i + 1];
@@ -757,9 +746,6 @@ pub fn validatePositions(positions: []const []const u8) PositionError!void {
     }
 }
 
-/// Match ids land in a path (`state/arena/<id>.json`), so they are restricted
-/// to characters that cannot traverse out of it — not merely checked for
-/// "..", which `a/../../b` passes.
 pub fn isSafeId(id: []const u8) bool {
     if (id.len == 0 or id.len > 64) return false;
     for (id) |c| {

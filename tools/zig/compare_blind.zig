@@ -283,9 +283,6 @@ pub fn parseVerdict(alloc: std.mem.Allocator, raw: []const u8, n: usize) ?Verdic
     };
 }
 
-/// Strips a fenced code block, if the reply is wrapped in one. Models asked for
-/// JSON commonly answer with ```json … ```, and treating that as a parse
-/// failure would throw away a perfectly good verdict.
 fn stripFence(raw: []const u8) []const u8 {
     var s = std.mem.trim(u8, raw, " \t\r\n");
     if (!std.mem.startsWith(u8, s, "```")) return s;
@@ -295,8 +292,6 @@ fn stripFence(raw: []const u8) []const u8 {
     return std.mem.trim(u8, s, " \t\r\n");
 }
 
-/// Finds the outermost `{…}` span, honouring strings and escapes so a brace
-/// inside `"reason"` does not end the object early.
 fn objectSpan(s: []const u8) ?[]const u8 {
     const start = std.mem.findScalar(u8, s, '{') orelse return null;
     var depth: usize = 0;
@@ -331,9 +326,6 @@ fn objectSpan(s: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Comparison ids land in a path (`state/compare/<id>.json`), so they are
-/// restricted to characters that cannot traverse out of it — not merely checked
-/// for "..", which `a/../../b` passes.
 pub fn isSafeId(id: []const u8) bool {
     if (id.len == 0 or id.len > 64) return false;
     for (id) |c| {

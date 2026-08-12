@@ -113,52 +113,21 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
 // ------------------------------------------------------------ input helpers
 
-/// A string field, or null when absent, the wrong type, or blank. Blank and
-/// absent are the same thing for every field this tool takes.
-fn strField(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
-    const v = obj.get(name) orelse return null;
-    if (v != .string) return null;
-    const s = std.mem.trim(u8, v.string, " \t\r\n");
-    return if (s.len == 0) null else s;
-}
+const strField = lib.strFieldTrimmed;
+const uintField = lib.uintFieldMap;
+const boolField = lib.boolFieldMap;
 
-fn uintField(obj: std.json.ObjectMap, name: []const u8) ?u32 {
-    const v = obj.get(name) orelse return null;
-    return switch (v) {
-        .integer => |n| if (n > 0) @intCast(@min(n, std.math.maxInt(u32))) else null,
-        .float => |f| if (f >= 1.0) @intFromFloat(f) else null,
-        else => null,
-    };
-}
-
-fn boolField(obj: std.json.ObjectMap, name: []const u8, fallback: bool) bool {
-    const v = obj.get(name) orelse return fallback;
-    return switch (v) {
-        .bool => |x| x,
-        else => fallback,
-    };
-}
-
-/// Comparison ids are derived, not taken from the caller, so a caller can never
-/// aim a comparison file anywhere. Content-seeded so two comparisons started in
-/// the same second on different prompts do not collide.
 fn newId(prompt: []const u8) ![]const u8 {
-    const secs: u64 = @intFromFloat(@max(0.0, lib.nowSeconds()));
-    var hasher = std.hash.Wyhash.init(secs);
-    hasher.update(prompt);
-    return std.fmt.allocPrint(alloc, "compare-{d}-{x}", .{ secs, hasher.final() & 0xffff_ffff });
+    return lib.prefixedId("compare", prompt);
 }
 
 // -------------------------------------------------------------- config view
 
-const HarnessProvider = struct { default_model: []const u8 = "" };
-const HarnessConfig = struct {
-    default_provider: []const u8 = "",
-    providers: std.json.ArrayHashMap(HarnessProvider) = .{},
-};
+const HarnessProvider = lib.HarnessProvider;
+const HarnessConfig = lib.HarnessConfig;
 
 fn harness() HarnessConfig {
-    return std.json.parseFromSliceLeaky(HarnessConfig, alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch HarnessConfig{};
+    return lib.parseHarnessConfig();
 }
 
 /// Where the entrants come from, in order of how explicit the caller was:
@@ -592,7 +561,7 @@ fn render(doc: Doc, reveal: bool) ![]const u8 {
 /// The tool's own reply: the rendered text plus the same facts structured, so
 /// a caller does not have to scrape the text to know who won.
 fn emit(out: *lib.Out, doc: Doc, text: []const u8, reveal: bool) !void {
-    var w = out.writer();
+    var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");
@@ -752,10 +721,7 @@ fn recordPick(out: *lib.Out, id: []const u8, pick: []const u8) !void {
     try emit(out, doc, text, true);
 }
 
-fn jsonStr(obj: std.json.ObjectMap, name: []const u8) []const u8 {
-    const v = obj.get(name) orelse return "";
-    return if (v == .string) v.string else "";
-}
+const jsonStr = lib.jsonStrField;
 
 fn jsonInt(obj: std.json.ObjectMap, name: []const u8) i64 {
     const v = obj.get(name) orelse return 0;
@@ -805,7 +771,7 @@ fn listComparisons(out: *lib.Out, reveal: bool) !void {
         }
     }
 
-    var w = out.writer();
+    var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
     try s.objectField("ok");

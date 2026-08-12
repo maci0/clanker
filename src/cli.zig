@@ -2337,13 +2337,6 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
     };
 }
 
-/// Looks up `goal_id` in `dir`/`state/goals.json`. Returns null if the file,
-/// the entry, or the JSON shape is missing.
-fn findGoalSectionIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?[]const u8 {
-    const g = try loadGoalById(arena, io, dir, goal_id) orelse return null;
-    return g.section;
-}
-
 fn loadGoalById(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, goal_id: []const u8) !?GoalContext {
     const goals_raw = dir.readFileAlloc(io, "state/goals.json", arena, .limited(1 << 20)) catch return null;
     const root = std.json.parseFromSliceLeaky(std.json.Value, arena, goals_raw, .{}) catch return null;

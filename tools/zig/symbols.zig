@@ -57,7 +57,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try matches.append(alloc, .{ .file = file, .line_no = line_no, .text = std.mem.trim(u8, text, " \t") });
     }
 
-    var w = out.writer();
+    var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
     try s.objectField("ok");
