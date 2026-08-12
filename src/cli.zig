@@ -8002,6 +8002,48 @@ fn imageAttachmentsSupported(model: config.Model) bool {
     return false;
 }
 
+/// The name of a vision-capable model on `p`, or null if the provider has
+/// none. Prefers `p`'s default model when it is vision-capable; otherwise the
+/// first model that is.
+fn providerVisionModel(p: *const config.Provider) ?[]const u8 {
+    if (imageAttachmentsSupported(p.activeModel())) return p.default_model;
+    var it = p.models.iterator();
+    while (it.next()) |e| {
+        if (imageAttachmentsSupported(e.value_ptr.*)) return e.key_ptr.*;
+    }
+    return null;
+}
+
+/// A provider copy to route image-bearing work to when the selected provider
+/// cannot take the image. Prefers `cfg.agent.fallback_provider` when it is
+/// configured, exists, differs from `current_name`, and has a vision-capable
+/// model; otherwise the first other configured provider with one. Returns
+/// null when nothing can take the image. The copy's `default_model` is set to
+/// a vision-capable model of that provider.
+fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8) ?config.Provider {
+    const prefer = cfg.agent.fallback_provider;
+    if (prefer.len > 0 and !std.mem.eql(u8, prefer, current_name)) {
+        if (cfg.providers.getPtr(prefer)) |p| {
+            if (providerVisionModel(p)) |m| {
+                var fb = p.*;
+                fb.default_model = m;
+                return fb;
+            }
+        }
+    }
+    var it = cfg.providers.iterator();
+    while (it.next()) |e| {
+        const name = e.key_ptr.*;
+        if (std.mem.eql(u8, name, current_name)) continue;
+        if (providerVisionModel(e.value_ptr)) |m| {
+            var fb = e.value_ptr.*;
+            fb.default_model = m;
+            return fb;
+        }
+    }
+    return null;
+}
+
 /// The webui surfaces a run failure as `[run failed: <message>]`. A bare
 /// provider error ("HTTP 400: decrypt error") tells the user nothing about
 /// which backend or whether it is their config, a harness bug, or the
@@ -8152,6 +8194,22 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             return;
         }
         provider_copy.default_model = req.model;
+    }
+    // Image attachments need a vision-capable model. If the selected provider
+    // cannot take the image, route the run to a fallback provider that can —
+    // the preferred `agent.fallback_provider` if it qualifies, else the first
+    // other configured provider with a vision model. Chosen here, before the
+    // agent is built, because the agent holds the provider pointer. When the
+    // fallback itself cannot take the image (or multimodal is off), the gate
+    // further down refuses as before.
+    var used_fallback: ?[]const u8 = null;
+    if (req.images.len > 0 and cfg.modules.multimodal and !imageAttachmentsSupported(provider.activeModel())) {
+        if (visionFallbackProvider(cfg, provider.name)) |fb| {
+            used_fallback = fb.name;
+            provider_copy = fb;
+            provider = &provider_copy;
+            log.log(.info, "run: {s} cannot take the image; falling back to provider '{s}'", .{ used_fallback.?, provider.name });
+        }
     }
     if (req.temperature != null or req.top_p != null) {
         var m = provider_copy.activeModel();
@@ -8305,6 +8363,12 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // line: it is a control event, so a client that does not know it just
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
+        // When the selected provider could not take the image and the run was
+        // routed to a fallback provider, say so — the user asked for model X
+        // and is getting model Y, and should not have to guess why.
+        if (used_fallback) |fb| {
+            writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "The selected provider cannot take the image; using '{s}' instead.", .{fb}) catch "Using a fallback provider for the image." });
+        }
         // Tells the client which goal (explicit or auto-steered) is behind
         // this turn, if any — the client has no other way to know an
         // auto-steered run was steered at all, since that resolution
@@ -9347,6 +9411,40 @@ test "a model that declares its capabilities without image_in is refused image a
     // local Ollama/vLLM vision model that forgot to declare image_in keeps
     // working; a failure still surfaces the vision hint).
     try std.testing.expect(imageAttachmentsSupported(config.Model{}));
+}
+
+test "visionFallbackProvider prefers the configured secondary then any other vision provider" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // deepseek (text-only), ollama (vision), kimi (vision, configured fallback).
+    var cfg = config.Config{
+        .providers = .empty,
+        .default_provider = "deepseek",
+        .agent = .{ .fallback_provider = "kimi" },
+    };
+    try cfg.providers.put(arena, "deepseek", try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-v4-flash", .{ .capabilities = &.{ "thinking", "tool_use" } }));
+    try cfg.providers.put(arena, "ollama", try config.Provider.single(arena, "ollama", "http://127.0.0.1:11434/v1", .openai_compat, "qwen3-vl", .{ .capabilities = &.{"image_in"} }));
+    try cfg.providers.put(arena, "kimi", try config.Provider.single(arena, "kimi", "https://api.moonshot.ai/v1", .openai_compat, "kimi-vl", .{ .capabilities = &.{"image_in"} }));
+
+    // The configured fallback provider wins over the first other vision one.
+    const preferred = visionFallbackProvider(&cfg, "deepseek").?;
+    try std.testing.expectEqualStrings("kimi", preferred.name);
+    try std.testing.expect(imageAttachmentsSupported(preferred.activeModel()));
+
+    // Without a configured fallback, the first other vision provider is picked.
+    cfg.agent.fallback_provider = "";
+    const first = visionFallbackProvider(&cfg, "deepseek").?;
+    try std.testing.expectEqualStrings("ollama", first.name);
+
+    // The current provider is never picked, and the fallback model is vision.
+    try std.testing.expect(!std.mem.eql(u8, visionFallbackProvider(&cfg, "ollama").?.name, "ollama"));
+
+    // No vision-capable provider anywhere → null.
+    var cfg2 = config.Config{ .providers = .empty, .default_provider = "deepseek" };
+    try cfg2.providers.put(arena, "deepseek", try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-v4-flash", .{ .capabilities = &.{"thinking"} }));
+    try std.testing.expect(visionFallbackProvider(&cfg2, "deepseek") == null);
 }
 
 test "run failure detail names the provider and hints at vision when images were attached" {

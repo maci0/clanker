@@ -247,6 +247,11 @@ pub const Agent = struct {
     /// gated, whatever this says: a confirm nobody can answer would deny
     /// every write instead of protecting anything.
     confirm_writes: ConfirmWrites = .never,
+    /// Preferred secondary provider, used when the selected/default provider
+    /// cannot serve the request (e.g. an image attached to a model that does
+    /// not declare vision). When empty, the harness picks the first other
+    /// configured provider that can. Names a `[providers.<name>]` entry.
+    fallback_provider: []const u8 = "",
 };
 
 /// Which agent keys a config file actually set. Used so a partial
@@ -277,6 +282,7 @@ pub const AgentFields = struct {
     ask_timeout_seconds: bool = false,
     provider_check_timeout_seconds: bool = false,
     confirm_writes: bool = false,
+    fallback_provider: bool = false,
 };
 
 /// Who must approve a write-capable tool call before it runs.
@@ -1007,6 +1013,7 @@ pub const Config = struct {
             "chains_dir",          "git_commit",              "git_remote_ops",
             "exec_pattern_allow",  "repl_exec_allow",         "seed",
             "ask_timeout_seconds", "confirm_writes",          "provider_check_timeout_seconds",
+            "fallback_provider",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
@@ -1151,6 +1158,10 @@ pub const Config = struct {
                 return error.ConfirmWritesInvalid;
             f.confirm_writes = true;
         }
+        if (obj.get("fallback_provider")) |k| {
+            a.fallback_provider = try jsonStr(k, "fallback_provider");
+            f.fallback_provider = true;
+        }
         return .{ .agent = a, .fields = f };
     }
 
@@ -1179,6 +1190,7 @@ pub const Config = struct {
         if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
         if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
+        if (fields.fallback_provider) dst.fallback_provider = src.fallback_provider;
     }
 
     fn applyModulesFields(dst: *Modules, src: Modules, fields: ModulesFields) void {
@@ -1604,6 +1616,38 @@ test "confirm_writes parses its three values and rejects anything else" {
         ,
     });
     try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
+}
+
+test "agent.fallback_provider parses and is not reset by a partial local override" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\default_model = "deepseek-v4-flash"
+        \\
+        \\[models."deepseek/deepseek-v4-flash"]
+        \\provider = "deepseek"
+        \\capabilities = ["thinking", "tool_use"]
+        \\
+        \\[agent]
+        \\fallback_provider = "ollama"
+        \\
+    });
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("ollama", cfg.agent.fallback_provider);
 }
 
 test "a config.local.json sibling is ignored: TOML is canonical" {
