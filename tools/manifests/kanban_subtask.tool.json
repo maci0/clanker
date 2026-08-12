@@ -3,8 +3,8 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_subtask",
+  "category": "kanban",
+  "name": "kanban_subtask",
   "description": "Add, tick or remove a subtask on a card. Use op subtask_add with text, or subtask_toggle / subtask_remove with subtask_id.",
   "input_schema": {
     "type": "object",

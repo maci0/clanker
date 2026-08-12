@@ -1,7 +1,7 @@
 {
   "name": "chat_rooms",
   "kind": "task",
-  "description": "chat_rooms must reach ck_chat and come back with the rooms listing — the read-only entry point of the whole chat family, and the one an agent is told to call first. The assertion is only the shape (ok:true with a rooms array), because a fresh checkout has no chat state and an empty listing is a correct answer; any populated listing passes identically. It goes red when the chatrooms module wiring or the host round-trip breaks, which no build gate sees. Needs modules.chatrooms enabled, which the shipped config.json sets. The mutating siblings (chat_send, board_add) have no eval on purpose: they persist into shared logs and fan out to peers, so an eval calling them would leave a mark on every run.",
+  "description": "chat_rooms must reach ck_chat and come back with the rooms listing — the read-only entry point of the whole chat family, and the one an agent is told to call first. The assertion is only the shape (ok:true with a rooms array), because a fresh checkout has no chat state and an empty listing is a correct answer; any populated listing passes identically. It goes red when the chatrooms module wiring or the host round-trip breaks, which no build gate sees. Needs modules.chatrooms enabled, which the shipped config.json sets. The mutating siblings (chat_send, kanban_add) have no eval on purpose: they persist into shared logs and fan out to peers, so an eval calling them would leave a mark on every run.",
   "prompt": "Use the chat_rooms tool with input {}. Look at the tool's JSON result. If its ok field is true and its rooms field is an array — an empty array is fine — reply with exactly ROOMS. Otherwise reply with exactly BROKEN.",
   "requires_tool": "chat_rooms",
   "criteria": [

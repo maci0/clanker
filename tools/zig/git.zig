@@ -57,11 +57,33 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
     return false;
 }
 
+/// Git global options that take a value in the next argument (or the same one
+/// via `=`). Mirrors the host's list in src/sandbox/host.zig so the in-tool
+/// deny message names the right verb when the value would otherwise be read
+/// as the subcommand (e.g. `git -C <worktree> status`).
+const git_value_options = [_][]const u8{
+    "-C", "--git-dir",   "--work-tree", "--git-common-dir",
+    "-c", "--namespace", "--exec-path", "--config-env",
+};
+
 /// The first argument of the given args, i.e. the git verb. Args that start
-/// with "-" (flags before the subcommand, like `git --version`) are skipped.
+/// with "-" (flags before the subcommand, like `git --version`) are skipped,
+/// and so is the value of a value-taking global option — the worktree path
+/// after `-C` must not be read as the verb.
 fn gitVerb(args: []const []const u8) ?[]const u8 {
-    for (args) |a| {
-        if (a.len == 0 or a[0] == '-') continue;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (a.len == 0) continue;
+        if (a[0] == '-') {
+            for (git_value_options) |o| {
+                if (std.mem.eql(u8, a, o)) {
+                    i += 1;
+                    break;
+                }
+            }
+            continue;
+        }
         return a;
     }
     return null;

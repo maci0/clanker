@@ -328,7 +328,7 @@ Kimi Code harness parity (open-source CLI — `MoonshotAI/kimi-code`):
 
 Goals ↔ board sync + mid-run steering (#91):
 
-- [x] 8.1 Durable goal→card link — a mirror card carries its goal's id in its own `goal` field (`cards.zig` fold, last-writer-wins, `""` unlinks; `board`/`board_add`-visible), so the link survives reloads and other browsers; title matching remains only to adopt cards from before the field existed, and only unlinked ones
+- [x] 8.1 Durable goal→card link — a mirror card carries its goal's id in its own `goal` field (`cards.zig` fold, last-writer-wins, `""` unlinks; `board`/`kanban_add`-visible), so the link survives reloads and other browsers; title matching remains only to adopt cards from before the field existed, and only unlinked ones
 - [x] 8.2 Mirror waits for the board — `boardIsLoaded()` gates `mirrorGoalsToBoard`, ending the duplicate card minted on every Goals-view visit against a never-fetched (empty) card list; goal-driven card moves post with `goal_sync: false` so they cannot bounce back as board→goal writes
 - [x] 8.3 `review` goal status — `validGoalStatus` grew `review` ("waiting for review" in the UI); a completed `/api/run` carrying a goal flips it active → review server-side (`setGoalStatusIf`), so a closed tab cannot leave finished work marked active
 - [x] 8.4 Transient `running` — a registry of in-flight goal runs (one slot per connection thread, freed with the connection) reported as `"running":[ids]` by `GET /api/goals`; running goals pin their mirror card to Doing, and a crash can never leave a stale "running" flag because nothing is persisted

@@ -151,6 +151,7 @@ var el = {
   enterSends: document.getElementById("enter-sends"),
   planMode: document.getElementById("plan-mode"),
   researchMode: document.getElementById("research-mode"),
+  unlimitedIterations: document.getElementById("unlimited-iterations"),
   turnFilter: document.getElementById("turn-filter"),
   turnFilterCount: document.getElementById("turn-filter-count"),
   scrollBottom: document.getElementById("scroll-bottom"),
@@ -304,11 +305,30 @@ function togglePin(id) {
   renderSessionOptions(null);
 }
 
+/* Which day-groups the rail folds away. Like pins this lives in the browser:
+   which "Yesterday" you have stopped looking at is a property of how you are
+   browsing right now, not of the conversation. Keyed by the group label
+   ("Pinned", "Today", "Yesterday", …) so one choice covers the same day in
+   every workspace. */
+function loadCollapsedGroups() {
+  try { return JSON.parse(window.localStorage.getItem("clanker.collapsedGroups") || "[]"); } catch (e) { return []; }
+}
+var collapsedGroups = loadCollapsedGroups();
+
+function isCollapsedGroup(g) { return collapsedGroups.indexOf(g) !== -1; }
+
+function toggleCollapsedGroup(g) {
+  var at = collapsedGroups.indexOf(g);
+  if (at === -1) collapsedGroups.push(g); else collapsedGroups.splice(at, 1);
+  try { window.localStorage.setItem("clanker.collapsedGroups", JSON.stringify(collapsedGroups)); } catch (e) {}
+  renderSessionOptions(null);
+}
+
 /* The conversation list derives from three things: what the server knows,
    what is pinned here, and what is typed in the filter. Nothing else can put
    a row on screen, which is what stops the rail and the transcript
    disagreeing about which conversation is open. */
-var railState = uiState({ sessions: [], filter: "", pins: [], current: "" });
+var railState = uiState({ sessions: [], filter: "", pins: [], current: "", collapsed: collapsedGroups.slice() });
 
 function isArchived(s){ return !!s.archived; }
 function showArchived(){ var cb=document.getElementById("archived-toggle"); return !!(cb && cb.checked); }
@@ -318,7 +338,8 @@ function renderSessionOptions(sessions) {
     sessions: knownSessions,
     filter: el.sessionFilter ? el.sessionFilter.value.trim().toLowerCase() : "",
     pins: pins.slice(),
-    current: sessionId
+    current: sessionId,
+    collapsed: collapsedGroups.slice()
   };
   renderSessionTitle();
 }
@@ -373,7 +394,7 @@ bind(el.railList, railState, function (s) {
     return pa === pb ? 0 : pb - pa;
   });
   var seen = ordered.some(function (item) { return item.id === s.current; });
-  var shown = 0;
+  var matched = 0;
 
   var wsList = workspacesOf(ordered);
   wsList.forEach(function (ws) {
@@ -393,17 +414,35 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-workspace-count" }, String(inWorkspace.length))));
     }
 
+    // Bucket the folder's conversations into day-groups (in order), then
+    // render each group as a collapsible header plus its rows.
+    var groups = [];
     var lastGroup = "";
     inWorkspace.forEach(function (item) {
       var group = isPinned(item.id) ? "Pinned" : recencyGroup(item.updated);
-      if (group !== lastGroup) {
-        out.push(T.li({ class: "rail-group", role: "presentation" }, group));
-        lastGroup = group;
-      }
-      var row = railRowFor(item, s.current);
-      if (!onlyDefault) row.classList.add("rail-folder");
-      out.push(row);
-      shown += 1;
+      if (group !== lastGroup) { groups.push({ name: group, items: [] }); lastGroup = group; }
+      groups[groups.length - 1].items.push(item);
+    });
+    groups.forEach(function (g) {
+      var collapsed = isCollapsedGroup(g.name);
+      var head = T.button({
+        type: "button",
+        class: "rail-group",
+        "aria-expanded": String(!collapsed),
+        "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
+        title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
+        onclick: function () { toggleCollapsedGroup(g.name); }
+      }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
+        T.span({ class: "rail-group-name" }, g.name),
+        T.span({ class: "rail-group-count" }, String(g.items.length)));
+      out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
+      if (collapsed) { matched += g.items.length; return; }
+      g.items.forEach(function (item) {
+        var row = railRowFor(item, s.current);
+        if (!onlyDefault) row.classList.add("rail-folder");
+        out.push(row);
+      });
+      matched += g.items.length;
     });
   });
 
@@ -416,7 +455,7 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-item-title" }, "New conversation"),
         T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!shown && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
+  if (!matched && s.filter) out.push(T.li({ class: "rail-empty" }, "No conversation matches."));
   return out;
 });
 
@@ -1410,6 +1449,11 @@ el.form.addEventListener("submit", function (e) {
 
   var isPlan = el.planMode && el.planMode.checked;
   var isResearch = el.researchMode && el.researchMode.checked;
+  // 1000 is the server's own clamp ceiling (clampIterationBudget in
+  // cli.zig) — there is no true "unlimited", so this asks for the highest
+  // budget the harness will actually honor rather than a number it clamps
+  // down anyway.
+  var noLimit = el.unlimitedIterations && el.unlimitedIterations.checked;
   var turn = createTurn(task);
   if (isPlan) {
     /* The badge marks the proposal turn so renderStats can offer Apply, and
@@ -1520,6 +1564,7 @@ el.form.addEventListener("submit", function (e) {
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,
       plan: isPlan,
       research: isResearch,
+      max_iterations: noLimit ? 1000 : null,
       knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : [])
     }),
     signal: controller.signal
@@ -1732,6 +1777,10 @@ function loadRun(id) {
       el.runGraph.removeAttribute("aria-busy");
       populateCompareSelects();
       drawRun(g);
+      // The graph itself makes completion visible, but this live region is
+      // also the small floating status shown while a run loads. Leaving the
+      // loading copy behind makes a finished graph still look in flight.
+      el.runStatus.textContent = "";
     })
     .catch(function (err) {
       showRunsError("Could not load that run: " + err.message);
@@ -3536,19 +3585,26 @@ SUGGESTIONS.forEach(function (text) {
    or Export or Save prompt produced no sign anything had happened unless you
    were using a screen reader. Rather than change fifty call sites and leave
    the two able to drift, the regions are observed and mirrored here. */
-function showToast(text) { uiToast(text); }
+function showToast(text) { return uiToast(text); }
 
 if (window.MutationObserver) {
+  var statusToasts = new WeakMap();
   var statusObserver = new MutationObserver(function (records) {
     var seen = {};
     records.forEach(function (r) {
       var el0 = r.target.nodeType === 3 ? r.target.parentNode : r.target;
-      if (!el0 || !el0.textContent) return;
+      if (!el0) return;
+      var previous = statusToasts.get(el0);
+      if (previous) {
+        previous.remove();
+        statusToasts.delete(el0);
+      }
       var text = el0.textContent.trim();
       // The same message written twice in one tick is one event.
       if (!text || seen[text]) return;
       seen[text] = true;
-      showToast(text);
+      var shown = showToast(text);
+      if (shown) statusToasts.set(el0, shown);
     });
   });
   ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status"].forEach(function (id) {
@@ -4019,9 +4075,14 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
         });
     });
   }
-  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check, and summarize pass/fail per check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
-  wire("progress-eval", { task:"run evals: list tasks with criteria, run each, and summarize scores", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
-  wire("progress-providers", { task:"check providers: for each configured provider/model report reachable/missing auth/rate-limited", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress") });
+  // These chores can legitimately run long (gate failures send the agent off
+  // to read source and fix them) and there is no checkbox here to raise the
+  // budget per-run the way the composer's "No limit" toggle does, so they ask
+  // for the same 1000 ceiling outright rather than silently inheriting
+  // cfg.agent.max_iterations (usually far lower) and cutting the run short.
+  wire("progress-gate", { task:"run the gate: zig build, zig build test, zig fmt check, and summarize pass/fail per check", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
+  wire("progress-eval", { task:"run evals: list tasks with criteria, run each, and summarize scores", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
+  wire("progress-providers", { task:"check providers: for each configured provider/model report reachable/missing auth/rate-limited", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
   if(stopBtn) stopBtn.addEventListener("click", function(){ if(progCtrl) try{progCtrl.abort();}catch(_){} });
   var histBtn=document.getElementById("progress-history-refresh");
   if(histBtn) histBtn.addEventListener("click", renderHistory);

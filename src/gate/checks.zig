@@ -124,7 +124,12 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
     if (hits > 0) {
         const written = hit_buf[0..hit_w.end];
         const detail_str = if (written.len > 0) written else "forbidden markers found in changed files";
-        return .{ .ok = false, .label = "lint", .detail = detail_str };
+        // hit_buf is this frame's stack. Callers that read `detail` (the gate
+        // CLI prints it) would otherwise get whatever reclaimed the frame, so
+        // hand back an owned copy under the same "detail aliases stderr"
+        // convention runZigArgs uses, letting deinit free it exactly once.
+        const owned = try gpa.dupe(u8, detail_str);
+        return .{ .ok = false, .label = "lint", .detail = owned, .stderr = owned };
     }
     return .{ .ok = true, .label = "lint" };
 }
@@ -145,15 +150,19 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     const clean = try lintGate(gpa, io, tmp.dir, &.{ "clean.zig", "dirty.md" });
     try std.testing.expect(clean.ok);
 
-    const dirty = try lintGate(gpa, io, tmp.dir, &.{"dirty.zig"});
+    var dirty = try lintGate(gpa, io, tmp.dir, &.{"dirty.zig"});
+    defer dirty.deinit(gpa);
     try std.testing.expect(!dirty.ok);
     try std.testing.expectEqualStrings("lint", dirty.label);
+    // The detail must survive the call: it named a stack buffer before.
+    try std.testing.expect(std.mem.find(u8, dirty.detail, "dirty.zig") != null);
 
     // The other two debt markers must trip the gate too. Split the same way
     // as the forbidden array above: spelled whole, they match this file's
     // own bytes and lintGate fails on itself every run.
     try tmp.dir.writeFile(io, .{ .sub_path = "hacky.zig", .data = "// HA" ++ "CK: quick fix\nconst x = 1;\n" });
-    const hacky = try lintGate(gpa, io, tmp.dir, &.{"hacky.zig"});
+    var hacky = try lintGate(gpa, io, tmp.dir, &.{"hacky.zig"});
+    defer hacky.deinit(gpa);
     try std.testing.expect(!hacky.ok);
     try std.testing.expectEqualStrings("lint", hacky.label);
 }

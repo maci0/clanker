@@ -1,6 +1,6 @@
 {
   "name": "bugreport",
-  "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity and environment into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls board_add. Use this instead of board_add when the work item is a bug: the template keeps reports consistent and searchable.",
+  "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity and environment into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls kanban_add. Use this instead of kanban_add when the work item is a bug: the template keeps reports consistent and searchable.",
   "wasm": "zig-out/tools/bugreport.wasm",
   "input_schema": {
     "type": "object",

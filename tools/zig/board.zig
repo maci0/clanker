@@ -46,7 +46,7 @@ const Req = struct {
     priority: ?[]const u8 = null,
     deadline: ?i64 = null,
     who: ?[]const u8 = null,
-    /// Manifested name for the assign field (web UI and board_update schema).
+    /// Manifested name for the assign field (web UI and kanban_update schema).
     /// Alias of `who`; either reassigns, and on create either stamps an initial
     /// assignment folded as if the add itself assigned.
     assignee: ?[]const u8 = null,
@@ -254,7 +254,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = std.json.parseFromSliceLeaky(Req, alloc, input, .{ .ignore_unknown_fields = true }) catch
         return lib.fail(out, "expected a JSON object");
 
-    // The descriptor pins the op for a single-purpose tool (board_move and the
+    // The descriptor pins the op for a single-purpose tool (kanban_move and the
     // rest); the internal entry point the web UI calls names it in the request.
     const cfg = std.json.parseFromSliceLeaky(Config, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Config{};
     const op = if (cfg.op) |o| o else if (req.op.len > 0) req.op else "list";
@@ -325,7 +325,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
 
-    if (req.id.len == 0) return lib.fail(out, "which card? pass its id from board_list");
+    if (req.id.len == 0) return lib.fail(out, "which card? pass its id from kanban_list");
     if (cards.get(list, req.id) == null) return lib.fail(out, "no such card");
 
     // Aliases: the manifests and the web UI grew two names for two of these

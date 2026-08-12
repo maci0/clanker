@@ -191,9 +191,9 @@ peer keeps the message only when it subscribes to that room.
   marked `sequential` so concurrent tool calls never race on the log file.
 - Shared board: room-scoped `todo_*` (a `room` param on the shared list) was
   removed once the board covered the same need (see
-  `docs/adrs/0002-private-todos-vs-shared-board.md`). `board_add`, `board_move`,
-  `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`,
-  `board_cost`, `board_list`, `board_delete` (`tools/zig/board.zig`, one
+  `docs/adrs/0002-private-todos-vs-shared-board.md`). `kanban_add`, `kanban_move`,
+  `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`,
+  `kanban_cost`, `kanban_list`, `kanban_delete` (`tools/zig/board.zig`, one
   `board.wasm` module, one op each) work a shared Kanban board folded from
   the board room's chat log (see
   `docs/adrs/0001-board-is-a-chatroom.md`), with subtasks, dependencies, a
@@ -305,7 +305,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `fetch_web` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied |
+| `git` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored, so per-worktree work runs as `git -C .local/worktrees/<wt> add/commit/push <branch>` |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or post a message to one peer |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
@@ -323,7 +323,7 @@ changes as tools are added.
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
 | `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_blind.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
-| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
+| `kanban_add`, `kanban_move`, `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_list`, `kanban_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
 Internal tools, never offered to the model:
 
@@ -486,7 +486,7 @@ iter 2
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `stats` | Token usage per provider/model |
-| `serve [--port N]` | HTTP server + web UI (default port 17921) |
+| `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs (also `clanker prune`) |
@@ -684,7 +684,7 @@ For the authoritative field list and defaults, see the doc comments on each stru
 
 ## HTTP server
 
-`clanker serve` starts a local HTTP server on port 17921 (override with `--port`). Endpoints:
+`clanker serve` starts an HTTP server on `127.0.0.1:17921` (override the interface with `--host`, the port with `--port`). Endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -719,6 +719,31 @@ For the authoritative field list and defaults, see the doc comments on each stru
 | `/api/chat/subscribe` | POST | Join or leave a chatroom |
 
 `GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
+
+### Binding and the trust model
+
+There is no authentication. The server exposes the full agent: `/api/run` runs a task, tools exec and write, and `/api/ask` answers write confirmations. Anyone who can reach the port can do all of it. Two things keep that from being a network-facing surface by default, and only the first is about the network:
+
+- **What it binds.** `--host` sets the interface, default `127.0.0.1`, so out of the box nothing off this machine can connect at all. `--host 0.0.0.0` (or `::`) makes it reachable from the LAN. That is opt-in and still unauthenticated: past loopback, the access control is a firewall or a network you trust, not clanker.
+- **Which authority it answers to.** Binding loopback stops remote connections but not DNS rebinding: a hostile name can resolve to `127.0.0.1` and make a browser treat this control plane as its own origin. So every request, GET included, is checked against the authority in its `Host` header (`unexpectedHost` in `src/cli.zig`) and refused with `421 Misdirected Request` when it does not match. The same rule gates the `Origin` header on state-changing requests, as CSRF protection.
+
+The authority rule is:
+
+| Authority | Served |
+|-----------|--------|
+| `127.0.0.1:17921`, `192.168.1.5:17921`, `[::1]:17921`, any IP literal at the listen port | yes |
+| `localhost:17921` | yes |
+| a name passed to `--serve-as`, at the listen port or with no port | yes |
+| any other name, e.g. `attacker.example:17921` | no |
+| any authority at a different port, or missing/duplicate `Host` | no |
+
+An IP literal is accepted because DNS rebinding needs a *name* whose resolution the attacker controls, and there is no resolution step to subvert in a literal. That is what makes `--host 0.0.0.0` usable on its own: a LAN client browsing to `http://192.168.1.5:17921/` is served. A name is not accepted on the same reasoning, so reaching the server through a real hostname (a reverse proxy, a `.lan` entry, a tailnet name) means naming it:
+
+```sh
+clanker serve --host 0.0.0.0 --serve-as clanker.lan
+```
+
+`--serve-as` is repeatable, matched case-insensitively, and takes `--serve-as x` or `--serve-as=x`. Hot reload re-execs with the same `--host`, `--port` and `--serve-as` set, so a rebuild does not quietly narrow the policy.
 
 ### `POST /api/run`
 

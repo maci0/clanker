@@ -30,10 +30,10 @@ pub const Proposal = struct {
 /// the gate honest and also meant the fitness function could never grow, which
 /// is a ceiling on how good self-improvement can get.
 ///
-/// `src/improve/` is open except for this file, so a pass can improve the
-/// machinery that improves it. What keeps that honest is that the gates are
-/// run by the binary already on disk, not by the patched one, plus the staged
-/// invariant check in the engine.
+/// `src/improve/` is fully excluded. A finite set of textual invariants cannot
+/// protect every control-flow edge in the machinery that decides whether a
+/// patch is promoted, so that machinery cannot rewrite itself in the same
+/// pass it is grading.
 pub const allowed_prefixes = [_][]const u8{
     "src/",
     "evals/",
@@ -79,12 +79,7 @@ pub fn validatePath(path: []const u8) bool {
             if (std.mem.startsWith(u8, path, "evals/") and !std.mem.endsWith(u8, path, ".task.json")) return false;
             // Fine-grained denials within allowed prefixes.
             if (std.mem.startsWith(u8, path, "src/evals/")) return false;
-            // proposal.zig is where the modifiable surface itself is defined:
-            // a pass that could edit it could grant itself anything, and no
-            // later check would see a violation because the rule would have
-            // moved. The rest of src/improve/ is open, guarded by the staged
-            // invariants in gate_invariants.
-            if (std.mem.eql(u8, path, "src/improve/proposal.zig")) return false;
+            if (std.mem.startsWith(u8, path, "src/improve/")) return false;
             if (std.mem.eql(u8, path, "src/tools/builder.zig")) return false;
             // Descriptors are editable, but only as descriptors: a stray write
             // into tools/manifests/ must not drop a .wasm or anything else the
@@ -236,7 +231,9 @@ pub fn parseProposal(
         .object => |o| o,
         else => return error.ProposalNotObject,
     };
-    var p = Proposal{ .summary = try strField(obj, "summary") };
+    const summary = try strField(obj, "summary");
+    if (summary.len == 0 or std.mem.findAny(u8, summary, "\r\n") != null) return error.InvalidSummary;
+    var p = Proposal{ .summary = summary };
     if (obj.get("rationale")) |r| p.rationale = switch (r) {
         .string => |x| x,
         else => return error.FieldNotString,
@@ -307,9 +304,8 @@ test "validatePath" {
     try std.testing.expect(validatePath("tools/manifests/calculator.tool.json"));
     try std.testing.expect(validatePath("build.zig"));
     try std.testing.expect(!validatePath("src/evals/runner.zig"));
-    // Open, so a pass can improve the machinery that improves it; the staged
-    // invariant check in the engine is what keeps that from removing a gate.
-    try std.testing.expect(validatePath("src/improve/engine.zig"));
+    try std.testing.expect(!validatePath("src/improve/engine.zig"));
+    try std.testing.expect(!validatePath("src/improve/worktree.zig"));
     try std.testing.expect(!validatePath("src/improve/proposal.zig"));
     try std.testing.expect(!validatePath("src/tools/builder.zig"));
     // Add-only rather than forbidden; the existence check that keeps it
@@ -342,6 +338,24 @@ test "stripMarkdownFence and parse fenced proposal" {
     try std.testing.expectEqualStrings("s", p.summary);
     try std.testing.expectEqual(@as(usize, 1), p.changes.len);
     try std.testing.expectEqualStrings("skills/SYSTEM.md", p.changes[0].file);
+}
+
+test "proposal summary must stay on one line for the improvement commit tag" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const newline =
+        \\{"summary":"safe subject\nbody without tag","changes":[
+        \\{"file":"src/cli.zig","old":"a","new":"b"}]}
+    ;
+    try std.testing.expectError(error.InvalidSummary, parseProposal(arena, newline, 10, 4096, null));
+
+    const empty =
+        \\{"summary":"","changes":[
+        \\{"file":"src/cli.zig","old":"a","new":"b"}]}
+    ;
+    try std.testing.expectError(error.InvalidSummary, parseProposal(arena, empty, 10, 4096, null));
 }
 
 test "a change may carry its text base64-encoded" {
@@ -392,9 +406,8 @@ test "the eval suite is add-only: new cases allowed, existing ones off limits" {
     // The machinery behind the suite stays shut, and normal source is not
     // accidentally append-only.
     try std.testing.expect(!validatePath("src/evals/scorers.zig"));
-    // Open, so a pass can improve the machinery that improves it; the staged
-    // invariant check in the engine is what keeps that from removing a gate.
-    try std.testing.expect(validatePath("src/improve/engine.zig"));
+    try std.testing.expect(!validatePath("src/improve/engine.zig"));
+    try std.testing.expect(!validatePath("src/improve/worktree.zig"));
     try std.testing.expect(!validatePath("src/improve/proposal.zig"));
     try std.testing.expect(!isAppendOnly("src/agent/loop.zig"));
     try std.testing.expect(validatePath("src/agent/loop.zig"));
