@@ -1,5 +1,8 @@
 # clanker — Reference Documentation
 
+External-project digests (what we can learn from them) live in [docs/digests/](digests/).
+
+
 ## Architecture
 
 clanker is a self-improving AI agent harness written in Zig 0.16. It runs tools as sandboxed WebAssembly modules via zwasm and improves its own source through a gated loop.
