@@ -474,8 +474,15 @@ pub const History = struct {
             // Why it failed is the part worth carrying: the summary alone says
             // what was attempted, not what went wrong with it.
             if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
-                try buf.appendSlice(arena, "\n    rejected because: ");
+                if (std.mem.eql(u8, e.status, "reverted")) {
+                    try buf.appendSlice(arena, "\n    reverted because: ");
+                } else {
+                    try buf.appendSlice(arena, "\n    rejected because: ");
+                }
                 try buf.appendSlice(arena, firstLine(e.detail, 200));
+            }
+            if (std.mem.eql(u8, e.status, "reverted") and e.detail.len == 0) {
+                try buf.appendSlice(arena, "\n    (reverted by human review after promotion)");
             }
             try buf.appendSlice(arena, "\n");
         }
@@ -938,6 +945,7 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
     // The rendered history now tells the next run the truth.
     const summary = try hist.recentSummary(arena, 6);
     try std.testing.expect(std.mem.indexOf(u8, summary, "- reverted [behavior]: gets reverted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "(reverted by human review after promotion)") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: stays accepted") != null);
 }
 
