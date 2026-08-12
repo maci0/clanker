@@ -53,6 +53,10 @@ pub const Worktree = struct {
             gpa.free(res.stdout);
             gpa.free(res.stderr);
         }
+        // Best-effort: remove the parent .clanker-worktrees directory if it
+        // is now empty. Fails harmlessly when other worktrees still exist
+        // (deleteDir on a non-empty directory returns an error we ignore).
+        std.Io.Dir.cwd().deleteDir(io, ".clanker-worktrees") catch {};
     }
 
     /// Folds the branch's current tip into `base_branch` without checking
