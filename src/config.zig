@@ -244,6 +244,13 @@ pub const Improve = struct {
     /// of the tree, so this is the loop's only way to look anything up; each
     /// one costs a call that produces no patch. 0 disables it.
     max_context_requests: u32 = 3,
+    /// Provider the capability gate runs the staged eval suite on. The evals
+    /// are mechanical capability checks (call a tool, read a field of its
+    /// result), not reasoning work, so a fast cheap model grades them the
+    /// same as a frontier one -- measured, the eval phase was ~334s of a
+    /// ~368s gate on the proposal provider. null keeps the staged tree's own
+    /// default provider.
+    eval_provider: ?[]const u8 = null,
 };
 
 /// A peer clanker instance that may be notified about events.
@@ -991,7 +998,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests" }, "improve");
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "max_cache_bytes", "max_context_requests", "eval_provider" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonInt(k, "max_context_bytes");
             im.max_context_bytes = if (n <= 0) null else @intCast(n);
@@ -1005,6 +1012,7 @@ pub const Config = struct {
             const n = try jsonInt(k, "max_context_requests");
             im.max_context_requests = if (n <= 0) 0 else @intCast(n);
         }
+        if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
         return im;
     }
 

@@ -1126,8 +1126,15 @@ pub const Engine = struct {
             return .{ .ok = true, .label = "capability evals" };
         };
 
+        // A configured eval_provider aims the staged eval agents at a fast
+        // cheap model: the cases are mechanical capability checks, and the
+        // eval phase measured ~334s of a ~368s gate on the proposal provider.
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(self.ctx.gpa);
+        try argv.appendSlice(self.ctx.gpa, &.{ exe, "eval", "--tasks" });
+        if (self.cfg.improve.eval_provider) |p| try argv.appendSlice(self.ctx.gpa, &.{ "--provider", p });
         const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
-            .argv = &.{ exe, "eval", "--tasks" },
+            .argv = argv.items,
             .cwd = .{ .dir = staged_dir },
             .stdout_limit = .limited(1 << 20),
             .stderr_limit = .limited(1 << 20),
@@ -1155,8 +1162,12 @@ pub const Engine = struct {
         var detail_buf: std.ArrayList(u8) = .empty;
         defer detail_buf.deinit(self.ctx.gpa);
         for (failed_names) |name| {
+            var argv: std.ArrayList([]const u8) = .empty;
+            defer argv.deinit(self.ctx.gpa);
+            try argv.appendSlice(self.ctx.gpa, &.{ exe, "eval", name });
+            if (self.cfg.improve.eval_provider) |p| try argv.appendSlice(self.ctx.gpa, &.{ "--provider", p });
             const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
-                .argv = &.{ exe, "eval", name },
+                .argv = argv.items,
                 .cwd = .{ .dir = staged_dir },
                 .stdout_limit = .limited(1 << 20),
                 .stderr_limit = .limited(1 << 20),
