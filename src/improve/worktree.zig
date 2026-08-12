@@ -82,27 +82,60 @@ pub const Worktree = struct {
             };
             defer gpa.free(merge_base);
 
-            const landed = if (std.mem.eql(u8, merge_base, base_sha))
+            if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
-                updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false
-            else land: {
-                const tree = mergeTree(gpa, io, base_sha, branch_sha) catch {
-                    log.log(.warn, "improve-self: merging {s} into {s} conflicts; leaving it on the branch for manual merge", .{ self.branch, self.base_branch });
+                if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
+                    resyncLocalBranch(gpa, io, branch_sha);
                     return;
-                };
-                defer gpa.free(tree);
-                const commit = commitTree(gpa, io, tree, base_sha, branch_sha, message) catch {
-                    log.log(.warn, "improve-self: could not create a merge commit for {s}", .{self.branch});
-                    return;
-                };
-                defer gpa.free(commit);
-                break :land updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false;
+                }
+                continue; // lost the CAS race; retry against the new tip
+            }
+
+            const tree = mergeTree(gpa, io, base_sha, branch_sha) catch {
+                log.log(.warn, "improve-self: merging {s} into {s} conflicts; leaving it on the branch for manual merge", .{ self.branch, self.base_branch });
+                return;
             };
-            if (landed) return;
+            defer gpa.free(tree);
+            const commit = commitTree(gpa, io, tree, base_sha, branch_sha, message) catch {
+                log.log(.warn, "improve-self: could not create a merge commit for {s}", .{self.branch});
+                return;
+            };
+            defer gpa.free(commit);
+            if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
+                resyncLocalBranch(gpa, io, commit);
+                return;
+            }
             // Someone else moved base_branch between the read and the write;
             // loop and retry against its new tip.
         }
         log.log(.warn, "improve-self: {s} kept losing the race to merge into {s}; leaving it on the branch", .{ self.branch, self.base_branch });
+    }
+
+    /// After a successful merge-back, fast-forwards this worktree's own
+    /// branch (and its checked-out files) to the commit that just landed on
+    /// the base branch, so the two stay in lockstep.
+    ///
+    /// Without this the branch keeps accumulating its own parallel history
+    /// every promotion, diverging a little further from the base branch
+    /// each time even though its content already landed there under a
+    /// different commit object — confirmed live: the first 7 promotions of
+    /// a run merged cleanly, and every one after silently failed once
+    /// accumulated drift produced a real conflict neither side could
+    /// auto-resolve, with nothing surfacing the growing backlog short of
+    /// reading raw logs for "conflicts" by hand.
+    fn resyncLocalBranch(gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
+        const argv = [_][]const u8{ "git", "reset", "--hard", new_sha };
+        const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
+            log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
+            return;
+        };
+        defer gpa.free(res.stdout);
+        defer gpa.free(res.stderr);
+        const ok = switch (res.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
     }
 };
 
