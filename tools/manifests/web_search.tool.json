@@ -1,12 +1,20 @@
 {
   "name": "web_search",
-  "description": "Search the web using DuckDuckGo HTML. Input: {\"query\": \"...\"}. Returns up to 8 results with title, url, and snippet.",
+  "description": "Search the web. Tries DuckDuckGo Lite first and silently falls back to Bing Search when DDG is unreachable, serving its bot-challenge page, or returns nothing. No API key needed. Input: {\"query\": \"...\", \"max_results\": 1-20 (default 8), \"region\": \"optional, e.g. en-US\"}. Returns {\"ok\": true, \"backend\": \"duckduckgo\"|\"bing\", \"query\": \"...\", \"count\": N, \"results\": [{\"title\", \"url\", \"snippet\"}]}.",
   "input_schema": {
     "type": "object",
     "properties": {
       "query": {
         "type": "string",
         "description": "Search query"
+      },
+      "max_results": {
+        "type": "number",
+        "description": "How many results to return (1-20, default 8)"
+      },
+      "region": {
+        "type": "string",
+        "description": "Region/locale hint, e.g. \"en-US\" (default en-US); passed to Bing market and language settings"
       }
     },
     "required": [
@@ -14,7 +22,8 @@
     ]
   },
   "network_allow": [
-    "html.duckduckgo.com"
+    "lite.duckduckgo.com",
+    "www.bing.com"
   ],
   "fs_prefixes": [],
   "wasm": "zig-out/tools/web_search.wasm",
