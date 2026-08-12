@@ -289,6 +289,8 @@ const CommandAction = union(enum) {
     goal,
     /// Prints usage, or runs the measurement loop as a normal agent task.
     autoresearch,
+    /// Prints usage, or runs one judged debate as a normal agent task.
+    arena,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
     tool: struct { name: []const u8, args: []const u8 },
 };
@@ -321,6 +323,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/plugins", .help = "list installed plugins", .action = .{ .tool = .{ .name = "cmd_plugins", .args = "" } } },
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
+    .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
 
@@ -790,6 +793,37 @@ const Model = struct {
                     return;
                 }
                 try self.submitTask(ctx, task);
+            },
+            // Runs as an ordinary agent turn so each round streams as it
+            // happens: a match is several multi-second model calls, and doing
+            // it synchronously here would freeze the REPL for its whole
+            // duration with nothing on screen. The tool's own rendered
+            // transcript is what lands in the turn, verdict block included.
+            .arena => {
+                if (pc.args.len == 0 or std.mem.eql(u8, pc.args, "--help") or std.mem.eql(u8, pc.args, "-h")) {
+                    self.lines.append(self.arena, .{ .text = "usage: /arena \"<question>\" --for \"<stance>\" --against \"<stance>\" [--rounds N] [--judge self|third]", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  two combatants argue opposing positions, each seeing every prior move, until a verdict", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  --for-provider / --against-provider pick who argues each side; --judge third pays for a neutral scorer", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  example: /arena \"queue or direct calls?\" --for \"use a message queue\" --against \"use direct calls\"", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  each round is one model call per side, so keep --rounds small", .dim = true }) catch {};
+                    return;
+                }
+                const prompt = std.fmt.allocPrint(
+                    self.arena,
+                    "Run one arena match with these arguments: {s}\n\n" ++
+                        "Call the `arena` tool exactly once, mapping the flags onto its input fields " ++
+                        "(--for -> \"for\", --against -> \"against\", --rounds -> \"max_rounds\", " ++
+                        "--judge -> \"judge\", --for-provider -> \"provider_for\", " ++
+                        "--against-provider -> \"provider_against\", --judge-provider -> \"judge_provider\"), " ++
+                        "with the quoted text before the first flag as \"question\". Then print the tool's " ++
+                        "\"text\" field verbatim as your whole answer. Do not summarize it, re-score the " ++
+                        "match, or add commentary — the transcript and verdict are the result.",
+                    .{pc.args},
+                ) catch {
+                    self.lines.append(self.arena, .{ .text = "[arena: out of memory]", .dim = true }) catch {};
+                    return;
+                };
+                try self.submitTask(ctx, prompt);
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");

@@ -735,7 +735,11 @@ const HarnessConfigAccess = enum { full, providers, peers, workflows, chains };
 /// fail closed for any other guest, including newly added tools.
 fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     if (std.mem.eql(u8, tool_name, "config_view")) return .full;
-    if (std.mem.eql(u8, tool_name, "providers")) return .providers;
+    // arena needs the provider list for one question only: which configured
+    // provider is free to judge a match, i.e. is not already fighting it.
+    // `.providers` answers that without handing it the api_key_env names
+    // `.full` carries.
+    if (std.mem.eql(u8, tool_name, "providers") or std.mem.eql(u8, tool_name, "arena")) return .providers;
     if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "cmd_status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
     if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
     if (std.mem.eql(u8, tool_name, "chain")) return .chains;

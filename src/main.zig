@@ -138,6 +138,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{diag}),
             error.BadPort => cli.printUsageError(init.io, "--port wants a 16-bit port number, got '{s}'", .{diag}),
             error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
+            error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{diag}),
             error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
             error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
             error.OutOfMemory => unreachable,

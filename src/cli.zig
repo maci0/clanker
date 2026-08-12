@@ -81,6 +81,7 @@ pub const Command = enum {
     setup,
     prune,
     autoresearch,
+    arena,
     workflow,
 };
 
@@ -134,6 +135,20 @@ pub const Options = struct {
     workflow_sub: ?[]const u8 = null,
     workflow_name: ?[]const u8 = null,
     workflow_args: ?[]const u8 = null,
+    /// `arena`: the two stances, and who argues them. A side with no provider
+    /// of its own falls back to `--provider`, then to the configured default —
+    /// so the same model arguing both sides needs no flags at all.
+    arena_for: ?[]const u8 = null,
+    arena_against: ?[]const u8 = null,
+    arena_for_provider: ?[]const u8 = null,
+    arena_against_provider: ?[]const u8 = null,
+    /// 0 means "leave it to the tool's configured default", which the tool
+    /// clamps; the CLI does not carry a second copy of that ceiling.
+    arena_rounds: u32 = 0,
+    arena_judge: ?[]const u8 = null,
+    arena_judge_provider: ?[]const u8 = null,
+    /// `arena --match <id>`: print a stored match instead of running one.
+    arena_match: ?[]const u8 = null,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -312,6 +327,42 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                     return error.BadIters;
                 };
                 used = .research_budget;
+            } else if (std.mem.eql(u8, a, "--for")) {
+                opts.arena_for = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_for;
+            } else if (std.mem.eql(u8, a, "--against")) {
+                opts.arena_against = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_against;
+            } else if (std.mem.eql(u8, a, "--for-provider")) {
+                opts.arena_for_provider = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_for_provider;
+            } else if (std.mem.eql(u8, a, "--against-provider")) {
+                opts.arena_against_provider = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_against_provider;
+            } else if (std.mem.eql(u8, a, "--rounds")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.arena_rounds = std.fmt.parseInt(u32, v, 10) catch {
+                    setDiag(diag, v);
+                    return error.BadIters;
+                };
+                used = .arena_rounds;
+            } else if (std.mem.eql(u8, a, "--judge")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                // Refused here rather than by the tool: a typo'd judge mode
+                // should not cost a whole match's worth of model calls before
+                // it is reported.
+                if (!std.mem.eql(u8, v, "self") and !std.mem.eql(u8, v, "third")) {
+                    setDiag(diag, v);
+                    return error.BadJudge;
+                }
+                opts.arena_judge = v;
+                used = .arena_judge;
+            } else if (std.mem.eql(u8, a, "--judge-provider")) {
+                opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_judge_provider;
+            } else if (std.mem.eql(u8, a, "--match")) {
+                opts.arena_match = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_match;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -384,6 +435,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .repl;
             } else if (std.mem.eql(u8, a, "autoresearch")) {
                 opts.command = .autoresearch;
+            } else if (std.mem.eql(u8, a, "arena")) {
+                opts.command = .arena;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
@@ -441,6 +494,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         } else if (opts.command == .run and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .graph and opts.task == null) {
+            opts.task = a;
+        } else if (opts.command == .arena and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .notify and opts.peer == null) {
             opts.peer = a;
@@ -519,6 +574,24 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     if (opts.command == .notify and opts.message == null) {
         setDiag(diag, "<message>");
         return error.MissingArg;
+    }
+    // `arena --match <id>` reads a stored match and takes no question or
+    // stances; anything else is starting one, which needs all three. Caught
+    // here so a missing side costs a usage error rather than a refusal from
+    // the tool after the registry has been loaded.
+    if (opts.command == .arena and opts.arena_match == null) {
+        if (opts.task == null) {
+            setDiag(diag, "<question>");
+            return error.MissingArg;
+        }
+        if (opts.arena_for == null) {
+            setDiag(diag, "--for");
+            return error.MissingArg;
+        }
+        if (opts.arena_against == null) {
+            setDiag(diag, "--against");
+            return error.MissingArg;
+        }
     }
     if (opts.command == .chat) {
         const needs_room = !std.mem.eql(u8, opts.chat_sub, "rooms");
@@ -663,6 +736,14 @@ const Flag = enum {
     research_direction,
     research_pattern,
     research_budget,
+    arena_for,
+    arena_against,
+    arena_for_provider,
+    arena_against_provider,
+    arena_rounds,
+    arena_judge,
+    arena_judge_provider,
+    arena_match,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -681,6 +762,14 @@ const Flag = enum {
             .research_direction => "--direction",
             .research_pattern => "--pattern",
             .research_budget => "--budget",
+            .arena_for => "--for",
+            .arena_against => "--against",
+            .arena_for_provider => "--for-provider",
+            .arena_against_provider => "--against-provider",
+            .arena_rounds => "--rounds",
+            .arena_judge => "--judge",
+            .arena_judge_provider => "--judge-provider",
+            .arena_match => "--match",
         };
     }
 };
@@ -723,6 +812,7 @@ const specs = [_]Spec{
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
+    .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Two combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare two designs before either is built; use `eval` when\nthe question has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" — two different providers is the\n                        interesting case, but one on both sides is allowed\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per side, so a match costs real money. Matches\nland in state/arena/<id>.json; `arena` with no arguments is not a listing —\nuse the arena tool from a run, or read state/arena/log.jsonl." },
     .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
@@ -810,6 +900,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .autolearn => try cmdAutolearn(init, opts),
         .gate => try cmdGate(init, opts),
         .autoresearch => try cmdAutoresearch(init, opts),
+        .arena => try cmdArena(init, opts),
         .workflow => try cmdWorkflow(init, opts),
     }
 }
@@ -7899,6 +7990,84 @@ test "webui wasm-miss error still points at zig build tools" {
     const body = webuiMissingWasmError();
     try std.testing.expect(std.mem.indexOf(u8, body, "wasm") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "zig build tools") != null);
+}
+
+/// `clanker arena "<question>" --for X --against Y` — one match, non-interactive,
+/// the same way `clanker autoresearch` mirrors `/autoresearch`.
+///
+/// The whole match runs inside the `arena` WASM tool, so this is only argument
+/// marshalling and printing: the round loop, the judging and the persistence are
+/// the tool's, and the CLI cannot drift from what an agent calling the same tool
+/// gets. `arena` reaches its providers through `ck_llm`, which needs no parent
+/// agent run — that is what lets this be a plain subcommand.
+fn cmdArena(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    try s.beginObject();
+    if (opts.arena_match) |id| {
+        try s.objectField("match");
+        try s.write(id);
+    } else {
+        try s.objectField("question");
+        try s.write(opts.task.?);
+        try s.objectField("for");
+        try s.write(opts.arena_for.?);
+        try s.objectField("against");
+        try s.write(opts.arena_against.?);
+        // A side with no provider of its own inherits --provider, so
+        // `--provider x` alone is the same model arguing both sides.
+        if (opts.arena_for_provider orelse opts.provider) |p| {
+            try s.objectField("provider_for");
+            try s.write(p);
+        }
+        if (opts.arena_against_provider orelse opts.provider) |p| {
+            try s.objectField("provider_against");
+            try s.write(p);
+        }
+        if (opts.arena_rounds > 0) {
+            try s.objectField("max_rounds");
+            try s.write(opts.arena_rounds);
+        }
+        if (opts.arena_judge) |j| {
+            try s.objectField("judge");
+            try s.write(j);
+        }
+        if (opts.arena_judge_provider) |p| {
+            try s.objectField("judge_provider");
+            try s.write(p);
+            // Naming a judge is asking for third-party judging; requiring
+            // --judge third alongside it would only be a way to get it wrong.
+            if (opts.arena_judge == null) {
+                try s.objectField("judge");
+                try s.write("third");
+            }
+        }
+    }
+    try s.endObject();
+
+    if (opts.arena_match == null)
+        log.log(.info, "arena: running a match — each round is one model call per side", .{});
+
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "arena", w.written());
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        log.log(.error_, "arena: unreadable tool output", .{});
+        return error.ToolBadOutput;
+    };
+    if (parsed != .object) return error.ToolBadOutput;
+    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    if (!ok) {
+        const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        log.log(.error_, "arena: {s}", .{msg});
+        return error.ArenaRefused;
+    }
+    const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
+    try writeStdOut(io, text);
+    if (text.len > 0 and text[text.len - 1] != '\n') try writeStdOut(io, "\n");
 }
 
 fn cmdAutoresearch(init: std.process.Init, opts: Options) !void {

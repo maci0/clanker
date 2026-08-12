@@ -474,6 +474,40 @@ pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostE
     return hostResult(rc);
 }
 
+/// Like `llmWith`, plus a system message prepended to the call — the shape a
+/// role-played call needs (`arena`'s combatants layer a persona there, not into
+/// the user turn, so the position under debate stays the only thing in it).
+///
+/// Allocates the request rather than using `llmWith`'s fixed 32 KiB stack
+/// buffer: a prompt carrying a whole match transcript outgrows that, and
+/// `error.TooLarge` on a prompt the provider would have accepted is the kind of
+/// failure that reads as a provider problem.
+pub fn llmSystem(system: ?[]const u8, prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostError![]const u8 {
+    var w: std.Io.Writer.Allocating = .init(alloc);
+    defer w.deinit();
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return error.TooLarge;
+    s.objectField("prompt") catch return error.TooLarge;
+    s.write(prompt) catch return error.TooLarge;
+    if (system) |sys| if (sys.len > 0) {
+        s.objectField("system") catch return error.TooLarge;
+        s.write(sys) catch return error.TooLarge;
+    };
+    if (provider) |p| if (p.len > 0) {
+        s.objectField("provider") catch return error.TooLarge;
+        s.write(p) catch return error.TooLarge;
+    };
+    if (max_tokens > 0) {
+        s.objectField("max_tokens") catch return error.TooLarge;
+        s.write(max_tokens) catch return error.TooLarge;
+    }
+    s.endObject() catch return error.TooLarge;
+
+    const req = sliceToMem(w.written());
+    const rc = ck_llm(req.ptr, req.len);
+    return hostResult(rc);
+}
+
 /// This tool's own `config` object from its descriptor, as a JSON string
 /// ("{}" when the descriptor has none).
 pub fn config() []const u8 {

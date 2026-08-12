@@ -1,0 +1,56 @@
+{
+  "name": "arena",
+  "description": "Run a bounded, judged debate between two positions and return a verdict traceable to the transcript that produced it. WHEN TO USE: a question where two defensible answers exist and the risk is a confidently wrong one going unchallenged — comparing two designs before either is built (allowlist vs denylist, two wordings of a prompt, move-to-WASM or stay), or pressure-testing a claim you are about to act on. Each side sees every prior move and has to answer the other's specific rebuttal, which is exactly what 'swarm' cannot do (its members cannot see each other). WHEN NOT TO USE: (1) measuring which implementation is faster or more correct — that is an eval or a benchmark, not a debate; (2) any task where the sides would not disagree, since 'swarm' fans that out cheaper and in parallel; (3) questions of fact you can look up. Each round costs one model call per side (plus one judge call per move with judge='third'), so keep max_rounds small. INPUT to start a match: {'question': required string under debate, 'for': required one-line stance, 'against': required one-line opposing stance, 'provider_for'/'provider_against': optional provider names (different providers genuinely disagreeing is the interesting case; the same provider on both sides is allowed and cheaper), 'persona_for'/'persona_against': optional framing layered onto each side's system prompt, 'max_rounds': optional integer (default 4, clamped to 12), 'judge': optional 'self' (default, cheap, each side reports how much the other landed) or 'third' (a provider that is not fighting scores every move — recommended when the verdict matters), 'judge_provider': optional provider to judge with, must not be a combatant}. INPUT to read a finished match: {'match': '<id>'}. INPUT with no fields: lists past matches.",
+  "wasm": "zig-out/tools/arena.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string",
+        "description": "The question under debate. Its presence is what starts a match."
+      },
+      "for": {
+        "type": "string",
+        "description": "One-line stance the first combatant defends, e.g. 'use a message queue'."
+      },
+      "against": {
+        "type": "string",
+        "description": "One-line opposing stance, e.g. 'use direct calls'. Must differ from 'for'."
+      },
+      "positions": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "The two stances as an array, instead of for/against. Exactly 2; 3-4 way matches are not implemented."
+      },
+      "provider_for": { "type": "string" },
+      "provider_against": { "type": "string" },
+      "persona_for": { "type": "string" },
+      "persona_against": { "type": "string" },
+      "max_rounds": { "type": "integer" },
+      "judge": {
+        "type": "string",
+        "enum": ["self", "third"]
+      },
+      "judge_provider": { "type": "string" },
+      "max_tokens": {
+        "type": "integer",
+        "description": "Output cap per combatant turn. Lower it to keep a long match cheap."
+      },
+      "match": {
+        "type": "string",
+        "description": "Read a stored match by id instead of starting one."
+      }
+    }
+  },
+  "fs_prefixes": ["state/arena/"],
+  "network_allow": [],
+  "config": {
+    "max_rounds": 4,
+    "judge": "self",
+    "max_tokens": 900
+  },
+  "category": "agent",
+  "config_editable": ["max_rounds", "judge", "max_tokens"],
+  "llm": true,
+  "confirm": true
+}
