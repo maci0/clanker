@@ -87,10 +87,7 @@ pub const Worktree = struct {
             };
             defer gpa.free(branch_sha);
 
-            if (std.mem.eql(u8, base_sha, branch_sha)) {
-                self.merged = true;
-                return; // already even
-            }
+            if (std.mem.eql(u8, base_sha, branch_sha)) return; // already even
 
             const merge_base = mergeBaseOf(gpa, io, base_sha, branch_sha) catch {
                 log.log(.warn, "improve-self: could not find a merge base for {s} and {s}", .{ self.base_branch, self.branch });
@@ -128,7 +125,7 @@ pub const Worktree = struct {
             // Someone else moved base_branch between the read and the write;
             // loop and retry against its new tip.
         }
-        log.log(.warn, "improve-self: {s} lost the CAS race {d} times merging into {s}; leaving it on the branch for manual or next-run merge", .{ self.branch, attempt, self.base_branch });
+        log.log(.warn, "improve-self: {s} kept losing the race to merge into {s}; leaving it on the branch", .{ self.branch, self.base_branch });
     }
 
     /// After a successful merge-back, fast-forwards this worktree's own
@@ -166,18 +163,7 @@ pub const Worktree = struct {
             .exited => |c| c == 0,
             else => false,
         };
-        if (!ok) {
-            log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}; skipping shared-state refresh to avoid mixing stale tracked files with fresh state", .{res.stderr});
-            return;
-        }
-        // git reset --hard removes untracked directories (state/, .env
-        // copies) that linkSharedState set up. Without re-establishing
-        // them, subsequent iterations in this worktree find no state/
-        // directory and every sandbox-readable file (learnings, autolearn,
-        // reasoning, plugin config, token stats) silently fails to write.
-        // Re-run the same setup that create() used.
-        linkSharedState(gpa, io, self.path) catch |err|
-            log.log(.warn, "improve-self: could not re-link shared state after resync: {s}", .{@errorName(err)});
+        if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
     }
 };
 
@@ -186,20 +172,6 @@ pub const Worktree = struct {
 /// targets the repo the caller's cwd is already in.
 pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     const base_branch = currentBranch(gpa, io) catch try gpa.dupe(u8, "main");
-
-    // Validate that the base branch ref actually resolves before spending
-    // time on directory creation and git worktree add. A detached HEAD
-    // falls back to "main" above, but the repo may use "master" or another
-    // name; catching it here gives a legible message instead of the opaque
-    // "fatal: invalid reference" that git worktree add emits.
-    {
-        const check = revParse(gpa, io, base_branch) catch {
-            log.log(.error_, "improve-self: base branch '{s}' does not exist; cannot create worktree", .{base_branch});
-            gpa.free(base_branch);
-            return error.WorktreeCreateFailed;
-        };
-        gpa.free(check);
-    }
     errdefer gpa.free(base_branch);
 
     const branch = try std.fmt.allocPrint(gpa, "clanker/improve-self-{s}", .{id});
@@ -311,13 +283,6 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
-    // Ensure improvements.jsonl exists (empty is valid JSONL — zero records)
-    // so the symlink loop below finds it on the very first improve-self run.
-    // Without this, a fresh checkout skips the link and the worktree starts
-    // with no cross-run dedup memory.
-    if (std.Io.Dir.cwd().access(io, "state/improvements.jsonl", .{})) |_| {} else |_| {
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/improvements.jsonl", .data = "" }) catch {};
-    }
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
@@ -349,24 +314,13 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
             log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
 
-    // Open the main tree root as a Dir so reads resolve against it even
-    // when cwd has moved into the worktree (resyncLocalBranch calls us
-    // after chdir). Without this, cwd()-based reads get the worktree's
-    // own (just-reset, possibly empty) files instead of the main tree's
-    // current versions, silently losing cross-run memory on every resync.
-    var root_dir = std.Io.Dir.cwd().openDir(io, root, .{}) catch {
-        log.log(.warn, "improve-self: could not open root dir {s} for sandbox-readable copies", .{root});
-        return;
-    };
-    defer root_dir.close(io);
-
     for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
         // 16 MiB: autolearn's own log cap is 8 MiB (max_log_bytes,
         // src/agent/autolearn.zig) and the trim triggers only past it, so a
         // 4 MiB read limit here didn't truncate -- readFileAlloc errors on
         // oversize and the catch skipped the copy entirely, silently
         // dropping the shared memory exactly when it had grown most useful.
-        const data = root_dir.readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
+        const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
         defer gpa.free(data);
         const dst = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(dst);
