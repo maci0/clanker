@@ -108,6 +108,7 @@ pub const Worktree = struct {
                     log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
                     self.resyncLocalBranch(gpa, io, branch_sha);
                     self.merged = true;
+                    copyBackLearnings(gpa, io, self.path);
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -127,6 +128,7 @@ pub const Worktree = struct {
                 log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
                 self.resyncLocalBranch(gpa, io, commit);
                 self.merged = true;
+                copyBackLearnings(gpa, io, self.path);
                 return;
             }
             // Someone else moved base_branch between the read and the write;
@@ -173,6 +175,25 @@ pub const Worktree = struct {
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
     }
 };
+
+/// After a successful merge-back, copies state/learnings.md from the
+/// worktree back to the main tree so learnings written during the isolated
+/// improve-self run survive promotion. The worktree's copy was seeded by
+/// linkSharedState at creation; any write_note calls during the run append
+/// to that copy, and without this step they vanish when the worktree is
+/// cleaned up. Best-effort: a missing or unreadable file is not an error.
+fn copyBackLearnings(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) void {
+    const src = std.fmt.allocPrint(gpa, "{s}/state/learnings.md", .{worktree_path}) catch return;
+    defer gpa.free(src);
+    const data = std.Io.Dir.cwd().readFileAlloc(io, src, gpa, .limited(1 << 24)) catch |err| {
+        log.log(.debug, "improve-self: no learnings to copy back: {s}", .{@errorName(err)});
+        return;
+    };
+    defer gpa.free(data);
+    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/learnings.md", .data = data }) catch |err|
+        log.log(.warn, "improve-self: could not copy learnings back from the worktree: {s}", .{@errorName(err)});
+}
 
 /// Creates a worktree on a fresh branch cut from `base_branch`'s current
 /// tip. Must be called before any chdir into the result: `git worktree add`
