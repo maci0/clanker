@@ -47,14 +47,6 @@ pub const Worktree = struct {
             log.log(.warn, "improve-self: worktree {s} was not merged; keeping it and branch {s} for manual recovery", .{ self.path, self.branch });
             return;
         }
-        // Copy back state files that the run may have appended to.
-        // These were copied IN (not symlinked) because the sandbox's
-        // no-follow walk refuses symlinked components, so any writes
-        // the run made landed in the worktree-local copy and would be
-        // lost when the worktree is removed below. Only on successful
-        // merge: an unmerged run's observations belong to its stranded
-        // branch, not to the main tree.
-        self.copyBackState(gpa, io);
         {
             const argv = [_][]const u8{ "git", "worktree", "remove", "--force", self.path };
             const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
@@ -159,24 +151,6 @@ pub const Worktree = struct {
     /// missing everything the merge just folded in, re-introducing on the
     /// next merge exactly what someone else had fixed. Both halves matter:
     /// ref moved AND files synced.
-    /// Copies sandbox-copied state files back from the worktree to the
-    /// main tree so observations made during the run survive cleanup.
-    /// Best-effort per file: a missing or unreadable file is skipped.
-    fn copyBackState(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io) void {
-        for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl" }) |name| {
-            const src = std.fmt.allocPrint(gpa, "{s}/{s}", .{ self.path, name }) catch continue;
-            defer gpa.free(src);
-            const data = std.Io.Dir.cwd().readFileAlloc(io, src, gpa, .limited(1 << 24)) catch continue;
-            defer gpa.free(data);
-            // Only write back if the file actually has content; an empty
-            // worktree copy should not truncate the main tree's version.
-            if (data.len == 0) continue;
-            std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-            std.Io.Dir.cwd().writeFile(io, .{ .sub_path = name, .data = data }) catch |err|
-                log.log(.warn, "improve-self: could not copy back {s}: {s}", .{ name, @errorName(err) });
-        }
-    }
-
     fn resyncLocalBranch(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
         const argv = [_][]const u8{ "git", "-C", self.path, "reset", "--hard", new_sha };
         const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
