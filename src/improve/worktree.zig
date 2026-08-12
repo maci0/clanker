@@ -95,6 +95,17 @@ pub const Worktree = struct {
             };
             defer gpa.free(merge_base);
 
+            if (std.mem.eql(u8, merge_base, branch_sha)) {
+                // Branch is already contained in base (base is ahead or
+                // equal): there is nothing to merge. This happens when a
+                // concurrent commit on the base branch already includes
+                // the worktree's changes, or when the run produced no new
+                // commits at all.
+                log.log(.info, "improve-self: {s} is already contained in {s}; nothing to merge", .{ self.branch, self.base_branch });
+                @as(*bool, @constCast(&self.merged)).* = true;
+                return;
+            }
+
             if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
