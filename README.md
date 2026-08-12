@@ -71,6 +71,7 @@ Provider `kind` is `openai_compat`, `anthropic`, or `vertex_anthropic` (Anthropi
 - **Plugin toggles** – `/plugins` lists every WASM tool and switches the optional ones on or off; core tools stay on
 - **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
 - **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
+- **Scheduled runs** – `clanker schedule add "0 9 * * 1-5" "review yesterday's runs"` puts a recurring task in `state/schedule.json`; the system's own cron calls `clanker schedule run-due` to fire what is due (see below)
 - **Token budget** – `compact_threshold_bytes` and `max_total_tokens` controls
 - **Web UI** – internal WASM tool served at `GET /`
 
@@ -110,6 +111,39 @@ The server also exposes the peer/chatroom/board/goal/stats APIs over HTTP and
 an A2A agent card at `/.well-known/agent.json`. See the HTTP server section in
 [docs/README.md](docs/README.md#http-server).
 
+## Scheduled runs
+
+`clanker schedule` keeps a list of recurring tasks in `state/schedule.json` and
+records every fire in `state/schedule/log.jsonl`, so a recurring run is
+something the harness knows about rather than a line in someone's crontab.
+
+```sh
+./zig-out/bin/clanker schedule add "0 9 * * 1-5" "summarize yesterday's commits"
+./zig-out/bin/clanker schedule list
+```
+
+Nothing fires on its own. The system's own cron is the clock:
+
+```
+* * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due
+```
+
+`run-due` is safe to call every minute: it holds a lock for the duration of a
+sweep, so a run that takes longer than a minute is not stacked on top of
+itself. Fire one entry ahead of its schedule with `clanker schedule run <id>`.
+
+The spec is five fields — `minute hour day-of-month month day-of-week` — each
+`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list. Sunday is `0`
+or `7`; names (`MON`) and `@nicknames` are not accepted. When both day fields
+are restricted, the entry fires when *either* matches, as in Vixie cron. Fields
+are read in UTC unless the entry carries a fixed `--tz-offset` (`+02:00`,
+`-05:00`); there is no DST handling, on purpose.
+
+**A missed window fires once.** A machine that slept through a day of a `*/5`
+entry runs it once on waking and resumes on the normal grid — the windows it
+slept through are counted into the ledger and dropped, not replayed. See
+[docs/prds/0009-schedule.md](docs/prds/0009-schedule.md).
+
 ## Command reference
 
 `clanker` (no command) drops you into the REPL. `clanker <command>` runs one
@@ -137,6 +171,7 @@ task; `clanker --help` prints usage.
 | `chat history <room> [after]` | Read chatroom history (newest first) |
 | `chat rooms` | List chatrooms + subscriptions |
 | `chat subscribe <room> [on]` | Join/leave a chatroom |
+| `schedule <list\|add\|remove\|enable\|disable\|run\|run-due\|log>` | Run the agent on a cron-like schedule (see below) |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
 | `serve [--host A] [--serve-as N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |

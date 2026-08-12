@@ -78,6 +78,10 @@ comptime {
     _ = @import("research/harness.zig");
     _ = @import("research/autoresearch.zig");
     _ = @import("workflows.zig");
+    _ = @import("schedule/cron.zig");
+    _ = @import("schedule/store.zig");
+    _ = @import("schedule/runner.zig");
+    _ = @import("schedule/command.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),
