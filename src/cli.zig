@@ -150,6 +150,11 @@ pub const Options = struct {
     /// `arena --position` repeated: a Battle Royale's 3-8 stances, used instead
     /// of the --for/--against pair.
     arena_positions: []const []const u8 = &.{},
+    /// `arena --defend` / `--alternative`: design-review mode. Each is either
+    /// literal text or a path that is read in, which is what makes "defend this
+    /// implementation" one flag rather than a shell heredoc.
+    arena_defend: ?[]const u8 = null,
+    arena_alternative: ?[]const u8 = null,
     /// `arena --match <id>`: print a stored match instead of running one.
     arena_match: ?[]const u8 = null,
 };
@@ -366,6 +371,12 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--match")) {
                 opts.arena_match = try takeValue(args, &idx, inline_value, a, diag);
                 used = .arena_match;
+            } else if (std.mem.eql(u8, a, "--defend")) {
+                opts.arena_defend = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_defend;
+            } else if (std.mem.eql(u8, a, "--alternative")) {
+                opts.arena_alternative = try takeValue(args, &idx, inline_value, a, diag);
+                used = .arena_alternative;
             } else if (std.mem.eql(u8, a, "--position")) {
                 // Repeatable, and not comma-split the way --target is: a stance
                 // is prose, and "use a queue, not direct calls" is one position
@@ -609,8 +620,19 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         // Two ways to name the field: the --for/--against pair for a pairwise
         // match, or repeated --position for a Battle Royale. Mixing them would
         // leave it ambiguous which stance is which seat.
+        const reviewing = opts.arena_defend != null or opts.arena_alternative != null;
+        if (reviewing) {
+            if (opts.arena_defend == null or opts.arena_alternative == null) {
+                setDiag(diag, if (opts.arena_defend == null) "--defend" else "--alternative");
+                return error.MissingArg;
+            }
+            if (opts.arena_for != null or opts.arena_against != null or opts.arena_positions.len > 0)
+                return error.ArenaMixedPositions;
+        }
         const royale = opts.arena_positions.len > 0;
-        if (royale) {
+        if (reviewing) {
+            // Positions are derived from the two artifacts.
+        } else if (royale) {
             if (opts.arena_for != null or opts.arena_against != null) {
                 setDiag(diag, "--position");
                 return error.ArenaMixedPositions;
@@ -782,6 +804,8 @@ const Flag = enum {
     arena_judge_provider,
     arena_match,
     arena_position,
+    arena_defend,
+    arena_alternative,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -809,6 +833,8 @@ const Flag = enum {
             .arena_judge_provider => "--judge-provider",
             .arena_match => "--match",
             .arena_position => "--position",
+            .arena_defend => "--defend",
+            .arena_alternative => "--alternative",
         };
     }
 };
@@ -851,7 +877,7 @@ const specs = [_]Spec{
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
-    .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
+    .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
@@ -8099,6 +8125,20 @@ test "webui wasm-miss error still points at zig build tools" {
     try std.testing.expect(std.mem.find(u8, body, "zig build tools") != null);
 }
 
+const ArenaArtifact = struct { text: []const u8, path: ?[]const u8 };
+
+/// A `--defend` / `--alternative` value: the contents of the file it names, or
+/// the value itself when it names none.
+///
+/// The path is kept alongside the text so a review finding can say *where*. A
+/// value that merely looks path-shaped but does not exist is treated as literal
+/// text rather than an error: a stance can legitimately contain a slash.
+fn arenaArtifact(io: std.Io, arena: std.mem.Allocator, value: []const u8) !ArenaArtifact {
+    const contents = std.Io.Dir.cwd().readFileAlloc(io, value, arena, .limited(256 * 1024)) catch
+        return .{ .text = value, .path = null };
+    return .{ .text = contents, .path = value };
+}
+
 /// `clanker arena "<question>" --for X --against Y` — one match, non-interactive,
 /// the same way `clanker autoresearch` mirrors `/autoresearch`.
 ///
@@ -8122,7 +8162,26 @@ fn cmdArena(init: std.process.Init, opts: Options) !void {
     } else {
         try s.objectField("question");
         try s.write(opts.task.?);
-        if (opts.arena_positions.len > 0) {
+        if (opts.arena_defend != null) {
+            // Design review: each side gets a real artifact. A value that names
+            // a readable file is read in, so "defend this implementation" is one
+            // flag rather than a shell heredoc, and the path travels with it so
+            // the verdict's finding can be file-shaped.
+            const d = try arenaArtifact(io, arena, opts.arena_defend.?);
+            const alt = try arenaArtifact(io, arena, opts.arena_alternative.?);
+            try s.objectField("defend");
+            try s.write(d.text);
+            if (d.path) |pth| {
+                try s.objectField("defend_path");
+                try s.write(pth);
+            }
+            try s.objectField("alternative");
+            try s.write(alt.text);
+            if (alt.path) |pth| {
+                try s.objectField("alternative_path");
+                try s.write(pth);
+            }
+        } else if (opts.arena_positions.len > 0) {
             // Battle royale: the stances are a list, and --provider (if given)
             // applies to all of them. Per-combatant providers above two are a
             // tool-input feature, not a flag: eight parallel flags would be

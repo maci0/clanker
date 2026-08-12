@@ -72,6 +72,18 @@ const Setup = struct {
     judge_provider: []const u8,
     /// Why third-party judging is not in effect despite being asked for.
     downgrade: []const u8,
+    /// Design-review mode: each side has a real artifact to point at, and the
+    /// verdict is a review finding rather than prose. Seeded from
+    /// `defend`/`alternative` instead of bare stances, because a match between
+    /// two opinions with nothing concrete on either side is what this mode
+    /// exists to avoid.
+    review: bool = false,
+    /// The text each combatant defends, indexed like `labels`. Empty outside
+    /// review mode.
+    artifacts: []const []const u8 = &.{},
+    /// Where each artifact lives, when the caller named a path. What makes a
+    /// finding file-shaped rather than an opinion.
+    paths: []const []const u8 = &.{},
 };
 
 const MoveRecord = struct {
@@ -224,6 +236,13 @@ fn pickJudge(requested: []const u8, providers: []const []const u8) JudgeChoice {
 
 // ------------------------------------------------------------------ prompts
 
+/// " (src/x.zig)" when the caller named a path for this side, else "". What
+/// turns the verdict's finding from an opinion into something file-shaped.
+fn pathNote(setup: Setup, i: usize) []const u8 {
+    if (i >= setup.paths.len or setup.paths[i].len == 0) return "";
+    return std.fmt.allocPrint(alloc, " ({s})", .{setup.paths[i]}) catch "";
+}
+
 fn systemPrompt(setup: Setup, i: usize, combatants: []const m.Combatant) ![]const u8 {
     var w: std.Io.Writer.Allocating = .init(alloc);
     const o = &w.writer;
@@ -244,6 +263,24 @@ fn systemPrompt(setup: Setup, i: usize, combatants: []const m.Combatant) ![]cons
         try o.writeAll("Only one position can win. Nobody is your ally.\n");
     } else {
         try o.print("Your opponent's position: \"{s}\"\n", .{combatants[1 - i].position});
+    }
+    if (setup.review) {
+        // Both artifacts, not just this combatant's: a design review is only
+        // adversarial if each side can quote the other's actual text back at it
+        // rather than arguing against a paraphrase.
+        const opp = if (i == 0) @as(usize, 1) else 0;
+        try o.writeAll("\nThis is a design review, not an abstract debate. You have the real thing to point at.\n");
+        try o.print("\nWhat you are defending{s}:\n<<<\n{s}\n>>>\n", .{ pathNote(setup, i), setup.artifacts[i] });
+        if (opp < setup.artifacts.len) {
+            try o.print("\nThe alternative you must attack{s}:\n<<<\n{s}\n>>>\n", .{ pathNote(setup, opp), setup.artifacts[opp] });
+        }
+        try o.writeAll(
+            \\
+            \\Quote the specific line, name, or wording you are attacking or defending. Go after the
+            \\weakest assumption in the alternative, not its weakest sentence. "It is simpler" is not
+            \\an argument; "it drops the X case, see the Y branch" is.
+            \\
+        );
     }
     if (setup.personas[i].len > 0) try o.print("\nAdopt this persona while arguing: {s}\n", .{setup.personas[i]});
 
@@ -428,6 +465,27 @@ fn synthesisPrompt(setup: Setup, combatants: []const m.Combatant, v: m.Verdict, 
             try o.print("  [r{d}] {s} {s}: {s}\n", .{ mv.round, setup.labels[mv.combatant], mv.move, mv.text });
         }
     }
+    if (setup.review) {
+        // The same shape a docs/prompts/*-review.md prompt already reports, so a
+        // verdict can be pasted into a review rather than translated into one.
+        // The transcript of why one design held up is the part a single
+        // reviewer's one-pass verdict does not produce.
+        try o.writeAll(
+            \\
+            \\Report this as a design-review finding, not prose. Exactly these lines:
+            \\
+            \\Verdict: <the position that held up>
+            \\Reason: <one line, naming the specific assumption that broke or held>
+            \\Where: <file, or file:line, or the wording under review; "n/a" if there is none>
+            \\Respect: <the point the losing side landed that the winner must still handle, or "none">
+            \\Confidence: <high|medium|low, and one clause why>
+            \\
+            \\Judge what was argued. If the losing side landed something the winner never answered,
+            \\say so on the Respect line rather than smoothing it over: that line is the reason this
+            \\is worth more than a single reviewer's verdict.
+        );
+        return w.written();
+    }
     try o.writeAll(
         \\
         \\In under 150 words, answer the question directly. Lead with the winning position, and
@@ -443,10 +501,40 @@ fn synthesisPrompt(setup: Setup, combatants: []const m.Combatant, v: m.Verdict, 
 fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !void {
     const cfg = settings();
 
-    // Positions: the flag-shaped for/against pair, or an explicit array — which
-    // is how a Battle Royale (3-8) is asked for.
+    // Design-review seeding: two real artifacts, not two abstract stances. The
+    // PRD is explicit that the match needs something to point at on both sides,
+    // so this mode derives the positions rather than asking for them.
+    const defend = strField(obj, "defend");
+    const alternative = strField(obj, "alternative");
+    const review = defend != null or alternative != null;
+    var artifacts: []const []const u8 = &.{};
+    var paths: []const []const u8 = &.{};
+
+    // Positions: the flag-shaped for/against pair, an explicit array (which is
+    // how a Battle Royale of 3-8 is asked for), or a review's two artifacts.
     var positions: []const []const u8 = &.{};
-    if (obj.get("positions")) |v| {
+    if (review) {
+        if (defend == null or alternative == null)
+            return lib.fail(out, "a design review needs both \"defend\" and \"alternative\": one artifact to defend and one to attack from");
+        if (obj.get("positions") != null or obj.get("for") != null or obj.get("against") != null)
+            return lib.fail(out, "\"defend\"/\"alternative\" derive the positions; do not also pass \"for\", \"against\" or \"positions\"");
+        const pair = try alloc.alloc([]const u8, 2);
+        // A stance the combatant can actually restate, defaulting to the shape
+        // the PRD describes rather than making the caller phrase it twice.
+        pair[0] = strField(obj, "defend_stance") orelse "keep the implementation as written";
+        pair[1] = strField(obj, "alternative_stance") orelse "adopt the alternative instead";
+        try validate(out, pair) orelse return;
+        positions = pair;
+
+        const arts = try alloc.alloc([]const u8, 2);
+        arts[0] = defend.?;
+        arts[1] = alternative.?;
+        artifacts = arts;
+        const ps = try alloc.alloc([]const u8, 2);
+        ps[0] = strField(obj, "defend_path") orelse "";
+        ps[1] = strField(obj, "alternative_path") orelse "";
+        paths = ps;
+    } else if (obj.get("positions")) |v| {
         if (v != .array) return lib.fail(out, "positions must be an array of stances");
         var listed: std.ArrayList([]const u8) = .empty;
         for (v.array.items) |it| {
@@ -532,6 +620,9 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
         .third_party = third_party,
         .judge_provider = judge.provider,
         .downgrade = judge.downgrade,
+        .review = review,
+        .artifacts = artifacts,
+        .paths = paths,
     };
 
     const combatants = try alloc.alloc(m.Combatant, n);
@@ -811,6 +902,12 @@ fn writeMatchJson(
     try s.write(if (setup.third_party) "third" else "self");
     try s.objectField("judge_provider");
     try s.write(setup.judge_provider);
+    if (setup.review) {
+        // A review match's verdict is a finding, not prose, so a reader has to
+        // be able to tell which it is holding without parsing the text.
+        try s.objectField("mode");
+        try s.write("review");
+    }
     if (setup.downgrade.len > 0) {
         try s.objectField("judge_downgraded");
         try s.write(setup.downgrade);
@@ -830,6 +927,12 @@ fn writeMatchJson(
         try s.write(c.provider);
         try s.objectField("persona");
         try s.write(c.persona);
+        // The artifact is what makes a review finding checkable later: without
+        // the path, "Where:" in the verdict has nothing behind it.
+        if (i < setup.paths.len and setup.paths[i].len > 0) {
+            try s.objectField("path");
+            try s.write(setup.paths[i]);
+        }
         try s.objectField("hp");
         try s.write(c.hp);
         try s.objectField("max_hp");
@@ -1011,13 +1114,15 @@ fn renderText(
     rounds_played: u32,
     final: ?Final,
 ) !void {
-    if (combatants.len > m.pairwise_combatants) {
+    if (setup.review) {
+        try o.print("arena {s}: design review. {s}\n", .{ setup.id, setup.question });
+    } else if (combatants.len > m.pairwise_combatants) {
         try o.print("arena {s}: battle royale, {d} positions. {s}\n", .{ setup.id, combatants.len, setup.question });
     } else {
         try o.print("arena {s}: {s}\n", .{ setup.id, setup.question });
     }
     for (combatants, 0..) |c, i| {
-        try o.print("  {s:<8} \"{s}\"  [{s}]\n", .{ sideName(i, combatants.len), c.position, setup.labels[i] });
+        try o.print("  {s:<8} \"{s}\"  [{s}]{s}\n", .{ sideName(i, combatants.len), c.position, setup.labels[i], pathNote(setup, i) });
     }
     try o.print("  judge: {s}", .{if (setup.third_party) "third-party" else "self-reported"});
     if (setup.third_party) try o.print(" ({s})", .{setup.judge_provider});

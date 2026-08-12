@@ -1,6 +1,6 @@
 {
   "name": "arena",
-  "description": "Run a bounded, judged debate between two positions, or a Battle Royale between up to eight, and return a verdict traceable to the transcript that produced it. WHEN TO USE: a question where several defensible answers exist and the risk is a confidently wrong one going unchallenged: comparing designs before any is built (allowlist vs denylist, competing wordings of a prompt, move-to-WASM or stay), or pressure-testing a claim you are about to act on. Every combatant sees every prior move and has to answer specific rebuttals, which is exactly what 'swarm' cannot do (its members cannot see each other). WHEN NOT TO USE: (1) measuring which implementation is faster or more correct, which is an eval or a benchmark, not a debate; (2) any task where the sides would not disagree, since 'swarm' fans that out cheaper and in parallel; (3) questions of fact you can look up. Each round costs one model call per surviving combatant (plus one judge call per move with judge='third'), so an 8-way match is 8x a pairwise one per round: keep max_rounds small. INPUT to start a pairwise match: {'question': required string under debate, 'for': required one-line stance, 'against': required one-line opposing stance, 'provider_for'/'provider_against': optional provider names (different providers genuinely disagreeing is the interesting case; the same provider on both sides is allowed and cheaper), 'persona_for'/'persona_against': optional framing layered onto each side's system prompt, 'max_rounds': optional integer (default 4, clamped to 12), 'judge': optional 'self' (default, cheap, each side reports how much the other landed) or 'third' (a provider that is not fighting scores every move, recommended when the verdict matters), 'judge_provider': optional provider to judge with, must not be a combatant}. INPUT to start a Battle Royale: same, but pass 'positions': array of 3-8 distinct stances instead of for/against, with optional parallel 'providers' and 'personas' arrays. In a royale every attack/block/counter names a 'target', a combatant can only block the one attack it names (so being focused by several at once hurts), and running out of HP eliminates that combatant without ending the match: last position standing wins, or highest HP at the round cap. INPUT to read a finished match: {'match': '<id>'}. INPUT with no fields: lists past matches.",
+  "description": "Run a bounded, judged debate between two positions, or a Battle Royale between up to eight, and return a verdict traceable to the transcript that produced it. WHEN TO USE: a question where several defensible answers exist and the risk is a confidently wrong one going unchallenged: comparing designs before any is built (allowlist vs denylist, competing wordings of a prompt, move-to-WASM or stay), or pressure-testing a claim you are about to act on. Every combatant sees every prior move and has to answer specific rebuttals, which is exactly what 'swarm' cannot do (its members cannot see each other). WHEN NOT TO USE: (1) measuring which implementation is faster or more correct, which is an eval or a benchmark, not a debate; (2) any task where the sides would not disagree, since 'swarm' fans that out cheaper and in parallel; (3) questions of fact you can look up. Each round costs one model call per surviving combatant (plus one judge call per move with judge='third'), so an 8-way match is 8x a pairwise one per round: keep max_rounds small. INPUT to start a pairwise match: {'question': required string under debate, 'for': required one-line stance, 'against': required one-line opposing stance, 'provider_for'/'provider_against': optional provider names (different providers genuinely disagreeing is the interesting case; the same provider on both sides is allowed and cheaper), 'persona_for'/'persona_against': optional framing layered onto each side's system prompt, 'max_rounds': optional integer (default 4, clamped to 12), 'judge': optional 'self' (default, cheap, each side reports how much the other landed) or 'third' (a provider that is not fighting scores every move, recommended when the verdict matters), 'judge_provider': optional provider to judge with, must not be a combatant}. INPUT to start a Battle Royale: same, but pass 'positions': array of 3-8 distinct stances instead of for/against, with optional parallel 'providers' and 'personas' arrays. In a royale every attack/block/counter names a 'target', a combatant can only block the one attack it names (so being focused by several at once hurts), and running out of HP eliminates that combatant without ending the match: last position standing wins, or highest HP at the round cap. INPUT to run a design review instead of a stance debate: {'question': the decision, 'defend': the implementation or wording to defend as real text, 'alternative': the alternative to attack it from, 'defend_path'/'alternative_path': optional file paths so the verdict can name a file, 'defend_stance'/'alternative_stance': optional one-line restatements}. This derives both positions, so do not also pass for/against/positions. Each side sees both artifacts and is told to quote the specific line or wording it attacks, and the verdict comes back as a review finding (Verdict / Reason / Where / Respect / Confidence) rather than prose. Use it to compare two designs before either is built. INPUT to read a finished match: {'match': '<id>'}. INPUT with no fields: lists past matches.",
   "wasm": "zig-out/tools/arena.wasm",
   "input_schema": {
     "type": "object",
@@ -19,29 +19,50 @@
       },
       "positions": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "The stances as an array, instead of for/against. 2 for a pairwise match, 3-8 for a Battle Royale. Must all be distinct."
       },
       "providers": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Provider per position, same order as 'positions'. Shorter than 'positions' is fine; the rest use the configured default."
       },
       "personas": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Persona per position, same order as 'positions'."
       },
-      "provider_for": { "type": "string" },
-      "provider_against": { "type": "string" },
-      "persona_for": { "type": "string" },
-      "persona_against": { "type": "string" },
-      "max_rounds": { "type": "integer" },
+      "provider_for": {
+        "type": "string"
+      },
+      "provider_against": {
+        "type": "string"
+      },
+      "persona_for": {
+        "type": "string"
+      },
+      "persona_against": {
+        "type": "string"
+      },
+      "max_rounds": {
+        "type": "integer"
+      },
       "judge": {
         "type": "string",
-        "enum": ["self", "third"]
+        "enum": [
+          "self",
+          "third"
+        ]
       },
-      "judge_provider": { "type": "string" },
+      "judge_provider": {
+        "type": "string"
+      },
       "max_tokens": {
         "type": "integer",
         "description": "Output cap per combatant turn. Lower it to keep a long match cheap."
@@ -49,10 +70,34 @@
       "match": {
         "type": "string",
         "description": "Read a stored match by id instead of starting one."
+      },
+      "defend": {
+        "type": "string",
+        "description": "Design review: the implementation or wording to defend, as real text. Derives the positions, so do not also pass for/against/positions."
+      },
+      "alternative": {
+        "type": "string",
+        "description": "Design review: the alternative to attack the defended artifact from."
+      },
+      "defend_path": {
+        "type": "string",
+        "description": "Where the defended artifact lives, so the verdict's finding can name a file."
+      },
+      "alternative_path": {
+        "type": "string"
+      },
+      "defend_stance": {
+        "type": "string",
+        "description": "Optional one-line restatement of the defending position (default: 'keep the implementation as written')."
+      },
+      "alternative_stance": {
+        "type": "string"
       }
     }
   },
-  "fs_prefixes": ["state/arena/"],
+  "fs_prefixes": [
+    "state/arena/"
+  ],
   "network_allow": [],
   "config": {
     "max_rounds": 4,
@@ -60,7 +105,11 @@
     "max_tokens": 1400
   },
   "category": "agent",
-  "config_editable": ["max_rounds", "judge", "max_tokens"],
+  "config_editable": [
+    "max_rounds",
+    "judge",
+    "max_tokens"
+  ],
   "llm": true,
   "confirm": true
 }
