@@ -3,7 +3,7 @@
 //! Accepts a bug report with a template (title, description, steps to
 //! reproduce, expected/actual behaviour, severity, environment), formats it
 //! into a readable body, and posts it to the board as a high-priority backlog
-//! card via ck_tool → board_add.
+//! card via ck_tool → kanban_add.
 //!
 //! Input:  {"title":"...", "description":"...", ...}
 //! Output: {"ok":true, "card_id":"...", "board":{...}}
@@ -90,7 +90,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk n;
     };
 
-    // Build the board_add args as JSON
+    // Build the kanban_add args as JSON
     var args_buf: std.ArrayList(u8) = .empty;
     defer args_buf.deinit(lib.alloc);
     {
@@ -114,12 +114,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try args_buf.appendSlice(lib.alloc, w.written());
     }
 
-    // Call board_add via ck_tool
-    const result = lib.toolCall("board_add", args_buf.items) catch |err| {
+    // Call kanban_add via ck_tool
+    const result = lib.toolCall("kanban_add", args_buf.items) catch |err| {
         return lib.failErr(out, err, "posting the bug to the board");
     };
 
-    // Forward the board_add response — it contains ok, board, and the new card id
+    // Forward the kanban_add response — it contains ok, board, and the new card id
     try out.writeAll(result);
 }
 

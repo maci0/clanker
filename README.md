@@ -86,11 +86,25 @@ A run's private checklist shows up live in its turn card as the agent adds,
 claims and closes items, so a multi-step plan is visible while it is worked
 rather than only in the answer.
 
-Start it with `clanker serve` (default port `17921`, `--port` to change it),
-then open the URL it prints (`http://127.0.0.1:17921/webui`):
+Start it with `clanker serve` (loopback and port `17921` by default, `--host`
+and `--port` to change them), then open the URL it prints
+(`http://127.0.0.1:17921/webui`):
 
 ```sh
 ./zig-out/bin/clanker serve
+```
+
+`--host 0.0.0.0` makes it reachable from the LAN by IP. There is no
+authentication, so anyone who can reach the port gets full agent and tool
+access; past loopback the access control is your firewall, not clanker.
+Requests are still refused unless the `Host` header names this listener: an IP
+literal at the listen port or `localhost` always passes, and a real hostname
+(a reverse proxy, a tailnet name) has to be listed with the repeatable
+`--allow-host`, because a name is what DNS rebinding needs and an IP literal
+cannot be rebound.
+
+```sh
+./zig-out/bin/clanker serve --host 0.0.0.0 --allow-host clanker.lan
 ```
 
 The server also exposes the peer/chatroom/board/goal/stats APIs over HTTP and
@@ -160,7 +174,7 @@ task; `clanker --help` prints usage.
 | `schedule <list\|add\|remove\|enable\|disable\|run\|run-due\|log>` | Run the agent on a cron-like schedule (see below) |
 | `stats` | Token usage per provider/model |
 | `phonebook` | List peer agent cards |
-| `serve [--port N]` | HTTP server + web UI (default port 17921) |
+| `serve [--host A] [--allow-host N]... [--port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint) |
 | `autolearn` | Aggregate usage into roadmap items |

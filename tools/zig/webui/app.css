@@ -1339,6 +1339,18 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .usage-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); margin-top: 1rem; }
 
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
+.tool-group {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  margin: var(--space-4) 0 var(--space-1); padding: 0.3rem 0.1rem;
+  border: none; border-top: 1px solid var(--rule); background: transparent;
+  cursor: pointer; text-align: left;
+  font-family: var(--sans); font-size: 11px; color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+}
+.tool-group:first-child { margin-top: 0; border-top: none; }
+.tool-group:hover { color: var(--fg); }
+.tool-group-caret { width: 1em; flex: none; }
+.tool-group-count { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .tool-row {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3);
   padding: 0.6rem 0.1rem; border-bottom: 1px solid var(--rule);
@@ -1856,11 +1868,17 @@ main {
 .rail-folder { padding-left: var(--space-3); border-left: 1px solid var(--rule); margin-left: var(--space-2); }
 
 .rail-group {
-  margin: var(--space-3) 0 var(--space-1);
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  margin: var(--space-3) 0 var(--space-1); padding: 0.2rem 0;
+  border: none; background: transparent; cursor: pointer; text-align: left;
   font-family: var(--sans); font-size: 11px; color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
 }
 .rail-group:first-child { margin-top: 0; }
+.rail-group:hover { color: var(--fg); }
+.rail-group-caret { width: 1em; flex: none; }
+.rail-group-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-group-count { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .rail-item {
   display: block; width: 100%; text-align: left; cursor: pointer;
   min-height: 32px; padding: 0.4rem 0.6rem;

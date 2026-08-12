@@ -2128,13 +2128,18 @@ const Model = struct {
             return true;
         }
 
+        self.lines.append(self.arena, .{ .text = "matching commands:", .dim = true }) catch {};
         var line: std.ArrayList(u8) = .empty;
-        line.appendSlice(self.arena, "completions:") catch return true;
-        for (matches) |m| {
-            line.appendSlice(self.arena, "  ") catch break;
+        for (matches, 0..) |m, i| {
+            if (i > 0 and i % 2 == 0) {
+                self.lines.append(self.arena, .{ .text = line.toOwnedSlice(self.arena) catch "", .dim = true }) catch {};
+                line = .empty;
+            }
+            if (line.items.len > 0) line.appendSlice(self.arena, "    ") catch break;
             line.appendSlice(self.arena, m.spelling) catch break;
         }
-        self.lines.append(self.arena, .{ .text = line.toOwnedSlice(self.arena) catch "completions:", .dim = true }) catch {};
+        if (line.items.len > 0)
+            self.lines.append(self.arena, .{ .text = line.toOwnedSlice(self.arena) catch "", .dim = true }) catch {};
         ctx.redraw = true;
         return true;
     }
