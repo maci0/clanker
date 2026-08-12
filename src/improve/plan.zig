@@ -89,9 +89,9 @@ pub fn parsePlan(
 ///
 /// The planning prompt says not to repeat history, but that instruction has
 /// the same weakness as every other prose hint here, so this is the
-/// mechanical backstop. An idea counts as tried when at least four fifths of
-/// its significant words appear in one past summary: exact matching misses
-/// every paraphrase ("cache the registry" vs "add a cache for the
+/// mechanical backstop. An idea counts as tried when at least three fifths
+/// of its significant words appear in one past summary: exact matching
+/// misses every paraphrase ("cache the registry" vs "add a cache for the
 /// registry"), and anything looser starts eating novel ideas that share a
 /// file name with an old one.
 pub fn tried(arena: std.mem.Allocator, idea: []const u8, summaries: []const []const u8) !bool {
@@ -103,7 +103,7 @@ pub fn tried(arena: std.mem.Allocator, idea: []const u8, summaries: []const []co
         for (idea_toks) |t| {
             if (containsToken(sum_toks, t)) hits += 1;
         }
-        if (hits * 5 >= idea_toks.len * 4) return true;
+        if (hits * 5 >= idea_toks.len * 3) return true;
     }
     return false;
 }
@@ -195,6 +195,8 @@ test "tried matches a paraphrase of a past summary, not a novel idea" {
 
     // Same idea, different words around the same significant tokens.
     try std.testing.expect(try tried(arena, "cache the registry load in improveOnce", &summaries));
+    // A looser paraphrase that shares 3/5 of the significant tokens still matches.
+    try std.testing.expect(try tried(arena, "cache registry manifests between improve attempts", &summaries));
     // Shares a file's vocabulary ("web_search") but is a different change.
     try std.testing.expect(!try tried(arena, "web_search should honour the sandbox timeout budget", &summaries));
     try std.testing.expect(!try tried(arena, "retry transient provider errors in client.chat", &summaries));
