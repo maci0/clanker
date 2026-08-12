@@ -62,7 +62,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var start: usize = 0;
     if (offset > 0) {
         // The caller resumed inside a line; drop that fragment.
-        if (std.mem.indexOfScalar(u8, raw, '\n')) |nl| start = nl + 1;
+        if (std.mem.findScalar(u8, raw, '\n')) |nl| start = nl + 1;
     }
     var end: usize = raw.len;
     if (raw.len == limit) {
@@ -187,7 +187,7 @@ fn fieldValue(input: []const u8, name: []const u8) ?[]const u8 {
     key_buf[1 + name.len] = '"';
     const key = key_buf[0 .. name.len + 2];
 
-    const at = std.mem.indexOf(u8, input, key) orelse return null;
+    const at = std.mem.find(u8, input, key) orelse return null;
     var i = at + key.len;
     while (i < input.len and (input[i] == ' ' or input[i] == ':')) i += 1;
     if (i >= input.len) return null;
@@ -197,7 +197,7 @@ fn fieldValue(input: []const u8, name: []const u8) ?[]const u8 {
 fn jsonString(input: []const u8, name: []const u8) ?[]const u8 {
     const rest = fieldValue(input, name) orelse return null;
     if (rest.len == 0 or rest[0] != '"') return null;
-    const end = std.mem.indexOfScalar(u8, rest[1..], '"') orelse return null;
+    const end = std.mem.findScalar(u8, rest[1..], '"') orelse return null;
     return rest[1 .. 1 + end];
 }
 

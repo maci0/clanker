@@ -1,3 +1,5 @@
+//! Runs iterative, metric-driven source experiments in isolated staging trees.
+
 const std = @import("std");
 const config = @import("../config.zig");
 const types = @import("../llm/types.zig");

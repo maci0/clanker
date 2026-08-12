@@ -74,7 +74,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             &[_][]const u8{ "build", gate };
 
         const res = lib.exec("zig", args) catch return lib.fail(out, "could not run zig");
-        const failed = std.mem.indexOf(u8, res, "\"code\":0") == null;
+        const failed = std.mem.find(u8, res, "\"code\":0") == null;
         if (failed) {
             var buf: [4096]u8 = undefined;
             const tail = res[res.len -| 1500..];

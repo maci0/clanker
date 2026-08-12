@@ -32,7 +32,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (req.path.len == 0) return lib.fail(out, "path is required");
     // The script reads whatever path it is handed, so the traversal check
     // belongs here rather than in Python: keep it inside the project.
-    if (std.mem.startsWith(u8, req.path, "/") or std.mem.indexOf(u8, req.path, "..") != null)
+    if (std.mem.startsWith(u8, req.path, "/") or std.mem.find(u8, req.path, "..") != null)
         return lib.fail(out, "path must be relative and stay inside the project");
 
     const opts = try std.fmt.allocPrint(alloc, "{f}", .{std.json.fmt(req.options, .{})});

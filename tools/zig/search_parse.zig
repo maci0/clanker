@@ -25,13 +25,13 @@ pub const WebResult = struct {
 
 fn indexOfPos(haystack: []const u8, start: usize, needle: []const u8) ?usize {
     if (start > haystack.len) return null;
-    return std.mem.indexOfPos(u8, haystack, start, needle);
+    return std.mem.findPos(u8, haystack, start, needle);
 }
 
 /// DDG serves a "Unfortunately, bots use DuckDuckGo too" anti-bot page from
 /// some networks and for non-browser user agents. Its marker is stable.
 pub fn isBotChallenge(page: []const u8) bool {
-    return std.mem.indexOf(u8, page, "anomaly-modal") != null;
+    return std.mem.find(u8, page, "anomaly-modal") != null;
 }
 
 /// Fantasy-land checks are untestable here; only pure logic lives in this
@@ -41,9 +41,9 @@ pub fn isBotChallenge(page: []const u8) bool {
 fn extractTag(comptime name: []const u8, region: []const u8) ?[]const u8 {
     const open_tag = "<" ++ name ++ ">";
     const close_tag = "</" ++ name ++ ">";
-    const s = std.mem.indexOf(u8, region, open_tag) orelse return null;
+    const s = std.mem.find(u8, region, open_tag) orelse return null;
     const content = s + open_tag.len;
-    const e_rel = std.mem.indexOfPos(u8, region, content, close_tag) orelse return null;
+    const e_rel = std.mem.findPos(u8, region, content, close_tag) orelse return null;
     return region[content..e_rel];
 }
 
@@ -85,15 +85,15 @@ fn lastIndexOfSlice(haystack: []const u8, before: usize, needle: []const u8) ?us
 /// Value of `name=` inside an HTML tag, respecting single/double quotes.
 fn extractAttr(comptime name: []const u8, tag: []const u8) ?[]const u8 {
     const n = name ++ "=";
-    const p = std.mem.indexOf(u8, tag, n) orelse return null;
+    const p = std.mem.find(u8, tag, n) orelse return null;
     const v = p + n.len;
     if (v >= tag.len) return null;
     if (tag[v] == '"' or tag[v] == '\'') {
         const q = tag[v];
-        const e = std.mem.indexOfPos(u8, tag, v + 1, &.{q}) orelse return null;
+        const e = std.mem.findPos(u8, tag, v + 1, &.{q}) orelse return null;
         return tag[v + 1 .. e];
     }
-    const e = std.mem.indexOfPos(u8, tag, v + 1, " >") orelse tag.len;
+    const e = std.mem.findPos(u8, tag, v + 1, " >") orelse tag.len;
     return tag[v..e];
 }
 
@@ -198,9 +198,9 @@ pub fn percentEncode(s: []const u8, dst: []u8) []const u8 {
 /// sliced out of the raw redirect URL. Returns null when absent.
 pub fn uddgValue(redirect: []const u8) ?[]const u8 {
     const marker = "uddg=";
-    const p = std.mem.indexOf(u8, redirect, marker) orelse return null;
+    const p = std.mem.find(u8, redirect, marker) orelse return null;
     const v = p + marker.len;
-    const e = std.mem.indexOfPos(u8, redirect, v, "&") orelse redirect.len;
+    const e = std.mem.findPos(u8, redirect, v, "&") orelse redirect.len;
     if (e <= v) return null;
     return redirect[v..e];
 }
@@ -236,7 +236,7 @@ const EntityDecode = struct { src_consumed: usize, dst_produced: usize };
 /// least 4 bytes.
 fn decodeEntity(src: []const u8, dst: []u8) ?EntityDecode {
     if (src.len < 2 or src[0] != '&') return null;
-    const semi = std.mem.indexOfPos(u8, src, 1, ";") orelse return null;
+    const semi = std.mem.findPos(u8, src, 1, ";") orelse return null;
     if (semi > 12) return null;
     const body = src[1..semi];
     if (body.len == 0) return null;
@@ -278,7 +278,7 @@ pub fn cleanInto(src: []const u8, dst: []u8) []const u8 {
     while (i < src.len) {
         const c = src[i];
         if (c == '<') {
-            const close = std.mem.indexOfPos(u8, src, i + 1, ">") orelse src.len;
+            const close = std.mem.findPos(u8, src, i + 1, ">") orelse src.len;
             i = close + 1;
             continue;
         }
@@ -322,7 +322,7 @@ test "parseBing extracts items and skips malformed ones" {
     try std.testing.expectEqual(@as(usize, 2), n);
     try std.testing.expectEqualStrings("Home ⚡ Zig Programming Language", results[0].title);
     try std.testing.expectEqualStrings("https://ziglang.org/", results[0].url);
-    try std.testing.expect(std.mem.indexOf(u8, results[0].snippet, "general-purpose") != null);
+    try std.testing.expect(std.mem.find(u8, results[0].snippet, "general-purpose") != null);
     try std.testing.expectEqualStrings("Zig (programming language) - Wikipedia", results[1].title);
 }
 
@@ -348,7 +348,7 @@ test "parseDdgLite extracts title, uddg url and skips none" {
     const n = parseDdgLite(ddg_lite_fixture, &results, 4);
     try std.testing.expectEqual(@as(usize, 1), n);
     try std.testing.expectEqualStrings("Home ⚡ Zig Programming Language", results[0].title);
-    try std.testing.expect(std.mem.indexOf(u8, results[0].url, "uddg=") != null);
+    try std.testing.expect(std.mem.find(u8, results[0].url, "uddg=") != null);
     // snippet stops at the first inner tag as a safe, if cut, boundary
     try std.testing.expect(std.mem.eql(u8, results[0].snippet, "Zig is a general-purpose programming "));
 }

@@ -2484,6 +2484,59 @@ fn toolJson(
     return arena.dupe(u8, raw);
 }
 
+fn memorySearch(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    query: []const u8,
+    collection_ids: []const []const u8,
+    mode: []const u8,
+    top_k: usize,
+    threshold: f32,
+) !std.json.Value {
+    var ibuf: [8192]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    try is.objectField("action");
+    try is.write("search");
+    try is.objectField("query");
+    try is.write(query[0..@min(query.len, 4000)]);
+    try is.objectField("mode");
+    try is.write(mode);
+    try is.objectField("top_k");
+    try is.print("{d}", .{top_k});
+    try is.objectField("threshold");
+    try is.print("{d}", .{threshold});
+    if (collection_ids.len > 0) {
+        try is.objectField("collection_ids");
+        try is.beginArray();
+        for (collection_ids) |cid| try is.write(cid);
+        try is.endArray();
+    }
+    try is.endObject();
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "memory", ibuf[0..iw.end]) catch return error.ToolUnavailable;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{});
+}
+
+fn appendMemoryHits(mem_buf: *std.ArrayList(u8), arena: std.mem.Allocator, result: std.json.Value) void {
+    if (result != .object) return;
+    const hits_val = result.object.get("hits") orelse return;
+    if (hits_val != .array) return;
+    for (hits_val.array.items) |h| {
+        if (h != .object) continue;
+        const text_v = h.object.get("text") orelse continue;
+        if (text_v != .string) continue;
+        if (mem_buf.items.len > 80_000) break;
+        if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
+        const mlimit = @min(text_v.string.len, 100_000 - mem_buf.items.len);
+        if (mlimit == 0) continue;
+        mem_buf.appendSlice(arena, text_v.string[0..mlimit]) catch continue;
+    }
+}
+
 fn toolText(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -6685,114 +6738,20 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             kb_buf.appendSlice(arena, task_text) catch {};
             final_task = kb_buf.items;
         }
-        // memory_inject: augment with chunk hits (hybrid/vector/keyword)
-        // vector path uses builtin hash_embed (offline, zero-dep) unless openai_compat configured; hybrid merges both.
         if (do_memory_inject and req.knowledge.len > 0) {
             var mem_buf: std.ArrayList(u8) = .empty;
-            const want_vector = !std.mem.eql(u8, cfg.memory.backend, "keyword");
-            const use_hash = want_vector and (cfg.memory.embedding_provider.len == 0 or std.mem.eql(u8, cfg.memory.embedding_provider, "builtin")) and std.mem.eql(u8, cfg.memory.vector_backend, "builtin");
-            if (use_hash) {
-                const he = @import("memory/hash_embed.zig");
-                const vec_mod = @import("memory/vector.zig");
-                const k_hash: usize = @as(usize, cfg.memory.vector_top_k);
-                const qvec = he.embed(arena, task_text, he.default_dim) catch null;
-                if (qvec) |query_vec| {
-                    var all_texts: std.ArrayList([]const u8) = .empty;
-                    var all_ids: std.ArrayList([]const u8) = .empty;
-                    for (req.knowledge) |cid| {
-                        const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
-                        const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
-                        const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
-                        if (arr != .array) continue;
-                        for (arr.array.items) |item| {
-                            if (item != .object) continue;
-                            const text_v = item.object.get("text") orelse continue;
-                            if (text_v != .string) continue;
-                            const cid_str = if (item.object.get("chunk_id")) |v| (if (v == .string) v.string else text_v.string) else text_v.string;
-                            all_texts.append(arena, text_v.string) catch continue;
-                            all_ids.append(arena, cid_str) catch continue;
-                        }
-                    }
-                    if (all_texts.items.len > 0) {
-                        var vecs: std.ArrayList([]const f32) = .empty;
-                        for (all_texts.items) |t| {
-                            const v = he.embed(arena, t, he.default_dim) catch continue;
-                            vecs.append(arena, v) catch continue;
-                        }
-                        const thresh: f32 = cfg.memory.vector_threshold;
-                        if (vecs.items.len > 0) {
-                            const hits = vec_mod.topK(arena, query_vec, all_ids.items, vecs.items, k_hash, thresh) catch &[_]vec_mod.Hit{};
-                            for (hits) |h| {
-                                var txt: []const u8 = h.chunk_id;
-                                for (all_ids.items, all_texts.items) |id, t| if (std.mem.eql(u8, id, h.chunk_id)) {
-                                    txt = t;
-                                    break;
-                                };
-                                if (mem_buf.items.len > 80_000) break;
-                                if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch break;
-                                const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
-                                if (mlimit == 0) continue;
-                                mem_buf.appendSlice(arena, txt[0..mlimit]) catch break;
-                            }
-                        }
-                    }
-                    const need_kw = std.mem.eql(u8, cfg.memory.backend, "hybrid") and mem_buf.items.len == 0;
-                    if (need_kw) {
-                        for (req.knowledge) |cid| {
-                            const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
-                            const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
-                            const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
-                            if (arr != .array) continue;
-                            var hits: usize = 0;
-                            for (arr.array.items) |item| {
-                                if (hits >= k_hash) break;
-                                if (item != .object) continue;
-                                const text_v = item.object.get("text") orelse continue;
-                                if (text_v != .string) continue;
-                                const txt: []const u8 = text_v.string;
-                                var score: usize = 0;
-                                var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
-                                while (tq_it.next()) |tok| {
-                                    if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.find(u8, txt, tok) != null) score += 1;
-                                }
-                                if (score == 0) continue;
-                                if (mem_buf.items.len > 80_000) break;
-                                if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
-                                const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
-                                if (mlimit == 0) continue;
-                                mem_buf.appendSlice(arena, txt[0..mlimit]) catch continue;
-                                hits += 1;
-                            }
-                        }
-                    }
-                }
-            } else {
-                for (req.knowledge) |cid| {
-                    const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
-                    const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
-                    const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
-                    if (arr != .array) continue;
-                    var hits: usize = 0;
-                    for (arr.array.items) |item| {
-                        if (hits >= cfg.memory.vector_top_k) break;
-                        if (item != .object) continue;
-                        const text_v = item.object.get("text") orelse continue;
-                        if (text_v != .string) continue;
-                        const txt: []const u8 = text_v.string;
-                        var score: usize = 0;
-                        var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
-                        while (tq_it.next()) |tok| {
-                            if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.find(u8, txt, tok) != null) score += 1;
-                        }
-                        if (score == 0) continue;
-                        if (mem_buf.items.len > 80_000) break;
-                        if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
-                        const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
-                        if (mlimit == 0) continue;
-                        mem_buf.appendSlice(arena, txt[0..mlimit]) catch continue;
-                        hits += 1;
-                    }
-                }
+            const mode: []const u8 = if (std.mem.eql(u8, cfg.memory.backend, "keyword")) "keyword" else "vector";
+            const k_top: usize = @as(usize, cfg.memory.vector_top_k);
+            const thresh: f32 = cfg.memory.vector_threshold;
+            const search_result = memorySearch(io, gpa, arena, cfg, environ_map, task_text, req.knowledge, mode, k_top, thresh);
+            if (search_result) |result| {
+                appendMemoryHits(&mem_buf, arena, result);
+            } else |_| {}
+            if (std.mem.eql(u8, cfg.memory.backend, "hybrid") and mem_buf.items.len == 0) {
+                const kw_result = memorySearch(io, gpa, arena, cfg, environ_map, task_text, req.knowledge, "keyword", k_top, thresh);
+                if (kw_result) |result| {
+                    appendMemoryHits(&mem_buf, arena, result);
+                } else |_| {}
             }
             if (mem_buf.items.len > 0) {
                 var combined: std.ArrayList(u8) = .empty;

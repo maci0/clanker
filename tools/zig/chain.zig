@@ -221,7 +221,7 @@ const TraceEntry = struct {
 
 fn argsToJsonWithSubst(alloc: std.mem.Allocator, args: std.json.Value, prev_json: ?std.json.Value, prev_raw: []const u8, vars_val: ?std.json.Value) ![]const u8 {
     const raw = try stringifyAlloc(alloc, args);
-    if (std.mem.indexOf(u8, raw, "{{") == null) return raw;
+    if (std.mem.find(u8, raw, "{{") == null) return raw;
     const substituted = try substituteInValue(alloc, args, prev_json, prev_raw, vars_val);
     return try stringifyAlloc(alloc, substituted);
 }
@@ -229,7 +229,7 @@ fn argsToJsonWithSubst(alloc: std.mem.Allocator, args: std.json.Value, prev_json
 fn substituteInValue(alloc: std.mem.Allocator, v: std.json.Value, prev_json: ?std.json.Value, prev_raw: []const u8, vars_val: ?std.json.Value) !std.json.Value {
     return switch (v) {
         .string => |s| blk: {
-            if (std.mem.indexOf(u8, s, "{{") == null) break :blk v;
+            if (std.mem.find(u8, s, "{{") == null) break :blk v;
             const out = try substituteString(alloc, s, prev_json, prev_raw, vars_val);
             break :blk .{ .string = out };
         },
@@ -259,7 +259,7 @@ fn substituteString(alloc: std.mem.Allocator, s: []const u8, prev_json: ?std.jso
     var i: usize = 0;
     while (i < s.len) {
         if (std.mem.startsWith(u8, s[i..], "{{")) {
-            const close = std.mem.indexOf(u8, s[i..], "}}") orelse {
+            const close = std.mem.find(u8, s[i..], "}}") orelse {
                 try out.appendSlice(alloc, s[i..]);
                 break;
             };
@@ -309,13 +309,13 @@ fn jsonPath(root: std.json.Value, path: []const u8) ?std.json.Value {
     var it = std.mem.splitScalar(u8, path, '.');
     while (it.next()) |seg| {
         if (seg.len == 0) continue;
-        if (std.mem.indexOfScalar(u8, seg, '[')) |br| {
+        if (std.mem.findScalar(u8, seg, '[')) |br| {
             const key = seg[0..br];
             if (cur != .object) return null;
             cur = cur.object.get(key) orelse return null;
             var rest = seg[br..];
             while (rest.len > 0 and rest[0] == '[') {
-                const close = std.mem.indexOfScalar(u8, rest, ']') orelse return null;
+                const close = std.mem.findScalar(u8, rest, ']') orelse return null;
                 const idx = std.fmt.parseInt(usize, rest[1..close], 10) catch return null;
                 if (cur != .array) return null;
                 if (idx >= cur.array.items.len) return null;
@@ -337,7 +337,7 @@ fn jsonPath(root: std.json.Value, path: []const u8) ?std.json.Value {
 
 fn stripFences(s: []const u8) []const u8 {
     if (!std.mem.startsWith(u8, s, "```")) return s;
-    const first_nl = std.mem.indexOfScalar(u8, s, '\n') orelse return s;
+    const first_nl = std.mem.findScalar(u8, s, '\n') orelse return s;
     const body = s[first_nl + 1 ..];
     const close = std.mem.lastIndexOf(u8, body, "```") orelse return body;
     return std.mem.trim(u8, body[0..close], " \t\r\n");
@@ -383,7 +383,7 @@ fn listChains(out: *lib.Out, chains_dir: []const u8) !void {
 
 fn showChain(out: *lib.Out, chains_dir: []const u8, name: []const u8) !void {
     if (name.len == 0) return lib.fail(out, "chain name must not be empty");
-    if (std.mem.indexOfScalar(u8, name, '/') != null or std.mem.indexOf(u8, name, "..") != null)
+    if (std.mem.findScalar(u8, name, '/') != null or std.mem.find(u8, name, "..") != null)
         return lib.fail(out, "invalid chain name");
     const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}.json", .{ chains_dir, name });
     const raw = lib.fsRead(path) catch |err| {

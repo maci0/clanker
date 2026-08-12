@@ -118,6 +118,18 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/worktree.zig", .needle = "\".env\", \"config.local.toml\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/improvements.jsonl\", \"state/history\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/learnings.md\", \"state/autolearn.jsonl\"" },
+    // Promotion is safe only while merge-back computes a three-way tree,
+    // creates a commit with both parents, advances the base ref with a
+    // compare-and-swap, and then makes the isolated branch and files match
+    // the landed commit. worktree.zig is writable, so protect those call
+    // sites just like the gate calls above.
+    .{ .file = "src/improve/worktree.zig", .needle = "mergeTree(gpa, io, self.created_from, base_sha, branch_sha)" },
+    .{ .file = "src/improve/worktree.zig", .needle = "commitTree(gpa, io, tree, base_sha, branch_sha, message)" },
+    .{ .file = "src/improve/worktree.zig", .needle = "updateRefCas(gpa, io, self.base_branch, commit, base_sha)" },
+    .{ .file = "src/improve/worktree.zig", .needle = "updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha)" },
+    .{ .file = "src/improve/worktree.zig", .needle = "self.resyncLocalBranch(gpa, io, commit);" },
+    .{ .file = "src/improve/worktree.zig", .needle = "self.resyncLocalBranch(gpa, io, branch_sha);" },
+    .{ .file = "src/improve/worktree.zig", .needle = "\"git\", \"update-ref\", full_ref, new_sha, old_sha" },
 };
 
 /// The next symbol worth looking up in `text`, reduced to its most specific
@@ -2895,6 +2907,48 @@ test "a patch that guts a gate implementation in checks.zig is rejected too" {
     try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = gutted });
     const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
     try std.testing.expectEqualStrings(".exited => |c| c == 0,", bad.needle);
+}
+
+test "a patch that bypasses merge-back CAS is rejected" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, "src/improve");
+
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        if (!std.mem.eql(u8, inv.file, "src/improve/worktree.zig")) continue;
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = "src/improve/worktree.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    const cas_call = "updateRefCas(gpa, io, self.base_branch, commit, base_sha)";
+    const bypassed = try std.mem.replaceOwned(u8, arena, keeps.items, cas_call, "");
+    try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = bypassed });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings(cas_call, bad.needle);
 }
 
 test "capability gate fails closed when the staged binary is missing" {

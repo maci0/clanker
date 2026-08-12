@@ -63,7 +63,7 @@ fn applyOne(c: Change) !void {
 /// replaced: exact match, first occurrence only, never line-numbered.
 fn patchOnce(alloc: std.mem.Allocator, text: []const u8, old: []const u8, new: []const u8) ![]u8 {
     if (old.len == 0) return std.mem.concat(alloc, u8, &.{ text, new });
-    const idx = std.mem.indexOf(u8, text, old) orelse return error.OldTextNotFound;
+    const idx = std.mem.find(u8, text, old) orelse return error.OldTextNotFound;
     return std.mem.concat(alloc, u8, &.{ text[0..idx], new, text[idx + old.len ..] });
 }
 

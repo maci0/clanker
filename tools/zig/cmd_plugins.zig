@@ -76,7 +76,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // renderings, rather than the UI re-parsing a text table.
     if (std.mem.eql(u8, args, "json")) return listStructured(out, alloc, plugins);
 
-    const sep = std.mem.indexOfScalar(u8, args, ' ') orelse
+    const sep = std.mem.findScalar(u8, args, ' ') orelse
         return lib.fail(out, "usage: /plugins [on|off <name>]");
     const verb = args[0..sep];
     const name = std.mem.trim(u8, args[sep + 1 ..], " \t");

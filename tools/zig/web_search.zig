@@ -47,7 +47,7 @@ fn resolvedUrl(raw: []const u8, backend: []const u8, dst: []u8) []const u8 {
 
 fn langFromRegion(region: []const u8) []const u8 {
     if (region.len == 0) return "en";
-    if (std.mem.indexOfScalar(u8, region, '-')) |dash| {
+    if (std.mem.findScalar(u8, region, '-')) |dash| {
         if (dash > 0) return region[0..dash];
     }
     return region;

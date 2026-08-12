@@ -106,7 +106,7 @@ fn stripFence(raw: []const u8) []const u8 {
     if (!std.mem.startsWith(u8, s, "```")) return s;
     s = s[3..];
     // Skip the info string ("json", "JSON", …) up to the first newline.
-    if (std.mem.indexOfScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
+    if (std.mem.findScalar(u8, s, '\n')) |nl| s = s[nl + 1 ..];
     if (std.mem.lastIndexOf(u8, s, "```")) |close| s = s[0..close];
     return std.mem.trim(u8, s, " \t\r\n");
 }
@@ -116,7 +116,7 @@ fn stripFence(raw: []const u8) []const u8 {
 /// no balanced object — prose with a stray `{` is a parse failure, not an
 /// object.
 fn objectSpan(s: []const u8) ?[]const u8 {
-    const start = std.mem.indexOfScalar(u8, s, '{') orelse return null;
+    const start = std.mem.findScalar(u8, s, '{') orelse return null;
     var depth: usize = 0;
     var in_string = false;
     var escaped = false;
@@ -182,7 +182,7 @@ pub fn weakAttack(raw: []const u8) Reply {
 /// Returns null when the input was already balanced (nothing to repair) or is
 /// too mangled to close.
 fn repairTruncated(alloc: std.mem.Allocator, s: []const u8) ?[]const u8 {
-    const start = std.mem.indexOfScalar(u8, s, '{') orelse return null;
+    const start = std.mem.findScalar(u8, s, '{') orelse return null;
     var depth: usize = 0;
     var in_string = false;
     var escaped = false;
@@ -1091,7 +1091,7 @@ test "headline says draw without naming a winner" {
     const labels = [_][]const u8{ "x", "y" };
     var buf: [512]u8 = undefined;
     const line = headline(&buf, &cs, &labels, decide(&cs));
-    try std.testing.expect(std.mem.indexOf(u8, line, "Draw") != null);
+    try std.testing.expect(std.mem.find(u8, line, "Draw") != null);
 }
 
 test "validatePositions refuses one side, duplicates, blanks and unshipped counts" {

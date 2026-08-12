@@ -855,7 +855,7 @@ function showCardDetail(id) {
   if (!entries.length) {
     var empty = document.createElement("p");
     empty.className = "meta";
-    empty.textContent = "Nothing recorded yet.";
+    empty.textContent = "No activity yet. Moving, assigning, or commenting on this card will build its history here.";
     logBox.appendChild(empty);
   }
   entries.forEach(function (e) {

@@ -52,9 +52,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // SSE: lines of "event: matches" followed by "data: [<json array>]".
     var lines = std.mem.splitScalar(u8, body, '\n');
     while (lines.next()) |line| {
-        if (std.mem.indexOf(u8, line, "event: matches") != null) {
+        if (std.mem.find(u8, line, "event: matches") != null) {
             const data_line = lines.next() orelse continue;
-            if (std.mem.indexOf(u8, data_line, "data: ")) |d| {
+            if (std.mem.find(u8, data_line, "data: ")) |d| {
                 const arr = std.json.parseFromSliceLeaky([]const Match, lib.alloc, data_line[d + 6 ..], .{ .ignore_unknown_fields = true }) catch continue;
                 for (arr) |m| {
                     for (m.lineMatches) |lm| {

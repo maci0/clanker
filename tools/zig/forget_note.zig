@@ -54,7 +54,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         var it = std.mem.splitScalar(u8, current, '\n');
         while (it.next()) |line| {
             if (line.len == 0) continue;
-            if (std.mem.indexOf(u8, line, match) != null) {
+            if (std.mem.find(u8, line, match) != null) {
                 n_removed += 1;
                 try removed.appendSlice(alloc, line);
                 try removed.append(alloc, '\n');

@@ -47,9 +47,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var lines = std.mem.splitScalar(u8, stdout, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
-        const colon1 = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon1 = std.mem.findScalar(u8, line, ':') orelse continue;
         const rest1 = line[colon1 + 1 ..];
-        const colon2 = std.mem.indexOfScalar(u8, rest1, ':') orelse continue;
+        const colon2 = std.mem.findScalar(u8, rest1, ':') orelse continue;
         const file = line[0..colon1];
         const line_str = rest1[0..colon2];
         const text = rest1[colon2 + 1 ..];

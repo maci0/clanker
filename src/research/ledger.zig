@@ -1,3 +1,5 @@
+//! Persists autoresearch iteration results and compares recorded metrics.
+
 const std = @import("std");
 const atomic_write = @import("../util/atomic_write.zig");
 pub const Entry = struct { iter: u32, ts: i64, summary: []const u8 = "", ok: bool = false, metric: ?f64 = null, metric_name: []const u8 = "", duration_ms: u64 = 0, detail: []const u8 = "", stdout_tail: []const u8 = "", stderr_tail: []const u8 = "" };

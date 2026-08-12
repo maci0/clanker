@@ -177,16 +177,16 @@ fn frame(alloc: std.mem.Allocator, body: *std.ArrayList(u8), payload: []const u8
 /// way an editor and every other tool here report positions).
 fn collectLocations(alloc: std.mem.Allocator, stdout: []const u8, out: *std.ArrayList([]const u8)) !void {
     var rest = stdout;
-    while (std.mem.indexOf(u8, rest, "\"uri\":\"file://")) |at| {
+    while (std.mem.find(u8, rest, "\"uri\":\"file://")) |at| {
         rest = rest[at + "\"uri\":\"file://".len ..];
-        const uri_end = std.mem.indexOfScalar(u8, rest, '"') orelse break;
+        const uri_end = std.mem.findScalar(u8, rest, '"') orelse break;
         const path = rest[0..uri_end];
 
         const line_key = "\"line\":";
-        const line_at = std.mem.indexOf(u8, rest, line_key) orelse break;
+        const line_at = std.mem.find(u8, rest, line_key) orelse break;
         const line = parseUint(rest[line_at + line_key.len ..]);
         const char_key = "\"character\":";
-        const char_at = std.mem.indexOf(u8, rest, char_key) orelse break;
+        const char_at = std.mem.find(u8, rest, char_key) orelse break;
         const character = parseUint(rest[char_at + char_key.len ..]);
 
         const entry = try std.fmt.allocPrint(alloc, "{s}:{d}:{d}", .{ path, line + 1, character + 1 });

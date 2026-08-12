@@ -99,7 +99,7 @@ function renderRoster(container, status, a2a, cards) {
   }
   var peers = status.peers || [];
   if (!peers.length) {
-    container.appendChild(el("p", "run-empty", "No peers configured."));
+    container.appendChild(el("p", "run-empty", "No peers configured. Add one to the phonebook to see its status and skills here."));
   } else {
     var ul = el("ul", "fleet-roster-list");
     ul.setAttribute("role", "list");
@@ -193,7 +193,7 @@ function renderDMs(container, chatData) {
   container.textContent = "";
   container.className = "fleet-dms";
   if (chatData === null) {
-    container.appendChild(el("p", "run-empty", "DMs unavailable — chat module disabled."));
+    container.appendChild(el("p", "run-empty", "DMs unavailable. Enable the chat module to message peers from Fleet."));
     return;
   }
   var norm = normalizeChatData(chatData);
@@ -205,7 +205,7 @@ function renderDMs(container, chatData) {
   var subs = norm.subscribed || [];
   var dmRooms = rooms.filter(function (r) { return isDmRoom(r.room); });
   if (!dmRooms.length) {
-    var empty = el("p", "run-empty", "No DM channels yet.");
+    var empty = el("p", "run-empty", "No DM channels yet. Open a peer in Rooms and send the first message.");
     container.appendChild(empty);
     if (rooms.length && !dmRooms.length) {
       var hint = el("p", "fleet-meta", rooms.length + " room(s), none are DMs.");
@@ -263,7 +263,7 @@ function renderDMs(container, chatData) {
 function renderRuns(container, detailNode, runs) {
   container.textContent = "";
   if (!runs.length) {
-    container.appendChild(el("p", "run-empty", "No runs recorded yet."));
+    container.appendChild(el("p", "run-empty", "No runs recorded yet. Start a task in Chat to watch its agent tree here."));
     return;
   }
   var grouped = groupRuns(runs);

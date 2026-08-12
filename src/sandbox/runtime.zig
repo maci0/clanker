@@ -858,7 +858,7 @@ test "cmd_sessions and cmd_graph report empty when the state dir does not exist"
     };
 
     const cases = [_]struct { wasm: []const u8, want: []const u8 }{
-        .{ .wasm = "zig-out/tools/cmd_sessions.wasm", .want = "(no sessions yet)" },
+        .{ .wasm = "zig-out/tools/cmd_sessions.wasm", .want = "No saved conversations yet" },
         .{ .wasm = "zig-out/tools/cmd_graph.wasm", .want = "(no runs yet" },
     };
     for (cases) |c| {
@@ -1442,8 +1442,8 @@ test "arena wasm tool refuses a match without two distinct sides" {
         defer std.testing.allocator.free(outp);
         // Names the offending row: a table-driven assertion that only says
         // "expected true" makes six cases into one bisect.
-        if (std.mem.indexOf(u8, outp, "\"ok\":false") == null or
-            std.mem.indexOf(u8, outp, c.want) == null)
+        if (std.mem.find(u8, outp, "\"ok\":false") == null or
+            std.mem.find(u8, outp, c.want) == null)
         {
             std.debug.print("arena refusal case {s}\n  wanted: {s}\n  got:    {s}\n", .{ c.input, c.want, outp });
             return error.TestUnexpectedResult;
@@ -1472,8 +1472,8 @@ test "arena wasm tool reports no matches on a fresh sandbox" {
 
     const listed = try arenaCall(io, root, wasm, &env_map, "{}");
     defer std.testing.allocator.free(listed);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "no arena matches yet") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, listed, "no arena matches yet") != null);
 
     // A match id that could climb out of state/arena/ is refused, rather than
     // reported as a missing match.
@@ -1485,13 +1485,13 @@ test "arena wasm tool reports no matches on a fresh sandbox" {
         // "" is absent rather than unsafe, so it lists instead of refusing;
         // every traversal attempt must be told apart from a real miss.
         if (bad.len == 0) continue;
-        try std.testing.expect(std.mem.indexOf(u8, outp, "\"ok\":false") != null);
-        try std.testing.expect(std.mem.indexOf(u8, outp, "not a match id") != null);
+        try std.testing.expect(std.mem.find(u8, outp, "\"ok\":false") != null);
+        try std.testing.expect(std.mem.find(u8, outp, "not a match id") != null);
     }
 
     const missing = try arenaCall(io, root, wasm, &env_map, "{\"match\":\"arena-1-deadbeef\"}");
     defer std.testing.allocator.free(missing);
-    try std.testing.expect(std.mem.indexOf(u8, missing, "no such match") != null);
+    try std.testing.expect(std.mem.find(u8, missing, "no such match") != null);
 }
 
 test "arena wasm tool finishes a match as forfeits when no provider answers" {
@@ -1520,13 +1520,13 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
     );
     defer std.testing.allocator.free(raw);
 
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"status\":\"finished\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"forfeit\":true") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"status\":\"finished\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"forfeit\":true") != null);
     // Nobody landed anything, so nobody won — and the verdict says so rather
     // than picking one of two untouched combatants.
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"reason\":\"draw\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "SandboxDenied") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"reason\":\"draw\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "SandboxDenied") != null);
 
     var parsed_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer parsed_arena.deinit();
@@ -1544,22 +1544,22 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
     defer std.testing.allocator.free(path);
     const stored = try tmp.dir.readFileAlloc(io, path, std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(stored);
-    try std.testing.expect(std.mem.indexOf(u8, stored, "queue or direct calls?") != null);
+    try std.testing.expect(std.mem.find(u8, stored, "queue or direct calls?") != null);
 
     const req = try std.fmt.allocPrint(std.testing.allocator, "{{\"match\":\"{s}\"}}", .{id});
     defer std.testing.allocator.free(req);
     const read_back = try arenaCall(io, root, wasm, &env_map, req);
     defer std.testing.allocator.free(read_back);
-    try std.testing.expect(std.mem.indexOf(u8, read_back, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, read_back, id) != null);
-    try std.testing.expect(std.mem.indexOf(u8, read_back, "use a message queue") != null);
+    try std.testing.expect(std.mem.find(u8, read_back, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, read_back, id) != null);
+    try std.testing.expect(std.mem.find(u8, read_back, "use a message queue") != null);
 
     // A finished match is replayable: the ledger carries it, so listing finds
     // it without walking every match file.
     const listed = try arenaCall(io, root, wasm, &env_map, "{}");
     defer std.testing.allocator.free(listed);
-    try std.testing.expect(std.mem.indexOf(u8, listed, id) != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed, "queue or direct calls?") != null);
+    try std.testing.expect(std.mem.find(u8, listed, id) != null);
+    try std.testing.expect(std.mem.find(u8, listed, "queue or direct calls?") != null);
 
     // The listing also answers structured, which is what the web UI's match
     // picker reads (GET /api/arena); the text table is for the CLI and an agent.
@@ -1598,9 +1598,9 @@ test "arena wasm tool runs a battle royale to a verdict when no provider answers
     );
     defer std.testing.allocator.free(raw);
 
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "\"status\":\"finished\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, "battle royale, 5 positions") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"status\":\"finished\"") != null);
+    try std.testing.expect(std.mem.find(u8, raw, "battle royale, 5 positions") != null);
 
     var parsed_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer parsed_arena.deinit();

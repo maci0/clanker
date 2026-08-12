@@ -41,7 +41,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // .zig) also picks up any rules the project defines.
         try args.append(lib.alloc, "--config");
         try args.append(lib.alloc, "sgconfig.yml");
-        if (std.mem.endsWith(u8, path, ".zig") or std.mem.indexOf(u8, path, ".") == null) {
+        if (std.mem.endsWith(u8, path, ".zig") or std.mem.find(u8, path, ".") == null) {
             // The Zig grammar is a custom language, so it has to be named:
             // ast-grep will not infer it from the extension alone.
             try args.append(lib.alloc, "-l");
@@ -128,10 +128,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 try s.write("ast-grep exited with non-zero status");
             }
             // Detect grammar/config issues and add an actionable hint.
-            if (std.mem.indexOf(u8, ag_stderr, "language") != null or
-                std.mem.indexOf(u8, ag_stderr, "config") != null or
-                std.mem.indexOf(u8, ag_stderr, "sgconfig") != null or
-                std.mem.indexOf(u8, ag_stderr, "Cannot find") != null)
+            if (std.mem.find(u8, ag_stderr, "language") != null or
+                std.mem.find(u8, ag_stderr, "config") != null or
+                std.mem.find(u8, ag_stderr, "sgconfig") != null or
+                std.mem.find(u8, ag_stderr, "Cannot find") != null)
             {
                 try s.objectField("hint");
                 try s.write("run tools/grammars/build.sh to build the Zig tree-sitter grammar, then retry");
@@ -159,7 +159,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const max_matches: usize = 200;
         var ag_rest: []const u8 = ag_stdout;
         while (ag_rest.len > 0 and match_count < max_matches) {
-            const ag_nl = std.mem.indexOfScalar(u8, ag_rest, '\n');
+            const ag_nl = std.mem.findScalar(u8, ag_rest, '\n');
             const ag_line = if (ag_nl) |n| ag_rest[0..n] else ag_rest;
             ag_rest = if (ag_nl) |n| ag_rest[n + 1 ..] else &[_]u8{};
 
@@ -174,9 +174,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // Try to split "file:line:col:text" — at least 3 colons for a
             // well-formed match. The file path may itself contain colons on
             // non-Unix systems, but Zig paths in this project do not.
-            if (std.mem.indexOfScalar(u8, trimmed, ':')) |c1| {
+            if (std.mem.findScalar(u8, trimmed, ':')) |c1| {
                 const after1 = trimmed[c1 + 1 ..];
-                if (std.mem.indexOfScalar(u8, after1, ':')) |c2| {
+                if (std.mem.findScalar(u8, after1, ':')) |c2| {
                     const after2 = after1[c2 + 1 ..];
                     // Verify the segment between c1 and c2 looks numeric (line number).
                     const num_candidate = after1[0..c2];
@@ -191,7 +191,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                         file_path = trimmed[0..c1];
                         line_num = num_candidate;
                         // Skip col field if present.
-                        if (std.mem.indexOfScalar(u8, after2, ':')) |c3| {
+                        if (std.mem.findScalar(u8, after2, ':')) |c3| {
                             text = after2[c3 + 1 ..];
                         } else {
                             text = after2;
@@ -217,7 +217,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (match_count >= max_matches) {
             var omitted: usize = 0;
             while (ag_rest.len > 0) {
-                const snl = std.mem.indexOfScalar(u8, ag_rest, '\n');
+                const snl = std.mem.findScalar(u8, ag_rest, '\n');
                 const sline = if (snl) |n| ag_rest[0..n] else ag_rest;
                 ag_rest = if (snl) |n| ag_rest[n + 1 ..] else &[_]u8{};
                 if (std.mem.trim(u8, sline, " \t\r\n").len > 0) omitted += 1;
@@ -257,7 +257,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         var rest: []const u8 = stdout;
         while (rest.len > 0 and match_count < max_matches) {
             // Find the end of this line.
-            const nl = std.mem.indexOfScalar(u8, rest, '\n');
+            const nl = std.mem.findScalar(u8, rest, '\n');
             const line = if (nl) |n| rest[0..n] else rest;
             rest = if (nl) |n| rest[n + 1 ..] else &[_]u8{};
 
@@ -322,12 +322,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             var omitted: usize = 0;
             var scan = rest;
             while (scan.len > 0) {
-                const snl = std.mem.indexOfScalar(u8, scan, '\n');
+                const snl = std.mem.findScalar(u8, scan, '\n');
                 const sline = if (snl) |n| scan[0..n] else scan;
                 scan = if (snl) |n| scan[n + 1 ..] else &[_]u8{};
                 if (sline.len == 0) continue;
                 // Quick check before full parse: line must contain "match".
-                if (std.mem.indexOf(u8, sline, "\"match\"") == null) continue;
+                if (std.mem.find(u8, sline, "\"match\"") == null) continue;
                 const sp = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, sline, .{ .ignore_unknown_fields = true }) catch continue;
                 if (sp != .object) continue;
                 const st = sp.object.get("type") orelse continue;

@@ -50,7 +50,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // exactly "loop" and misses loop.zig, which is never what the caller
     // meant. A pattern with no glob character is taken as "name contains
     // this"; one with * or ? is passed through as written.
-    const has_glob = std.mem.indexOfAny(u8, pattern, "*?") != null;
+    const has_glob = std.mem.findAny(u8, pattern, "*?") != null;
     var glob_buf: [512]u8 = undefined;
     const glob = if (has_glob)
         pattern

@@ -156,7 +156,7 @@ fn upsertRoadmap(alloc: std.mem.Allocator, section: []const u8) !void {
     const existing = lib.fsRead(roadmap_path) catch "";
     const marker = "## Autolearn";
     var out: std.ArrayList(u8) = .empty;
-    if (std.mem.indexOf(u8, existing, marker)) |idx| {
+    if (std.mem.find(u8, existing, marker)) |idx| {
         try out.appendSlice(alloc, existing[0..idx]);
     } else {
         try out.appendSlice(alloc, existing);

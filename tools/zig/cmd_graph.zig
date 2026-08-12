@@ -196,7 +196,7 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
 /// The first line of a task, clipped to a picker-sized label on a UTF-8
 /// boundary so the JSON stays valid no matter where the cut lands.
 fn labelOf(task: []const u8) []const u8 {
-    const line = task[0 .. std.mem.indexOfScalar(u8, task, '\n') orelse task.len];
+    const line = task[0 .. std.mem.findScalar(u8, task, '\n') orelse task.len];
     if (line.len <= label_max) return line;
     var end: usize = label_max;
     while (end > 0 and line[end] & 0xC0 == 0x80) end -= 1;
@@ -229,7 +229,7 @@ test "GraphFile carries tool arguments for the web UI" {
     defer enc.deinit();
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.write(g);
-    try std.testing.expect(std.mem.indexOf(u8, enc.written(), "\"arguments\"") != null);
+    try std.testing.expect(std.mem.find(u8, enc.written(), "\"arguments\"") != null);
     // Old runs recorded before the field parsed fine and stay field-less.
     const old = "{\"run_id\":\"run-0\",\"task\":\"t\",\"nodes\":[{\"kind\":\"tool\",\"iteration\":1,\"label\":\"read_file\",\"output\":\"{}\"}]}";
     const g0 = try std.json.parseFromSliceLeaky(GraphFile, std.testing.allocator, old, .{ .ignore_unknown_fields = true });
@@ -323,7 +323,7 @@ fn runJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want:
 fn writeGraph(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !void {
     const g = std.json.parseFromValueLeaky(GraphFile, alloc, value, .{ .ignore_unknown_fields = true }) catch
         return lib.fail(out, "write needs a graph object");
-    if (g.run_id.len == 0 or std.mem.indexOfAny(u8, g.run_id, "/\\") != null)
+    if (g.run_id.len == 0 or std.mem.findAny(u8, g.run_id, "/\\") != null)
         return lib.fail(out, "run_id must be non-empty and contain no path separators");
 
     var enc: std.Io.Writer.Allocating = .init(alloc);

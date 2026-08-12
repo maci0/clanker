@@ -44,9 +44,9 @@ fn extractCaptionsUrl(page: []const u8) ?[]const u8 {
     // YouTube embeds captions URLs in the playerCaptionsTracklistRenderer.
     // Look for "baseUrl":"https://www.youtube.com/api/timedtext..."
     const needle = "\"baseUrl\":\"";
-    const start = std.mem.indexOf(u8, page, needle) orelse return null;
+    const start = std.mem.find(u8, page, needle) orelse return null;
     const url_start = start + needle.len;
-    const url_end_rel = std.mem.indexOfScalar(u8, page[url_start..], '"') orelse return null;
+    const url_end_rel = std.mem.findScalar(u8, page[url_start..], '"') orelse return null;
     const raw_url = page[url_start .. url_start + url_end_rel];
 
     // The URL contains \u0026 for &; decode those.
@@ -106,7 +106,7 @@ fn stripXmlTags(alloc: std.mem.Allocator, xml: []const u8) ![]const u8 {
             } else if (i + 6 <= xml.len and std.mem.eql(u8, xml[i .. i + 6], "&quot;")) {
                 try out.append(alloc, '"');
                 i += 6;
-            } else if (std.mem.indexOfScalarPos(u8, xml, i + 1, ';')) |semi| {
+            } else if (std.mem.findScalarPos(u8, xml, i + 1, ';')) |semi| {
                 // Skip unknown entity.
                 i = semi + 1;
             } else {

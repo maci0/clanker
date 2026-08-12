@@ -48,7 +48,7 @@ fn argDenied(arg: []const u8, t: []const u8) bool {
     if (std.mem.eql(u8, arg, t)) return true;
     if (t[0] == '-') return std.mem.startsWith(u8, arg, t);
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, arg, i, t)) |p| {
+    while (std.mem.findPos(u8, arg, i, t)) |p| {
         const before = p == 0 or !isWordChar(arg[p - 1]);
         const after = p + t.len >= arg.len or !isWordChar(arg[p + t.len]);
         if (before and after) return true;

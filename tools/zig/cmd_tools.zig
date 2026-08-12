@@ -83,7 +83,7 @@ fn writeGrouped(alloc: std.mem.Allocator, buf: *std.ArrayList(u8), entries: anyt
             if (desc.len > 0) {
                 const pad = if (e.name.len < name_col) name_col - e.name.len else 1;
                 try buf.appendNTimes(alloc, ' ', pad);
-                const first = desc[0 .. std.mem.indexOfScalar(u8, desc, '\n') orelse desc.len];
+                const first = desc[0 .. std.mem.findScalar(u8, desc, '\n') orelse desc.len];
                 const clipped = first[0..@min(first.len, desc_max)];
                 try buf.appendSlice(alloc, clipped);
                 if (clipped.len < first.len) try buf.appendSlice(alloc, "\u{2026}");

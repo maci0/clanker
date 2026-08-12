@@ -1,3 +1,5 @@
+//! Executes autoresearch harness commands and extracts their numeric metrics.
+
 const std = @import("std");
 pub const HarnessResult = struct {
     ok: bool,

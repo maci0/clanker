@@ -45,10 +45,6 @@ comptime {
     _ = @import("util/atomic_write.zig");
     _ = @import("util/filelock.zig");
     _ = @import("agent/autolearn.zig");
-    _ = @import("memory/chunk.zig");
-    _ = @import("memory/vector.zig");
-    _ = @import("memory/embedder.zig");
-    _ = @import("memory/hash_embed.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");

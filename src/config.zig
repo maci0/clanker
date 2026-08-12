@@ -880,7 +880,7 @@ pub const Config = struct {
         if (std.posix.gethostname(&host_buf)) |host| {
             for (host) |ch| seed ^= std.hash.Wyhash.hash(0, &[_]u8{ch});
         } else |_| {}
-        seed ^= std.hash.Wyhash.hash(0, @as([*]const u8, @ptrCast(&seed))[0..8]);
+        seed ^= std.hash.Wyhash.hash(0, std.mem.asBytes(&seed));
         var prng = std.Random.DefaultPrng.init(seed);
         const n = prng.random().intRangeAtMost(u16, 100, 999);
         // Futurama-robot flavored, matching friendlyInstanceName's word list

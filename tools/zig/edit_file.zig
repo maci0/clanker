@@ -83,7 +83,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, msg);
     }
 
-    const at = std.mem.indexOf(u8, text, old).?;
+    const at = std.mem.find(u8, text, old).?;
     var result: std.ArrayList(u8) = .empty;
     defer result.deinit(alloc);
     try result.appendSlice(alloc, text[0..at]);

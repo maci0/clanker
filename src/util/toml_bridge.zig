@@ -1,3 +1,5 @@
+//! Converts parsed TOML values into the JSON value tree used by configuration.
+
 const std = @import("std");
 const json = std.json;
 const toml = @import("toml");

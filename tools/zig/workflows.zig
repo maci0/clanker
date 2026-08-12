@@ -121,10 +121,10 @@ fn parseWorkflow(alloc: std.mem.Allocator, stem: []const u8, rel_path: []const u
     var arg_hint: []const u8 = "";
     var body: []const u8 = raw;
     if (std.mem.startsWith(u8, raw, "---")) {
-        const first_nl = std.mem.indexOfScalar(u8, raw, '\n') orelse raw.len;
+        const first_nl = std.mem.findScalar(u8, raw, '\n') orelse raw.len;
         const first_line = std.mem.trim(u8, raw[0..first_nl], " \t\r");
         if (std.mem.eql(u8, first_line, "---")) {
-            if (std.mem.indexOf(u8, raw[first_nl + 1 ..], "\n---")) |rel| {
+            if (std.mem.find(u8, raw[first_nl + 1 ..], "\n---")) |rel| {
                 const fm_start = first_nl + 1;
                 const fm_end = fm_start + rel;
                 const fm = raw[fm_start..fm_end];
@@ -134,7 +134,7 @@ fn parseWorkflow(alloc: std.mem.Allocator, stem: []const u8, rel_path: []const u
                 while (lines.next()) |line| {
                     const trimmed = std.mem.trim(u8, line, " \t\r");
                     if (trimmed.len == 0 or trimmed[0] == '#') continue;
-                    const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+                    const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
                     const key = std.mem.trim(u8, trimmed[0..colon], " \t");
                     var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
                     if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
@@ -165,7 +165,7 @@ fn inferDescription(body: []const u8) []const u8 {
         while (t.len > 0 and t[0] == '#') t = std.mem.trim(u8, t[1..], " \t");
         if (t.len == 0) continue;
         const end = @min(t.len, 120);
-        if (std.mem.indexOfScalar(u8, t[0..end], '.')) |dot| {
+        if (std.mem.findScalar(u8, t[0..end], '.')) |dot| {
             if (dot >= 20) return t[0 .. dot + 1];
         }
         return t[0..end];
@@ -174,7 +174,7 @@ fn inferDescription(body: []const u8) []const u8 {
 }
 
 fn instantiate(alloc: std.mem.Allocator, body: []const u8, args: []const u8) ![]const u8 {
-    if (std.mem.indexOf(u8, body, "{{") == null and std.mem.indexOf(u8, body, "$ARGUMENTS") == null) {
+    if (std.mem.find(u8, body, "{{") == null and std.mem.find(u8, body, "$ARGUMENTS") == null) {
         if (args.len == 0) return body;
         return try std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ body, args });
     }
@@ -277,16 +277,16 @@ fn writeOneWithChain(out: *lib.Out, wf: FileWorkflow, chain_json: []const u8) !v
 fn extractChainFrontmatter(alloc: std.mem.Allocator, body: []const u8) !?[]const u8 {
     // Very small frontmatter chain extraction: look for `chain:` line in leading `---` block.
     if (!std.mem.startsWith(u8, body, "---")) return null;
-    const first_nl = std.mem.indexOfScalar(u8, body, '\n') orelse return null;
+    const first_nl = std.mem.findScalar(u8, body, '\n') orelse return null;
     const first_line = std.mem.trim(u8, body[0..first_nl], " \t\r");
     if (!std.mem.eql(u8, first_line, "---")) return null;
-    const rel = std.mem.indexOf(u8, body[first_nl + 1 ..], "\n---") orelse return null;
+    const rel = std.mem.find(u8, body[first_nl + 1 ..], "\n---") orelse return null;
     const fm = body[first_nl + 1 .. first_nl + 1 + rel];
     var lines = std.mem.splitScalar(u8, fm, '\n');
     while (lines.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0 or trimmed[0] == '#') continue;
-        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, trimmed, ':') orelse continue;
         const key = std.mem.trim(u8, trimmed[0..colon], " \t");
         if (!std.ascii.eqlIgnoreCase(key, "chain")) continue;
         var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");

@@ -80,7 +80,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(lib.alloc);
     if (metas.items.len == 0) {
-        try buf.appendSlice(lib.alloc, "(no sessions yet)");
+        try buf.appendSlice(lib.alloc, "No saved conversations yet. Start one with `clanker repl` or `clanker run \"<task>\"`.");
         return lib.okText(out, buf.items);
     }
 
@@ -89,7 +89,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (buf.items.len > 0) try buf.append(lib.alloc, '\n');
         try buf.appendSlice(lib.alloc, m.id);
         try buf.appendSlice(lib.alloc, "  ");
-        const first_nl = std.mem.indexOfScalar(u8, m.title, '\n') orelse m.title.len;
+        const first_nl = std.mem.findScalar(u8, m.title, '\n') orelse m.title.len;
         const one_line = m.title[0..first_nl];
         const title = if (one_line.len > 60) one_line[0..60] else one_line;
         try buf.appendSlice(lib.alloc, title);

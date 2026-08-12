@@ -68,7 +68,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// Models wrap JSON in ```json fences even when told not to.
 fn stripFences(s: []const u8) []const u8 {
     if (!std.mem.startsWith(u8, s, "```")) return s;
-    const first_nl = std.mem.indexOfScalar(u8, s, '\n') orelse return s;
+    const first_nl = std.mem.findScalar(u8, s, '\n') orelse return s;
     const body = s[first_nl + 1 ..];
     const close = std.mem.lastIndexOf(u8, body, "```") orelse return body;
     return std.mem.trim(u8, body[0..close], " \t\r\n");

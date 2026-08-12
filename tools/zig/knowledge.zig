@@ -359,7 +359,7 @@ fn actionSearch(obj: std.json.Value, out: *lib.Out) !void {
         for (col.docs) |doc| {
             const lower_buf = lib.alloc.alloc(u8, doc.content.len) catch continue;
             for (doc.content, 0..) |c, i| lower_buf[i] = std.ascii.toLower(c);
-            if (std.mem.indexOf(u8, lower_buf, q_lower)) |pos| {
+            if (std.mem.find(u8, lower_buf, q_lower)) |pos| {
                 const start = if (pos > 120) pos - 120 else 0;
                 const end = @min(doc.content.len, pos + q_lower.len + 120);
                 hits.append(lib.alloc, .{

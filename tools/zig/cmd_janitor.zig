@@ -42,7 +42,7 @@ fn isImproveLog(name: []const u8) bool {
 }
 
 fn removable(state_dir: []const u8, path: []const u8) bool {
-    if (std.mem.indexOf(u8, path, "..") != null) return false;
+    if (std.mem.find(u8, path, "..") != null) return false;
     var buf: [512]u8 = undefined;
     const staging_prefix = std.fmt.bufPrint(&buf, "{s}/staging/imp-", .{state_dir}) catch return false;
     if (std.mem.startsWith(u8, path, staging_prefix)) {
