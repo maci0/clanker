@@ -54,6 +54,7 @@ pub const RoomInfo = struct {
     last_ts: i64 = 0,
     last_from: []const u8 = "",
     last_text: []const u8 = "",
+    topic: ?[]const u8 = null,
 };
 
 /// Durable inbox position. Message identity is the primary cursor because
@@ -214,11 +215,18 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
             gop.value_ptr.last_text = if (m.text.len > 120) m.text[0..120] else m.text;
         }
     }
+    // Enrich with room metadata (topic, pins)
+    const meta = loadMeta(base, io, arena, state_dir) catch null;
     const out = try arena.alloc(RoomInfo, by_room.count());
     var idx: usize = 0;
     var it = by_room.iterator();
     while (it.next()) |kv| {
         out[idx] = kv.value_ptr.*;
+        if (meta) |m| {
+            if (m.map.getPtr(kv.key_ptr.*)) |rm| {
+                out[idx].topic = rm.topic;
+            }
+        }
         idx += 1;
     }
     return out;

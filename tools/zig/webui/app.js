@@ -2908,6 +2908,16 @@ function buildChatMessage(m) {
 
   var text = document.createElement("div");
   text.className = "chat-text";
+  // Deleted messages
+  if (m.deleted) {
+    text.classList.add("chat-deleted");
+    text.textContent = "[This message was deleted]";
+    wrap.appendChild(text);
+    wrap.setAttribute("data-deleted", "true");
+    _lastChatFrom = m.from;
+    _lastChatTs = m.ts;
+    return wrap;
+  }
   var said = boardActionLine(m.text);
   if (said) {
     text.classList.add("chat-action");
@@ -2932,13 +2942,22 @@ function buildChatMessage(m) {
       wrap._unfurl = unfurl;
     }
   }
+  // Edited indicator
+  if (m.edited) {
+    var edited = document.createElement("span");
+    edited.className = "chat-edited";
+    edited.textContent = " (edited)";
+    edited.title = "Edited";
+    text.appendChild(edited);
+  }
   wrap.appendChild(text);
   if (wrap._unfurl) wrap.appendChild(wrap._unfurl);
-  // ---- reactions (local, aggregated) ----
-  var reactStore = (function(){ try{ return JSON.parse(localStorage.getItem("clanker.reactions")||"{}"); }catch(_){ return {}; }})();
-  function saveReacts(){ try{ localStorage.setItem("clanker.reactions", JSON.stringify(reactStore)); }catch(_){} }
-  var msgKey = m.id || (m.from+":"+m.ts+":"+m.text.slice(0,40));
-  var reacts = reactStore[msgKey] || {};
+  // ---- server-side reactions (aggregated from m.reactions array) ----
+  // m.reactions is [{emoji,from}, ...] — group into {emoji: [from1, ...]}
+  var reacts = {};
+  if (m.reactions && m.reactions.length) {
+    m.reactions.forEach(function(r){ reacts[r.emoji] = reacts[r.emoji] || []; reacts[r.emoji].push(r.from); });
+  }
   var reactionsBar = document.createElement("div"); reactionsBar.className = "chat-reactions";
   var EMOJIS = ["👍","❤️","🎉","🔥","👀","✅"];
   function renderReacts(){
@@ -2954,12 +2973,19 @@ function buildChatMessage(m) {
     });
   }
   function toggleReact(emoji){
-    reacts[emoji] = reacts[emoji] || [];
-    var at = reacts[emoji].indexOf(instanceName);
-    if(at!==-1) reacts[emoji].splice(at,1); else reacts[emoji].push(instanceName);
-    if(!reacts[emoji].length) delete reacts[emoji];
-    reactStore[msgKey]=reacts; if(!Object.keys(reacts).length) delete reactStore[msgKey];
-    saveReacts(); renderReacts();
+    // Call the server-side react endpoint
+    fetch("/api/chat/react", { method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, emoji: emoji })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok){
+        // Optimistic update
+        reacts[emoji] = reacts[emoji] || [];
+        var at = reacts[emoji].indexOf(instanceName);
+        if(d.added) { if(at===-1) reacts[emoji].push(instanceName); }
+        else { if(at!==-1) reacts[emoji].splice(at,1); if(!reacts[emoji].length) delete reacts[emoji]; }
+        renderReacts();
+      }
+    }).catch(function(){});
   }
   renderReacts();
   wrap.appendChild(reactionsBar);
@@ -3014,6 +3040,58 @@ function buildChatMessage(m) {
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
     actions.appendChild(b);
   });
+  // Pin button
+  var pinBtn = document.createElement("button");
+  pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.textContent = "📌"; pinBtn.title = "Pin/Unpin";
+  pinBtn.setAttribute("aria-label", "Pin message");
+  pinBtn.addEventListener("click", function(e){ e.stopPropagation();
+    fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok) pollChat(el.chatRoom.value);
+    }).catch(function(){});
+  });
+  actions.appendChild(pinBtn);
+  // Edit + Delete only for own messages
+  if (m.from === instanceName) {
+    var editBtn = document.createElement("button");
+    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "✏️"; editBtn.title = "Edit message";
+    editBtn.setAttribute("aria-label", "Edit message");
+    editBtn.addEventListener("click", function(e){ e.stopPropagation();
+      var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
+      var inp = document.createElement("input"); inp.type="text"; inp.className="chat-edit-input"; inp.value=cur;
+      text.textContent = ""; text.appendChild(inp); inp.focus();
+      function finishEdit(){
+        var v = inp.value.trim();
+        if(v && v !== m.text){
+          fetch("/api/chat/edit", { method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, text: v })
+          }).then(function(r){ return r.json(); }).then(function(d){
+            if(d.ok){ m.text = v; m.edited = true; text.textContent = v;
+              var ed = document.createElement("span"); ed.className="chat-edited"; ed.textContent=" (edited)"; text.appendChild(ed);
+            } else { text.textContent = m.text; }
+          }).catch(function(){ text.textContent = m.text; });
+        } else { text.textContent = m.text; if(m.edited){
+          var ed2 = document.createElement("span"); ed2.className="chat-edited"; ed2.textContent=" (edited)"; text.appendChild(ed2); }}
+      }
+      inp.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); finishEdit(); } if(ev.key==="Escape"){ text.textContent=m.text; if(m.edited){
+        var ed3=document.createElement("span"); ed3.className="chat-edited"; ed3.textContent=" (edited)"; text.appendChild(ed3); }} });
+      inp.addEventListener("blur", finishEdit);
+    });
+    actions.appendChild(editBtn);
+    var delBtn = document.createElement("button");
+    delBtn.type = "button"; delBtn.className = "secondary"; delBtn.textContent = "🗑️"; delBtn.title = "Delete message";
+    delBtn.setAttribute("aria-label", "Delete message");
+    delBtn.addEventListener("click", function(e){ e.stopPropagation();
+      if(!confirm("Delete this message?")) return;
+      fetch("/api/chat/delete", { method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
+      }).catch(function(){});
+    });
+    actions.appendChild(delBtn);
+  }
   wrap.appendChild(actions);
   // update grouping state for next message
   _lastChatFrom = m.from;

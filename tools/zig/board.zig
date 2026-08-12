@@ -100,6 +100,24 @@ fn checklistComplete(card: *const cards.Card) bool {
     return true;
 }
 
+fn checklistItemReady(card: *const cards.Card, id: []const u8) bool {
+    for (card.subtasks) |sub| {
+        if (!std.mem.eql(u8, sub.id, id)) continue;
+        for (sub.depends_on) |dep_id| {
+            var satisfied = false;
+            for (card.subtasks) |candidate| {
+                if (std.mem.eql(u8, candidate.id, dep_id) and candidate.done) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            if (!satisfied) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 test "done requires every checklist node and dependency cycles are detectable" {
     const subs = [_]cards.Subtask{
         .{ .id = "a", .text = "root", .done = true, .depends_on = &.{"b"} },
@@ -109,6 +127,8 @@ test "done requires every checklist node and dependency cycles are detectable" {
     try std.testing.expect(!checklistComplete(&card));
     try std.testing.expect(checklistReaches(&card, "a", "b", 0));
     try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
+    try std.testing.expect(!checklistItemReady(&card, "a"));
+    try std.testing.expect(checklistItemReady(&card, "b"));
 }
 
 const Sent = struct {
@@ -425,6 +445,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk .{ .action = "subtask_add", .todo = req.id, .text = text, .parent = req.parent_subtask_id };
     } else if (std.mem.eql(u8, op, "subtask_toggle")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");
+        if ((req.done orelse true) and !checklistItemReady(cards.get(list, req.id).?, sid))
+            return lib.fail(out, "finish this checklist item's dependencies first");
         break :blk .{ .action = "subtask_toggle", .todo = req.id, .subtask = sid, .done = req.done orelse true };
     } else if (std.mem.eql(u8, op, "subtask_remove")) blk: {
         const sid = subtask_id orelse return lib.fail(out, "which subtask?");

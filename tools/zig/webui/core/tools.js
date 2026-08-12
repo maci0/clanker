@@ -75,6 +75,12 @@ function buildToolRow(t) {
     llm.textContent = "llm";
     row.appendChild(llm);
   }
+  (t.tags || []).forEach(function (tagName) {
+    var tg = document.createElement("span");
+    tg.className = "tool-tag";
+    tg.textContent = tagName;
+    row.appendChild(tg);
+  });
   if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
   var desc = document.createElement("span");
   desc.className = "tool-desc";
@@ -181,6 +187,7 @@ export function showToolDetail(t) {
   if (t.sequential) tags.push("sequential");
   if (t.check) tags.push("check");
   if (t.transform) tags.push("transform " + t.transform.phase + " (order " + t.transform.order + ")");
+  (t.tags || []).forEach(function (tagName) { tags.push(tagName); });
   tags.push(t.enabled ? "enabled" : "disabled");
   meta.textContent = "  " + tags.join("  \u00b7  ");
   titleWrap.appendChild(meta);
@@ -403,7 +410,8 @@ export function bindTools(ctx) {
     ctx.bind(_el.tools, _toolState, function (s) {
       var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
         return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
-          (t.description || "").toLowerCase().indexOf(s.filter) !== -1;
+          (t.description || "").toLowerCase().indexOf(s.filter) !== -1 ||
+          (t.tags || []).some(function (tagName) { return tagName.toLowerCase().indexOf(s.filter) !== -1; });
       });
       _el.toolsStatus.textContent = s.filter
         ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")

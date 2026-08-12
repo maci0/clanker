@@ -1287,6 +1287,11 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 .chat-reactions:empty { display: none; }
 .chat-reaction { font-size: 12px; padding: 0.1rem 0.4rem; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface-2); cursor: pointer; }
 .chat-reaction[data-mine="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.chat-edited { font-size: 11px; color: var(--fg-muted); font-style: italic; }
+.chat-deleted { color: var(--fg-muted); font-style: italic; }
+.chat-msg-deleted .chat-actions { display: none; }
+.chat-edit-input { width: 100%; padding: 0.3rem 0.5rem; font: inherit; font-size: 13px; background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px; outline: none; }
+.chat-topic { font-size: 12px; color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
 .chat-thread-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; font-size: 12px; }
 .chat-thread-bar[hidden] { display: none; }
 .chat-thread-bar button { min-height: 22px; padding: 0 0.5rem; font-size: 11px; border-radius: 999px; }
@@ -2030,30 +2035,55 @@ h2#session-title {
 .board {
   display: flex; gap: var(--space-3); margin-top: var(--space-4);
   overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start;
+  /* Trello-style: fill available height so columns scroll internally */
+  min-height: 60vh;
 }
 .board-col {
-  flex: 1 1 0; min-width: 13.5rem; display: flex; flex-direction: column;
+  flex: 1 1 0; min-width: 17rem; max-width: 22rem; display: flex; flex-direction: column;
   border: 0; border-radius: 14px;
-  background: var(--surface-2); max-height: 32rem;
+  background: var(--surface-2); max-height: calc(100vh - 14rem);
   padding-top: 0.25rem;
+  transition: background 180ms ease, box-shadow 180ms ease, min-width 250ms ease, max-width 250ms ease;
 }
-.board-col[data-collapsed="true"] { min-width: 2.6rem; max-width: 2.6rem; }
+.board-col[data-collapsed="true"] { min-width: 2.6rem; max-width: 2.6rem; cursor: pointer; }
 .board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
 .board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.06em; }
-.board-col[data-drop="true"] { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); box-shadow: inset 0 0 0 2px var(--accent); }
+.board-col[data-collapsed="true"] .board-col-actions { display: none; }
+.board-col[data-drop="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 2px var(--accent); }
 .board-col[data-drop="true"] .board-empty-slot { border-color: var(--accent); color: var(--accent-text); }
 .board-col-head {
-  display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3);
+  display: flex; justify-content: space-between; align-items: center; gap: var(--space-2);
   padding: 0.65rem 0.75rem 0.5rem; border-bottom: 0;
   font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+  user-select: none; -webkit-user-select: none;
 }
-.board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; flex: 1; min-width: 0; }
 .board-col-actions { display: flex; gap: 0.25rem; align-items: center; }
 .board-col-actions button { min-height: 24px; padding: 0 0.4rem; font-size: 11px; border-radius: 999px; }
-.board-quick-add { display: flex; gap: 0.4rem; padding: 0.4rem 0.5rem; border-top: 1px solid var(--rule); background: var(--surface); border-radius: 0 0 14px 14px; }
+.board-quick-add { padding: 0.4rem 0.5rem; border-top: 1px solid var(--rule); background: var(--surface); border-radius: 0 0 14px 14px; }
 .board-quick-add[hidden] { display: none; }
-.board-quick-add input { flex: 1; min-height: 32px; font-size: 12px; border-radius: 999px; }
-.board-quick-add button { min-height: 32px; font-size: 12px; border-radius: 999px; }
+/* Trello-style: add-card shows a placeholder button, expanding to textarea on click */
+.board-quick-add .board-add-trigger {
+  display: flex; align-items: center; gap: 0.4rem; width: 100%; padding: 0.35rem 0.5rem;
+  border: none; background: none; color: var(--fg-muted); font-size: 12px; font-family: var(--sans);
+  cursor: pointer; border-radius: 8px; transition: background 120ms ease, color 120ms ease;
+}
+.board-quick-add .board-add-trigger:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.board-quick-add .board-add-trigger .icon { opacity: 0.6; }
+.board-quick-add .board-add-form { display: none; flex-direction: column; gap: 0.4rem; }
+.board-quick-add.is-adding .board-add-trigger { display: none; }
+.board-quick-add.is-adding .board-add-form { display: flex; }
+.board-quick-add .board-add-form textarea {
+  width: 100%; min-height: 54px; max-height: 140px; resize: vertical; font-size: 13px;
+  border-radius: 8px; padding: 0.5rem 0.6rem; font-family: var(--sans);
+  border: 1px solid var(--rule); background: var(--surface);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06); line-height: 1.4;
+}
+.board-quick-add .board-add-form textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.board-quick-add .board-add-actions { display: flex; gap: 0.4rem; align-items: center; }
+.board-quick-add .board-add-actions button { min-height: 32px; font-size: 12px; border-radius: 8px; }
+.board-quick-add .board-add-actions .board-add-cancel { background: none; border: none; color: var(--fg-muted); cursor: pointer; padding: 0 0.4rem; font-size: 16px; line-height: 1; }
+.board-quick-add .board-add-actions .board-add-cancel:hover { color: var(--fg); }
 .board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .board-col-count[data-over="true"] { color: var(--warn-text); }
 .board-col[data-over="true"] { box-shadow: inset 0 0 0 1.5px var(--warn); }
@@ -2061,8 +2091,14 @@ h2#session-title {
 .board-cards {
   list-style: none; margin: 0; padding: 0 var(--space-2) var(--space-2);
   display: flex; flex-direction: column; gap: var(--space-2);
-  overflow-y: auto; min-height: 4.5rem;
+  overflow-y: auto; min-height: 2rem; flex: 1;
+  /* smooth scrolling for internal scroll */
+  scroll-behavior: smooth;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 15%, transparent) transparent;
 }
+.board-cards::-webkit-scrollbar { width: 6px; }
+.board-cards::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 15%, transparent); border-radius: 999px; }
+.board-cards::-webkit-scrollbar-track { background: transparent; }
 .board-empty-slot {
   border: 1px dashed var(--rule); border-radius: var(--radius);
   padding: 1rem 0.75rem; text-align: center;
@@ -2070,44 +2106,116 @@ h2#session-title {
   background: color-mix(in srgb, var(--surface) 70%, var(--surface-2));
 }
 .board-empty-slot button { margin-top: 0.5rem; min-height: 28px; font-size: 12px; border-radius: 999px; }
+
+/* ---- Drop indicator: thin line between cards showing where a card will land ---- */
+.board-drop-indicator {
+  height: 2px; background: var(--accent); border-radius: 999px; margin: -1px 0.5rem;
+  pointer-events: none; transition: opacity 120ms ease;
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
 /* A card is a small plate mounted in its column's channel. */
 .card {
   text-align: left; width: 100%; cursor: pointer;
-  padding: 0.65rem 0.75rem; border: 1px solid var(--rule); border-radius: 12px;
+  padding: 0; border: 1px solid var(--rule); border-radius: 8px;
   background: var(--surface); color: var(--fg);
   font-family: var(--sans); font-size: 13px; line-height: 1.45;
-  display: flex; flex-direction: column; gap: 0.4rem;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  display: flex; flex-direction: column;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  transition: border-color 140ms ease, box-shadow 180ms ease, transform 180ms ease, opacity 180ms ease;
+  position: relative; overflow: hidden;
 }
-.card:hover { border-color: var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.card:hover { border-color: var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1; }
 .card:hover .card-title, .card:focus-visible .card-title { color: var(--accent-text); }
 .card:active { transform: translateY(0); }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.card[aria-current="true"] { box-shadow: inset 2px 0 0 var(--accent), 0 1px 2px rgba(0, 0, 0, 0.1); }
+.card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), 0 1px 3px rgba(0, 0, 0, 0.1); }
 .card[aria-current="true"] .card-title { color: var(--accent-text); }
-.card[data-dragging="true"] { opacity: 0.5; transform: rotate(1deg) scale(1.02); }
-.card-cover { height: 6px; border-radius: 999px; margin: -0.65rem -0.75rem 0.4rem; background: var(--rule); overflow: hidden; }
-.card-cover[data-priority="high"] { background: var(--danger); }
-.card-cover[data-priority="low"] { background: var(--surface-2); }
-.card-cover-img { display: block; width: 100%; height: 84px; object-fit: cover; border-radius: 10px 10px 0 0; margin: -6px 0 0; }
+.card[data-dragging="true"] { opacity: 0.35; transform: scale(0.97); box-shadow: none; }
+.card-body { padding: 0.55rem 0.65rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; }
+
+/* Trello-style card cover: colored strip at top */
+.card-cover { height: 6px; border-radius: 0; margin: 0; background: var(--rule); flex-shrink: 0; }
+.card-cover[data-priority="high"] { background: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 75%, #ff6b6b)); height: 4px; }
+.card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }
+.card-cover[data-color] { height: 32px; }
+.card-cover[data-color="green"] { background: linear-gradient(135deg, #0a7a2e, #2cb355); }
+.card-cover[data-color="yellow"] { background: linear-gradient(135deg, #9a7a0a, #d4a80a); }
+.card-cover[data-color="orange"] { background: linear-gradient(135deg, #c45a0a, #e8850a); }
+.card-cover[data-color="red"] { background: linear-gradient(135deg, #c41212, #e84040); }
+.card-cover[data-color="purple"] { background: linear-gradient(135deg, #6b2fb8, #9055d4); }
+.card-cover[data-color="blue"] { background: linear-gradient(135deg, #0b5ab8, #3a8aed); }
+.card-cover-img { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 7px 7px 0 0; }
 .card-cover--img { height: auto; background: transparent; }
-.card-labels { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.card-label { font-size: 10px; font-weight: 700; letter-spacing: 0.02em; padding: 0.05rem 0.4rem; border-radius: 999px; color: #fff; line-height: 1.4; }
-.card-label[data-color="green"] { background: #0a7a2e; }
-.card-label[data-color="yellow"] { background: #9a7a0a; color: #111; }
-.card-label[data-color="orange"] { background: #c45a0a; }
-.card-label[data-color="red"] { background: #c41212; }
-.card-label[data-color="purple"] { background: #6b2fb8; }
-.card-label[data-color="blue"] { background: #0b5ab8; }
-.card-title { overflow-wrap: anywhere; line-height: 1.35; }
+
+/* Trello-style labels: pill chips on card face */
+.card-labels { display: flex; flex-wrap: wrap; gap: 3px; }
+.card-label {
+  font-size: 0; font-weight: 700; letter-spacing: 0.02em;
+  padding: 0; width: 40px; height: 8px; border-radius: 4px;
+  color: #fff; line-height: 1.4; transition: all 150ms ease; cursor: pointer;
+}
+/* On hover, labels expand to show text */
+.card:hover .card-label, .card:focus-within .card-label {
+  font-size: 10px; height: auto; padding: 0.05rem 0.4rem; width: auto; min-width: 40px;
+}
+.card-label[data-color="green"] { background: #22a24a; }
+.card-label[data-color="yellow"] { background: #c9a50a; color: #111; }
+.card-label[data-color="orange"] { background: #e07a1a; }
+.card-label[data-color="red"] { background: #e04040; }
+.card-label[data-color="purple"] { background: #8b55d4; }
+.card-label[data-color="blue"] { background: #2a7aed; }
+.card-label[data-color="sky"] { background: #5ab5e8; color: #111; }
+.card-label[data-color="pink"] { background: #e85a9a; }
+.card-label[data-color="lime"] { background: #6ab82f; color: #111; }
+.card-label[data-color="black"] { background: #444; }
+
+.card-title { overflow-wrap: anywhere; line-height: 1.35; font-weight: 500; }
+.card-desc-preview { color: var(--fg-muted); font-size: 11px; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin-top: -0.1rem; }
+
+/* Trello-style card badges row */
+.card-badges { display: flex; flex-wrap: wrap; gap: 0.2rem 0.5rem; align-items: center; margin-top: 0.1rem; }
+.card-badge {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums;
+  border-radius: 4px; padding: 0.1rem 0.3rem;
+}
+.card-badge .icon { width: 14px; height: 14px; opacity: 0.65; }
+.card-badge[data-due="soon"] { color: var(--on-danger); background: var(--warn); }
+.card-badge[data-due="late"] { color: var(--on-danger); background: var(--danger); }
+.card-badge[data-done="true"] { color: var(--ok); }
+.card-badge[data-done="true"] .icon { opacity: 1; }
+
 .card-meta { display: flex; flex-wrap: wrap; gap: 0.3rem 0.5rem; color: var(--fg-muted); font-variant-numeric: tabular-nums; font-size: 11px; line-height: 1.3; }
 .card-flag { border-radius: 999px; padding: 0.1rem 0.5rem; border: 1px solid var(--rule); font-size: 11px; font-weight: 500; }
 .card-flag[data-priority="high"] { color: var(--on-danger); background: var(--danger); border-color: var(--danger); }
 .card-flag[data-priority="low"] { color: var(--fg-muted); background: color-mix(in srgb, var(--surface-2) 85%, transparent); }
-.card-members { display: flex; align-items: center; gap: -0.35rem; margin-left: auto; }
-.card-member { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--on-accent); background: var(--accent); border: 2px solid var(--surface); margin-left: -0.35rem; }
+.card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; margin-top: 0.15rem; }
+.card-members { display: flex; align-items: center; margin-left: auto; }
+.card-member {
+  width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center;
+  font-size: 10px; font-weight: 700; color: var(--on-accent); background: var(--accent);
+  border: 2px solid var(--surface); margin-left: -0.35rem;
+  transition: transform 120ms ease;
+}
 .card-member:first-child { margin-left: 0; }
+.card-member:hover { transform: translateY(-2px); z-index: 2; }
+
+/* Quick actions overlay on card hover */
+.card-quick-actions {
+  position: absolute; top: 2px; right: 2px;
+  display: none; gap: 2px; z-index: 3;
+  background: var(--surface); border-radius: 6px; padding: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid var(--rule);
+}
+.card:hover .card-quick-actions { display: flex; }
+.card-quick-actions button {
+  min-width: 26px; min-height: 26px; padding: 0; border: none; background: none;
+  color: var(--fg-muted); cursor: pointer; border-radius: 4px; display: grid; place-items: center;
+  font-size: 12px; transition: background 100ms ease, color 100ms ease;
+}
+.card-quick-actions button:hover { background: var(--surface-2); color: var(--fg); }
+
 /* Blue marks operator action; a due date is a reading, in signal amber or red. */
 .card-flag[data-due="soon"] { color: var(--on-danger); background: var(--warn); border-color: var(--warn); }
 .card-flag[data-due="late"] { color: var(--on-danger); background: var(--danger); border-color: var(--danger); }
@@ -2115,8 +2223,89 @@ h2#session-title {
 .card-flag[data-goal="true"] { color: var(--accent-text); background: color-mix(in srgb, var(--surface-2) 88%, transparent); }
 .card-progress { color: var(--fg-muted); font-size: 11px; }
 .card-progress-bar { height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 0.2rem; }
-.card-progress-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.card-progress-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 300ms ease; }
 .card-progress-bar[data-done="true"] > span { background: var(--ok-fill); }
+
+/* Drag ghost styling */
+.card.board-drag-ghost {
+  position: fixed; pointer-events: none; z-index: 9999;
+  transform: rotate(3deg) scale(1.04); opacity: 0.92;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.1);
+  max-width: 20rem; transition: none;
+}
+
+/* Trello-style card detail: slides in from the right like a panel */
+.card-detail-panel {
+  background: var(--surface); border-radius: 8px;
+  max-width: 48rem; width: 100%; margin: 2rem auto;
+  max-height: calc(100vh - 4rem); overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+  animation: card-detail-enter 200ms ease;
+}
+@keyframes card-detail-enter {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.card-detail-header {
+  display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-4) 0;
+  position: sticky; top: 0; background: var(--surface); z-index: 2;
+}
+.card-detail-header .card-detail-icon { flex: none; font-size: 20px; opacity: 0.5; margin-top: 0.15rem; }
+.card-detail-header h3 { flex: 1; margin: 0; font-size: 18px; line-height: 1.3; font-weight: 600; }
+.card-detail-header .card-detail-close {
+  flex: none; min-width: 32px; min-height: 32px; padding: 0; border: none; background: none;
+  color: var(--fg-muted); cursor: pointer; border-radius: 999px; font-size: 20px;
+  display: grid; place-items: center; transition: background 120ms ease;
+}
+.card-detail-header .card-detail-close:hover { background: var(--surface-2); color: var(--fg); }
+.card-detail-layout {
+  display: grid; grid-template-columns: 1fr 11rem; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+@media (max-width: 40rem) { .card-detail-layout { grid-template-columns: 1fr; } }
+.card-detail-main { min-width: 0; }
+.card-detail-sidebar { display: flex; flex-direction: column; gap: var(--space-2); }
+.card-detail-sidebar-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); margin-bottom: 0.15rem; }
+.card-detail-sidebar button {
+  width: 100%; text-align: left; min-height: 32px; font-size: 12px;
+  border-radius: 6px; padding: 0.3rem 0.5rem; background: var(--surface-2);
+  border: 1px solid transparent; color: var(--fg); cursor: pointer;
+  transition: background 120ms ease;
+}
+.card-detail-sidebar button:hover { background: color-mix(in srgb, var(--fg) 12%, var(--surface-2)); }
+
+/* Label picker inside card detail */
+.label-picker { display: flex; flex-wrap: wrap; gap: 4px; padding: var(--space-2) 0; }
+.label-picker-item {
+  width: 48px; height: 32px; border-radius: 6px; cursor: pointer; border: 2px solid transparent;
+  transition: transform 100ms ease, border-color 100ms ease;
+  position: relative;
+}
+.label-picker-item:hover { transform: scale(1.12); }
+.label-picker-item[data-selected="true"] { border-color: var(--fg); }
+.label-picker-item[data-selected="true"]::after {
+  content: "✓"; position: absolute; inset: 0; display: grid; place-items: center;
+  color: #fff; font-weight: 700; font-size: 14px; text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+.label-picker-item[data-color="green"] { background: #22a24a; }
+.label-picker-item[data-color="yellow"] { background: #c9a50a; }
+.label-picker-item[data-color="orange"] { background: #e07a1a; }
+.label-picker-item[data-color="red"] { background: #e04040; }
+.label-picker-item[data-color="purple"] { background: #8b55d4; }
+.label-picker-item[data-color="blue"] { background: #2a7aed; }
+.label-picker-item[data-color="sky"] { background: #5ab5e8; }
+.label-picker-item[data-color="pink"] { background: #e85a9a; }
+.label-picker-item[data-color="lime"] { background: #6ab82f; }
+.label-picker-item[data-color="black"] { background: #444; }
+
+/* Board column count badge */
+.board-col-count-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 0.3rem;
+  border-radius: 999px; background: color-mix(in srgb, var(--fg) 10%, transparent);
+  font-size: 11px; font-weight: 600; color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
 .webui-plugin {
   display: flex;
   flex-wrap: wrap;

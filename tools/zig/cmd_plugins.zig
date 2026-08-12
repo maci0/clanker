@@ -40,6 +40,9 @@ const Descriptor = struct {
     fs_prefixes: []const []const u8 = &.{},
     exec_allow: []const []const u8 = &.{},
     category: []const u8 = "",
+    /// Free-form facets for filtering (distinct from category, which is the
+    /// one group a tool sorts into). e.g. ["destructive","read-only","git"].
+    tags: []const []const u8 = &.{},
     sequential: bool = false,
     check: bool = false,
 };
@@ -301,6 +304,10 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
         if (p.d.category.len > 0) {
             try s.objectField("category");
             try s.write(p.d.category);
+        }
+        if (p.d.tags.len > 0) {
+            try s.objectField("tags");
+            try s.write(p.d.tags);
         }
         if (p.d.sequential) {
             try s.objectField("sequential");
