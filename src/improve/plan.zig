@@ -78,6 +78,25 @@ pub fn parsePlan(
             else => {},
         };
 
+        // Intra-plan dedup: if this idea overlaps heavily with one already
+        // accepted from the same response, skip it. The model often returns
+        // 2-3 rephrasings of its best idea, each of which would burn an
+        // iteration on equivalent work.
+        const dominated = blk: {
+            const idea_toks = try tokens(arena, text);
+            if (idea_toks.len == 0) break :blk false;
+            for (out.items) |prev| {
+                const prev_toks = try tokens(arena, prev.text);
+                var hits: usize = 0;
+                for (idea_toks) |t| {
+                    if (containsToken(prev_toks, t)) hits += 1;
+                }
+                if (hits * 5 >= idea_toks.len * 3) break :blk true;
+            }
+            break :blk false;
+        };
+        if (dominated) continue;
+
         try out.append(arena, .{ .text = text, .files = try files.toOwnedSlice(arena) });
         if (out.items.len >= max_ideas) break;
     }
@@ -189,6 +208,25 @@ test "parsePlan strips a markdown fence" {
     const ideas = (try parsePlan(arena, raw, 6, 4)).?;
     try std.testing.expectEqual(@as(usize, 1), ideas.len);
     try std.testing.expectEqualStrings("do the thing", ideas[0].text);
+}
+
+test "parsePlan deduplicates ideas within the same response" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        \\{"ideas": [
+        \\  {"idea": "cache the tool registry between improve attempts", "files": []},
+        \\  {"idea": "add caching to the tool registry across improve attempts", "files": []},
+        \\  {"idea": "retry transient provider errors in the LLM client", "files": []}
+        \\]}
+    ;
+    const ideas = (try parsePlan(arena, raw, 6, 4)).?;
+    // The second idea is a rephrasing of the first; only 2 distinct ideas survive.
+    try std.testing.expectEqual(@as(usize, 2), ideas.len);
+    try std.testing.expectEqualStrings("cache the tool registry between improve attempts", ideas[0].text);
+    try std.testing.expectEqualStrings("retry transient provider errors in the LLM client", ideas[1].text);
 }
 
 test "parsePlan returns null for a patch proposal or an empty list" {
