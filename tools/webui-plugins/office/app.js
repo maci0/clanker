@@ -491,19 +491,19 @@ clanker.registerView({
     /* Three z's drifting up from a dozing head. With reduced motion they sit
        still: the state still reads, only the drift is skipped. */
     function drawZzz(px, py) {
-      ctx2d.font = "10px ui-monospace, monospace";
-      var t = reduced ? 0 : performance.now() / 1400;
+      ctx2d.font = "bold 13px ui-monospace, monospace";
+      var t = reduced ? 0 : performance.now() / 1600;
       for (var i = 0; i < 3; i++) {
         var ph = reduced ? i * 0.3 : (t + i * 0.33) % 1;
         var ch = i === 2 ? "Z" : "z";
-        var zx = px + TILE - 8 + ph * 7;
-        var zy = py - ph * 13;
-        var alpha = 0.95 - ph * 0.75;
+        var zx = px + TILE - 6 + ph * 8;
+        var zy = py - 6 - ph * 16;
+        var alpha = 1 - ph * 0.45;
         // Drawn twice, shadow then face: the drift crosses the dark board
-        // graphic, where a single dark glyph disappears entirely.
+        // graphic, where a single unbacked glyph disappears entirely.
         ctx2d.fillStyle = "rgba(10,14,28," + alpha.toFixed(2) + ")";
         ctx2d.fillText(ch, zx + 1, zy + 1);
-        ctx2d.fillStyle = "rgba(190,208,255," + alpha.toFixed(2) + ")";
+        ctx2d.fillStyle = "rgba(214,226,255," + alpha.toFixed(2) + ")";
         ctx2d.fillText(ch, zx, zy);
       }
     }
