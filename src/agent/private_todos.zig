@@ -254,3 +254,17 @@ test "todo_list reply for a full list of long escaped titles exceeds any fixed b
     try std.testing.expect(std.mem.indexOf(u8, listed, "\\\"\\\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, listed, "\"p1\"") != null);
 }
+
+test "todo_add rejects titles over the max length" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var list = List{ .alloc = t_alloc };
+    defer list.deinit();
+
+    const long_title = try arena.alloc(u8, max_title_len + 1);
+    @memset(long_title, 'x');
+    const result = try applyTodoOp(&list, arena, "todo_add", long_title, null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"ok\":false") != null);
+}
