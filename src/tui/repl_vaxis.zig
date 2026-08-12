@@ -45,6 +45,7 @@ const Agent = agent_loop.Agent;
 const log = @import("../util/log.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
+const width_mod = @import("width.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 
@@ -603,6 +604,7 @@ const Model = struct {
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
     status_buf: [192]u8 = undefined,
+    scroll_buf: [32]u8 = undefined,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op — there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -1583,9 +1585,8 @@ const Model = struct {
         // "-N" is how many transcript lines sit below the frozen window —
         // the reader's distance from the tail, and the cue that the view is
         // not following new output right now.
-        var scroll_buf: [24]u8 = undefined;
         const scroll_hint: []const u8 = if (self.view_end != null)
-            std.fmt.bufPrint(&scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
+            std.fmt.bufPrint(&self.scroll_buf, " \xc2\xb7 [scroll -{d}]", .{line_count - view_end}) catch " \xc2\xb7 [scroll]"
         else
             "";
         var phase_buf: [80]u8 = undefined;
@@ -1619,19 +1620,40 @@ const Model = struct {
         var children = try ctx.arena.alloc(vxfw.SubSurface, 1);
         children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
 
+        // The scrollbar claims the rightmost column whenever the transcript
+        // is taller than the region, so text wraps one column short of it.
+        const show_bar = line_count > avail_rows;
+        const text_width: u16 = if (show_bar) max.width -| 1 else max.width;
+
         var row: u16 = top;
-        if (line_count == 0 and !streaming and row < bottom) {
-            writeWrapped(surface, &row, bottom, max.width, "Type a task to begin. clanker streams tool work and keeps the conversation.", vaxis.Style{});
+        if (line_count == 0 and !streaming) {
+            // Empty state hugs the bottom, just above the input, the way a
+            // chat client opens rather than pinning a banner to the top.
+            row = bottom -| 5;
+            writeWrapped(surface, &row, bottom, text_width, "Type a task to begin. clanker streams tool work and keeps the conversation.", vaxis.Style{});
+            if (row < bottom) row += 1;
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, max.width, "  \"fix the failing test\"    \"explain src/main.zig\"    \"refactor the parser\"", dim);
+                writeWrapped(surface, &row, bottom, text_width, "  \"fix the failing test\"    \"explain src/main.zig\"    \"refactor the parser\"", dim);
             }
             if (row < bottom) row += 1;
             if (row < bottom) {
-                writeWrapped(surface, &row, bottom, max.width, "/model to switch models  /help for commands  Ctrl-C to quit", dim);
+                writeWrapped(surface, &row, bottom, text_width, "/model to switch models  /help for commands  Ctrl-C to quit", dim);
             }
         }
-        const start = tailStart(self.lines.items[0..view_end], avail_rows);
+        // Transcript layout: while a turn streams, content flows top-down as
+        // it arrives (the live tail is what the eye tracks). At rest and while
+        // scrolled back, the visible block is bottom-aligned so a short
+        // transcript sits against the input instead of floating at the top.
+        var start: usize = undefined;
+        if (streaming) {
+            start = tailStart(self.lines.items[0..view_end], avail_rows);
+            row = top;
+        } else {
+            const win = tailWindow(self.lines.items[0..view_end], view_end, avail_rows, text_width);
+            start = win.start;
+            row = top + (avail_rows - win.used_rows);
+        }
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.
         const fence_on = active.reset.len > 0;
@@ -1648,14 +1670,14 @@ const Model = struct {
                 var state = syntax.State.init(lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
                 if (syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs)) {
-                    writeWrappedSegments(ctx, surface, &row, bottom, max.width, segs.items);
+                    writeWrappedSegments(ctx, surface, &row, bottom, text_width, segs.items);
                 } else |_| {
-                    writeWrapped(surface, &row, bottom, max.width, l.text, dim);
+                    writeWrapped(surface, &row, bottom, text_width, l.text, dim);
                 }
             } else if (l.dim and transcript_mod.isToolCardLine(l.text)) {
                 // Tool cards (dim, left-bar shaped) get their own tint and a
                 // bar-preserving wrap.
-                writeWrappedCard(surface, &row, bottom, max.width, l.text, tool_style);
+                writeWrappedCard(surface, &row, bottom, text_width, l.text, tool_style);
             } else {
                 // An error turn's "[error: " prefix gets its own tint; the
                 // user's echoed prompt gets the accent colour; everything
@@ -1668,7 +1690,7 @@ const Model = struct {
                     dim
                 else
                     vaxis.Style{};
-                writeWrapped(surface, &row, bottom, max.width, l.text, style);
+                writeWrapped(surface, &row, bottom, text_width, l.text, style);
             }
             row += 1;
         }
@@ -1678,6 +1700,8 @@ const Model = struct {
         if (streaming and self.view_end == null and row < bottom and stream_snapshot.len > 0) {
             self.writeStream(ctx, surface, &row, bottom, stream_snapshot, fence_on, &syn_style);
         }
+
+        if (show_bar) drawScrollbar(surface, max.width - 1, top, bottom, start, view_end, line_count, rule_style, accent_style);
 
         if (self.has_selection) highlightSelection(surface, self.sel_start, self.sel_end);
         if (self.picker_open) self.drawModelPicker(surface, rule_style, tool_style);
@@ -1748,6 +1772,50 @@ fn tailStart(lines: []const Line, avail_rows: u16) usize {
     const n = lines.len;
     const want: usize = avail_rows;
     return if (n > want) n - want else 0;
+}
+
+/// How many terminal rows one transcript line occupies at `width`: its
+/// display width divided up by the wrap column, at least one. Embedded
+/// newlines are rare (finishTurn/printHelp pre-split on '\n') but counted so
+/// a line that does carry one still reserves its rows.
+fn lineRows(text: []const u8, width: u16) usize {
+    if (width == 0) return 1;
+    var rows: usize = 1;
+    var col: usize = 0;
+    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (it.nextCodepointSlice()) |cp| {
+        if (std.mem.eql(u8, cp, "\n")) {
+            rows += 1;
+            col = 0;
+            continue;
+        }
+        const w = width_mod.displayWidth(cp);
+        if (col + w > width) {
+            rows += 1;
+            col = 0;
+        }
+        col += w;
+    }
+    return rows;
+}
+
+/// The bottom-aligned window: walk backward from `view_end` accumulating
+/// wrapped rows until the next line would overflow `avail_rows`, so the
+/// newest line always lands at the bottom edge and nothing is clipped there
+/// (unlike tailStart's line-count guess). Returns the first visible line and
+/// the rows it and its successors occupy; `avail_rows - used_rows` is the
+/// blank offset that pins short transcripts to the bottom, chat-style.
+fn tailWindow(lines: []const Line, view_end: usize, avail_rows: u16, width: u16) struct { start: usize, used_rows: u16 } {
+    var used: usize = 0;
+    var start = view_end;
+    while (start > 0) {
+        const lr = lineRows(lines[start - 1].text, width);
+        if (used + lr > avail_rows and used > 0) break;
+        used += lr;
+        start -= 1;
+        if (used >= avail_rows) break;
+    }
+    return .{ .start = start, .used_rows = @intCast(@min(used, avail_rows)) };
 }
 
 // ---------------------------------------------------------------------
@@ -1842,9 +1910,56 @@ test "an anchored view end holds its lines while the transcript grows" {
     try std.testing.expectEqual(@as(usize, 30), clampViewEnd(10, 200, 30));
 }
 
+test "lineRows counts wrapped rows and honours embedded newlines" {
+    try std.testing.expectEqual(@as(usize, 1), lineRows("", 80));
+    try std.testing.expectEqual(@as(usize, 1), lineRows("short", 80));
+    try std.testing.expectEqual(@as(usize, 2), lineRows("0123456789", 5)); // 10 cols / 5
+    try std.testing.expectEqual(@as(usize, 3), lineRows("aa\nbb\ncc", 80)); // two newlines
+    try std.testing.expectEqual(@as(usize, 1), lineRows("anything", 0)); // zero width is one row
+}
+
+test "tailWindow bottom-aligns a short transcript and fills a tall one" {
+    const lines = [_]Line{
+        .{ .text = "one" },   .{ .text = "two" }, .{ .text = "three" },
+        .{ .text = "four" },  .{ .text = "five" },
+    };
+    // All five fit in ten rows: start at 0, used == the five short lines.
+    const short = tailWindow(&lines, lines.len, 10, 80);
+    try std.testing.expectEqual(@as(usize, 0), short.start);
+    try std.testing.expectEqual(@as(u16, 5), short.used_rows);
+    // Only three rows available: the window drops the two oldest lines and
+    // fills, so the newest line is never clipped.
+    const tall = tailWindow(&lines, lines.len, 3, 80);
+    try std.testing.expectEqual(@as(usize, 2), tall.start);
+    try std.testing.expectEqual(@as(u16, 3), tall.used_rows);
+}
+
 fn writeRow(surface: vxfw.Surface, row: u16, text: []const u8, style: vaxis.Style) void {
     var col: u16 = 0;
     writeRowAt(surface, row, &col, text, style);
+}
+
+/// A vertical scrollbar in column `col`, rows [top, bottom): a dim track with
+/// a brighter thumb whose position and length track the visible window
+/// (`start`..`view_end`) against the whole transcript (`line_count`). Drawn
+/// only when the transcript overflows, so an idle short session shows none.
+fn drawScrollbar(surface: vxfw.Surface, col: u16, top: u16, bottom: u16, start: usize, view_end: usize, line_count: usize, track: vaxis.Style, thumb: vaxis.Style) void {
+    if (bottom <= top or line_count == 0) return;
+    const track_h: usize = bottom - top;
+    // Thumb size and offset in track rows, proportional to the fraction of the
+    // transcript on screen. `min 1` keeps the thumb visible in a huge scroll.
+    const visible = view_end - start;
+    var thumb_h: usize = (visible * track_h + line_count - 1) / line_count;
+    if (thumb_h < 1) thumb_h = 1;
+    if (thumb_h > track_h) thumb_h = track_h;
+    var thumb_top: usize = (start * track_h) / line_count;
+    if (thumb_top + thumb_h > track_h) thumb_top = track_h - thumb_h;
+    var r: u16 = top;
+    while (r < bottom) : (r += 1) {
+        const in_thumb = (r - top) >= thumb_top and (r - top) < thumb_top + thumb_h;
+        const glyph = if (in_thumb) "\xe2\x96\x88" else "\xe2\x94\x82"; // full block / light vertical
+        surface.writeCell(col, r, .{ .char = .{ .grapheme = glyph, .width = 1 }, .style = if (in_thumb) thumb else track });
+    }
 }
 
 fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, style: vaxis.Style) void {
