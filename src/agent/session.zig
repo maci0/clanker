@@ -849,3 +849,23 @@ test "listSessions orders by most recently updated" {
     try std.testing.expectEqualStrings("newer", list[0].id);
     try std.testing.expectEqualStrings("older", list[1].id);
 }
+
+test "deleteSession on a missing session returns FileNotFound without touching the repo" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No session exists, so deletion must fail cleanly. Everything stays
+    // inside the temporary dir: nothing in the checkout (e.g. state/) may be
+    // created or modified, which is what keeps this test from interfering
+    // with the git tool's deny checks in the eval suite.
+    try std.testing.expectError(error.FileNotFound, deleteSession(io, arena, tmp.dir, "nope"));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, "state", .{}));
+}
