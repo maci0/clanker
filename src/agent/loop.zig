@@ -1421,8 +1421,7 @@ pub const Agent = struct {
         // answer in a prose preamble (e.g. "Here is the result:"). For the
         // answer_format eval we need the exact value, so fall back to the
         // first non-empty line and strip a leading "Answer:"/"Result:" prefix.
-        if (!json_extracted and !fence_extracted)
-        {
+        if (!json_extracted and !fence_extracted) {
             var last_line: []const u8 = s;
             var line_it = std.mem.tokenizeScalar(u8, s, '\n');
             while (line_it.next()) |line| {
