@@ -84,6 +84,14 @@ pub const Provider = struct {
     /// `/v1/messages`).
     path: ?[]const u8 = null,
 
+    /// How long `providers check` waits for this endpoint before giving up on
+    /// it, overriding `agent.provider_check_timeout_seconds` for this provider
+    /// alone (seconds). Null takes that global default; 0 means no ceiling.
+    /// Exists because one config mixes a LAN endpoint that either answers in a
+    /// blink or is switched off with hosted ones that legitimately take a few
+    /// seconds, and a single number cannot be short for both.
+    check_timeout_seconds: ?u32 = null,
+
     /// Name of the active model (sent as the API `model` field).
     /// Builds a provider with one model. JSON loading normalizes into exactly
     /// this shape, so programmatic callers (tests, ad-hoc providers) do not
@@ -177,6 +185,15 @@ pub const Agent = struct {
     /// threads, so it must be bounded: on timeout the tool gets the same
     /// "nobody attached" answer a headless run gets and the run proceeds.
     ask_timeout_seconds: u32 = 120,
+    /// How long `providers check` waits for one provider before reporting it
+    /// as timed out and moving on (seconds). Unbounded, a single unreachable
+    /// endpoint costs the whole sweep the OS's connect timeout (~75s on macOS)
+    /// with nothing else on screen, which reads as a hang and gets Ctrl-C'd
+    /// before the providers below it are ever reached. 10 leaves headroom for
+    /// a cold TLS handshake plus a first token from a hosted provider, so a
+    /// healthy one is not misreported. 0 disables the ceiling;
+    /// `[providers.<name>] check_timeout_seconds` overrides it per provider.
+    provider_check_timeout_seconds: u32 = 10,
     /// Gate write-capable tool calls (a descriptor with exec or filesystem
     /// access, or `"confirm": true`) on a human's allow/deny. `never` is
     /// today's behaviour; `browser` gates streaming web runs, where the
@@ -218,6 +235,7 @@ pub const AgentFields = struct {
     exec_pattern_allow: bool = false,
     seed: bool = false,
     ask_timeout_seconds: bool = false,
+    provider_check_timeout_seconds: bool = false,
     confirm_writes: bool = false,
 };
 
@@ -597,11 +615,13 @@ pub const Config = struct {
             .base_url = try jsonStr(try required(obj, "base_url"), "base_url"),
         };
         warnUnknownKeys(obj, &.{
-            "base_url",    "kind",                 "project",          "location",
-            "api_key_env", "service_account_file", "path",             "default_model",
+            "base_url",         "kind",          "project",
+            "location",         "api_key_env",   "service_account_file",
+            "path",             "default_model", "check_timeout_seconds",
             // Legacy names: flagged with a dedicated error below, not a warning.
-            "model",       "models",               "max_tokens",       "context_window",
-            "temperature", "top_p",                "reasoning_effort",
+            "model",            "models",        "max_tokens",
+            "context_window",   "temperature",   "top_p",
+            "reasoning_effort",
         }, name);
         // Settings that belong to a model are rejected on the provider: they
         // differ per model on the same endpoint, and silently accepting them
@@ -640,6 +660,16 @@ pub const Config = struct {
         }
         if (obj.get("default_model")) |k| {
             p.default_model = try jsonStr(k, "default_model");
+        }
+        if (obj.get("check_timeout_seconds")) |k| {
+            const secs = try jsonInt(k, "check_timeout_seconds");
+            // Rejected rather than @intCast into a panic: a negative timeout
+            // has no sensible reading, and "0 disables" is already taken.
+            if (secs < 0) {
+                log.log(.error_, "provider '{s}': \"check_timeout_seconds\" must be >= 0 (0 = no ceiling)", .{name});
+                return error.BadCheckTimeout;
+            }
+            p.check_timeout_seconds = @intCast(secs);
         }
 
         // vertex_anthropic addresses the model by project/location in the URL
@@ -901,14 +931,14 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",      "compact_threshold_bytes", "max_total_tokens",
-            "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
-            "hot_tools",           "tools_dir",               "skills_dir",
-            "system_prompt_file",  "learnings_file",          "global_instructions_file",
-            "state_dir",           "sandbox_root",            "workflows_dir",
-            "chains_dir",          "git_commit",              "git_remote_ops",
-            "exec_pattern_allow",  "seed",                    "ask_timeout_seconds",
-            "confirm_writes",
+            "max_iterations",      "compact_threshold_bytes",        "max_total_tokens",
+            "max_tokens_per_turn", "max_history_tokens",             "tool_catalog",
+            "hot_tools",           "tools_dir",                      "skills_dir",
+            "system_prompt_file",  "learnings_file",                 "global_instructions_file",
+            "state_dir",           "sandbox_root",                   "workflows_dir",
+            "chains_dir",          "git_commit",                     "git_remote_ops",
+            "exec_pattern_allow",  "seed",                           "ask_timeout_seconds",
+            "confirm_writes",      "provider_check_timeout_seconds",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
@@ -1024,6 +1054,15 @@ pub const Config = struct {
             a.ask_timeout_seconds = @intCast(try jsonInt(k, "ask_timeout_seconds"));
             f.ask_timeout_seconds = true;
         }
+        if (obj.get("provider_check_timeout_seconds")) |k| {
+            const secs = try jsonInt(k, "provider_check_timeout_seconds");
+            if (secs < 0) {
+                log.log(.error_, "agent.provider_check_timeout_seconds must be >= 0 (0 = no ceiling)", .{});
+                return error.BadCheckTimeout;
+            }
+            a.provider_check_timeout_seconds = @intCast(secs);
+            f.provider_check_timeout_seconds = true;
+        }
         if (obj.get("confirm_writes")) |k| {
             const s = try jsonStr(k, "confirm_writes");
             a.confirm_writes = std.meta.stringToEnum(ConfirmWrites, s) orelse
@@ -1055,6 +1094,7 @@ pub const Config = struct {
         if (fields.exec_pattern_allow) dst.exec_pattern_allow = src.exec_pattern_allow;
         if (fields.seed) dst.seed = src.seed;
         if (fields.ask_timeout_seconds) dst.ask_timeout_seconds = src.ask_timeout_seconds;
+        if (fields.provider_check_timeout_seconds) dst.provider_check_timeout_seconds = src.provider_check_timeout_seconds;
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
     }
 
@@ -1748,6 +1788,57 @@ test "partial local agent keeps base tools_dir" {
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+}
+
+test "the providers-check timeout has a short default, a global key, and a per-provider override" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Default first: a config that says nothing about it still bounds a sweep.
+    try std.testing.expectEqual(@as(u32, 10), (Agent{}).provider_check_timeout_seconds);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "hosted"
+        \\providers = { hosted = { base_url = "https://a.test" }, lan = { base_url = "http://10.0.0.5:8000/v1", check_timeout_seconds = 2 } }
+        \\models = { "hosted/m" = { provider = "hosted" }, "lan/m" = { provider = "lan" } }
+        \\agent = { provider_check_timeout_seconds = 30 }
+        ,
+    });
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u32, 30), cfg.agent.provider_check_timeout_seconds);
+    // Null, not 30: the sweep reads the global default itself, so "unset" stays
+    // distinguishable from "set to the same number".
+    try std.testing.expect(cfg.providers.getPtr("hosted").?.check_timeout_seconds == null);
+    try std.testing.expectEqual(@as(u32, 2), cfg.providers.getPtr("lan").?.check_timeout_seconds.?);
+}
+
+test "a negative check timeout is rejected instead of wrapping into a huge one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test", check_timeout_seconds = -1 } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    try std.testing.expectError(error.BadCheckTimeout, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {

@@ -666,7 +666,7 @@ const specs = [_]Spec{
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
-    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
+    .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
@@ -910,6 +910,206 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
 
 // --------------------------------------------------------- providers check --
 
+/// What a sweep concluded about one provider. A closed vocabulary of five, so
+/// the overview reads as a table instead of as prose, and so the two ways of
+/// not working stay apart: an endpoint that answers with an error is a model or
+/// account problem, one that never answers is a network or host problem, and
+/// they are fixed in completely different places.
+const CheckStatus = enum {
+    ok,
+    /// Cannot possibly answer, decided from config and environment alone with
+    /// nothing sent.
+    not_configured,
+    /// Answered, and the answer was an error: HTTP >= 400 (ollama 404s for a
+    /// model it has not pulled) or an error body behind a 200.
+    failed,
+    /// Never answered: connection refused, DNS failure, TLS handshake, socket
+    /// error. Reached its budget or not, nothing was on the other end.
+    unreachable_host,
+    /// Still had not answered when its budget ran out.
+    timed_out,
+
+    fn label(s: CheckStatus) []const u8 {
+        return switch (s) {
+            .ok => "OK",
+            .not_configured => "not configured",
+            .failed => "failed",
+            .unreachable_host => "unreachable",
+            .timed_out => "timed out",
+        };
+    }
+};
+
+/// One row of the end-of-sweep overview.
+const CheckRow = struct {
+    name: []const u8,
+    status: CheckStatus,
+    model: []const u8,
+    /// Round trip in ms. Null when nothing was sent; for `.timed_out` it is
+    /// the budget rather than a measurement, and is rendered with a `>`.
+    ms: ?i64,
+    is_default: bool,
+};
+
+/// Outcome of one ping, as produced by the task that does the talking.
+const PingResult = struct {
+    status: CheckStatus,
+    ms: i64 = 0,
+    tokens: u64 = 0,
+    cost: ?f64 = null,
+    /// What to print on the failure line: the provider's own error text when
+    /// there is one, else the error name.
+    detail: []const u8 = "",
+};
+
+fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) i64 {
+    const ns = t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
+    return @intCast(@divTrunc(ns, std.time.ns_per_ms));
+}
+
+/// Which kind of not-working a failed ping was. `error.ApiError` is the client's
+/// "the endpoint answered with a status >= 400 (or an error body behind a 200)",
+/// so it is the one error that proves the host is there; everything else —
+/// refused, DNS, TLS, a canceled socket — means nothing answered.
+fn classifyChatError(err: anyerror) CheckStatus {
+    return switch (err) {
+        error.ApiError => .failed,
+        else => .unreachable_host,
+    };
+}
+
+/// Sends the one-token ping and classifies the outcome. Runs as a concurrent
+/// task under `pingWithTimeout`, hence `done`: the sweep's own task waits on
+/// that with a deadline rather than blocking in `await` with no way out.
+fn pingProvider(
+    io: std.Io,
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    p: *const config.Provider,
+    done: *std.Io.Event,
+) PingResult {
+    // Every exit from here has to set it, including the error paths and a
+    // cancelation: a waiter that is never woken is the bug this whole command
+    // is about.
+    defer done.set(io);
+    const messages = [_]types.Message{.{ .role = .user, .content = "ping" }};
+    var err_detail: ?[]const u8 = null;
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const resp = client.chat(ctx, arena, .{ .provider = p, .messages = &messages, .max_tokens = 1 }, &err_detail) catch |err| {
+        return .{
+            .status = classifyChatError(err),
+            .ms = elapsedMs(io, t0),
+            .detail = err_detail orelse @errorName(err),
+        };
+    };
+    return .{
+        .status = .ok,
+        .ms = elapsedMs(io, t0),
+        .tokens = if (resp.usage) |u| u.total_tokens else 0,
+        .cost = p.activeModel().cost_per_1m_input,
+    };
+}
+
+/// One ping under a wall-clock ceiling. The ping runs as a concurrent task and
+/// is canceled when `budget_ms` is spent, so a switched-off host costs the
+/// sweep its budget instead of the OS connect timeout (~75s on macOS). A
+/// `budget_ms` of 0 means no ceiling.
+fn pingWithTimeout(
+    io: std.Io,
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    p: *const config.Provider,
+    budget_ms: i64,
+) PingResult {
+    var done: std.Io.Event = .unset;
+    if (budget_ms <= 0) return pingProvider(io, ctx, arena, p, &done);
+    var fut = io.concurrent(pingProvider, .{ io, ctx, arena, p, &done }) catch {
+        // No spare unit of concurrency to run the ping in. Checking the
+        // provider without a ceiling beats not checking it at all, but say so:
+        // this is the one path where the command can still stall.
+        log.log(.warn, "{s}: no concurrency available for the timeout, checking without one", .{p.name});
+        return pingProvider(io, ctx, arena, p, &done);
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, budget_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                // cancel() interrupts the blocking syscall and waits for the
+                // task, so nothing is left running behind the sweep.
+                var out = fut.cancel(io);
+                out.status = .timed_out;
+                out.ms = budget_ms;
+                out.detail = "";
+                return out;
+            },
+            // The sweep itself was canceled. Take the ping down with it and
+            // report whatever it had; the caller is on its way out.
+            error.Canceled => return fut.cancel(io),
+        };
+    }
+    return fut.await(io);
+}
+
+/// Writes `text` followed by enough spaces to fill `width`.
+fn padCell(w: *std.Io.Writer, text: []const u8, width: usize) !void {
+    try w.writeAll(text);
+    try w.splatByteAll(' ', width -| text.len);
+}
+
+/// The latency cell: a measurement, `>budget` for a provider that ran out of
+/// time, or `-` when nothing was sent at all.
+fn latencyCell(buf: []u8, row: CheckRow) []const u8 {
+    const ms = row.ms orelse return "-";
+    const prefix: []const u8 = if (row.status == .timed_out) ">" else "";
+    return std.fmt.bufPrint(buf, "{s}{d}ms", .{ prefix, ms }) catch "?";
+}
+
+/// Renders the end-of-sweep overview: one row per provider, columns sized from
+/// the data. Plain text with no colour, no cursor movement and no redrawing, so
+/// a pipe or a log file gets exactly what a terminal gets.
+fn writeCheckSummary(w: *std.Io.Writer, rows: []const CheckRow) !void {
+    const default_header = "default";
+    var name_w: usize = "provider".len;
+    var status_w: usize = "status".len;
+    var model_w: usize = "model".len;
+    var lat_w: usize = "latency".len;
+    var buf: [32]u8 = undefined;
+    for (rows) |r| {
+        name_w = @max(name_w, r.name.len);
+        status_w = @max(status_w, r.status.label().len);
+        model_w = @max(model_w, r.model.len);
+        lat_w = @max(lat_w, latencyCell(&buf, r).len);
+    }
+    try padCell(w, "provider", name_w + 2);
+    try padCell(w, "status", status_w + 2);
+    try padCell(w, "model", model_w + 2);
+    try padCell(w, "latency", lat_w);
+    try w.writeAll("  " ++ default_header ++ "\n");
+    for (rows) |r| {
+        try padCell(w, r.name, name_w + 2);
+        try padCell(w, r.status.label(), status_w + 2);
+        try padCell(w, r.model, model_w + 2);
+        // The header line names the default too, but a table that has to be
+        // read against a line above it is not an overview. Last column, and the
+        // latency before it is only padded when something follows, so no line
+        // ends in trailing spaces.
+        if (r.is_default) {
+            try padCell(w, latencyCell(&buf, r), lat_w);
+            try w.writeAll("  *");
+        } else {
+            try w.writeAll(latencyCell(&buf, r));
+        }
+        try w.writeAll("\n");
+    }
+}
+
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "models")) {
         return cmdProvidersModels(init, opts);
@@ -935,6 +1135,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     else
         log.log(.info, "default provider: {s} (built-in fallback, no config sets default_provider)", .{cfg.default_provider});
 
+    var rows: std.ArrayList(CheckRow) = .empty;
     var it = cfg.providers.iterator();
     var found_any = false;
     var checked_any = false;
@@ -947,37 +1148,83 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         const p = kv.value_ptr.*;
         const is_default = std.mem.eql(u8, name, cfg.default_provider);
 
-        if (p.api_key_env) |env_name| {
-            // Nothing is sent for these — no key, no request. Say "not
-            // configured" rather than "skipped": a provider you never set up
-            // is not a failure, it is absent, and the old wording read as a
-            // check that had been attempted and abandoned. It is only a
-            // problem when it is the default, where it means the provider
-            // every unqualified command reaches for cannot answer at all.
-            if (init.environ_map.get(env_name) == null) {
-                if (is_default)
-                    log.log(.warn, "{s}: not configured — {s} not set, nothing sent — default=true, so no provider is usable unqualified", .{ name, env_name })
-                else
-                    log.log(.info, "{s}: not configured — {s} not set, nothing sent — default=false", .{ name, env_name });
-                continue;
+        // Decided before any socket work: a provider that cannot possibly
+        // answer should not cost the sweep a connection attempt, and its line
+        // should be on screen before the ones that do take time. Say "not
+        // configured" rather than "skipped": a provider you never set up is not
+        // a failure, it is absent, and the old wording read as a check that had
+        // been attempted and abandoned. It is only a problem when it is the
+        // default, where it means the provider every unqualified command
+        // reaches for cannot answer at all.
+        const unusable: ?[]const u8 = blk: {
+            if (p.base_url.len == 0) break :blk "base_url is empty";
+            if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
+                break :blk try std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url});
+            if (p.api_key_env) |env_name| {
+                if (init.environ_map.get(env_name) == null)
+                    break :blk try std.fmt.allocPrint(arena, "{s} not set", .{env_name});
             }
+            break :blk null;
+        };
+        if (unusable) |reason| {
+            if (is_default)
+                log.log(.warn, "{s}: not configured — {s}, nothing sent — default=true, so no provider is usable unqualified", .{ name, reason })
+            else
+                log.log(.info, "{s}: not configured — {s}, nothing sent — default=false", .{ name, reason });
+            try rows.append(arena, .{
+                .name = name,
+                .status = .not_configured,
+                .model = p.activeModelName(),
+                .ms = null,
+                .is_default = is_default,
+            });
+            continue;
         }
 
-        const messages = [_]types.Message{.{ .role = .user, .content = "ping" }};
-        var err_detail: ?[]const u8 = null;
-        const t0 = std.Io.Timestamp.now(io, .awake);
-        const resp = client.chat(&ctx, arena, .{ .provider = &p, .messages = &messages, .max_tokens = 1 }, &err_detail) catch |err| {
-            log.log(.error_, "{s}: {s} — default={}", .{ name, err_detail orelse @errorName(err), is_default });
-            continue;
-        };
-        const t1 = std.Io.Timestamp.now(io, .awake);
-        const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
-        const tok = if (resp.usage) |u| u.total_tokens else 0;
-        checked_any = true;
-        log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok) cost={any} — default={}", .{ name, p.activeModelName(), ms, tok, p.activeModel().cost_per_1m_input, is_default });
+        // Announced before the request goes out, not after it comes back. A
+        // provider's result line can be seconds away; until this line existed
+        // the sweep sat silent through the slowest one in the config and read
+        // as a hang.
+        const budget_s = p.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
+        if (budget_s == 0)
+            log.log(.info, "{s}: checking {s} — {s} — no timeout", .{ name, p.base_url, p.activeModelName() })
+        else
+            log.log(.info, "{s}: checking {s} — {s} — timeout {d}s", .{ name, p.base_url, p.activeModelName(), budget_s });
+
+        const res = pingWithTimeout(io, &ctx, arena, &p, @as(i64, budget_s) * std.time.ms_per_s);
+        switch (res.status) {
+            .ok => {
+                checked_any = true;
+                log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok) cost={any} — default={}", .{ name, p.activeModelName(), res.ms, res.tokens, res.cost, is_default });
+            },
+            .timed_out => log.log(.error_, "{s}: timed out after {d}s, giving up on it — default={}", .{ name, budget_s, is_default }),
+            // Same line the failure path has always printed, for both the
+            // answered-with-an-error and the never-answered case: the detail
+            // text is what tells them apart in prose, the summary's status
+            // column is what tells them apart at a glance.
+            else => log.log(.error_, "{s}: {s} — default={}", .{ name, res.detail, is_default }),
+        }
+        try rows.append(arena, .{
+            .name = name,
+            .status = res.status,
+            .model = p.activeModelName(),
+            // For a timed-out provider this is the budget, not a measurement;
+            // pingWithTimeout sets it, and the table renders it as `>Nms`.
+            .ms = res.ms,
+            .is_default = is_default,
+        });
     }
     if (opts.provider != null and !found_any) return error.UnknownProvider;
     if (opts.provider != null and !checked_any) return error.ProviderCheckFailed;
+
+    // Only for a full sweep: one provider's result is already one line, and a
+    // table of one row restates it without adding anything.
+    if (opts.provider == null and rows.items.len > 0) {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        try out.writer.writeAll("\n");
+        try writeCheckSummary(&out.writer, rows.items);
+        try std.Io.File.stdout().writeStreamingAll(io, out.written());
+    }
 }
 
 /// `clanker providers models [provider]` — list a provider's models with their
@@ -7204,6 +7451,85 @@ test "sessionListJSON carries each conversation's byte weight" {
     const first = parsed.object.get("sessions").?.array.items[0];
     try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
     try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
+}
+
+// --------------------------------------------------------- providers check --
+
+test "the sweep summary is one row per provider, with the default marked in the table" {
+    const rows = [_]CheckRow{
+        .{ .name = "vllm-local", .status = .timed_out, .model = "deepseek-v4-flash", .ms = 10000, .is_default = false },
+        .{ .name = "deepseek", .status = .ok, .model = "deepseek-v4-flash", .ms = 612, .is_default = true },
+        .{ .name = "ollama", .status = .failed, .model = "qwen3.5", .ms = 103, .is_default = false },
+        .{ .name = "openai", .status = .not_configured, .model = "gpt-4o-mini", .ms = null, .is_default = false },
+    };
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try writeCheckSummary(&out.writer, &rows);
+    // Columns sized from the data, statuses from the closed vocabulary, `*` on
+    // the default row, and no trailing spaces on any line.
+    try std.testing.expectEqualStrings(
+        \\provider    status          model              latency   default
+        \\vllm-local  timed out       deepseek-v4-flash  >10000ms
+        \\deepseek    OK              deepseek-v4-flash  612ms     *
+        \\ollama      failed          qwen3.5            103ms
+        \\openai      not configured  gpt-4o-mini        -
+        \\
+    , out.written());
+}
+
+test "a canceled or refused socket is unreachable, an HTTP error status is a failure" {
+    // The distinction the summary rests on: ollama answering 404 for a model it
+    // does not have is a different fix from vllm-local not being switched on.
+    try std.testing.expectEqual(CheckStatus.failed, classifyChatError(error.ApiError));
+    try std.testing.expectEqual(CheckStatus.unreachable_host, classifyChatError(error.ConnectionRefused));
+    try std.testing.expectEqual(CheckStatus.unreachable_host, classifyChatError(error.Canceled));
+    try std.testing.expectEqual(CheckStatus.unreachable_host, classifyChatError(error.TemporaryNameServerFailure));
+}
+
+test "a provider that never answers costs the sweep its budget, not the OS connect timeout" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // A bound socket nobody ever accepts from: the kernel completes the
+    // handshake off the backlog, so connect() and the request write both
+    // succeed and the client then blocks forever waiting for a response. That
+    // is the shape of the endpoint this command used to hang on.
+    var port: u16 = 0;
+    var server: ?std.Io.net.Server = null;
+    for (0..64) |i| {
+        port = 21000 + @as(u16, @intCast(i * 7 % 3000));
+        const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
+        server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch continue;
+        break;
+    }
+    var listener = server orelse return error.CannotBindTestPort;
+    defer listener.socket.close(io);
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const base_url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{port});
+    const provider = try config.Provider.single(arena, "silent", base_url, .openai_compat, "model-x", .{});
+    // The ping's own allocations are abandoned when it is canceled mid-request,
+    // so it gets an arena rather than the testing allocator: a canceled HTTP
+    // request is not a leak to report.
+    var ctx = client.Ctx{ .io = io, .gpa = arena, .environ_map = &env };
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const res = pingWithTimeout(io, &ctx, arena, &provider, 1000);
+    const spent = elapsedMs(io, t0);
+
+    try std.testing.expectEqual(CheckStatus.timed_out, res.status);
+    try std.testing.expectEqual(@as(i64, 1000), res.ms);
+    // Loose upper bound: the point is that it is nowhere near the ~75s connect
+    // timeout, not that cancelation lands on a particular millisecond.
+    try std.testing.expect(spent >= 900);
+    try std.testing.expect(spent < 15000);
 }
 
 // ------------------------------------------------------- providers catalog --
