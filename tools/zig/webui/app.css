@@ -1881,15 +1881,23 @@ main {
 }
 .rail {
   flex: none; width: 15rem; align-self: stretch;
-  position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin; scrollbar-color: transparent transparent;
+  position: sticky; top: 0; max-height: 100vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
   background: var(--surface);
   padding: var(--space-3) var(--space-3);
   border-right: 1px solid var(--rule);
 }
-.rail:hover { scrollbar-color: var(--border) transparent; }
-.rail-head { display: flex; flex-direction: column; gap: var(--space-3); }
+/* The rail is pinned: only the conversation list scrolls, not the whole
+   sidebar, so the tabs and the chat controls stay put while the history
+   moves under the pointer. The list owns the scrollbar. */
+.rail-nav { flex: none; }
+.rail-context {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  margin-top: var(--space-3); border-top: 1px solid var(--rule); padding-top: var(--space-3);
+}
+.rail-context[hidden] { display: none; }
+.rail-head { flex: none; display: flex; flex-direction: column; gap: var(--space-3); }
 .rail-new {
   min-height: 36px; padding: 0 1rem; width: 100%;
   border: 1px solid var(--accent); border-radius: 999px;
@@ -1902,9 +1910,13 @@ main {
 .rail-archived input { margin: 0; }
 .rail input[type="search"]::placeholder { font-size: 12px; }
 .rail-list {
+  flex: 1; min-height: 0;
   margin-top: var(--space-4); padding: 0; list-style: none;
   display: flex; flex-direction: column; gap: 1px;
+  overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
+.rail-list:hover { scrollbar-color: var(--border) transparent; }
 /* A workspace is a folder: its conversations are indented under its name, so
    the nesting is visible rather than implied by order. */
 .rail-workspace {
