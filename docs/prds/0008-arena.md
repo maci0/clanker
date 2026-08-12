@@ -255,10 +255,29 @@ way its own non-goal requires.
   just sitting still.
 - **The verdict moment.** Winner holds an arms-up pose with a small flash
   (reusing the lamp-glow `globalAlpha` breathing technique, not a new
-  effect), loser's sprite stays in its last kneel/damage pose, and the
-  status line's final update is the synthesized verdict headline — the real
-  text, not just a canvas graphic, matching the "canvas plus real text side
-  by side" split below.
+  effect), and the status line's final update is the synthesized verdict
+  headline — the real text, not just a canvas graphic, matching the "canvas
+  plus real text side by side" split below. The loser doesn't just sit in
+  its kneel pose: see the next bullet.
+- **The eliminated combatant's exit ("trash compactor").** A short, purely
+  decorative sequence after the verdict flash, same non-goal as everything
+  else on this stage: skippable, and the status line already said who lost
+  in words before this plays. A small procedural bulldozer sprite (a body
+  block, a blade rect, two tread squares that step-cycle the way the office
+  plugin's walk-cycle already steps a sprite's legs) drives in from the
+  stage edge, and the loser's sprite — still in its last kneel/damage pose —
+  gets pushed ahead of the blade toward a dark hole rect at the stage's
+  far edge, then scales down and fades into it, reusing the fade technique
+  the `concede` pose already dims its HP bar with. A brief crossfade cuts to
+  a second scene: two solid wall rects closing in from left and right on the
+  now-small loser sprite, holding just short of full closure (the point is
+  the walls closing, not actually squashing anything) before the view
+  returns to the normal stage. In a multi-loser Battle Royale match (Phase
+  8), each elimination gets its own bulldozer pass, one at a time, in
+  elimination order — not a pile-up. `prefers-reduced-motion` skips the
+  whole sequence: no bulldozer, no walls, just the same static final frame
+  plus the status line's "`<name>` eliminated" text, which is authoritative
+  either way.
 - **Data and refresh.** Below the canvas, the actual move transcript
   (text cards, same tool-call card style used everywhere else) — the canvas
   never carries information the transcript doesn't also carry in words,
@@ -335,6 +354,9 @@ Phase 5 — web UI:
 - [ ] `aria-live` status caption carrying real state in text, mirroring
       `#fleet-floor-status` — the canvas stays `aria-hidden`
 - [ ] Real transcript rendered alongside the canvas, never only in it
+- [ ] Trash-compactor elimination sequence (bulldozer push -> hole -> wall
+      closeup), skipped entirely under `prefers-reduced-motion` in favor of
+      the status line's static "eliminated" text
 
 Phase 6 — self-improve integration (separate proposal, not this PRD's ship):
 
