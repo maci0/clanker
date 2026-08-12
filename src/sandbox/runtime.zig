@@ -1382,3 +1382,173 @@ test "a tool with a tiny fuel budget runs out of fuel; the default budget answer
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("391", out);
 }
+
+/// One `arena` call against an isolated sandbox root. `llm` is left unset, so
+/// every `ck_llm` is denied — which is exactly how these tests reach the
+/// forfeit path without a provider account.
+fn arenaCall(io: std.Io, root: []const u8, wasm: []const u8, env: *std.process.Environ.Map, input: []const u8) ![]u8 {
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{"state/arena/"},
+        .environ_map = env,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    return mod.executeTool(input);
+}
+
+test "arena wasm tool refuses a match without two distinct sides" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/arena.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // A debate needs at least two distinct sides, and 3-4 way matches are not
+    // implemented. Every one of these is refused at the tool boundary rather
+    // than started and abandoned partway through — which for this tool means
+    // refused before it has spent a single model call.
+    const cases = [_]struct { input: []const u8, want: []const u8 }{
+        .{ .input = "{\"question\":\"q\",\"for\":\"a\"}", .want = "two distinct positions" },
+        .{ .input = "{\"question\":\"q\",\"against\":\"b\"}", .want = "two distinct positions" },
+        .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\" a \"}", .want = "identical" },
+        .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"  \"}", .want = "cannot be blank" },
+        .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"c\"]}", .want = "Battle Royale" },
+        .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"b\",\"judge\":\"jury\"}", .want = "judge must be" },
+    };
+    for (cases) |c| {
+        const outp = try arenaCall(io, root, wasm, &env_map, c.input);
+        defer std.testing.allocator.free(outp);
+        // Names the offending row: a table-driven assertion that only says
+        // "expected true" makes six cases into one bisect.
+        if (std.mem.indexOf(u8, outp, "\"ok\":false") == null or
+            std.mem.indexOf(u8, outp, c.want) == null)
+        {
+            std.debug.print("arena refusal case {s}\n  wanted: {s}\n  got:    {s}\n", .{ c.input, c.want, outp });
+            return error.TestUnexpectedResult;
+        }
+    }
+
+    // A refusal must not have left a match file behind.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/arena", .{}));
+}
+
+test "arena wasm tool reports no matches on a fresh sandbox" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/arena.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const listed = try arenaCall(io, root, wasm, &env_map, "{}");
+    defer std.testing.allocator.free(listed);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "no arena matches yet") != null);
+
+    // A match id that could climb out of state/arena/ is refused, rather than
+    // reported as a missing match.
+    for ([_][]const u8{ "../escape", "a/../../b", "a/b", "" }) |bad| {
+        const req = try std.fmt.allocPrint(std.testing.allocator, "{{\"match\":\"{s}\"}}", .{bad});
+        defer std.testing.allocator.free(req);
+        const outp = try arenaCall(io, root, wasm, &env_map, req);
+        defer std.testing.allocator.free(outp);
+        // "" is absent rather than unsafe, so it lists instead of refusing;
+        // every traversal attempt must be told apart from a real miss.
+        if (bad.len == 0) continue;
+        try std.testing.expect(std.mem.indexOf(u8, outp, "\"ok\":false") != null);
+        try std.testing.expect(std.mem.indexOf(u8, outp, "not a match id") != null);
+    }
+
+    const missing = try arenaCall(io, root, wasm, &env_map, "{\"match\":\"arena-1-deadbeef\"}");
+    defer std.testing.allocator.free(missing);
+    try std.testing.expect(std.mem.indexOf(u8, missing, "no such match") != null);
+}
+
+test "arena wasm tool finishes a match as forfeits when no provider answers" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/arena.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    // Every combatant call is denied (no `llm` grant on the sandbox), so this
+    // drives the whole round loop down its failure path: a combatant whose
+    // call errors forfeits the round, and the match still reaches a persisted
+    // verdict instead of hanging or erroring out. That is the PRD's stated
+    // behaviour for a mid-match provider failure, exercised end to end.
+    const raw = try arenaCall(io, root, wasm, &env_map,
+        \\{"question":"queue or direct calls?","for":"use a message queue","against":"use direct calls","max_rounds":2}
+    );
+    defer std.testing.allocator.free(raw);
+
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"status\":\"finished\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"forfeit\":true") != null);
+    // Nobody landed anything, so nobody won — and the verdict says so rather
+    // than picking one of two untouched combatants.
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"reason\":\"draw\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "SandboxDenied") != null);
+
+    var parsed_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer parsed_arena.deinit();
+    const a = parsed_arena.allocator();
+    const doc = try std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{});
+    const match = doc.object.get("match").?.object;
+    const id = match.get("id").?.string;
+    // Both rounds ran: a forfeit is a played round, not an aborted match.
+    try std.testing.expectEqual(@as(i64, 2), match.get("rounds_played").?.integer);
+    try std.testing.expectEqual(@as(usize, 2), match.get("rounds").?.array.items.len);
+    try std.testing.expectEqual(@as(i64, 100), match.get("combatants").?.array.items[0].object.get("hp").?.integer);
+
+    // The match is on disk under its own id, and reads back through the tool.
+    const path = try std.fmt.allocPrint(std.testing.allocator, "state/arena/{s}.json", .{id});
+    defer std.testing.allocator.free(path);
+    const stored = try tmp.dir.readFileAlloc(io, path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(stored);
+    try std.testing.expect(std.mem.indexOf(u8, stored, "queue or direct calls?") != null);
+
+    const req = try std.fmt.allocPrint(std.testing.allocator, "{{\"match\":\"{s}\"}}", .{id});
+    defer std.testing.allocator.free(req);
+    const read_back = try arenaCall(io, root, wasm, &env_map, req);
+    defer std.testing.allocator.free(read_back);
+    try std.testing.expect(std.mem.indexOf(u8, read_back, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_back, id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_back, "use a message queue") != null);
+
+    // A finished match is replayable: the ledger carries it, so listing finds
+    // it without walking every match file.
+    const listed = try arenaCall(io, root, wasm, &env_map, "{}");
+    defer std.testing.allocator.free(listed);
+    try std.testing.expect(std.mem.indexOf(u8, listed, id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "queue or direct calls?") != null);
+}
