@@ -1,0 +1,23 @@
+{
+  "name": "cmd_janitor",
+  "description": "sweep up what old runs left behind",
+  "wasm": "zig-out/tools/cmd_janitor.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "op": {
+        "type": "string",
+        "description": "scan (report only), prune (delete), or json (structured)"
+      },
+      "state_dir": {
+        "type": "string",
+        "description": "state directory (default: state)"
+      }
+    }
+  },
+  "fs_prefixes": [
+    "state/"
+  ],
+  "internal": true,
+  "category": "harness"
+}

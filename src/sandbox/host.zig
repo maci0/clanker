@@ -1775,9 +1775,15 @@ pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     if (path.len == 0) return Err.invalid;
     const full = safeJoinSecure(h.sandbox, path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
-    std.Io.Dir.cwd().deleteFile(h.sandbox.io, full) catch |err| switch (err) {
+    std.Io.Dir.cwd().deleteFile(h.sandbox.io, full) catch |file_err| switch (file_err) {
         error.FileNotFound => return Err.not_found,
-        else => return Err.invalid,
+        else => {
+            // Not a regular file: try as an empty directory.
+            std.Io.Dir.cwd().deleteDir(h.sandbox.io, full) catch |dir_err| switch (dir_err) {
+                error.FileNotFound => return Err.not_found,
+                else => return Err.invalid,
+            };
+        },
     };
     return Err.ok;
 }

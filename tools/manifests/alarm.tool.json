@@ -1,0 +1,33 @@
+{
+  "name": "alarm",
+  "description": "Set a reminder for your future self. A due alarm appears in the system prompt of every later run until you cancel it, so use it to follow up on things that need time to pass: \"check whether CI went green\", \"re-poll the peer\", \"revisit the stuck goal\". Input: {\"action\":\"set\",\"message\":\"...\",\"in_minutes\":20} or {\"action\":\"set\",\"message\":\"...\",\"at\":<epoch seconds>}; {\"action\":\"list\"}; {\"action\":\"cancel\",\"id\":\"a-...\"}. Cancel an alarm once you have acted on it, or it keeps nagging.",
+  "wasm": "zig-out/tools/alarm.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["set", "list", "cancel"]
+      },
+      "message": {
+        "type": "string"
+      },
+      "in_minutes": {
+        "type": "number"
+      },
+      "at": {
+        "type": "integer"
+      },
+      "id": {
+        "type": "string"
+      }
+    },
+    "required": ["action"]
+  },
+  "fs_prefixes": [
+    "state/alarms.json"
+  ],
+  "network_allow": [],
+  "category": "agent",
+  "confirm": false
+}

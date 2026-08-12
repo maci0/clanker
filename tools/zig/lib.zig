@@ -581,6 +581,28 @@ pub fn fsMkdir(path: []const u8) FsError!void {
     return fsPathOp(ck_fs_mkdir(p.ptr, p.len));
 }
 
+// Recursively deletes a directory tree. Lists contents, deletes files,
+// recurses into subdirectories, then removes the now-empty directory.
+// Best-effort: individual failures are skipped.
+pub fn fsDeleteTree(a: std.mem.Allocator, path: []const u8) void {
+    const raw = fsList(path) catch return;
+    const names = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
+    if (names != .array) return;
+    for (names.array.items) |item| {
+        if (item != .string) continue;
+        const name = item.string;
+        if (name.len == 0) continue;
+        if (name[name.len - 1] == '/') {
+            const dir_path = std.fmt.allocPrint(a, "{s}/{s}", .{ path, name[0 .. name.len - 1] }) catch continue;
+            fsDeleteTree(a, dir_path);
+        } else {
+            const sub = std.fmt.allocPrint(a, "{s}/{s}", .{ path, name }) catch continue;
+            fsDelete(sub) catch {};
+        }
+    }
+    fsDelete(path) catch {};
+}
+
 /// JSON: {"kind":"file"|"dir","size":N}
 pub fn fsStat(path: []const u8) FsError![]const u8 {
     const p = sliceToMem(path);

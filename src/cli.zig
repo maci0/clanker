@@ -30,7 +30,6 @@ const repl_vaxis = @import("tui/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
 const doctor_mod = @import("doctor.zig");
-const janitor_mod = @import("janitor.zig");
 const token_stats = @import("stats/tokens.zig");
 const log = @import("util/log.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -778,7 +777,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
         .init => try cmdInit(init, true),
         .doctor => try doctor_mod.cmdDoctor(init),
-        .prune => try janitor_mod.cmdPrune(init, opts.apply),
+        .prune => try cmdPrune(init, opts.apply),
         .setup => {
             // Scaffolding first: setup is the one command a new checkout runs,
             // and sending them to `init` and back is a step that exists only
@@ -2415,6 +2414,43 @@ fn printInternalTool(init: std.process.Init, cfg: *const config.Config, tool_nam
     if (!std.mem.endsWith(u8, text, "\n")) try out.writeStreamingAll(init.io, "\n");
 }
 
+fn cmdPrune(init: std.process.Init, apply: bool) !void {
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const op: []const u8 = if (apply) "prune" else "scan";
+    var ibuf: [512]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    try is.beginObject();
+    try is.objectField("op");
+    try is.write(op);
+    try is.objectField("state_dir");
+    try is.write(cfg.agent.state_dir);
+    try is.endObject();
+    var reg = try registry.Registry.load(init.io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    var ctx = client.Ctx{ .io = init.io, .gpa = init.gpa, .environ_map = init.environ_map, .cfg = &cfg };
+    const mod = runtime.loadNamedTool(init.gpa, init.io, arena, init.environ_map, &cfg, &reg, "cmd_janitor", &ctx) catch |err| {
+        if (err == error.UnknownTool) {
+            log.log(.error_, "internal tool 'cmd_janitor' not found in {s}", .{cfg.agent.tools_dir});
+        } else {
+            log.log(.error_, "'cmd_janitor' tool load failed: {s} (run `zig build tools`)", .{@errorName(err)});
+        }
+        return error.ToolWasmMissing;
+    };
+    defer mod.deinit();
+    const raw = try mod.executeTool(ibuf[0..iw.end]);
+    defer init.gpa.free(raw);
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
+    if (parsed != .object) return;
+    if (parsed.object.get("text")) |t| {
+        if (t == .string) {
+            const stdout = std.Io.File.stdout();
+            try stdout.writeStreamingAll(init.io, t.string);
+            if (!std.mem.endsWith(u8, t.string, "\n")) try stdout.writeStreamingAll(init.io, "\n");
+        }
+    }
+}
+
 fn cmdGraph(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
@@ -3084,7 +3120,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_providers) {
             handleProviders(cfg, stream);
         } else if (is_janitor) {
-            handleJanitor(io, gpa, cfg, stream);
+            handleJanitor(io, gpa, cfg, environ_map, stream);
         } else if (is_board) {
             handleBoard(io, gpa, cfg, environ_map, method, target, body, stream);
         } else if (is_webui_plugins) {
@@ -4712,29 +4748,26 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
 /// show the janitor working when there is work and sitting down when there is
 /// not. Read-only: it never deletes. `clanker janitor --yes` is the only thing
 /// that removes anything.
-fn handleJanitor(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
+fn handleJanitor(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const candidates = janitor_mod.scan(io, arena, cfg.agent.state_dir) catch {
+    var ibuf: [512]u8 = undefined;
+    var iw: std.Io.Writer = .fixed(&ibuf);
+    var is = std.json.Stringify{ .writer = &iw, .options = .{} };
+    is.beginObject() catch return;
+    is.objectField("op") catch return;
+    is.write("json") catch return;
+    is.objectField("state_dir") catch return;
+    is.write(cfg.agent.state_dir) catch return;
+    is.endObject() catch return;
+
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "cmd_janitor", ibuf[0..iw.end]) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not scan\"}");
         return;
     };
-    var total: u64 = 0;
-    for (candidates) |c| total += c.bytes;
-
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("items") catch return;
-    s.write(candidates.len) catch return;
-    s.objectField("bytes") catch return;
-    s.write(total) catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    respond(stream, 200, "OK", raw);
 }
 
 /// The shared Kanban board.

@@ -396,6 +396,40 @@ pub fn build(
         }
     }
 
+    // Personal reminders: alarms the agent set for itself via the alarm
+    // tool. Due ones are surfaced loudly until cancelled; pending ones are
+    // listed so the agent knows a follow-up is already scheduled and does
+    // not set a duplicate.
+    reminders: {
+        const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/alarms.json", arena, .limited(1 << 20)) catch break :reminders;
+        const AlarmEntry = struct { id: []const u8 = "", ts: i64 = 0, message: []const u8 = "" };
+        const alarms = std.json.parseFromSliceLeaky([]AlarmEntry, arena, raw, .{ .ignore_unknown_fields = true }) catch break :reminders;
+        if (alarms.len == 0) break :reminders;
+        const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+        var due_header = false;
+        for (alarms) |a| {
+            if (a.ts > now) continue;
+            if (!due_header) {
+                try buf.appendSlice(arena, "## Reminders due NOW\n\nYou set these for yourself with the alarm tool. Act on each, then cancel it (alarm {\"action\":\"cancel\",\"id\":\"...\"}) or it will keep nagging every run.\n\n");
+                due_header = true;
+            }
+            try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (due {d} min ago)\n", .{ a.id, a.message, @max(@divTrunc(now - a.ts, 60), 0) }));
+        }
+        if (due_header) try buf.appendSlice(arena, "\n");
+        var pending_header = false;
+        var shown: usize = 0;
+        for (alarms) |a| {
+            if (a.ts <= now or shown >= 10) continue;
+            if (!pending_header) {
+                try buf.appendSlice(arena, "## Reminders scheduled (not yet due)\n\n");
+                pending_header = true;
+            }
+            try buf.appendSlice(arena, try std.fmt.allocPrint(arena, "- [{s}] {s} (in {d} min)\n", .{ a.id, a.message, @divTrunc(a.ts - now, 60) }));
+            shown += 1;
+        }
+        if (pending_header) try buf.appendSlice(arena, "\n");
+    }
+
     // Chaining hint — composable pipelines where each step's output feeds the next.
     try buf.appendSlice(arena,
         \\## Chaining outputs → inputs (mutate + chain)
