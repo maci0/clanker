@@ -100,6 +100,112 @@ pub fn validatePath(path: []const u8) bool {
     return false;
 }
 
+/// Prefixes a path must match to be *readable* into the improve prompt.
+///
+/// Wider than the writable surface on purpose: the gate machinery, the roadmap
+/// and the ADRs are all worth reading and none of them may be patched. Still a
+/// closed list, because a granted path is echoed back into a model request:
+/// `.env`, `config.local.*`, `state/` and `.git/` hold API keys, session
+/// transcripts and credentials, and none of them match anything here.
+const readable_prefixes = [_][]const u8{
+    "src/",
+    "evals/",
+    "tools/",
+    "skills/",
+    "tests/",
+    "docs/",
+    "README.md",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "RELEASES.md",
+    "build.zig",
+    "build.zig.zon",
+    "config.json",
+    "config.toml",
+};
+
+/// Extensions that are text a model can act on. The prefix list alone would
+/// admit `tools/manifests/x.wasm` and every other build artifact under an
+/// allowed directory.
+const readable_extensions = [_][]const u8{ ".zig", ".zon", ".json", ".toml", ".md", ".html", ".js", ".css", ".sh", ".yml" };
+
+/// True when `path` may be read into the improve prompt. Reading is not
+/// writing: `validatePath` governs what a patch may change, this governs what
+/// the model may ask to see.
+pub fn validateReadPath(path: []const u8) bool {
+    if (hasUnsafeSegment(path)) return false;
+    // Committed build output: bytes, not source, and megabytes of it.
+    if (std.mem.startsWith(u8, path, "tools/bin/")) return false;
+    var ext_ok = false;
+    for (readable_extensions) |e| {
+        if (std.mem.endsWith(u8, path, e)) ext_ok = true;
+    }
+    if (!ext_ok) return false;
+    for (readable_prefixes) |p| {
+        if (std.mem.startsWith(u8, path, p)) return true;
+    }
+    return false;
+}
+
+/// The paths a response asks to be shown, when it asks for files instead of
+/// proposing a patch: `{"need": ["src/cli.zig"], "reason": "..."}`.
+///
+/// improve-self shows the model a byte-budgeted slice of a ~3 MB tree and
+/// gives it no tools, so the alternative to asking is guessing: an exact-match
+/// patch against text it never saw, which fails the match gate every time.
+///
+/// Returns null unless the response carries a non-empty `need` array *and* no
+/// changes — a response that patches and asks is a patch, and answering the
+/// question instead would throw the patch away. Paths outside the readable
+/// surface are dropped rather than failing the whole request, so the useful
+/// ones still get through; `refused` names the first one dropped so the caller
+/// can say why.
+pub fn parseFileRequest(
+    arena: std.mem.Allocator,
+    raw: []const u8,
+    max_paths: usize,
+    refused: ?*?[]const u8,
+) !?[]const []const u8 {
+    const cleaned = stripMarkdownFence(raw);
+    const v = json.parseFromSliceLeaky(json.Value, arena, cleaned, .{ .ignore_unknown_fields = true }) catch return null;
+    const obj = switch (v) {
+        .object => |o| o,
+        else => return null,
+    };
+    if (obj.get("changes")) |c| switch (c) {
+        .array => |arr| if (arr.items.len > 0) return null,
+        else => {},
+    };
+    const arr = switch (obj.get("need") orelse return null) {
+        .array => |a| a,
+        else => return null,
+    };
+    if (arr.items.len == 0) return null;
+
+    var out: std.ArrayList([]const u8) = .empty;
+    for (arr.items) |item| {
+        const p = switch (item) {
+            .string => |s| s,
+            else => continue,
+        };
+        if (!validateReadPath(p)) {
+            log.log(.warn, "file request: '{s}' is outside the readable surface", .{p});
+            if (refused) |r| {
+                if (r.* == null) r.* = p;
+            }
+            continue;
+        }
+        var seen = false;
+        for (out.items) |have| {
+            if (std.mem.eql(u8, have, p)) seen = true;
+        }
+        if (seen) continue;
+        try out.append(arena, p);
+        if (out.items.len >= max_paths) break;
+    }
+    return try out.toOwnedSlice(arena);
+}
+
 /// Some local models wrap the requested JSON in a markdown code fence
 /// (```json ... ```) despite being told not to. Strip an outer fence and any
 /// leading/trailing whitespace so the JSON parser sees a bare object.
@@ -294,6 +400,118 @@ test "the eval suite is add-only: new cases allowed, existing ones off limits" {
     try std.testing.expect(!validatePath("src/improve/proposal.zig"));
     try std.testing.expect(!isAppendOnly("src/agent/loop.zig"));
     try std.testing.expect(validatePath("src/agent/loop.zig"));
+}
+
+test "the readable surface is wider than the writable one, and still closed" {
+    // Readable but not writable: the gate machinery and the roadmap are what
+    // the model most needs to read before changing anything.
+    try std.testing.expect(validateReadPath("src/evals/scorers.zig"));
+    try std.testing.expect(validateReadPath("src/improve/proposal.zig"));
+    try std.testing.expect(validateReadPath("src/tools/builder.zig"));
+    try std.testing.expect(validateReadPath("docs/ROADMAP.md"));
+    try std.testing.expect(validateReadPath("docs/adrs/0003-autoresearch.md"));
+    try std.testing.expect(validateReadPath("AGENTS.md"));
+    try std.testing.expect(validateReadPath("src/cli.zig"));
+    try std.testing.expect(validateReadPath("tools/zig/webui/index.html"));
+    try std.testing.expect(validateReadPath("config.toml"));
+
+    // A granted path is read and echoed straight back into a model request, so
+    // the secrets and the run state have to stay out however they are spelled.
+    try std.testing.expect(!validateReadPath(".env"));
+    try std.testing.expect(!validateReadPath("config.local.toml"));
+    try std.testing.expect(!validateReadPath("config.local.json"));
+    try std.testing.expect(!validateReadPath("state/token_stats.jsonl"));
+    try std.testing.expect(!validateReadPath("state/sessions/a.json"));
+    try std.testing.expect(!validateReadPath(".git/config"));
+    try std.testing.expect(!validateReadPath("src/../.env"));
+    try std.testing.expect(!validateReadPath("/etc/passwd"));
+    try std.testing.expect(!validateReadPath(""));
+
+    // Not text, or not source.
+    try std.testing.expect(!validateReadPath("tools/manifests/calculator.wasm"));
+    try std.testing.expect(!validateReadPath("tools/bin/calc_ts.wasm"));
+    try std.testing.expect(!validateReadPath("tools/bin/calc_ts.json"));
+    try std.testing.expect(!validateReadPath("vendor/toml/src/root.zig"));
+}
+
+test "a response may ask for files instead of proposing a patch" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const asked =
+        \\{"need":["src/cli.zig","docs/ROADMAP.md"],"reason":"neither is in context"}
+    ;
+    const want = (try parseFileRequest(arena, asked, 6, null)) orelse return error.TestExpectedRequest;
+    try std.testing.expectEqual(@as(usize, 2), want.len);
+    try std.testing.expectEqualStrings("src/cli.zig", want[0]);
+    try std.testing.expectEqualStrings("docs/ROADMAP.md", want[1]);
+
+    // Fenced, like every other response this loop has to survive.
+    const fenced =
+        \\```json
+        \\{"need":["src/cli.zig"]}
+        \\```
+    ;
+    const f = (try parseFileRequest(arena, fenced, 6, null)) orelse return error.TestExpectedRequest;
+    try std.testing.expectEqual(@as(usize, 1), f.len);
+}
+
+test "a patch that also asks for files is a patch" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Answering the question would throw the patch away, and the patch is the
+    // thing the run exists to produce.
+    const both =
+        \\{"summary":"s","need":["src/cli.zig"],"changes":[{"file":"src/main.zig","old":"a","new":"b"}]}
+    ;
+    try std.testing.expect((try parseFileRequest(arena, both, 6, null)) == null);
+
+    // No "need" key at all, an empty one, and a plain patch are all "not a
+    // request" rather than an error: this runs before the proposal parser on
+    // every single response.
+    try std.testing.expect((try parseFileRequest(arena, "{\"need\":[]}", 6, null)) == null);
+    try std.testing.expect((try parseFileRequest(arena, "{\"summary\":\"s\",\"changes\":[]}", 6, null)) == null);
+    try std.testing.expect((try parseFileRequest(arena, "not json at all", 6, null)) == null);
+}
+
+test "a file request is filtered, deduplicated and capped" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // One path outside the surface must not cost the model the whole request:
+    // the good ones still land, and the refusal is reported so the retry knows
+    // which one it may not have.
+    var refused: ?[]const u8 = null;
+    const mixed =
+        \\{"need":["src/cli.zig",".env","src/cli.zig","docs/ROADMAP.md"]}
+    ;
+    const want = (try parseFileRequest(arena, mixed, 6, &refused)) orelse return error.TestExpectedRequest;
+    try std.testing.expectEqual(@as(usize, 2), want.len);
+    try std.testing.expectEqualStrings("src/cli.zig", want[0]);
+    try std.testing.expectEqualStrings("docs/ROADMAP.md", want[1]);
+    try std.testing.expectEqualStrings(".env", refused orelse return error.TestExpectedRefusal);
+
+    // A request for everything is capped, not honoured: each granted file is
+    // billed on every later call of the run.
+    const greedy =
+        \\{"need":["src/a.zig","src/b.zig","src/c.zig","src/d.zig","src/e.zig"]}
+    ;
+    const capped = (try parseFileRequest(arena, greedy, 2, null)) orelse return error.TestExpectedRequest;
+    try std.testing.expectEqual(@as(usize, 2), capped.len);
+
+    // Every path refused leaves an empty grant, which is not the same as "not
+    // a request": the engine has to answer it rather than parse it as a patch.
+    var all_bad: ?[]const u8 = null;
+    const bad =
+        \\{"need":[".env","state/x.json"]}
+    ;
+    const none = (try parseFileRequest(arena, bad, 6, &all_bad)) orelse return error.TestExpectedRequest;
+    try std.testing.expectEqual(@as(usize, 0), none.len);
+    try std.testing.expectEqualStrings(".env", all_bad orelse return error.TestExpectedRefusal);
 }
 
 test "a rejected path is reported back so the retry can move on" {
