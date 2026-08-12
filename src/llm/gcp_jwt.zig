@@ -100,7 +100,13 @@ pub fn parsePkcs8(arena: std.mem.Allocator, pem: []const u8) Error!RsaKey {
     };
 }
 
+/// Returns `bytes` with leading zero bytes stripped, but never empty: DER
+/// integers carry a leading zero byte when the high bit is set (sign
+/// padding), and a value of zero must stay a single 0x00. The empty case is
+/// unreachable from a valid RSAPrivateKey but guarded so this cannot index
+/// out of bounds (`bytes.len - 1` underflows on an empty slice).
 fn trimLeadingZeros(bytes: []const u8) []const u8 {
+    if (bytes.len == 0) return bytes;
     var i: usize = 0;
     while (i < bytes.len - 1 and bytes[i] == 0) i += 1;
     return bytes[i..];
@@ -187,4 +193,17 @@ test "pem parsing rejects garbage" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     try std.testing.expectError(error.PrivateKeyMalformed, parsePkcs8(arena_state.allocator(), "not a pem"));
+}
+
+test "trimLeadingZeros strips sign padding but keeps a zero value" {
+    // DER sign padding: a leading 0x00 before a high-bit-set byte is padding.
+    try std.testing.expectEqualStrings("\x42", trimLeadingZeros("\x00\x42"));
+    // Multiple padding zeros collapse down to the magnitude.
+    try std.testing.expectEqualSlices(u8, &.{ 0x01, 0x02 }, trimLeadingZeros(&.{ 0x00, 0x00, 0x01, 0x02 }));
+    // A value of zero keeps the single 0x00 that represents it.
+    try std.testing.expectEqualSlices(u8, &.{0x00}, trimLeadingZeros(&.{0x00}));
+    // An already-unpadded value passes through untouched.
+    try std.testing.expectEqualSlices(u8, &.{ 0x42, 0x00 }, trimLeadingZeros(&.{ 0x42, 0x00 }));
+    // An empty slice is returned as-is rather than indexing out of bounds.
+    try std.testing.expectEqualSlices(u8, &.{}, trimLeadingZeros(&.{}));
 }
