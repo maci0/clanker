@@ -78,25 +78,6 @@ pub fn parsePlan(
             else => {},
         };
 
-        // Intra-plan dedup: if this idea overlaps heavily with one already
-        // accepted from the same response, skip it. The model often returns
-        // 2-3 rephrasings of its best idea, each of which would burn an
-        // iteration on equivalent work.
-        const dominated = blk: {
-            const idea_toks = try tokens(arena, text);
-            if (idea_toks.len == 0) break :blk false;
-            for (out.items) |prev| {
-                const prev_toks = try tokens(arena, prev.text);
-                var hits: usize = 0;
-                for (idea_toks) |t| {
-                    if (containsToken(prev_toks, t)) hits += 1;
-                }
-                if (hits * 5 >= idea_toks.len * 3) break :blk true;
-            }
-            break :blk false;
-        };
-        if (dominated) continue;
-
         try out.append(arena, .{ .text = text, .files = try files.toOwnedSlice(arena) });
         if (out.items.len >= max_ideas) break;
     }
@@ -114,14 +95,6 @@ pub fn parsePlan(
 /// registry"), and anything looser starts eating novel ideas that share a
 /// file name with an old one.
 pub fn tried(arena: std.mem.Allocator, idea: []const u8, summaries: []const []const u8) !bool {
-    return triedEx(arena, idea, &.{}, summaries);
-}
-
-/// Extended dedup: also considers the idea's file list. When an idea's files
-/// overlap heavily with paths mentioned in a past summary AND there is
-/// moderate word overlap, the idea is treated as tried — this catches
-/// rephrasings that target the same code location.
-pub fn triedEx(arena: std.mem.Allocator, idea: []const u8, idea_files: []const []const u8, summaries: []const []const u8) !bool {
     const idea_toks = try tokens(arena, idea);
     if (idea_toks.len == 0) return false;
     for (summaries) |s| {
@@ -130,21 +103,7 @@ pub fn triedEx(arena: std.mem.Allocator, idea: []const u8, idea_files: []const [
         for (idea_toks) |t| {
             if (containsToken(sum_toks, t)) hits += 1;
         }
-        // Strong word overlap alone is enough (original 4/5 rule).
         if (hits * 5 >= idea_toks.len * 4) return true;
-        // Moderate word overlap (3/5) combined with file overlap: the idea
-        // targets the same code as a past attempt and reads similarly.
-        if (idea_files.len > 0 and hits * 5 >= idea_toks.len * 3) {
-            var file_hits: usize = 0;
-            for (idea_files) |f| {
-                // Check if the summary text mentions this file path (even as
-                // a substring, since summaries often contain bare file names).
-                const basename = std.fs.path.basename(f);
-                if (std.mem.indexOf(u8, s, basename) != null) file_hits += 1;
-            }
-            // At least half the idea's files appear in the summary.
-            if (file_hits * 2 >= idea_files.len) return true;
-        }
     }
     return false;
 }
@@ -210,25 +169,6 @@ test "parsePlan strips a markdown fence" {
     try std.testing.expectEqualStrings("do the thing", ideas[0].text);
 }
 
-test "parsePlan deduplicates ideas within the same response" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const raw =
-        \\{"ideas": [
-        \\  {"idea": "cache the tool registry between improve attempts", "files": []},
-        \\  {"idea": "add caching to the tool registry across improve attempts", "files": []},
-        \\  {"idea": "retry transient provider errors in the LLM client", "files": []}
-        \\]}
-    ;
-    const ideas = (try parsePlan(arena, raw, 6, 4)).?;
-    // The second idea is a rephrasing of the first; only 2 distinct ideas survive.
-    try std.testing.expectEqual(@as(usize, 2), ideas.len);
-    try std.testing.expectEqualStrings("cache the tool registry between improve attempts", ideas[0].text);
-    try std.testing.expectEqualStrings("retry transient provider errors in the LLM client", ideas[1].text);
-}
-
 test "parsePlan returns null for a patch proposal or an empty list" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -260,24 +200,4 @@ test "tried matches a paraphrase of a past summary, not a novel idea" {
     try std.testing.expect(!try tried(arena, "retry transient provider errors in client.chat", &summaries));
     // Nothing significant to compare on either side.
     try std.testing.expect(!try tried(arena, "do it", &summaries));
-}
-
-test "triedEx catches file-overlap repeats that word-only dedup misses" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const summaries = [_][]const u8{
-        "Improve error handling in worktree.zig resync after merge-back",
-    };
-
-    // Moderate word overlap + same file → caught as repeat.
-    const files = [_][]const u8{"src/improve/worktree.zig"};
-    try std.testing.expect(try triedEx(arena, "better error handling for worktree resync failures", &files, &summaries));
-
-    // Same files but genuinely different idea text → not caught.
-    try std.testing.expect(!try triedEx(arena, "add retry budget configuration to the provider client", &files, &summaries));
-
-    // No files provided falls back to word-only (original behaviour).
-    try std.testing.expect(!try triedEx(arena, "better error handling for worktree resync failures", &.{}, &summaries));
 }
