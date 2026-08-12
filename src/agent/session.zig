@@ -272,16 +272,19 @@ pub fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usiz
     var total: usize = 0;
     for (messages.items) |m| total +|= estimatedTokens(m);
     if (total <= max_tokens) return;
-    var i: usize = 0;
-    while (i < messages.items.len and total > max_tokens) {
-        const m = messages.items[i];
-        if (m.role != .system) {
+    // A single left-to-right compaction pass: `orderedRemove` per dropped
+    // message shifts the whole tail, which is O(n^2) once a long session
+    // needs many messages trimmed. Writing survivors back in place is O(n).
+    var write: usize = 0;
+    for (messages.items) |m| {
+        if (total > max_tokens and m.role != .system) {
             total -|= estimatedTokens(m);
-            _ = messages.orderedRemove(i);
-        } else {
-            i += 1;
+            continue;
         }
+        messages.items[write] = m;
+        write += 1;
     }
+    messages.shrinkRetainingCapacity(write);
 }
 
 fn roleFromStr(s: []const u8) types.Role {

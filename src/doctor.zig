@@ -67,72 +67,11 @@ fn fileExists(io: std.Io, path: []const u8) bool {
     return true;
 }
 
-/// improve-self isolates each run in its own `clanker/improve-self-<id>`
-/// branch and merges every promotion back into the base branch at the ref
-/// level (src/improve/worktree.zig). A merge-back that hits a real conflict
-/// (not just a lost compare-and-swap, which retries on its own) leaves the
-/// branch parked rather than blocking the run — logged once, easy to miss
-/// in a long-running loop's output. Confirmed live: 23 promotions from one
-/// run sat stuck for hours with nothing surfacing it short of grepping raw
-/// logs for "conflicts" by hand. This check makes that state visible
-/// without having to know to look for it.
-fn checkImproveSelfBranches(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, rep: *Report) void {
-    const list = std.process.run(gpa, io, .{
-        .argv = &.{ "git", "branch", "--list", "clanker/improve-self-*" },
-    }) catch return; // not a git repo, or git unavailable: nothing to say
-    defer gpa.free(list.stdout);
-    defer gpa.free(list.stderr);
-    const ok = switch (list.term) {
-        .exited => |c| c == 0,
-        else => false,
-    };
-    if (!ok) return;
-
-    var stuck: usize = 0;
-    var it = std.mem.splitScalar(u8, list.stdout, '\n');
-    while (it.next()) |raw_line| {
-        // `git branch --list` marks the current worktree's branch with "* "
-        // and any branch checked out in another worktree with "+ ".
-        const branch = std.mem.trim(u8, raw_line, " \t\r*+");
-        if (branch.len == 0) continue;
-
-        const anc = std.process.run(gpa, io, .{
-            .argv = &.{ "git", "merge-base", "--is-ancestor", branch, "HEAD" },
-        }) catch continue;
-        defer gpa.free(anc.stdout);
-        defer gpa.free(anc.stderr);
-        const merged = switch (anc.term) {
-            .exited => |c| c == 0,
-            else => false,
-        };
-        if (merged) continue;
-
-        const range = std.fmt.allocPrint(arena, "HEAD..{s}", .{branch}) catch continue;
-        const count = std.process.run(gpa, io, .{
-            .argv = &.{ "git", "rev-list", "--count", range },
-        }) catch continue;
-        defer gpa.free(count.stdout);
-        defer gpa.free(count.stderr);
-        const n = std.mem.trim(u8, count.stdout, " \t\r\n");
-
-        stuck += 1;
-        const detail = std.fmt.allocPrint(
-            arena,
-            "{s} commit(s) not on HEAD; a merge-back hit a real conflict, see the run's log for which files and resolve by hand (or `./clanker-merge-worktree.sh {s}`)",
-            .{ n, branch },
-        ) catch continue;
-        rep.line(.warn, branch, detail);
-    }
-    if (stuck == 0 and !std.mem.eql(u8, std.mem.trim(u8, list.stdout, " \t\r\n"), ""))
-        rep.line(.ok, "isolated branches", "all merged");
-}
-
 /// Every check doctor runs, so `setup` can end with the same report rather
 /// than a second, drifting copy of it.
 fn runChecks(
     io: std.Io,
     arena: std.mem.Allocator,
-    gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
     rep: *Report,
 ) !void {
@@ -232,9 +171,6 @@ fn runChecks(
             .{ missing, first_missing },
         ));
     }
-
-    rep.section("improve-self");
-    checkImproveSelfBranches(gpa, io, arena, rep);
 }
 
 pub fn cmdDoctor(init: std.process.Init) !void {
@@ -245,7 +181,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     var rep = Report{ .w = &out.interface };
     rep.w.writeAll("clanker doctor\n") catch {};
 
-    try runChecks(io, arena, init.gpa, init.environ_map, &rep);
+    try runChecks(io, arena, init.environ_map, &rep);
 
     rep.w.print("\n{d} failing, {d} warning\n", .{ rep.failures, rep.warnings }) catch {};
     if (rep.failures == 0) {
@@ -327,7 +263,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
     }
 
     var rep = Report{ .w = w };
-    try runChecks(io, arena, init.gpa, init.environ_map, &rep);
+    try runChecks(io, arena, init.environ_map, &rep);
     w.print("\n{d} failing, {d} warning\n", .{ rep.failures, rep.warnings }) catch {};
     if (rep.failures == 0) {
         w.writeAll("\nReady. Try: clanker \"summarise this repo\"\n") catch {};

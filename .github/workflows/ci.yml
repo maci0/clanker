@@ -30,6 +30,13 @@ jobs:
           version: 0.16.0
           use-cache: true
 
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: tools/ts/package-lock.json
+
       - name: Check shell scripts
         run: |
           shellcheck \
@@ -38,6 +45,12 @@ jobs:
             release-check.sh \
             tools/grammars/build.sh \
             tools/ts/verify.sh
+
+      - name: Audit AssemblyScript toolchain
+        working-directory: tools/ts
+        run: |
+          npm audit --audit-level=high
+          ./verify.sh
 
       - name: Run deterministic gate
         run: |

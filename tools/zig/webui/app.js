@@ -23,7 +23,6 @@ import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugi
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, syncModelSearchLabel as mpSyncLabel, renderModelList as mpRenderList, hideModelList as mpHideList, selectModel as mpSelectModel, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind } from "./core/modelpicker.js";
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, bindTools as toolsBind } from "./core/tools.js";
-import { refreshFleet, setNavShowView, setOpenRun } from "./features/fleet.js";
 
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";
@@ -1006,6 +1005,11 @@ function renderStats(turn, stats, task) {
   span.textContent = parts.join(" · ");
   turn.foot.appendChild(span);
 
+  var actions = document.createElement("span");
+  actions.className = "turn-foot-actions";
+  actions.style.display = "inline-flex";
+  actions.style.gap = "0.4rem";
+  actions.style.flexWrap = "wrap";
   var copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.className = "secondary";
@@ -1013,7 +1017,7 @@ function renderStats(turn, stats, task) {
   copyBtn.addEventListener("click", function () {
     copyText(turn.root.markdownSource || turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
   });
-  turn.foot.appendChild(copyBtn);
+  actions.appendChild(copyBtn);
 
   /* A plan turn that held is a proposal awaiting a verdict: Apply runs it
      for real, in the same conversation so the plan is in context, with plan
@@ -1030,7 +1034,7 @@ function renderStats(turn, stats, task) {
       el.task.value = "Apply the plan you proposed above, executing its steps now.";
       el.form.requestSubmit();
     });
-    turn.foot.appendChild(applyBtn);
+    actions.appendChild(applyBtn);
   }
 
   if (task) {
@@ -1044,7 +1048,7 @@ function renderStats(turn, stats, task) {
       el.task.value = task;
       el.form.requestSubmit();
     });
-    turn.foot.appendChild(regenBtn);
+    actions.appendChild(regenBtn);
 
     var editBtn = document.createElement("button");
     editBtn.type = "button";
@@ -1058,8 +1062,9 @@ function renderStats(turn, stats, task) {
       syncControls();
       scrollTo(el.task, "center");
     });
-    turn.foot.appendChild(editBtn);
+    actions.appendChild(editBtn);
   }
+  turn.foot.appendChild(actions);
 }
 
 var makeLineSplitter = makeLineSplitterMod;
@@ -2129,6 +2134,17 @@ toolsBind({
 // ---- views: one section visible at a time -----------------------------
 
 var VIEWS = ["chat", "board", "goals", "runs", "fleet", "rooms", "tools", "system"];
+var fleetModulePromise = null;
+function loadFleetModule() {
+  if (!fleetModulePromise) {
+    fleetModulePromise = import("./features/fleet.js").then(function (fleet) {
+      fleet.setNavShowView(showView);
+      fleet.setOpenRun(openRun);
+      return fleet;
+    });
+  }
+  return fleetModulePromise;
+}
 /* Each view's data is fetched the first time it is opened rather than all of
    it at load. The page used to fire seven requests before showing anything,
    several of which execute a WASM tool. */
@@ -2136,7 +2152,7 @@ var viewLoaded = {};
 var viewLoaders = {
   runs: loadRuns,
   fleet: function () {
-    return refreshFleet();
+    return loadFleetModule().then(function (fleet) { return fleet.refreshFleet(); });
   },
   rooms: function () { return loadStatus().then(loadChatRooms); },
   goals: loadGoals,
@@ -3545,8 +3561,6 @@ if (needsPluginsNow) {
   });
 }
 
-setNavShowView(showView);
-setOpenRun(openRun);
 afterFirstDraw(function () {
   loadStatus();
   loadProviders();

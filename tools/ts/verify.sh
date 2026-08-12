@@ -16,7 +16,9 @@ command -v npm >/dev/null || { printf 'error: npm is required to verify Assembly
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
-npm ci --silent
+# The compiler has no required lifecycle scripts. Keep verification installs
+# inert so a compromised transitive package cannot execute code on the runner.
+npm ci --silent --ignore-scripts
 
 status=0
 for f in *.ts; do
