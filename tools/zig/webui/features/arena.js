@@ -298,7 +298,7 @@ function renderMatch() {
   if (status) {
     var line = statusLine(m);
     if (reducedMotion()) line = "Still frame, respecting reduced motion. " + line;
-    status.textContent = line;
+    if (status.textContent !== line) status.textContent = line;
   }
 
   renderCombatants(m);

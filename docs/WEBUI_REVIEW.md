@@ -445,6 +445,49 @@ actually serving `features/todos.js` and `features/arena.js` with a JS content
 type rather than falling through to the page. Suite `583 pass, 2 skip (585
 total)`; 163/163 build steps.
 
+## Export escaping, finished — the run `Export .html` path (2026-08-13)
+
+Follow-up to "Two bugs found on the way, both fixed here" above. That entry
+fixed the header fields (`<title>`, `<h1>`, `<p>`) and said every interpolated
+field now goes through `core/utils.js`'s `escapeHtml`. One did not: the JSON
+dump at the end of the document still carried its own
+one-character escaper, a bare regex replace of `<` alone, written inline in
+`drawRun`.
+
+- **Why it survived a fix that was looking straight at it.** `<` is the only
+  character that can open a tag, so escaping just `<` really does keep markup
+  out of the `<pre>` — the dump was not an injection hole, and reading the line
+  for injection finds nothing. It is a *fidelity* hole. With `&` left alone, a
+  run whose text contained the literal characters `&lt;script&gt;` renders in
+  the export as `<script>`, and `&amp;` renders as `&`: the file disagrees with
+  the run it claims to be a copy of, in the direction of showing markup that
+  was never there. Order matters too — `&` has to be replaced first, which a
+  chain of replaces gets wrong and a single-pass escaper cannot.
+- **The fix is deletion, not addition.** The dump goes through the same `esc`
+  the header fields already use. There is now exactly one escaper on this path
+  (`escapeHtml`, `[&<>"']` in one pass), which was the intent of the earlier
+  entry; what was left was a second, partial one sitting beside it.
+- **Guarded, because a comment is not a gate.** A source-tree test in
+  `src/cli.zig` ("no webui source hand-rolls a partial HTML escape") walks
+  `tools/zig/webui/{.,core,lib,features}` and fails on a `.replace(/</g`,
+  `.replace(/&/g` or `.replace(/>/g` shaped call in code (comment lines are
+  skipped, so the pattern can still be named where it is explained). It skips
+  outside the repo root, like its `webui_asset_paths` neighbour. Two people
+  have now written a partial escaper into this one function; the third attempt
+  turns the suite red instead.
+
+### Verified
+
+Not in the browser: `clanker serve` still dies at `accept` (SIGSYS) here, so
+nothing was clicked through. Covered by the source-tree gate above, and the
+same escaping question was verified end to end on the native side, where it
+*is* runnable: `clanker session export` (docs/ROADMAP.md, Done) renders a
+transcript through a single-pass Zig escaper of the same five characters, and
+a real export of a live DeepSeek session whose answer was
+`<script>alert("x & y")</script>` was fed to a strict HTML parser — no
+`script` element in the tree, the sequence present only as a text node.
+Suite `608/610 tests passed (2 skipped)`; 169/169 build steps.
+
 ## Compare view — the blind side-by-side in the browser (2026-08-13)
 
 The web UI half of `clanker compare`, listed as still open on the roadmap since

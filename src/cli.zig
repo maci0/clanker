@@ -15,6 +15,7 @@ const worktree_mod = @import("improve/worktree.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
+const session_export = @import("agent/session_export.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
 const private_todos = @import("agent/private_todos.zig");
@@ -61,6 +62,8 @@ pub const Command = enum {
     providers_check,
     run,
     sessions,
+    /// `session export <id>`: one conversation as a self-contained HTML file.
+    session_export,
     tools_list,
     eval,
     improve_self,
@@ -107,6 +110,11 @@ pub const Options = struct {
     /// "subscribe". `room` holds the room name; `message` holds the text (send),
     /// an `after` ts (history) or an on/off token (subscribe).
     chat_sub: []const u8 = "rooms",
+    /// `session export <id> [path]`: where the HTML transcript goes. Absent,
+    /// `session_export.defaultPath` picks `state/exports/<id>.html`. The id
+    /// itself rides in `session`, the field every other command already reads
+    /// a session id out of.
+    session_out: ?[]const u8 = null,
     room: ?[]const u8 = null,
     eval_name: ?[]const u8 = null,
     /// `eval --tasks`: only the agent-driven evals, skipping the selfhost
@@ -474,6 +482,13 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .run;
             } else if (std.mem.eql(u8, a, "sessions")) {
                 opts.command = .sessions;
+            } else if (std.mem.eql(u8, a, "session")) {
+                // Mandatory subcommand, the way `tools list` is: `session`
+                // alone is not a listing (that is `sessions`), so leaving it
+                // to mean something would make the singular and the plural
+                // two spellings of one command.
+                opts.command = .session_export;
+                pending_sub = "export";
             } else if (std.mem.eql(u8, a, "tools")) {
                 opts.command = .tools_list;
                 pending_sub = "list";
@@ -582,6 +597,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.task = a;
         } else if (opts.command == .providers_check and opts.provider == null) {
             opts.provider = a;
+        } else if (opts.command == .session_export and opts.session == null) {
+            opts.session = a;
+        } else if (opts.command == .session_export and opts.session_out == null) {
+            opts.session_out = a;
         } else if (opts.command == .run and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .graph and opts.task == null) {
@@ -657,6 +676,10 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         return error.MissingArg;
     }
     if (opts.command == .revert and opts.task == null) {
+        setDiag(diag, "<id>");
+        return error.MissingArg;
+    }
+    if (opts.command == .session_export and opts.session == null) {
         setDiag(diag, "<id>");
         return error.MissingArg;
     }
@@ -998,6 +1021,7 @@ const specs = [_]Spec{
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
+    .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
@@ -1059,6 +1083,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .providers_check => try cmdProvidersCheck(init, opts),
         .run => try cmdRun(init, opts),
         .sessions => try cmdSessions(init),
+        .session_export => try cmdSessionExport(init, opts),
         .tools_list => try cmdToolsList(init, opts),
         .eval => try cmdEval(init, opts),
         .improve_self => try cmdImproveSelf(init, opts),
@@ -2586,6 +2611,39 @@ fn cmdSessions(init: std.process.Init) !void {
         return error.ModuleDisabled;
     }
     try printInternalTool(init, &cfg, "cmd_sessions", "");
+}
+
+/// `clanker session export <id> [path]` — one saved conversation written out
+/// as a self-contained HTML transcript.
+///
+/// Native rather than a `cmd_*` WASM tool, unlike its `sessions` neighbour: a
+/// tool's output is a `text` field the CLI prints, and this produces a file
+/// on disk, at a path the caller may name, whose whole point is that it is
+/// larger than the guest's shared output buffer. The rendering itself lives
+/// in `agent/session_export.zig` and is unit-tested there; this only resolves
+/// the id and the destination.
+fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.sessions) return error.ModuleDisabled;
+
+    const id = opts.session orelse return error.MissingArg;
+    if (!session.validSessionId(id)) {
+        log.log(.error_, "not a session id: '{s}'", .{id});
+        return error.InvalidSessionId;
+    }
+    const s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), id) catch |err| {
+        log.log(.error_, "cannot read session '{s}': {s} (clanker sessions lists them)", .{ id, @errorName(err) });
+        return err;
+    };
+    const html = try session_export.render(arena, s);
+    const path = opts.session_out orelse try session_export.defaultPath(arena, id);
+    // Atomic, so re-exporting over a file someone already has open leaves
+    // them the previous complete document rather than half of the new one.
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, html);
+    const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, s.messages.len, html.len });
+    try writeStdOut(io, line);
 }
 
 /// `clanker graph [run-id]` — list persisted execution graphs, or render one
@@ -8867,6 +8925,47 @@ test "no webui module file exists that the asset route has never heard of" {
             if (!isWebuiAssetPath(path)) {
                 std.debug.print("webui module {s} is not in webui_asset_paths; it will 404\n", .{path});
                 return error.UnroutedWebuiModule;
+            }
+        }
+    }
+}
+
+test "no webui source hand-rolls a partial HTML escape" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Source-tree test, skipped outside the repo root like its neighbour
+    // above. The run "Export .html" path in app.js builds a whole document by
+    // string concatenation, and once carried its own one-character escaper
+    // (`.replace(/</g,"&lt;")`) beside core/utils.js's escapeHtml. `<` alone
+    // keeps markup out, so the miss was invisible until a run's text held an
+    // entity and came back decoded. There is one escaper; a second partial
+    // one is the bug, not the fix, so scan for the shape of it.
+    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    defer root.close(io);
+
+    const needles = [_][]const u8{ "replace(/</g", "replace(/&/g", "replace(/>/g" };
+    for ([_][]const u8{ ".", "core", "lib", "features" }) |sub| {
+        var d = root.openDir(io, sub, .{ .iterate = true }) catch continue;
+        defer d.close(io);
+        var it = d.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".js")) continue;
+            const src = d.readFileAlloc(io, entry.name, std.testing.allocator, .limited(4 << 20)) catch continue;
+            defer std.testing.allocator.free(src);
+            var lines = std.mem.splitScalar(u8, src, '\n');
+            while (lines.next()) |line| {
+                // A comment naming the pattern is how it stays explained;
+                // only code counts.
+                if (std.mem.startsWith(u8, std.mem.trim(u8, line, " \t"), "//")) continue;
+                for (needles) |n| {
+                    if (std.mem.find(u8, line, n) != null) {
+                        std.debug.print("webui/{s}/{s} hand-rolls '{s}'; use core/utils.js escapeHtml\n", .{ sub, entry.name, n });
+                        return error.PartialHtmlEscape;
+                    }
+                }
             }
         }
     }

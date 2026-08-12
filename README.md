@@ -109,6 +109,7 @@ task; `clanker --help` prints usage.
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
 | `sessions` | List saved sessions |
+| `session export <id> [path]` | Write one saved session as a self-contained HTML transcript (default `state/exports/<id>.html`) |
 | `tools list` | List registered WASM tools |
 | `eval [name] [--tasks]` | Run evals |
 | `improve-self [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |

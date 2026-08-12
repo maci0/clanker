@@ -1921,10 +1921,73 @@ const Model = struct {
     /// matches complete to their longest shared prefix, or, once that stops
     /// advancing the line, get listed in the transcript instead of eating
     /// the keystroke silently.
+    /// Completes a command argument (the text after "<command> ") against a
+    /// known set: one match completes it (with a trailing space), several
+    /// complete to their shared prefix or, once that stops advancing, get
+    /// listed. Returns whether it did anything.
+    fn completeArg(self: *Model, ctx: *vxfw.EventContext, cmd: []const u8, partial: []const u8, candidates: []const []const u8) bool {
+        var hits: [max_completions][]const u8 = undefined;
+        var n: usize = 0;
+        for (candidates) |c| {
+            if (n < hits.len and std.mem.startsWith(u8, c, partial)) {
+                hits[n] = c;
+                n += 1;
+            }
+        }
+        if (n == 0) return false;
+        if (n == 1) {
+            self.loadInputFrom(std.fmt.allocPrint(self.arena, "{s} {s} ", .{ cmd, hits[0] }) catch return true);
+            ctx.redraw = true;
+            return true;
+        }
+        // Longest common prefix of the hits.
+        var lcp = hits[0];
+        for (hits[1..n]) |h| {
+            var i: usize = 0;
+            while (i < lcp.len and i < h.len and lcp[i] == h[i]) : (i += 1) {}
+            lcp = lcp[0..i];
+        }
+        if (lcp.len > partial.len) {
+            self.loadInputFrom(std.fmt.allocPrint(self.arena, "{s} {s}", .{ cmd, lcp }) catch return true);
+            ctx.redraw = true;
+            return true;
+        }
+        var line: std.ArrayList(u8) = .empty;
+        line.appendSlice(self.arena, "completions:") catch return true;
+        for (hits[0..n]) |h| {
+            line.appendSlice(self.arena, "  ") catch break;
+            line.appendSlice(self.arena, h) catch break;
+        }
+        self.lines.append(self.arena, .{ .text = line.toOwnedSlice(self.arena) catch "completions:", .dim = true }) catch {};
+        ctx.redraw = true;
+        return true;
+    }
+
     fn completeSlashCommand(self: *Model, ctx: *vxfw.EventContext) !bool {
         const input = self.text_field.buf.dupe() catch return false;
         defer self.text_field.buf.allocator.free(input);
         if (!looksLikeSlashCommand(input)) return false;
+
+        // Argument completion: once a command name and a space are typed,
+        // complete the argument against the command's known value set (theme
+        // names, workflow names). Commands whose argument is free text (goal,
+        // arena, ...) have no set and fall through to nothing.
+        if (std.mem.indexOfScalar(u8, input, ' ')) |sp| {
+            const cmd = std.mem.trimEnd(u8, input[0..sp], " ");
+            const partial = std.mem.trimStart(u8, input[sp + 1 ..], " ");
+            const pc = parseCommand(cmd) orelse return false;
+            switch (pc.spec.action) {
+                .theme => return self.completeArg(ctx, cmd, partial, &theme_mod.names),
+                .workflow => {
+                    const workflows_mod = @import("../workflows.zig");
+                    const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch return false;
+                    var names: std.ArrayList([]const u8) = .empty;
+                    for (wfs) |w| names.append(self.arena, w.name) catch break;
+                    return self.completeArg(ctx, cmd, partial, names.items);
+                },
+                else => return false,
+            }
+        }
 
         var buf: [max_completions]SpellingMatch = undefined;
         const matches = matchingSpellings(input, &buf);
@@ -2137,19 +2200,24 @@ const Model = struct {
                 // Tool cards (dim, left-bar shaped) get their own tint and a
                 // bar-preserving wrap.
                 writeWrappedCard(surface, &row, bottom, text_width, l.text, tool_style);
+            } else if (l.user) {
+                // The user's echoed prompt line: accent, no markdown (it is
+                // literal input, not model prose).
+                writeWrapped(surface, &row, bottom, text_width, l.text, prompt_style);
+            } else if (std.mem.startsWith(u8, l.text, "[error:")) {
+                writeWrapped(surface, &row, bottom, text_width, l.text, err_style);
+            } else if (l.dim) {
+                // System notices, usage hints, tool output: plain dim.
+                writeWrapped(surface, &row, bottom, text_width, l.text, dim);
             } else {
-                // An error turn's "[error: " prefix gets its own tint; the
-                // user's echoed prompt gets the accent colour; everything
-                // else is default or dim.
-                const style = if (l.user)
-                    prompt_style
-                else if (std.mem.startsWith(u8, l.text, "[error:"))
-                    err_style
-                else if (l.dim)
-                    dim
-                else
-                    vaxis.Style{};
-                writeWrapped(surface, &row, bottom, text_width, l.text, style);
+                // Model prose: inline markdown (bold/italic/code, headings,
+                // bullets). Falls back to plain on any parse failure.
+                var segs: std.ArrayList(vaxis.Segment) = .empty;
+                if (mdLineSegments(&active, ctx.arena, l.text, &segs)) {
+                    writeWrappedSegments(ctx, surface, &row, bottom, text_width, segs.items);
+                } else |_| {
+                    writeWrapped(surface, &row, bottom, text_width, l.text, vaxis.Style{});
+                }
             }
             row += 1;
         }
@@ -2157,7 +2225,7 @@ const Model = struct {
         // frozen history, and painting fresh tokens under it would both lie
         // about where they belong and shove the anchored lines around.
         if (streaming and self.view_end == null and row < bottom and stream_snapshot.len > 0) {
-            self.writeStream(ctx, surface, &row, bottom, text_width, stream_snapshot, fence_on, &syn_style);
+            self.writeStream(ctx, surface, &row, bottom, text_width, stream_snapshot, fence_on, &syn_style, &active);
         }
 
         if (show_bar) drawScrollbar(surface, max.width - 1, top, bottom, start, view_end, line_count, rule_style, accent_style);
@@ -2224,7 +2292,7 @@ const Model = struct {
     /// same while it streams as it does once folded in (it used to render as
     /// flat unstyled text with the ``` markers showing). `fence_on` is whether
     /// the theme has colour at all; with it off everything falls back to plain.
-    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style) void {
+    fn writeStream(self: *Model, ctx: vxfw.DrawContext, surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, fence_on: bool, syn_style: *const syntax.Style, active: *const theme_mod.Theme) void {
         _ = self;
         var in_fence = false;
         var fence_lang: []const u8 = "";
@@ -2245,6 +2313,17 @@ const Model = struct {
                 var state = syntax.State.init(fence_lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
                 if (syntax.spansVaxis(&state, syn_style, ctx.arena, line, &segs)) {
+                    writeWrappedSegments(ctx, surface, row, bottom, width, segs.items);
+                } else |_| {
+                    writeWrapped(surface, row, bottom, width, line, .{});
+                }
+            } else if (fence_on) {
+                // Live prose: same inline markdown the completed transcript
+                // gets, so bold/italic/code render as they stream in. A marker
+                // still opening (a `**` with no close yet) stays literal until
+                // the rest arrives.
+                var segs: std.ArrayList(vaxis.Segment) = .empty;
+                if (mdLineSegments(active, ctx.arena, line, &segs)) {
                     writeWrappedSegments(ctx, surface, row, bottom, width, segs.items);
                 } else |_| {
                     writeWrapped(surface, row, bottom, width, line, .{});
@@ -2428,6 +2507,47 @@ test "lineRows counts wrapped rows and honours embedded newlines" {
     try std.testing.expectEqual(@as(usize, 1), lineRows("anything", 0)); // zero width is one row
 }
 
+test "inline markdown splits into styled segments and leaves plain text whole" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const theme = theme_mod.Theme.mocha; // a 24-bit theme, so styles carry colour
+
+    // Bold, italic, and inline code each become their own segment, with the
+    // markers stripped and the surrounding text kept as plain segments.
+    var segs: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "a **b** c `d` e", &segs);
+    var joined: std.ArrayList(u8) = .empty;
+    var bold_seen = false;
+    var code_seen = false;
+    for (segs.items) |s| {
+        try joined.appendSlice(arena, s.text);
+        if (std.mem.eql(u8, s.text, "b")) bold_seen = s.style.bold;
+        if (std.mem.eql(u8, s.text, "d")) code_seen = s.style.fg != .default;
+    }
+    try std.testing.expectEqualStrings("a b c d e", joined.items); // markers gone
+    try std.testing.expect(bold_seen);
+    try std.testing.expect(code_seen);
+
+    // A heading collapses to one bold segment with the # marker stripped.
+    var head: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "## Title", &head);
+    try std.testing.expectEqual(@as(usize, 1), head.items.len);
+    try std.testing.expectEqualStrings("Title", head.items[0].text);
+    try std.testing.expect(head.items[0].style.bold);
+
+    // A bullet emits a marker segment then the inline body.
+    var bul: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "- item", &bul);
+    try std.testing.expectEqualStrings("\xe2\x80\xa2 ", bul.items[0].text);
+
+    // Plain prose with an unmatched marker stays literal, one plain segment.
+    var plain: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "just text with a * star", &plain);
+    try std.testing.expectEqual(@as(usize, 1), plain.items.len);
+    try std.testing.expectEqualStrings("just text with a * star", plain.items[0].text);
+}
+
 test "tailWindow bottom-aligns a short transcript and fills a tall one" {
     const lines = [_]Line{
         .{ .text = "one" },  .{ .text = "two" },  .{ .text = "three" },
@@ -2479,6 +2599,110 @@ fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, styl
         surface.writeCell(col.*, row, .{ .char = .{ .grapheme = cp, .width = 1 }, .style = style });
         col.* += 1;
     }
+}
+
+/// The styles inline markdown renders with, resolved once from the active
+/// theme. A 24-bit theme names exact colours; a 16-colour theme falls back to
+/// the nearest index; `mono` stays attributes-only (bold/italic still read).
+const MdStyles = struct {
+    bold: vaxis.Style,
+    italic: vaxis.Style,
+    code: vaxis.Style,
+    heading: vaxis.Style,
+    bullet: vaxis.Style,
+    plain: vaxis.Style,
+};
+
+fn mdStyles(active: *const theme_mod.Theme) MdStyles {
+    if (active.rgb) |c| return .{
+        .bold = .{ .bold = true },
+        .italic = .{ .italic = true },
+        .code = .{ .fg = .{ .rgb = c.builtin } },
+        .heading = .{ .bold = true, .fg = .{ .rgb = c.accent } },
+        .bullet = .{ .fg = .{ .rgb = c.accent } },
+        .plain = .{},
+    };
+    const on = active.reset.len > 0;
+    return .{
+        .bold = .{ .bold = true },
+        .italic = .{ .italic = true },
+        .code = if (on) .{ .fg = .{ .index = 6 } } else .{},
+        .heading = .{ .bold = true },
+        .bullet = if (on) .{ .fg = .{ .index = 2 } } else .{},
+        .plain = .{},
+    };
+}
+
+/// Parses one line's inline markdown (`**bold**`, `*italic*`/`_italic_`,
+/// `` `code` ``) into styled segments. Text slices point into `text` (the
+/// caller's arena-owned line), so they stay valid until the frame flushes.
+/// An unmatched marker is left literal.
+fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *std.ArrayList(vaxis.Segment)) !void {
+    var i: usize = 0;
+    var seg_start: usize = 0;
+    const flush = struct {
+        fn f(a: std.mem.Allocator, o: *std.ArrayList(vaxis.Segment), s: []const u8, style: vaxis.Style) !void {
+            if (s.len > 0) try o.append(a, .{ .text = s, .style = style });
+        }
+    }.f;
+    while (i < text.len) {
+        const c = text[i];
+        if (c == '`') {
+            if (std.mem.findScalarPos(u8, text, i + 1, '`')) |end| {
+                try flush(arena, out, text[seg_start..i], st.plain);
+                try out.append(arena, .{ .text = text[i + 1 .. end], .style = st.code });
+                i = end + 1;
+                seg_start = i;
+                continue;
+            }
+        } else if (c == '*' and i + 1 < text.len and text[i + 1] == '*') {
+            if (std.mem.findPos(u8, text, i + 2, "**")) |end| {
+                if (end > i + 2) {
+                    try flush(arena, out, text[seg_start..i], st.plain);
+                    try out.append(arena, .{ .text = text[i + 2 .. end], .style = st.bold });
+                    i = end + 2;
+                    seg_start = i;
+                    continue;
+                }
+            }
+        } else if (c == '*' or c == '_') {
+            if (std.mem.findScalarPos(u8, text, i + 1, c)) |end| {
+                if (end > i + 1) {
+                    try flush(arena, out, text[seg_start..i], st.plain);
+                    try out.append(arena, .{ .text = text[i + 1 .. end], .style = st.italic });
+                    i = end + 1;
+                    seg_start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    try flush(arena, out, text[seg_start..], st.plain);
+}
+
+/// Renders one transcript line as inline markdown segments: a `# heading`
+/// becomes bold-accent, a `-`/`*`/`+` bullet gets an accent dot then inline
+/// body, everything else is inline-parsed prose. Line-level only (no
+/// multi-line constructs); a line that is not markdown comes back as one plain
+/// segment, so the caller can always render the result.
+fn mdLineSegments(active: *const theme_mod.Theme, arena: std.mem.Allocator, text: []const u8, out: *std.ArrayList(vaxis.Segment)) !void {
+    const st = mdStyles(active);
+    var h: usize = 0;
+    while (h < text.len and text[h] == '#') h += 1;
+    if (h >= 1 and h <= 6 and h < text.len and text[h] == ' ') {
+        try out.append(arena, .{ .text = std.mem.trimStart(u8, text[h..], " "), .style = st.heading });
+        return;
+    }
+    var indent: usize = 0;
+    while (indent < text.len and text[indent] == ' ') indent += 1;
+    if (indent + 1 < text.len and (text[indent] == '-' or text[indent] == '*' or text[indent] == '+') and text[indent + 1] == ' ') {
+        if (indent > 0) try out.append(arena, .{ .text = text[0..indent], .style = st.plain });
+        try out.append(arena, .{ .text = "\xe2\x80\xa2 ", .style = st.bullet }); // "• "
+        try appendInline(arena, text[indent + 2 ..], st, out);
+        return;
+    }
+    try appendInline(arena, text, st, out);
 }
 
 /// Writes styled segments with grapheme-accurate widths, wrapping at the
