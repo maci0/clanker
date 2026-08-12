@@ -91,7 +91,7 @@ pub const Worktree = struct {
                 continue; // lost the CAS race; retry against the new tip
             }
 
-            const tree = mergeTree(gpa, io, base_sha, branch_sha) catch {
+            const tree = mergeTreeDiag(gpa, io, base_sha, branch_sha) catch {
                 log.log(.warn, "improve-self: merging {s} into {s} conflicts; leaving it on the branch for manual merge", .{ self.branch, self.base_branch });
                 return;
             };
@@ -252,11 +252,31 @@ fn mergeBaseOf(gpa: std.mem.Allocator, io: std.Io, a: []const u8, b: []const u8)
     return run1(gpa, io, &.{ "git", "merge-base", a, b });
 }
 
-/// Computes the merge without touching any working tree or the index; the
-/// returned tree sha is `null` semantically on conflict (surfaced as
-/// error.CommandFailed by run1, which the caller treats as "can't merge").
-fn mergeTree(gpa: std.mem.Allocator, io: std.Io, ours: []const u8, theirs: []const u8) ![]u8 {
-    return run1(gpa, io, &.{ "git", "merge-tree", "--write-tree", "--no-messages", ours, theirs });
+/// Computes the merge without touching any working tree or the index. On a
+/// real conflict, logs `git merge-tree`'s own conflict report (the
+/// conflicting paths) before returning `error.MergeConflict` — going
+/// through plain `run1` here would discard that stdout along with the
+/// generic failure, leaving the caller's warning with nothing but "it
+/// conflicts" and no way to know which files without re-running the
+/// command by hand.
+fn mergeTreeDiag(gpa: std.mem.Allocator, io: std.Io, ours: []const u8, theirs: []const u8) ![]u8 {
+    const argv = [_][]const u8{ "git", "merge-tree", "--write-tree", "--no-messages", ours, theirs };
+    const res = try std.process.run(gpa, io, .{ .argv = &argv, .stdout_limit = .limited(1 << 20), .stderr_limit = .limited(1 << 20) });
+    defer gpa.free(res.stderr);
+    const ok = switch (res.term) {
+        .exited => |c| c == 0,
+        else => false,
+    };
+    if (!ok) {
+        log.log(.warn, "improve-self: merge-tree conflict detail:\n{s}", .{res.stdout});
+        gpa.free(res.stdout);
+        return error.MergeConflict;
+    }
+    const trimmed = std.mem.trim(u8, res.stdout, " \t\r\n");
+    if (trimmed.len == res.stdout.len) return res.stdout;
+    const out = try gpa.dupe(u8, trimmed);
+    gpa.free(res.stdout);
+    return out;
 }
 
 fn commitTree(gpa: std.mem.Allocator, io: std.Io, tree: []const u8, parent1: []const u8, parent2: []const u8, message: []const u8) ![]u8 {

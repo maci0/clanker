@@ -146,21 +146,40 @@ while [ "$attempt" -lt 3 ]; do
   warn "$BASE moved during the merge attempt; retrying (attempt $attempt/3)"
 done
 
-[ -n "${landed_sha:-}" ] || die "kept losing the race to land on $BASE after 3 attempts; nothing was touched, try again"
+if [ -z "${landed_sha:-}" ]; then
+  warn "kept losing the race to land on $BASE after 3 attempts; nothing was touched, try again"
+  exit 2
+fi
 
 if [ "$RESYNC" -eq 1 ] && [ "$branch_sha" != "$landed_sha" ]; then
   info "resyncing $BRANCH to the landed commit"
-  run git update-ref "refs/heads/$BRANCH" "$landed_sha"
+  # CAS, same as the land itself: $branch_sha is the value this script last
+  # read for $BRANCH, so this only succeeds if nothing else moved it in the
+  # meantime (a human still working on it, a second concurrent run of this
+  # script) — a blind two-arg update-ref would silently overwrite whatever
+  # they added.
+  run git update-ref "refs/heads/$BRANCH" "$landed_sha" "$branch_sha" ||
+    warn "$BRANCH moved since it landed; left it as-is rather than overwrite whatever moved it"
 fi
 
 if [ -n "$REMOVE_WORKTREE" ]; then
-  info "removing worktree $REMOVE_WORKTREE"
-  run git worktree remove --force "$REMOVE_WORKTREE"
+  # Cross-check before --force discards anyone's uncommitted work: only
+  # remove a worktree that is actually checked out on $BRANCH, not just
+  # whatever path was passed.
+  wt_branch="$(git worktree list --porcelain | awk -v p="$REMOVE_WORKTREE" '
+    $1=="worktree" { w=$2 } $1=="branch" && w==p { sub("refs/heads/", "", $2); print $2 }
+  ')"
+  if [ "$wt_branch" = "$BRANCH" ]; then
+    info "removing worktree $REMOVE_WORKTREE"
+    run git worktree remove --force "$REMOVE_WORKTREE"
+  else
+    warn "not removing $REMOVE_WORKTREE: it's checked out on '${wt_branch:-<none found>}', not $BRANCH — pass the right path or remove it yourself"
+  fi
 fi
 
 if [ "$KEEP_BRANCH" -eq 0 ]; then
   info "deleting $BRANCH (its content now lives on $BASE)"
-  run git branch -D "$BRANCH" 2>/dev/null || warn "could not delete $BRANCH (still checked out somewhere?)"
+  run git branch -D "$BRANCH" || warn "could not delete $BRANCH (still checked out somewhere?)"
 fi
 
 info "done"
