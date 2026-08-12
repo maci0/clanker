@@ -36,6 +36,21 @@ Both `clanker repl` and `clanker run` render the same live status while a turn i
 - **openai** / **anthropic**: first-party API endpoints.
 - **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project`, `location`, and either an access token in `api_key_env` or a `service_account_file`; tokens are minted in-process and cached until they near expiry. `std.crypto.Certificate.rsa` only verifies signatures, so the RS256 assertion Google requires is signed in `src/llm/gcp_jwt.zig` on std primitives: `der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, and the RSASSA-PKCS1-v1_5 padding is built by hand. No gcloud, no Python, no subprocess. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
 
+**Auth is a separate axis from the wire format.** Most providers accept an API
+key; some also accept OAuth, and the two are chosen by the credential, not a
+new provider kind. Anthropic already does this: a token that starts `sk-ant-oat`
+(an OAuth access token from `ant auth login`) is sent as `Authorization: Bearer`
+with an `oauth-2025-04-20` beta header, while any other value goes on
+`x-api-key` (`isOauthToken` in `src/llm/client.zig`). Vertex mints and refreshes
+a GCP OAuth token from `service_account_file` instead of reading a static key.
+For an OpenAI-compatible provider that offers both (xAI, say), the API-key path
+already works with `api_key_env` alone, because both an API key and an OAuth
+token ride `Authorization: Bearer` there; adding OAuth is a credential-
+acquisition concern (obtain and refresh the token), not a new header path. The
+target design that names these strategies (`api_key` / `oauth_static` /
+`oauth_refresh`) is [docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md),
+alongside the modular-provider vtable in [docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
+
 Streaming is the Anthropic event vocabulary, not OpenAI's: `content_block_delta` carries `text_delta` for prose and `input_json_delta` fragments for tool arguments, and usage arrives split across `message_start` (input, cache reads) and `message_delta` (output, cumulative). Unknown event types, including `thinking_delta` and `signature_delta`, are ignored rather than treated as errors.
 
 Providers are configured in `config.toml` / `config.local.toml` (see below).
