@@ -1,9 +1,9 @@
 {
   "name": "board_list",
   "kind": "task",
-  "description": "board_list must fold the board out of the room's chat log and always present the fixed column set — cards.zig hardcodes backlog through done, so the columns are in every answer whether or not a single card exists. That makes the assertion content-free: an empty board and a full one both pass, and no card anyone adds or moves can break it. It goes red when the fold, the ck_chat paging, or the guest-side board logic breaks — application logic no build gate exercises end to end. Read-only: list never appends to the log. Needs modules.chatrooms enabled, which the shipped config.json sets.",
-  "prompt": "Use the board_list tool with input {}. Look at the tool's JSON result. If its ok field is true and its board's columns include backlog and done, reply with exactly COLUMNS. Otherwise reply with exactly EMPTY.",
-  "requires_tool": "board_list",
+  "description": "kanban_list must fold the board out of the room's chat log and always present the fixed column set — cards.zig hardcodes backlog through done, so the columns are in every answer whether or not a single card exists. That makes the assertion content-free: an empty board and a full one both pass, and no card anyone adds or moves can break it. It goes red when the fold, the ck_chat paging, or the guest-side board logic breaks — application logic no build gate exercises end to end. Read-only: list never appends to the log. Needs modules.chatrooms enabled, which the shipped config.json sets.",
+  "prompt": "Use the kanban_list tool with input {}. Look at the tool's JSON result. If its ok field is true and its board's columns include backlog and done, reply with exactly COLUMNS. Otherwise reply with exactly EMPTY.",
+  "requires_tool": "kanban_list",
   "criteria": [
     {
       "includes": [

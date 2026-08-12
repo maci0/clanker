@@ -1513,9 +1513,11 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     // The board is one guest (board.wasm) behind eleven manifest names, and it
     // needs two ops rather than one: it replicates each card into its room with
     // "send" and folds that room's log back with "history" on every read.
-    // Matched exactly, or on the "board_" prefix — a bare startsWith("board")
-    // also grants any future tool whose name merely begins that way.
-    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "board_"))
+    // Matched on the "board" name, the legacy "board_" prefix, and the current
+    // "kanban_" prefix (commit 4fadb86 renamed the public tools).
+    if (std.mem.eql(u8, tool_name, "board") or
+        std.mem.startsWith(u8, tool_name, "board_") or
+        std.mem.startsWith(u8, tool_name, "kanban_"))
         return std.mem.eql(u8, op, "send") or std.mem.eql(u8, op, "history");
     // The janitor announces what it pruned into the room. Like the board it
     // ignores a failed chat call, so being denied here cost it its

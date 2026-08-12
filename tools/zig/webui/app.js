@@ -151,6 +151,7 @@ var el = {
   enterSends: document.getElementById("enter-sends"),
   planMode: document.getElementById("plan-mode"),
   researchMode: document.getElementById("research-mode"),
+  unlimitedIterations: document.getElementById("unlimited-iterations"),
   turnFilter: document.getElementById("turn-filter"),
   turnFilterCount: document.getElementById("turn-filter-count"),
   scrollBottom: document.getElementById("scroll-bottom"),
@@ -1448,6 +1449,11 @@ el.form.addEventListener("submit", function (e) {
 
   var isPlan = el.planMode && el.planMode.checked;
   var isResearch = el.researchMode && el.researchMode.checked;
+  // 1000 is the server's own clamp ceiling (clampIterationBudget in
+  // cli.zig) — there is no true "unlimited", so this asks for the highest
+  // budget the harness will actually honor rather than a number it clamps
+  // down anyway.
+  var noLimit = el.unlimitedIterations && el.unlimitedIterations.checked;
   var turn = createTurn(task);
   if (isPlan) {
     /* The badge marks the proposal turn so renderStats can offer Apply, and
@@ -1558,6 +1564,7 @@ el.form.addEventListener("submit", function (e) {
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,
       plan: isPlan,
       research: isResearch,
+      max_iterations: noLimit ? 1000 : null,
       knowledge: (typeof kbSelected !== "undefined" ? kbSelected.slice() : [])
     }),
     signal: controller.signal
