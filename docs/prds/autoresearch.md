@@ -10,7 +10,7 @@ Manual edit → run → measure → keep/discard loop costs a human per iteratio
 
 ## Design
 
-Harness contract: any shell command must (a) exit 0, (b) emit metric as `<pattern><number>` in stdout/stderr or `metric.json` `{"<name>": <number>}`, (c) respect `budget_seconds` wall-clock. Targets validated against `src/improve/proposal.zig` allowed surface. State: `state/autoresearch/<run-id>/` (`config.json`, `ledger.jsonl`, `best/`, `staging/`). Loop: `src/research/autoresearch.zig` (`Loop`).
+Harness contract: any shell command must (a) exit 0, (b) emit metric as `<pattern><number>` in stdout/stderr or `metric.json` `{"<name>": <number>}`, (c) respect `budget_seconds` wall-clock. Targets validated against `src/improve/proposal.zig` allowed surface. State: `state/autoresearch/<run-id>/` (`config.json` or `config.toml`, `ledger.jsonl`, `best/`, `staging/`). Loop: `src/research/autoresearch.zig` (`Loop`).
 
 ## Acceptance
 
