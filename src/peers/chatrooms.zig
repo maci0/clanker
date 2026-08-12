@@ -337,7 +337,11 @@ fn trimLog(gpa: std.mem.Allocator, arena: std.mem.Allocator, out: *std.ArrayList
         try new_list.appendSlice(gpa, ln);
         try new_list.append(gpa, '\n');
     }
-    out.* = new_list;
+    // Swap instead of `out.* = new_list`: a plain struct copy would leave
+    // `out` aliasing new_list's buffer, and the deferred new_list.deinit(gpa)
+    // below would free it, leaving out.items dangling. The next write of
+    // out.items would hit freed memory (writev → EFAULT → process abort).
+    std.mem.swap(std.ArrayList(u8), out, &new_list);
 }
 
 /// Receives a message from a peer; appends it only when this instance
@@ -858,6 +862,50 @@ test "append + readHistory + listRooms round-trip" {
 
     const fresh = try readNew(tmp.dir, io, std.testing.allocator, arena, "", .{ .ts = 1000 });
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
+}
+
+test "append trims to max_history and keeps the newest lines" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 3;
+
+    // 6 appends force trimLog to drop the first 3 and keep the newest 3 on
+    // every append past the cap. This exercises the trim (the old `out.* =
+    // new_list` aliased the buffer and freed it, so the write hit freed
+    // memory and the log came back corrupted / the write EFAULTed).
+    var i: usize = 0;
+    while (i < 6) : (i += 1) {
+        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+            .room = "dev",
+            .from = "test-clanker",
+            .text = try std.fmt.allocPrint(arena, "line {d}", .{i}),
+            .ts = @as(i64, @intCast(i)),
+            .id = try std.fmt.allocPrint(arena, "m{d}", .{i}),
+        });
+    }
+
+    // Only the newest 3 survive, oldest dropped first.
+    const hist = try readHistory(tmp.dir, io, std.testing.allocator, arena, "", "dev", 0, 50);
+    try std.testing.expectEqual(@as(usize, 3), hist.len);
+    try std.testing.expectEqualStrings("line 5", hist[0].text); // newest first
+    try std.testing.expectEqualStrings("line 4", hist[1].text);
+    try std.testing.expectEqualStrings("line 3", hist[2].text);
+
+    // The trimmed log must still be a valid, parseable room file.
+    const rooms = try listRooms(tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), rooms.len);
+    try std.testing.expectEqual(@as(usize, 3), rooms[0].messages);
 }
 
 test "readHistoryAsc pages oldest-first and extends through a shared boundary timestamp" {
