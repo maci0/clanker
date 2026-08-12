@@ -189,15 +189,47 @@ test "astCheckGate short-circuits when there are no .zig files" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// The live process environment, for tests that spawn `zig`. Threaded.init's
+/// default environ is `.empty`, which resolves a bare argv[0] against a stub
+/// PATH ("/usr/local/bin:/bin:/usr/bin") and gives the child an *empty*
+/// environment — so the spawn either fails outright (zig not in the stub
+/// PATH) or a version-managed zig (anyzig) dies with AppDataDirUnavailable
+/// because not even HOME survives.
+fn testProcessEnviron() std.process.Environ {
+    const raw: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
+    var n: usize = 0;
+    while (raw[n] != null) : (n += 1) {}
+    return .{ .block = .{ .slice = raw[0..n :null] } };
+}
+
+/// Tests that actually spawn `zig` run it with the test's tmp dir as cwd.
+/// Under a version-manager shim (anyzig, which manages this repo's toolchain
+/// off build.zig.zon), zig refuses to run from a directory holding no
+/// build.zig/build.zig.zon to pull a version from — so seed a minimal pair.
+/// A plain zig install ignores both files for the subcommands used here.
+fn seedZigVersionFiles(io: std.Io, dir: std.Io.Dir) !void {
+    try dir.writeFile(io, .{ .sub_path = "build.zig", .data = "" });
+    try dir.writeFile(io, .{ .sub_path = "build.zig.zon", .data =
+    \\.{
+    \\    .name = .gate_test,
+    \\    .version = "0.0.0",
+    \\    .minimum_zig_version = "0.16.0",
+    \\    .paths = .{""},
+    \\    .fingerprint = 0xd15ea5ed0dec0ded,
+    \\}
+    });
+}
+
 test "astCheckGate fails on a syntax error with a precise diagnostic" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = testProcessEnviron() });
     defer threaded.deinit();
     const io = threaded.io();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    try seedZigVersionFiles(io, tmp.dir);
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x = ;\n" });
     var result = try astCheckGate(gpa, io, tmp.dir, &.{"bad.zig"});
     defer result.deinit(gpa);
@@ -560,13 +592,14 @@ test "fmtGate and formatFiles short-circuit when there is nothing to format" {
 
 test "fmtGate catches unformatted code and formatFiles fixes it" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = testProcessEnviron() });
     defer threaded.deinit();
     const io = threaded.io();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    try seedZigVersionFiles(io, tmp.dir);
     // Deliberately unformatted: zig fmt would insert a space before `1`.
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x =1;\n" });
 
@@ -675,6 +708,23 @@ fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
     for (known_first) |k| {
         std.Io.Dir.accessAbsolute(io, k, .{ .execute = true }) catch continue;
         return gpa.dupe(u8, k) catch null;
+    }
+    // Fall back to a PATH search. std.process.run execs argv[0] as given —
+    // no shell, no PATH lookup — so a bare "zig" only spawns if it happens
+    // to live in the gate's cwd; on any machine not covered by the known
+    // paths above, every zig gate died with a spawn error instead of running.
+    const path_env = std.c.getenv("PATH") orelse return null;
+    var it = std.mem.splitScalar(u8, std.mem.span(path_env), ':');
+    while (it.next()) |dir| {
+        // Relative PATH entries are skipped: the gate runs zig with its own
+        // cwd, so a path relative to *this* process's cwd would be wrong.
+        if (dir.len == 0 or dir[0] != '/') continue;
+        const cand = std.fmt.allocPrint(gpa, "{s}/zig", .{dir}) catch return null;
+        std.Io.Dir.accessAbsolute(io, cand, .{ .execute = true }) catch {
+            gpa.free(cand);
+            continue;
+        };
+        return cand;
     }
     return null;
 }
