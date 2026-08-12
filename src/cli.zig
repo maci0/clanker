@@ -82,6 +82,7 @@ pub const Command = enum {
     prune,
     autoresearch,
     arena,
+    compare,
     workflow,
 };
 
@@ -157,6 +158,21 @@ pub const Options = struct {
     arena_alternative: ?[]const u8 = null,
     /// `arena --match <id>`: print a stored match instead of running one.
     arena_match: ?[]const u8 = null,
+    /// `compare --with` repeated: the models to put side by side, each written
+    /// `<provider>` or `<provider>@<model>`. `@` because a model name may
+    /// legitimately contain `/` (`moonshotai/kimi-k2`) and `:` (`llama3:8b`),
+    /// so neither can separate the two halves unambiguously.
+    compare_with: []const []const u8 = &.{},
+    /// `compare --judge <provider>`, or "none". Absent, the tool's own default
+    /// ("auto": a configured provider that is not an entrant) applies.
+    compare_judge: ?[]const u8 = null,
+    /// `compare --show <id>`: print a stored comparison instead of running one.
+    compare_show: ?[]const u8 = null,
+    /// `compare --show <id> --pick <letter>`: record the human's pick.
+    compare_pick: ?[]const u8 = null,
+    compare_synthesize: bool = false,
+    /// `compare --reveal`: print the label-to-model key even with no verdict.
+    compare_reveal: bool = false,
 };
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
@@ -356,15 +372,49 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 used = .arena_rounds;
             } else if (std.mem.eql(u8, a, "--judge")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
-                // Refused here rather than by the tool: a typo'd judge mode
-                // should not cost a whole match's worth of model calls before
-                // it is reported.
-                if (!std.mem.eql(u8, v, "self") and !std.mem.eql(u8, v, "third")) {
-                    setDiag(diag, v);
-                    return error.BadJudge;
+                if (opts.command == .compare) {
+                    // `compare --judge` names a provider (or "none"), not a
+                    // mode: there is no self-scoring here, since the entrants
+                    // never see each other's answers. The command token comes
+                    // first, so it is already known by the time a flag is read.
+                    opts.compare_judge = v;
+                    used = .compare_judge;
+                } else {
+                    // Refused here rather than by the tool: a typo'd judge mode
+                    // should not cost a whole match's worth of model calls
+                    // before it is reported.
+                    if (!std.mem.eql(u8, v, "self") and !std.mem.eql(u8, v, "third")) {
+                        setDiag(diag, v);
+                        return error.BadJudge;
+                    }
+                    opts.arena_judge = v;
+                    used = .arena_judge;
                 }
-                opts.arena_judge = v;
-                used = .arena_judge;
+            } else if (std.mem.eql(u8, a, "--with")) {
+                // Repeatable, and not comma-split: a model name can contain a
+                // comma about as readily as it can contain a space, and one
+                // flag per entrant is what makes the list obvious in a shell
+                // history.
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                const gpa = std.heap.page_allocator;
+                var list: std.ArrayList([]const u8) = .empty;
+                for (opts.compare_with) |x| try list.append(gpa, x);
+                const trimmed = std.mem.trim(u8, v, " \t");
+                if (trimmed.len > 0) try list.append(gpa, trimmed);
+                opts.compare_with = try list.toOwnedSlice(gpa);
+                used = .compare_with;
+            } else if (std.mem.eql(u8, a, "--show")) {
+                opts.compare_show = try takeValue(args, &idx, inline_value, a, diag);
+                used = .compare_show;
+            } else if (std.mem.eql(u8, a, "--pick")) {
+                opts.compare_pick = try takeValue(args, &idx, inline_value, a, diag);
+                used = .compare_pick;
+            } else if (std.mem.eql(u8, a, "--synthesize")) {
+                opts.compare_synthesize = true;
+                used = .compare_synthesize;
+            } else if (std.mem.eql(u8, a, "--reveal")) {
+                opts.compare_reveal = true;
+                used = .compare_reveal;
             } else if (std.mem.eql(u8, a, "--judge-provider")) {
                 opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
                 used = .arena_judge_provider;
@@ -463,6 +513,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .autoresearch;
             } else if (std.mem.eql(u8, a, "arena")) {
                 opts.command = .arena;
+            } else if (std.mem.eql(u8, a, "compare")) {
+                opts.command = .compare;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
             } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
@@ -534,6 +586,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         } else if (opts.command == .graph and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .arena and opts.task == null) {
+            opts.task = a;
+        } else if (opts.command == .compare and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .notify and opts.peer == null) {
             opts.peer = a;
@@ -661,6 +715,42 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             if (opts.arena_against == null) {
                 setDiag(diag, "--against");
                 return error.MissingArg;
+            }
+        }
+    }
+    // `compare --show <id>` reads a stored comparison and takes no prompt;
+    // anything else is running one, which needs one. Caught here so a missing
+    // prompt costs a usage error rather than a refusal from the tool after the
+    // registry has been loaded. An empty --show is not a request to list: the
+    // tool treats blank as absent, so it would print the listing instead of the
+    // comparison that was asked for.
+    if (opts.command == .compare) {
+        if (opts.compare_show) |id| {
+            if (id.len == 0) {
+                setDiag(diag, "--show");
+                return error.MissingArg;
+            }
+            if (opts.task != null) {
+                setDiag(diag, "--show");
+                return error.UnknownArg;
+            }
+        } else {
+            if (opts.compare_pick != null) {
+                // A pick with nothing to pick from would silently start a new
+                // comparison and discard the letter.
+                setDiag(diag, "--show");
+                return error.MissingArg;
+            }
+            if (opts.task == null) {
+                setDiag(diag, "<prompt>");
+                return error.MissingArg;
+            }
+            // One entrant is not a comparison. Zero is the documented "use
+            // every configured provider" case, so only an explicit single
+            // --with is wrong.
+            if (opts.compare_with.len == 1) {
+                setDiag(diag, "--with");
+                return error.CompareTooFewModels;
             }
         }
     }
@@ -818,6 +908,12 @@ const Flag = enum {
     arena_position,
     arena_defend,
     arena_alternative,
+    compare_with,
+    compare_judge,
+    compare_show,
+    compare_pick,
+    compare_synthesize,
+    compare_reveal,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -847,6 +943,12 @@ const Flag = enum {
             .arena_position => "--position",
             .arena_defend => "--defend",
             .arena_alternative => "--alternative",
+            .compare_with => "--with",
+            .compare_judge => "--judge",
+            .compare_show => "--show",
+            .compare_pick => "--pick",
+            .compare_synthesize => "--synthesize",
+            .compare_reveal => "--reveal",
         };
     }
 };
@@ -890,6 +992,7 @@ const specs = [_]Spec{
     .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
+    .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
     .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
@@ -978,6 +1081,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .gate => try cmdGate(init, opts),
         .autoresearch => try cmdAutoresearch(init, opts),
         .arena => try cmdArena(init, opts),
+        .compare => try cmdCompare(init, opts),
         .workflow => try cmdWorkflow(init, opts),
     }
 }
@@ -8270,6 +8374,99 @@ fn cmdArena(init: std.process.Init, opts: Options) !void {
         const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
         log.log(.error_, "arena: {s}", .{msg});
         return error.ArenaRefused;
+    }
+    const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
+    try writeStdOut(io, text);
+    if (text.len > 0 and text[text.len - 1] != '\n') try writeStdOut(io, "\n");
+}
+
+/// Splits a `--with` value into provider and model. `@` is the separator
+/// because a model name can contain `/` (`moonshotai/kimi-k2`) and `:`
+/// (`llama3:8b`) but not `@`, and a provider name is a config key with neither.
+/// An empty model means "the provider's configured model", which is what makes
+/// a bare `--with deepseek` enough.
+fn splitCompareTarget(spec: []const u8) struct { provider: []const u8, model: []const u8 } {
+    if (std.mem.findScalar(u8, spec, '@')) |at| {
+        return .{
+            .provider = std.mem.trim(u8, spec[0..at], " \t"),
+            .model = std.mem.trim(u8, spec[at + 1 ..], " \t"),
+        };
+    }
+    return .{ .provider = spec, .model = "" };
+}
+
+/// `clanker compare "<prompt>" --with a --with b@model` — one prompt to several
+/// models at once, answers shown unlabeled. Builds the `compare` tool's input
+/// and prints its rendered text, the same shape `cmdArena` has: the blinding,
+/// the concurrency and the persistence all live in the tool and its host
+/// function, so an agent calling the tool and a person typing the subcommand
+/// get identical behaviour rather than two implementations of it.
+fn cmdCompare(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    try s.beginObject();
+    if (opts.compare_show) |id| {
+        try s.objectField("id");
+        try s.write(id);
+        if (opts.compare_pick) |pick| {
+            try s.objectField("pick");
+            try s.write(pick);
+        }
+    } else {
+        try s.objectField("prompt");
+        try s.write(opts.task.?);
+        if (opts.compare_with.len > 0) {
+            try s.objectField("targets");
+            try s.beginArray();
+            for (opts.compare_with) |spec| {
+                const t = splitCompareTarget(spec);
+                try s.beginObject();
+                try s.objectField("provider");
+                try s.write(t.provider);
+                if (t.model.len > 0) {
+                    try s.objectField("model");
+                    try s.write(t.model);
+                }
+                try s.endObject();
+            }
+            try s.endArray();
+        }
+        if (opts.compare_judge) |j| {
+            try s.objectField("judge");
+            try s.write(j);
+        }
+        if (opts.compare_synthesize) {
+            try s.objectField("synthesize");
+            try s.write(true);
+        }
+        if (opts.compare_reveal) {
+            try s.objectField("reveal");
+            try s.write(true);
+        }
+    }
+    try s.endObject();
+
+    if (opts.compare_show == null) {
+        const n = if (opts.compare_with.len > 0) opts.compare_with.len else cfg.providers.count();
+        log.log(.info, "compare: asking {d} model(s) the same prompt, concurrently", .{n});
+    }
+
+    const raw = try toolJson(io, gpa, arena, &cfg, init.environ_map, "compare", w.written());
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
+        log.log(.error_, "compare: unreadable tool output", .{});
+        return error.ToolBadOutput;
+    };
+    if (parsed != .object) return error.ToolBadOutput;
+    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    if (!ok) {
+        const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        log.log(.error_, "compare: {s}", .{msg});
+        return error.CompareRefused;
     }
     const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
     try writeStdOut(io, text);

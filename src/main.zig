@@ -139,6 +139,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{diag}),
             error.ArenaMixedPositions => cli.printUsageError(init.io, "use --for/--against for a two-way match or repeated --position for a battle royale, not both", .{}),
             error.ArenaTooFewPositions => cli.printUsageError(init.io, "a battle royale needs at least 2 --position flags (3 to 8 is the interesting range)", .{}),
+            error.CompareTooFewModels => cli.printUsageError(init.io, "a comparison needs at least 2 --with flags, or none at all to compare every configured provider", .{}),
             error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
             error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ diag, diag }),

@@ -1,0 +1,77 @@
+{
+  "name": "compare",
+  "description": "Put one prompt to several configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than on the badge. The calls run concurrently host-side, so N models cost the slowest one and not the sum. WHEN TO USE: choosing which configured provider/model to route a class of work to, or sanity-checking one model's answer against others before acting on it. WHEN NOT TO USE: (1) 'providers' with action='check', which pings for connectivity and latency and says nothing about answer quality; (2) 'arena', where two models argue against each other over rounds and see each other's moves, which is the right tool when the risk is a confidently wrong answer going unchallenged rather than an unclear choice between models; (3) anything with a measurable right answer, which is an eval. INPUT to run one: {'prompt': required string every model is asked, 'targets': optional array of {'provider','model'} (model optional, defaults to the provider's configured model), 'providers': optional array of provider names as a shorthand for targets with default models, 'judge': optional 'auto' (default, the configured default provider), 'none' (leave the pick to the human) or a provider name, 'max_tokens': optional output cap per answer (default 600), 'synthesize': optional bool, merges the answers into one (costs one extra call, default false), 'reveal': optional bool forcing the label-to-model key into the output}. With neither 'targets' nor 'providers', every configured provider enters, capped at 8. Two to eight entrants; two entrants that are the same provider AND the same model are refused, since that is one model sampled twice. Answers are shown in an order derived from the comparison id rather than the order the targets were given, and each model's own provider/model names are struck out of its own answer, so nothing before the reveal says which model wrote which answer. INPUT to read one: {'id': '<id>'} (always revealed). INPUT to record a pick: {'id': '<id>', 'pick': '<letter>'}. INPUT with no fields: lists past comparisons. Comparisons land in state/compare/<id>.json.",
+  "wasm": "zig-out/tools/compare.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "description": "The question every model is asked. Its presence is what starts a comparison."
+      },
+      "targets": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "The models to compare. 'model' is optional and defaults to the provider's configured model, so two models of one provider is expressible."
+      },
+      "providers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Shorthand for 'targets': one entrant per provider, each on its configured model."
+      },
+      "judge": {
+        "type": "string",
+        "description": "'auto' (default): the configured default provider, with a caveat recorded on the verdict when it is also an entrant. 'none': no verdict, the pick is left to the human. Any other value names the judging provider."
+      },
+      "max_tokens": {
+        "type": "integer",
+        "description": "Output cap per answer. Lower it to keep a wide comparison readable and cheap."
+      },
+      "synthesize": {
+        "type": "boolean",
+        "description": "Also merge the answers into one, as an extra model call. Off by default."
+      },
+      "reveal": {
+        "type": "boolean",
+        "description": "Force the label-to-model key into the output. Defaults to true once there is a verdict to attach the names to."
+      },
+      "id": {
+        "type": "string",
+        "description": "Read a stored comparison by id instead of running one."
+      },
+      "pick": {
+        "type": "string",
+        "description": "With 'id': record this blind label as the human's pick and reveal the key."
+      }
+    }
+  },
+  "fs_prefixes": [
+    "state/compare/"
+  ],
+  "network_allow": [],
+  "config": {
+    "max_tokens": 600,
+    "judge": "auto",
+    "synthesize": false
+  },
+  "category": "agent",
+  "config_editable": [
+    "max_tokens",
+    "judge",
+    "synthesize"
+  ],
+  "llm": true,
+  "confirm": true
+}
