@@ -282,9 +282,85 @@ defense in depth:
   console messages — the posture working, not defects); **zero frame-src
   violations**; screenshot `docs/assets/webui/preview.png`.
 
+## Research toggle — the composer's web-search control (2026-08-12)
+
+Parity slice: the last named candidate beyond Phase 6 — Kimi's signature
+composer control, a web-search toggle.
+
+- **Server:** `RunRequestBody` gains `research: bool`; `handleConnection`
+  threads it into `Agent.research_mode`; `src/agent/loop.zig` gains
+  `research_mode_suffix` ("RESEARCH MODE: … consult web_search/fetch_web for
+  current, sourced information …"), appended to the system prompt beside the
+  plan-mode suffix. A directive, not a gate: `web_search`/`fetch_web` are
+  ordinary enabled tools the model could already call; the suffix tells it
+  the operator wants web-backed answers and when to reach for them.
+- **Composer:** a `Research` checkbox (same pill styling as Plan) beside the
+  Plan toggle; the `/api/run` body carries `research: isResearch`.
+- **Verified** (playwright, live serve, `/api/run` intercepted with a fake
+  stream so no provider call is made): toggle renders; ON → body
+  `research: true`, OFF → `research: false`, `plan` unaffected; 0 page
+  errors. New parse test (`research:true` → field set, `plan` untouched);
+  suite `430 pass, 1 skip (431 total)`.
+
+## Video input — Kimi Code harness parity (2026-08-12)
+
+Target correction: "Kimi Code" here means the **open-source coding harness**
+(`MoonshotAI/kimi-code`, the TypeScript CLI agent), not the kimi.com web
+product — the earlier Phase 6 slice was written against the latter and
+remains a valid chat-parity layer, but the parity map below is the harness's
+feature list.
+
+Harness feature map vs this page: tools (read/edit/run/search/fetch) ✓,
+sessions ✓, approvals ✓, model switching ✓, subagents ✓, **video input**
+(this slice), skills/plugins (partial — Tools view, no skills surface),
+MCP client config ✗, ACP/IDE ✗, lifecycle hooks (partial).
+
+- **Video input** — Kimi's headline "drop a screen recording into the chat":
+  `core/attachments.js` gains `addVideoFile` — a dropped/pasted video is
+  decoded through a blob-URL `<video>` element, sampled to up to 4 evenly
+  spaced JPEG frames (one per second up to the cap, `max_images` total with
+  anything already attached), drawn at ≤640px wide, encoded at jpeg 0.72
+  (~6-7 KB per frame), and pushed onto the same `pendingImages` list the
+  server already accepts — nothing server-side changes. `addMediaFile`
+  routes images/videos, refuses the rest; the composer's paste + drag-drop
+  handlers now call it.
+- **CSP:** `media-src blob:` added (video decode happens through a blob URL;
+  `default-src 'none'` otherwise blocks it) — documented in the header
+  comment, same pattern as `frame-src blob:` for the preview pane.
+- **Verified** (playwright, live serve): a real 3s ffmpeg mp4 dropped into
+  the composer → 3 JPEG frames attached (6-7 kB each), hint "video sampled
+  to 3 frames.", and the intercepted `/api/run` body carries the three
+  `image/jpeg` frames; 0 page errors. Screenshot
+  `docs/assets/webui/video-attach.png`.
+
+## Skills surface — the Tools view catalogue (2026-08-12)
+
+Kimi harness parity, next gap on the map: skills were agent-authored markdown
+in `skills/` that only the system prompt ever saw — the web UI had no idea
+they existed. Now the Tools view carries a Skills section under the tool
+rows.
+
+- **Endpoint:** `GET /api/skills` (`scanSkills` + `handleSkills` in
+  `src/cli.zig`) mirrors the system prompt's discovery exactly — same dir
+  (`cfg.agent.skills_dir`), same filters (`*.md`, no `SYSTEM.md`, ≥20 bytes),
+  same sort — so the catalogue can never drift from what the agent actually
+  has in context. Only the first `# ` heading and first prose paragraph are
+  sent (clipped UTF-8-safe to 220 chars) plus byte size; the page gets a
+  catalogue, not the bodies. Test: `scanSkills` with a temp dir (sort,
+  exclusions, missing-dir → empty).
+- **View:** `core/tools.js` — `loadTools` now also fetches `/api/skills` and
+  renders `.skill-card`s (title, `name · size`, description) under a
+  "Skills" heading in `#view-tools` (`index.html` + `.skill-card` CSS).
+  Best-effort: a skills failure never takes the tools list down.
+- **Verified** (playwright, live serve): Tools view shows all 4 real skills
+  (Autoresearch, Self-improvement, Research, Writing a goal) with
+  descriptions, "4 skills." status, 0 page errors; screenshot
+  `docs/assets/webui/skills.png`. Suite `431 pass, 1 skip (432 total)`.
+
 ## Left / next
 
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.
-- If Kimi parity is to extend beyond the documented Phase 6: a composer "research/web search" toggle (wiring the existing `web_search`/`fetch_web` tools into a run directive — server-side, in the agent loop) is the remaining candidate. The per-run file-edit diff view and the html/svg preview pane from this slice are now shipped.
+- If Kimi parity is to extend beyond the documented Phase 6: decompose remaining `app.js` view logic (`features/board.js`, `features/goals.js`), promote `axe-core` into `clanker gate`, and resolve the pre-existing axe handoff items (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — all already logged in the sweep entry. The composer Research toggle from this slice closes the last named parity candidate.
+- Kimi Code **harness** parity (open-source CLI, the corrected target): remaining gaps are MCP **client** configuration (clanker already serves MCP; `/mcp-config`-style client management is new), ACP/IDE integration (`kimi acp` equivalent), and lifecycle hooks surfaced from the page. Video input and the skills catalogue just landed; each remaining item is a bounded slice on its own.

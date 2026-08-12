@@ -16,7 +16,7 @@ import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersRe
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
 import { renderUsageTable as usageRenderTable } from "./core/usage.js";
 import { renderStatusInto as statusRenderInto } from "./core/status.js";
-import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addImageFile as attachAddFile } from "./core/attachments.js";
+import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addMediaFile as attachAddMedia } from "./core/attachments.js";
 import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
@@ -145,6 +145,7 @@ var el = {
   paramTopP: document.getElementById("param-topp"),
   enterSends: document.getElementById("enter-sends"),
   planMode: document.getElementById("plan-mode"),
+  researchMode: document.getElementById("research-mode"),
   turnFilter: document.getElementById("turn-filter"),
   turnFilterCount: document.getElementById("turn-filter-count"),
   scrollBottom: document.getElementById("scroll-bottom"),
@@ -1255,7 +1256,10 @@ function loadStatus() {
 var pendingImages = attachImages;
 var max_image_bytes = attachMaxBytes;
 function renderAttachments() { attachRender(el, icon, fmtBytes); }
-function addImageFile(file) { attachAddFile(file, el, icon, fmtBytes); }
+/* A dropped or pasted file may be an image or a video (Kimi Code parity:
+   drop a screen recording and the agent watches it). Videos are sampled to
+   JPEG frames by the attachments module and ride the same image path. */
+function addImageFile(file) { attachAddMedia(file, el, icon, fmtBytes); }
 
 el.task.addEventListener("paste", function (e) {
   var items = (e.clipboardData && e.clipboardData.items) || [];
@@ -1341,6 +1345,7 @@ el.form.addEventListener("submit", function (e) {
   if (busy || task === "") return;
 
   var isPlan = el.planMode && el.planMode.checked;
+  var isResearch = el.researchMode && el.researchMode.checked;
   var turn = createTurn(task);
   if (isPlan) {
     /* The badge marks the proposal turn so renderStats can offer Apply, and
@@ -1445,7 +1450,8 @@ el.form.addEventListener("submit", function (e) {
       model: opts.model || "",
       temperature: typeof opts.temperature === "number" ? opts.temperature : null,
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,
-      plan: isPlan
+      plan: isPlan,
+      research: isResearch
     }),
     signal: controller.signal
   }).then(function (resp) {

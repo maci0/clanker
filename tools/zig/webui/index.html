@@ -178,6 +178,10 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
           </label>
+          <label for="research-mode" class="checkbox-row plan-toggle" title="The run consults the web (web_search/fetch_web) for current, sourced information">
+            <input type="checkbox" id="research-mode">
+            <span>Research</span>
+          </label>
           <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)">🎙</button>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
@@ -360,6 +364,13 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
         <div id="tools"></div>
         <div id="tool-detail" class="run-detail" role="region" aria-label="Selected tool detail" hidden></div>
+        <h3 class="detail-head" style="margin-top: var(--space-5);">Skills</h3>
+        <!-- Skills are the markdown files in skills/ the system prompt embeds
+             wholesale; this list mirrors that discovery (same dir, same
+             filters) so what the page shows is what the agent actually sees.
+             Read-only: skills are authored by the agent itself via edit_skill. -->
+        <div id="skills" class="skills"></div>
+        <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
         <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
       </div>
     </section>

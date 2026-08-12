@@ -2,6 +2,7 @@
 // row rendering, detail, toggles and config editing. Keeps the list itself as
 // a derived state (toolState) so filter and data cannot disagree.
 import { scrollTo as vendorScrollTo } from "./vendor.js";
+import { fmtBytes as utilFmtBytes } from "./utils.js";
 
 var _el = null;
 var _allToolsHolder = null;
@@ -261,6 +262,7 @@ export function loadTools() {
     .then(function (data) {
       _allToolsHolder.list.length = 0; Array.prototype.push.apply(_allToolsHolder.list, data.plugins || []);
       renderTools(_el.toolFilter.value);
+      return loadSkills();
     })
     .catch(function (err) {
       _el.tools.textContent = "";
@@ -269,6 +271,47 @@ export function loadTools() {
       p.textContent = "Could not load tools: " + err.message;
       _el.tools.appendChild(p);
       _el.toolsStatus.textContent = p.textContent;
+    });
+}
+
+/* The Skills list under the tool rows: GET /api/skills mirrors the system
+   prompt's discovery (same dir, same filters, same sort), so this can never
+   disagree with what the agent actually has in context. Best-effort — a
+   skills failure must not take the tools list down with it. */
+function loadSkills() {
+  var box = document.getElementById("skills");
+  var status = document.getElementById("skills-status");
+  if (!box) return Promise.resolve();
+  return fetch("/api/skills")
+    .then(_readJson)
+    .then(function (data) {
+      var list = (data && data.skills) || [];
+      box.textContent = "";
+      box.hidden = list.length === 0;
+      list.forEach(function (sk) {
+        var card = document.createElement("div");
+        card.className = "skill-card";
+        var name = document.createElement("span");
+        name.className = "skill-name";
+        name.textContent = sk.title || sk.name.replace(/\.md$/, "");
+        card.appendChild(name);
+        var meta = document.createElement("span");
+        meta.className = "skill-meta";
+        meta.textContent = sk.name + "  \u00b7  " + utilFmtBytes(sk.bytes);
+        card.appendChild(meta);
+        if (sk.description) {
+          var desc = document.createElement("p");
+          desc.className = "skill-desc";
+          desc.textContent = sk.description;
+          card.appendChild(desc);
+        }
+        box.appendChild(card);
+      });
+      if (status) status.textContent = list.length + (list.length === 1 ? " skill." : " skills.");
+    })
+    .catch(function () {
+      box.hidden = true;
+      if (status) status.textContent = "Could not load skills.";
     });
 }
 

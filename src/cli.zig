@@ -2644,6 +2644,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_stats = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/stats");
         const is_metrics = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/metrics");
         const is_plugins = std.mem.eql(u8, path, "/api/plugins") and (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
+        const is_skills = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/skills");
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
@@ -2729,6 +2730,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handlePluginConfig(io, gpa, cfg, body, stream);
         } else if (is_plugins) {
             handlePlugins(io, gpa, cfg, environ_map, method, body, stream);
+        } else if (is_skills) {
+            handleSkills(io, gpa, cfg, acceptsGzip(headers_raw), stream);
         } else if (is_goals) {
             handleGoals(io, gpa, cfg, method, body, stream);
         } else if (is_providers) {
@@ -3433,6 +3436,9 @@ const RunRequestBody = struct {
     /// harness refuses write-capable tools, so nothing changes until the
     /// user applies the plan as a follow-up run.
     plan: bool = false,
+    /// Research mode (the composer's Research toggle): the run is directed
+    /// to consult web_search/fetch_web for current, sourced information.
+    research: bool = false,
     /// Optional per-run max agent-loop iteration budget. When set it wins over
     /// everything else; when null and a goal steers this run, that goal's
     /// stored `max_iterations` (state/goals.json) is the default; when neither
@@ -4816,6 +4822,140 @@ test "branch route suffix parsing yields a valid source id and refuses traversal
     try std.testing.expect(branchSuffix("sess-abc/branch/3/4") == null);
 }
 
+const SkillMeta = struct {
+    name: []const u8,
+    title: []const u8 = "",
+    description: []const u8 = "",
+    bytes: usize = 0,
+};
+
+/// Skills are markdown files in `skills_dir` the system prompt embeds
+/// wholesale (system_prompt.zig reads every *.md except SYSTEM.md with
+/// >= 20 bytes of content, sorted for prompt-cache stability). This mirrors
+/// that discovery exactly — same dir, same filters, same sort — so the web
+/// UI's Skills list can never drift from what the agent actually sees. Only
+/// the first `# ` heading and the first prose paragraph after it are sent,
+/// clipped; the page gets a catalogue, not the bodies.
+fn scanSkills(arena: std.mem.Allocator, io: std.Io, base: std.Io.Dir, dir: []const u8) ![]SkillMeta {
+    var out: std.ArrayList(SkillMeta) = .empty;
+    var d = base.openDir(io, dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
+    defer d.close(io);
+
+    var names: std.ArrayList([]const u8) = .empty;
+    var it = d.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
+        if (std.mem.eql(u8, entry.name, "SYSTEM.md")) continue;
+        try names.append(arena, try arena.dupe(u8, entry.name));
+    }
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+
+    for (names.items) |name| {
+        const content = d.readFileAlloc(io, name, arena, .limited(max_skill_bytes)) catch continue;
+        if (std.mem.trim(u8, content, " \t\r\n").len < 20) continue;
+        var title: []const u8 = "";
+        var description: []const u8 = "";
+        var lines = std.mem.splitScalar(u8, content, '\n');
+        while (lines.next()) |line| {
+            const t = std.mem.trim(u8, line, " \t\r");
+            if (t.len == 0) continue;
+            if (std.mem.startsWith(u8, t, "# ")) {
+                if (title.len == 0) title = t[2..];
+                continue;
+            }
+            if (std.mem.startsWith(u8, t, "#")) continue;
+            description = clipTo(arena, t, 220);
+            break;
+        }
+        try out.append(arena, .{ .name = name, .title = title, .description = description, .bytes = content.len });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// Clips a line to `max` bytes without splitting a UTF-8 codepoint.
+fn clipTo(arena: std.mem.Allocator, s: []const u8, max: usize) []const u8 {
+    if (s.len <= max) return s;
+    var end: usize = max;
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return arena.dupe(u8, s[0..end]) catch s[0..end];
+}
+
+/// Skills the prompt embeds also get capped at the same bound (PromptParts
+/// default in system_prompt.zig); the list scans must agree with the read.
+const max_skill_bytes = 24 * 1024;
+
+fn handleSkills(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const skills = scanSkills(arena, io, std.Io.Dir.cwd(), cfg.agent.skills_dir) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"skills scan failed\"}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("skills") catch return;
+    s.beginArray() catch return;
+    for (skills) |sk| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(sk.name) catch return;
+        s.objectField("title") catch return;
+        s.write(sk.title) catch return;
+        s.objectField("description") catch return;
+        s.write(sk.description) catch return;
+        s.objectField("bytes") catch return;
+        s.print("{d}", .{sk.bytes}) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+test "scanSkills mirrors the system prompt's discovery" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "skills");
+    try tmp.dir.writeFile(io, .{ .sub_path = "skills/research.md", .data = "# Web research\n\nFind current facts first, then answer.\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "skills/autoresearch.md", .data = "# Autoresearch\n\nRun a command-to-scalar harness loop.\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "skills/SYSTEM.md", .data = "# Base\n\nNever included here.\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "skills/tiny.md", .data = "too short" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "skills/notes.txt", .data = "# Not markdown\n" });
+
+    const skills = try scanSkills(arena, io, tmp.dir, "skills");
+    // Sorted, SYSTEM.md excluded, <20 bytes skipped, non-.md skipped.
+    try std.testing.expectEqual(@as(usize, 2), skills.len);
+    try std.testing.expectEqualStrings("autoresearch.md", skills[0].name);
+    try std.testing.expectEqualStrings("research.md", skills[1].name);
+    try std.testing.expectEqualStrings("Autoresearch", skills[0].title);
+    try std.testing.expectEqualStrings("Run a command-to-scalar harness loop.", skills[0].description);
+    try std.testing.expect(skills[0].bytes > 20);
+    // Missing dir yields an empty list, not an error.
+    const none = try scanSkills(arena, io, tmp.dir, "no-such-skills");
+    try std.testing.expectEqual(@as(usize, 0), none.len);
+}
+
 /// Session ids reach the filesystem as a path fragment, so they are restricted
 /// to the shapes this server itself mints: a UUID from the browser, or the
 /// `sess-<base36>` fallback. Anything with a separator or a dot is refused
@@ -5333,6 +5473,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // write-capable tools and the system prompt says why, so the answer is
     // a plan the browser renders with an Apply action.
     a.plan_mode = req.plan;
+    a.research_mode = req.research;
     // Per-run iteration budget: an explicit body override wins, else the
     // steering goal's stored max_iterations (state/goals.json) is the default
     // for runs of that goal, else the global cfg.agent.max_iterations already
@@ -5534,7 +5675,10 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // blob:. The frame inherits this document's policy, which is what actually
 // keeps the untrusted markup inert — the sandbox attribute is belt, the
 // inherited script-src is braces.
-const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// Video input (Kimi Code parity) decodes a dropped recording through a blob:
+// URL <video> element and samples frames client-side, so media-src allows
+// blob: — the frames themselves ride the image path, which needs nothing.
+const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src blob:; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The page, compressed when the client will take it. This is the response
 /// that blocks the first draw, so the 21 KB it used to send uncompressed was
@@ -6157,6 +6301,10 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expect(!bare.plan);
     const plan = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"plan\":true}", .{ .ignore_unknown_fields = true });
     try std.testing.expect(plan.plan);
+    try std.testing.expect(!plan.research);
+    const research = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"research\":true}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(research.research);
+    try std.testing.expect(!research.plan);
 
     // Goal id is optional and empty by default so older clients keep working.
     try std.testing.expectEqualStrings("", bare.goal);

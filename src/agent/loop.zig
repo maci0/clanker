@@ -29,6 +29,13 @@ const exact_format_suffix = "\n\nIMPORTANT: When the user requests a specific ou
 /// turns those refusals from confusing failures into a coherent mode.
 const plan_mode_suffix = "\n\nPLAN MODE: This run is a proposal, not an execution. Read-only tools work normally; any tool that could change state (files, commands, delegation) is refused by the harness in this mode, so do not attempt it. Investigate as needed, then answer with a concrete, numbered plan of the steps you would take. The user reviews the plan and applies it as a follow-up run.";
 
+/// Appended to the system prompt when [[Agent.research_mode]] is set — the
+/// composer's Research toggle, the web-search parity control. A directive,
+/// not a gate: web_search/fetch_web are ordinary enabled tools the model
+/// could already call; this tells it the operator wants web-backed answers
+/// and when to reach for them.
+const research_mode_suffix = "\n\nRESEARCH MODE: The operator turned on web research for this run. Prefer current, sourced information over stale knowledge: consult web_search (or fetch_web for a specific page) when the answer depends on facts that change — versions, prices, events, APIs, today's news — and cite what you found. Do not fetch for the sake of fetching; a question answerable from context needs no network call.";
+
 /// A fork resolved by the human: what was asked, and what they chose.
 pub const Decision = struct {
     question: []const u8,
@@ -114,6 +121,11 @@ pub const Agent = struct {
     /// predicate confirm-before-write gates on), so a plan run can research
     /// freely but cannot change anything, whatever the model decides.
     plan_mode: bool = false,
+    /// Research mode (the composer's Research toggle): [[research_mode_suffix]]
+    /// is threaded into the system prompt, directing the run to consult
+    /// web_search/fetch_web for current, sourced facts. A directive, not a
+    /// gate — the tools stay ordinary and the model stays free.
+    research_mode: bool = false,
     /// Images a caller (the /api/run composer) wants attached to the next
     /// task message. run() consumes them once and clears the slot, so a
     /// later turn never re-sends an old attachment.
@@ -267,7 +279,7 @@ pub const Agent = struct {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "" }) catch |err| {
+        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "" }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };

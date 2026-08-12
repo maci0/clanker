@@ -246,6 +246,12 @@ Phase 6 — Chat UX parity (Kimi Code web UI):
 - [x] 6.5 Mermaid diagrams — `mermaid` fences render as diagrams (vendored `mermaid@11`, lazy `loadMermaid`, `buildMermaidBlock` + `renderMermaidBlocks` in `lib/markdown.js`), themed by `.md-mermaid` rules riding the app's palette variables; the SVG's inline `<style>` is stripped for the CSP and `style-src` gained `'unsafe-inline'` for the vendored renderer only (`script-src` stays `'self'`)
 - [x] 6.6 Run changes — file-edit tool nodes record their arguments (`Node.arguments`, `arguments_preview_cap` 8000) and the run detail renders a per-file diff card (`✎ path  +N −M`, context lines, create = all-added) for `path`/`old`/`new` and `create`/`content` shapes
 - [x] 6.7 Preview pane — `html`/`svg` fences render in a sandboxed blob-URL iframe (Preview toggle, `sandbox=""`, no scripts, opaque origin), with `frame-src 'self' blob:` added to the CSP; untrusted markup's scripts/external resources stay blocked
+- [x] 6.8 Research toggle — composer checkbox beside Plan; `/api/run` carries `research`, threaded to `Agent.research_mode`, which appends `research_mode_suffix` (consult `web_search`/`fetch_web` for current, sourced facts) to the system prompt — a directive, not a gate
+
+Kimi Code harness parity (open-source CLI — `MoonshotAI/kimi-code`):
+
+- [x] 7.1 Video input — a dropped/pasted recording is sampled client-side to ≤4 JPEG frames (blob `<video>` + canvas, ≤640px, ~7 kB each) and rides the existing image path; `media-src blob:` added to the CSP
+- [x] 7.2 Skills catalogue — `GET /api/skills` mirrors the system prompt's skill discovery (same dir/filters/sort; title + first paragraph + bytes only), rendered as a Skills section under the Tools view's rows
 
 Infrastructure:
 

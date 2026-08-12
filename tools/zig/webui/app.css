@@ -1232,6 +1232,15 @@ select:focus-visible { border-color: var(--accent); outline: 2px solid var(--acc
 }
 .tool-row:hover { background: var(--surface-2); border-radius: var(--radius); }
 @media (prefers-reduced-motion: reduce) { .tool-row { transition: none; } .tool-row:hover { background: transparent; } }
+/* Skill cards under the tool rows: the catalogue of skills/ the prompt
+   embeds. A card reads name + meta on one line, description below. */
+.skills { display: grid; gap: var(--space-3); }
+.skill-card {
+  padding: 0.6rem 0.1rem; border-bottom: 1px solid var(--rule);
+}
+.skill-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); margin-right: var(--space-3); }
+.skill-meta { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.skill-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 .tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; letter-spacing: -0.01em; line-height: 1.4; }
 button.tool-name:hover { color: var(--accent-text); }
 button.tool-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
