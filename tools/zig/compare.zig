@@ -284,7 +284,7 @@ fn startComparison(out: *lib.Out, obj: std.json.ObjectMap, prompt: []const u8) !
         error.SandboxDenied => "this tool is not allowed to call the model",
         error.TooLarge => "the prompt or the combined answers were too large",
         error.NetworkError => "no provider answered",
-        else => @errorName(err),
+        else => "the request could not be completed",
     });
     const results = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch
         return lib.fail(out, "unreadable answer batch");
@@ -351,7 +351,12 @@ fn startComparison(out: *lib.Out, obj: std.json.ObjectMap, prompt: []const u8) !
             verdict = b.parseVerdict(alloc, reply, entrants.len);
             if (verdict == null) judge_error = "the judge did not name an answer";
         } else |err| {
-            judge_error = @errorName(err);
+            judge_error = switch (err) {
+                error.SandboxDenied => "judge call refused by sandbox policy",
+                error.NetworkError => "judge call did not complete",
+                error.TooLarge => "prompt too large for judge",
+                else => "the judge did not respond",
+            };
         }
     } else if (judge.provider.len > 0) {
         judge_error = "only one model answered, so there was nothing to judge";

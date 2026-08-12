@@ -102,7 +102,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.objectField("status");
             try s.write("failed");
             try s.objectField("error");
-            try s.write(@errorName(err));
+            try s.write(switch (err) {
+                error.SandboxDenied => "refused by sandbox policy",
+                error.NetworkError => "request did not complete",
+                error.InvalidArg => "arguments rejected",
+                else => "provider did not respond",
+            });
         }
         try s.endObject();
     }

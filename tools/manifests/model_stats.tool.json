@@ -7,6 +7,7 @@
     "type": "object",
     "properties": {
       "args": {
+        "type": "boolean",
         "description": "When present (any value), return a human-readable text table instead of structured JSON."
       }
     }

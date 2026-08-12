@@ -111,7 +111,11 @@ fn phonebook(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer) !void
             try s.objectField("status");
             try s.write("down");
             try s.objectField("error");
-            try s.write(@errorName(err));
+            try s.write(switch (err) {
+                error.SandboxDenied => "refused by sandbox policy",
+                error.NetworkError => "request did not complete",
+                else => "peer did not respond",
+            });
         }
         try s.endObject();
     }
@@ -190,7 +194,7 @@ fn failWithId(out: *lib.Out, err: anyerror, what: []const u8, id: []const u8) !v
         error.NetworkError => std.fmt.bufPrint(&msg_buf, "{s}: the request did not complete", .{what}),
         error.InvalidArg => std.fmt.bufPrint(&msg_buf, "{s}: the arguments were rejected", .{what}),
         error.OutOfMemory => std.fmt.bufPrint(&msg_buf, "{s}: out of memory in the sandbox", .{what}),
-        else => std.fmt.bufPrint(&msg_buf, "{s}: {s}", .{ what, @errorName(err) }),
+        else => std.fmt.bufPrint(&msg_buf, "{s}: the request could not be completed", .{what}),
     } catch what;
 
     out.reset();

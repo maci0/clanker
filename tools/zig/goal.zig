@@ -13,6 +13,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
+    if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
 
     const objective = switch (obj.get("objective") orelse return lib.fail(out, "missing objective")) {

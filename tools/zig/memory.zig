@@ -234,7 +234,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s2.beginArray();
             try s2.endArray();
             try s2.objectField("note");
-            try s2.write(@errorName(err));
+            try s2.write(switch (err) {
+                error.SandboxDenied => "knowledge directory not accessible",
+                error.NotFound => "knowledge directory not found",
+                else => "could not list knowledge files",
+            });
             try s2.endObject();
             lib.commit(out, &w);
             return;

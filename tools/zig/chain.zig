@@ -8,6 +8,7 @@ const lib = @import("lib.zig");
 const Config = struct {
     chains_dir: []const u8 = "chains",
     max_steps: u32 = 16,
+    max_tokens: u32 = 2048,
 };
 
 const Step = struct {
@@ -134,8 +135,13 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
             }
             const prev_block = if (prev_raw.len > 0) prev_raw else if (prev_json) |v| try stringifyAlloc(alloc, v) else "(no prior output)";
             const prompt = try std.fmt.allocPrint(alloc, "{s}\n\nPrevious output:\n{s}", .{ m.instruction, prev_block });
-            const answer = lib.llm(prompt) catch |err| {
-                const msg = try std.fmt.allocPrint(alloc, "mutate llm failed: {s}", .{@errorName(err)});
+            const answer = lib.llmWith(prompt, null, cfg.max_tokens) catch |err| {
+                const msg = try std.fmt.allocPrint(alloc, "mutate llm failed: {s}", .{switch (err) {
+                    error.SandboxDenied => "refused by sandbox policy",
+                    error.NetworkError => "request did not complete",
+                    error.TooLarge => "prompt too large",
+                    else => "model did not respond",
+                }});
                 try trace.append(alloc, .{ .index = idx, .kind = "mutate", .ok = false, .output = msg, .tool = "" });
                 if (st.stop_on_error orelse true) break else continue;
             };
