@@ -1825,6 +1825,7 @@ fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.
     if (catalog != .object) return null;
     const want_base = std.mem.trimEnd(u8, p.base_url, "/");
     const want_host = config.hostOf(p.base_url);
+    var host_fallback: ?std.json.Value = null;
     var env_fallback: ?std.json.Value = null;
     var it = catalog.object.iterator();
     while (it.next()) |kv| {
@@ -1832,11 +1833,11 @@ fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.
         if (entry != .object) continue;
         const api = fieldStr(entry.object, "api") orelse "";
         if (api.len > 0 and std.mem.eql(u8, std.mem.trimEnd(u8, api, "/"), want_base)) return entry;
-        if (want_host) |wh| {
+        if (host_fallback == null) if (want_host) |wh| {
             if (config.hostOf(api)) |eh| {
-                if (std.mem.eql(u8, eh, wh)) return entry;
+                if (std.mem.eql(u8, eh, wh)) host_fallback = entry;
             }
-        }
+        };
         if (env_fallback == null) {
             if (p.api_key_env) |want_env| {
                 if (entry.object.get("env")) |envs| {
@@ -1852,7 +1853,7 @@ fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.
             }
         }
     }
-    return env_fallback;
+    return host_fallback orelse env_fallback;
 }
 
 /// A catalog provider's model matching `model_name`, trying the exact key
@@ -2201,6 +2202,19 @@ fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]c
 /// Resolves which goal steers this run: explicit id, else newest active when
 /// `auto` is true. Returns the task text with the preamble applied (or the
 /// original task when no goal applies).
+const ResolvedTask = struct {
+    task: []const u8,
+    /// The goal that actually steered this run, whether it was named
+    /// explicitly or picked by auto-steer. Callers use this — not the raw
+    /// `goal_id` argument — for anything that must track the run to its
+    /// goal (registry, iteration budget, the post-run status transition):
+    /// an auto-steered run has no explicit id, but it still has a goal, and
+    /// skipping that goal's own bookkeeping is what previously left every
+    /// auto-steered goal stuck `active` forever, re-run from scratch on
+    /// every subsequent request.
+    goal_id: ?[]const u8,
+};
+
 fn resolveRunTask(
     arena: std.mem.Allocator,
     io: std.Io,
@@ -2208,20 +2222,20 @@ fn resolveRunTask(
     task: []const u8,
     goal_id: ?[]const u8,
     auto: bool,
-) ![]const u8 {
+) !ResolvedTask {
     if (goal_id) |id| {
         if (try loadGoalById(arena, io, dir, id)) |g| {
-            return try taskWithGoal(arena, task, g);
+            return .{ .task = try taskWithGoal(arena, task, g), .goal_id = id };
         }
         log.log(.warn, "goal '{s}' not found in state/goals.json, running without goal context", .{id});
-        return task;
+        return .{ .task = task, .goal_id = null };
     }
-    if (!auto) return task;
+    if (!auto) return .{ .task = task, .goal_id = null };
     if (try findNewestActiveGoalIn(arena, io, dir)) |g| {
         log.log(.info, "steering run with active goal {s}", .{g.id});
-        return try taskWithGoal(arena, task, g);
+        return .{ .task = try taskWithGoal(arena, task, g), .goal_id = g.id };
     }
-    return task;
+    return .{ .task = task, .goal_id = null };
 }
 
 /// Clamps a raw iteration budget to the accepted 1..=1000 range (0 is treated
@@ -2307,7 +2321,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // Explicit `--goal <id>` wins; otherwise the newest active goal steers
     // the run automatically when the goal module is on (same rule the web UI
     // describes: the goal most recently set is what runs are steered toward).
-    const task_text = try resolveRunTask(
+    const resolved_task = try resolveRunTask(
         arena,
         io,
         std.Io.Dir.cwd(),
@@ -2315,6 +2329,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
         opts.goal,
         cfg.modules.goal and opts.goal == null,
     );
+    const task_text = resolved_task.task;
     compactMessages(&messages, max_turn_tokens);
     var err_detail: ?[]const u8 = null;
 
@@ -2372,6 +2387,13 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     try out_w.interface.flush();
 
     printTurnStats(io, arena, &a, provider, turn_start, messages.items);
+
+    // The run this goal carried completed: move it to review so it stops
+    // being picked up as still-active work. `resolved_task.goal_id` covers
+    // both `--goal <id>` and auto-steer alike — using only an explicit id
+    // here previously left every auto-steered goal `active` forever, so the
+    // same one kept being re-run from scratch on each later invocation.
+    if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, std.Io.Dir.cwd(), gid, "active", "review");
 
     if (opts.session) |sid| {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
@@ -7284,18 +7306,19 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
 
-    const goal_id: ?[]const u8 = if (req.goal.len > 0) req.goal else null;
-    const task_text = resolveRunTask(
+    const explicit_goal_id: ?[]const u8 = if (req.goal.len > 0) req.goal else null;
+    const resolved = resolveRunTask(
         arena,
         io,
         std.Io.Dir.cwd(),
         req.task,
-        goal_id,
-        cfg.modules.goal and goal_id == null,
+        explicit_goal_id,
+        cfg.modules.goal and explicit_goal_id == null,
     ) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal resolve failed\"}");
         return;
     };
+    const task_text = resolved.task;
     // Inject knowledge context when requested — selected collections' documents
     // are prepended to the task so the model sees them without extra tool calls.
     // The boundary is part of the prompt contract: collection contents are
@@ -7425,7 +7448,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // steering goal's stored max_iterations (state/goals.json) is the default
     // for runs of that goal, else the global cfg.agent.max_iterations already
     // applied at init stays. Clamped to 1..=1000.
-    if (runIterationBudget(arena, io, std.Io.Dir.cwd(), req.max_iterations, goal_id, cfg.modules.goal and goal_id == null)) |budget| {
+    if (runIterationBudget(arena, io, std.Io.Dir.cwd(), req.max_iterations, resolved.goal_id, false)) |budget| {
         a.max_iterations = budget;
         log.log(.info, "run iteration budget {d} ({s})", .{ budget, if (req.max_iterations != null) "per-run override" else "goal default" });
     }
@@ -7486,7 +7509,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // `running`) and steerable (POST /api/steer) for exactly as long as
         // this connection works it. Registration failing (full table, oversize
         // id) just means this run cannot be steered — not that it cannot run.
-        if (goal_id) |gid| {
+        // `resolved.goal_id` so an auto-steered run registers too, not only
+        // one named by explicit id.
+        if (resolved.goal_id) |gid| {
             if (goalRunRegister(gid)) a.steer_fn = &steerPoll;
         }
         defer goalRunRelease();
@@ -7527,7 +7552,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // The run this goal carried completed: the goal moves to review and
         // waits for a human verdict. Server-side, so the flip happens even
         // when the tab that started the run is long gone.
-        if (goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+        if (resolved.goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
         if (has_session) {
             const title_src = if (req.task.len > 0) req.task else final_task;
             const title = title_src[0..@min(title_src.len, 60)];
@@ -7576,7 +7601,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
 
     // Same as the streaming path: a completed goal run parks its goal in
     // review rather than leaving it active.
-    if (goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
+    if (resolved.goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
 
     if (has_session) {
         const title_src = if (req.task.len > 0) req.task else task_text;
@@ -8541,31 +8566,37 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
 
     // Explicit id: that goal only, even if not the newest.
     const explicit = try resolveRunTask(arena, io, tmp.dir, "do the thing", "old", false);
-    try std.testing.expect(std.mem.find(u8, explicit, "## Active goal") != null);
-    try std.testing.expect(std.mem.find(u8, explicit, "old objective") != null);
-    try std.testing.expect(std.mem.find(u8, explicit, "do the thing") != null);
-    try std.testing.expect(std.mem.find(u8, explicit, "ship the feature") == null);
+    try std.testing.expect(std.mem.find(u8, explicit.task, "## Active goal") != null);
+    try std.testing.expect(std.mem.find(u8, explicit.task, "old objective") != null);
+    try std.testing.expect(std.mem.find(u8, explicit.task, "do the thing") != null);
+    try std.testing.expect(std.mem.find(u8, explicit.task, "ship the feature") == null);
+    try std.testing.expectEqualStrings("old", explicit.goal_id.?);
 
     // Auto: newest active (updated=50), not the done goal with updated=99.
+    // The resolved goal_id must be the one auto-steer actually picked, so
+    // its status can be advanced (and its run registered) after the run.
     const auto = try resolveRunTask(arena, io, tmp.dir, "chat task", null, true);
-    try std.testing.expect(std.mem.find(u8, auto, "ship the feature") != null);
-    try std.testing.expect(std.mem.find(u8, auto, "tests green") != null);
-    try std.testing.expect(std.mem.find(u8, auto, "chat task") != null);
-    try std.testing.expect(std.mem.find(u8, auto, "finished work") == null);
+    try std.testing.expect(std.mem.find(u8, auto.task, "ship the feature") != null);
+    try std.testing.expect(std.mem.find(u8, auto.task, "tests green") != null);
+    try std.testing.expect(std.mem.find(u8, auto.task, "chat task") != null);
+    try std.testing.expect(std.mem.find(u8, auto.task, "finished work") == null);
+    try std.testing.expectEqualStrings("new", auto.goal_id.?);
 
     // Goal-only: empty task becomes a work order for that goal.
     const goal_only = try resolveRunTask(arena, io, tmp.dir, "", "new", false);
-    try std.testing.expect(std.mem.find(u8, goal_only, "Work on this goal until the completion criterion is met.") != null);
-    try std.testing.expect(std.mem.find(u8, goal_only, "ship the feature") != null);
+    try std.testing.expect(std.mem.find(u8, goal_only.task, "Work on this goal until the completion criterion is met.") != null);
+    try std.testing.expect(std.mem.find(u8, goal_only.task, "ship the feature") != null);
 
-    // Missing id leaves the task alone (warns on stderr via log).
+    // Missing id leaves the task alone (warns on stderr via log) and resolves no goal.
     const missing = try resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false);
-    try std.testing.expectEqualStrings("plain", missing);
+    try std.testing.expectEqualStrings("plain", missing.task);
+    try std.testing.expect(missing.goal_id == null);
 
     // Auto with no active goals leaves the task alone.
     try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
     const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
-    try std.testing.expectEqualStrings("plain", none);
+    try std.testing.expectEqualStrings("plain", none.task);
+    try std.testing.expect(none.goal_id == null);
 }
 
 test "runIterationBudget precedence: body override, then goal default, then global" {
@@ -8819,6 +8850,22 @@ test "findCatalogProvider prefers an exact base_url match over a shared env var"
     p_env.api_key_env = "MOONSHOT_API_KEY";
     const found = findCatalogProvider(catalog, &p_env) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("Moonshot AI", found.object.get("name").?.string);
+}
+
+test "findCatalogProvider checks every exact URL before using a host match" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{
+        \\  "same-host-wrong-path": {"name": "Wrong path", "api": "https://api.example.test/v2"},
+        \\  "exact": {"name": "Exact", "api": "https://api.example.test/v1"}
+        \\}
+    , .{});
+    const p = try config.Provider.single(arena, "example", "https://api.example.test/v1", .openai_compat, "m", .{});
+    const found = findCatalogProvider(catalog, &p) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Exact", found.object.get("name").?.string);
 }
 
 test "findCatalogProvider falls back to the env var when no host matches" {

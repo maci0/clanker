@@ -348,27 +348,94 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
-    <section>
-      <div class="section-head">
-        <h2>Rooms</h2>
-        <button type="button" class="secondary" id="chat-refresh">Refresh</button>
-      </div>
-      <div class="runs">
-        <div class="run-picker">
-          <label for="chat-room">Room</label>
-          <!-- Rooms and direct messages are the same underlying channel, so one
-               native select with two groups beats two parallel controls. -->
-          <select id="chat-room"></select>
+    <div class="slack-layout">
+      <!-- Sidebar: channel list -->
+      <aside class="slack-sidebar" id="chat-sidebar">
+        <div class="slack-sidebar-head">
+          <h2>Channels</h2>
+          <button type="button" class="slack-btn-icon" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>
         </div>
+        <!-- Quick room switcher (Cmd+K / Ctrl+K) -->
+        <div class="slack-search-box">
+          <input type="text" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
+        </div>
+        <div class="slack-room-list" id="chat-room-list" role="listbox" aria-label="Channels">
+          <div class="slack-room-group" id="chat-rooms-group">
+            <div class="slack-room-group-head" data-group="rooms">
+              <span class="slack-caret">▸</span> Channels
+            </div>
+            <div class="slack-room-items" id="chat-rooms-items"></div>
+          </div>
+          <div class="slack-room-group" id="chat-dms-group">
+            <div class="slack-room-group-head" data-group="dms">
+              <span class="slack-caret">▸</span> Direct Messages
+            </div>
+            <div class="slack-room-items" id="chat-dms-items"></div>
+          </div>
+        </div>
+        <!-- Hidden select for backwards compat -->
+        <select id="chat-room" class="sr-only" aria-hidden="true"></select>
+      </aside>
+      <!-- Main chat area -->
+      <div class="slack-main">
+        <!-- Channel header -->
+        <div class="slack-channel-header" id="chat-channel-header">
+          <div class="slack-channel-name">
+            <button type="button" class="slack-sidebar-toggle" id="chat-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+            <span id="chat-channel-title">#general</span>
+            <span class="slack-channel-topic" id="chat-channel-topic"></span>
+          </div>
+          <div class="slack-channel-actions">
+            <button type="button" class="slack-btn-icon" id="chat-search-toggle" title="Search messages" aria-label="Search messages">🔍</button>
+            <button type="button" class="slack-btn-icon" id="chat-pin-toggle" title="Pinned messages" aria-label="View pinned messages">📌</button>
+            <button type="button" class="slack-btn-icon" id="chat-refresh" title="Refresh" aria-label="Refresh">↻</button>
+          </div>
+        </div>
+        <!-- Search bar (hidden by default) -->
+        <div class="slack-search-bar" id="chat-search-bar" hidden>
+          <input type="text" id="chat-search-input" placeholder="Search messages…" autocomplete="off">
+          <button type="button" class="slack-btn-icon" id="chat-search-close" title="Close search">✕</button>
+          <div class="slack-search-results" id="chat-search-results"></div>
+        </div>
+        <!-- Pinned messages panel (hidden by default) -->
+        <div class="slack-pins-panel" id="chat-pins-panel" hidden>
+          <div class="slack-pins-head">
+            <span>📌 Pinned Messages</span>
+            <button type="button" class="slack-btn-icon" id="chat-pins-close" title="Close pins">✕</button>
+          </div>
+          <div class="slack-pins-list" id="chat-pins-list"></div>
+        </div>
+        <!-- Message log -->
         <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" aria-live="polite" tabindex="0"></div>
+        <!-- Composer -->
         <form class="chat-composer" id="chat-form">
-          <label class="sr-only" for="chat-text">Message</label>
-          <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
-          <button type="submit" id="chat-send" disabled>Send</button>
+          <div class="slack-composer-row">
+            <button type="button" class="slack-btn-icon slack-emoji-trigger" id="chat-emoji-btn" title="Emoji picker" aria-label="Emoji picker">😀</button>
+            <label class="sr-only" for="chat-text">Message</label>
+            <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
+            <button type="submit" id="chat-send" disabled>Send</button>
+          </div>
+          <div class="slack-formatting-hint">
+            <span><b>*bold*</b> <i>_italic_</i> <code>`code`</code> ~strike~ &gt;quote</span>
+          </div>
         </form>
+        <!-- Emoji picker popup -->
+        <div class="slack-emoji-picker" id="chat-emoji-picker" hidden></div>
         <p class="sr-only" id="chat-status" role="status" aria-live="polite"></p>
       </div>
-    </section>
+    </div>
+    <!-- Create channel modal -->
+    <dialog class="slack-dialog" id="chat-create-dialog">
+      <form method="dialog" class="slack-dialog-form">
+        <h3>Create a channel</h3>
+        <label for="chat-new-room-name">Channel name</label>
+        <input type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_-]+" maxlength="64" required>
+        <div class="slack-dialog-actions">
+          <button type="button" class="secondary" id="chat-create-cancel">Cancel</button>
+          <button type="submit" id="chat-create-confirm">Create</button>
+        </div>
+      </form>
+    </dialog>
   </div>
   <div class="view" id="view-goals" role="tabpanel" aria-labelledby="tab-goals" tabindex="-1" hidden>
     <section>
