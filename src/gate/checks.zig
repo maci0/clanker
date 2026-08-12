@@ -189,9 +189,22 @@ test "astCheckGate short-circuits when there are no .zig files" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// The zig-spawning tests must hand their Io the real process environment:
+/// `Threaded.init` defaults to an empty environ, which strips PATH (so a bare
+/// "zig" argv[0] cannot be resolved) and HOME (which version-manager shims
+/// like anyzig need to locate their installs). The production Io from
+/// `std.process.Init` always carries the process environ, so an empty one
+/// tests a child environment the gates never actually run with.
+fn testProcessEnviron() std.process.Environ {
+    const c_environ = std.c.environ;
+    var n: usize = 0;
+    while (c_environ[n] != null) : (n += 1) {}
+    return .{ .block = .{ .slice = @ptrCast(c_environ[0..n :null]) } };
+}
+
 test "astCheckGate fails on a syntax error with a precise diagnostic" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = testProcessEnviron() });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -560,7 +573,7 @@ test "fmtGate and formatFiles short-circuit when there is nothing to format" {
 
 test "fmtGate catches unformatted code and formatFiles fixes it" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = testProcessEnviron() });
     defer threaded.deinit();
     const io = threaded.io();
 
