@@ -213,7 +213,11 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
     // from inside that very worktree, silently skipping the post-merge
     // resync.
     const cwd_path = std.process.currentPathAlloc(io, gpa) catch try gpa.dupe(u8, ".");
-    defer gpa.free(cwd_path);
+    log.log(.debug, "worktree: cwd_path={s}", .{cwd_path});
+    defer {
+        log.log(.debug, "worktree: freeing cwd_path", .{});
+        gpa.free(cwd_path);
+    }
     const path = try std.fmt.allocPrint(gpa, "{s}/.clanker-worktrees/{s}", .{ cwd_path, id });
     errdefer gpa.free(path);
 

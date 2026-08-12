@@ -83,6 +83,7 @@ comptime {
     _ = @import("schedule/store.zig");
     _ = @import("schedule/runner.zig");
     _ = @import("schedule/command.zig");
+    _ = @import("repro_test.zig");
 }
 
 /// Resolves the Zig standard library directory at startup (via `zig env`),
