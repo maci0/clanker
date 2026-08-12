@@ -52,10 +52,10 @@ test "dotenv parses and fills the environ map without overriding" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    // Silence the loader's INFO log: stderr output from a test while the
+    // Silence the loader's debug log: stderr output from a test while the
     // runner is in --listen mode breaks the test protocol. Restored after,
     // since std.testing runs all tests in one process and a level left
-    // dirty here would silence INFO logs for every test that runs after.
+    // dirty here would silence logs for every test that runs after.
     const saved_level = log.getLevel();
     log.setLevel(.warn);
     defer log.setLevel(saved_level);

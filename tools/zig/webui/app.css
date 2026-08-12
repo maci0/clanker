@@ -416,7 +416,9 @@ h1 {
   margin: 0; color: var(--fg);
   padding: 0.15rem 0.4rem;
   border: 0; background: transparent;
+  display: inline-flex; align-items: center; gap: 0.4rem;
 }
+h1 .logo { flex: none; }
 .header-model {
   font-family: var(--sans); font-size: 12px; font-weight: 500;
   color: var(--fg-muted); background: var(--surface-2);

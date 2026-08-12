@@ -42,14 +42,14 @@ fn renderText(raw: []const u8) ![]const u8 {
     if (parsed.stats.len == 0) return "no token usage recorded yet (run an agent task first)\n";
 
     var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(lib.alloc, "provider        model                 calls   prompt  complet   total  cache%  tok/s       cost$\n");
+    try text.appendSlice(lib.alloc, "provider        model                          calls   prompt  complet   total  cache%  tok/s       cost$\n");
     for (parsed.stats) |stat| try appendRow(&text, stat.provider, stat.model, stat);
     try appendRow(&text, "totals", "", parsed.totals);
     return text.toOwnedSlice(lib.alloc);
 }
 
 fn appendRow(text: *std.ArrayList(u8), provider: []const u8, model: []const u8, stat: Stat) !void {
-    const line = try std.fmt.allocPrint(lib.alloc, "{s:<15} {s:<20} {d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
+    const line = try std.fmt.allocPrint(lib.alloc, "{s:<15} {s:<30}{d:>5} {d:>7} {d:>7} {d:>8} {d:>5.1} {d:>7.1} {d:>10.4}\n", .{
         provider,
         model,
         stat.calls,

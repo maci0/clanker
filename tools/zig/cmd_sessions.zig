@@ -15,6 +15,29 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
+fn appendAge(buf: *std.ArrayList(u8), delta_s: i64) !void {
+    if (delta_s < 0) {
+        try buf.appendSlice(lib.alloc, "just now");
+        return;
+    }
+    const d: u64 = @intCast(delta_s);
+    if (d < 60) {
+        try buf.appendSlice(lib.alloc, "just now");
+    } else if (d < 3600) {
+        const m = d / 60;
+        const s = try std.fmt.allocPrint(lib.alloc, "{d}m ago", .{m});
+        try buf.appendSlice(lib.alloc, s);
+    } else if (d < 86400) {
+        const h = d / 3600;
+        const s = try std.fmt.allocPrint(lib.alloc, "{d}h ago", .{h});
+        try buf.appendSlice(lib.alloc, s);
+    } else {
+        const days = d / 86400;
+        const s = try std.fmt.allocPrint(lib.alloc, "{d}d ago", .{days});
+        try buf.appendSlice(lib.alloc, s);
+    }
+}
+
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
@@ -56,17 +79,26 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(lib.alloc);
+    if (metas.items.len == 0) {
+        try buf.appendSlice(lib.alloc, "(no sessions yet)");
+        return lib.okText(out, buf.items);
+    }
+
+    const now_s: i64 = @intFromFloat(lib.nowSeconds());
     for (metas.items) |m| {
         if (buf.items.len > 0) try buf.append(lib.alloc, '\n');
         try buf.appendSlice(lib.alloc, m.id);
-        try buf.append(lib.alloc, '\t');
-        try buf.appendSlice(lib.alloc, m.title);
-        try buf.append(lib.alloc, '\t');
-        const ts = try std.fmt.allocPrint(lib.alloc, "{d}", .{m.updated});
-        defer lib.alloc.free(ts);
-        try buf.appendSlice(lib.alloc, ts);
+        try buf.appendSlice(lib.alloc, "  ");
+        const first_nl = std.mem.indexOfScalar(u8, m.title, '\n') orelse m.title.len;
+        const one_line = m.title[0..first_nl];
+        const title = if (one_line.len > 60) one_line[0..60] else one_line;
+        try buf.appendSlice(lib.alloc, title);
+        if (one_line.len > 60) try buf.appendSlice(lib.alloc, "...");
+        if (m.updated > 0) {
+            try buf.appendSlice(lib.alloc, "  ");
+            try appendAge(&buf, now_s - m.updated);
+        }
     }
-    if (metas.items.len == 0) try buf.appendSlice(lib.alloc, "(no sessions yet)");
 
     return lib.okText(out, buf.items);
 }
