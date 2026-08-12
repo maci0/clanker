@@ -2278,3 +2278,27 @@ h2#session-title {
 .arena-round > summary { cursor: pointer; font-weight: 600; font-size: 13px; margin: 0.4rem 0; }
 .arena-round .tool-card { margin-left: 0.9rem; }
 .arena-verdict { border-color: var(--accent, var(--ok)); }
+
+/* Compare: the blind side-by-side. Columns are deliberately identical to each
+   other — equal width, one shared surface, no ordering cue beyond the letter —
+   because any per-column decoration is a place a reader could learn something
+   about who wrote which answer before they have picked. Palette variables only,
+   so every data-theme block gets it. */
+.compare-list { display: flex; flex-direction: column; gap: 4px; }
+.compare-row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; }
+.compare-row[aria-pressed="true"] { border-color: var(--accent, var(--ok)); }
+.compare-row-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.compare-row-outcome { flex: none; }
+.compare-prompt { font-weight: 600; margin: 0.6rem 0 0.2rem; }
+.compare-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--space-3, 12px); align-items: start; }
+.compare-answer { display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; }
+.compare-answer[data-picked="true"] { border-color: var(--accent, var(--ok)); }
+.compare-answer[data-winner="true"] .compare-answer-head { color: var(--ok, #2fae4d); }
+.compare-answer-head { margin: 0; font-size: 13px; }
+.compare-answer-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.compare-answer-who { margin: 0; }
+.compare-pick { align-self: flex-start; margin-top: auto; }
+.compare-your-pick { color: var(--ok, #2fae4d); }
+.compare-key-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
+.compare-key-list dt { font-weight: 600; }
+.compare-key-list dd { margin: 0; color: var(--fg-muted); }
