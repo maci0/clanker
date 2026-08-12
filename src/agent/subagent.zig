@@ -11,7 +11,7 @@ const registry = @import("../tools/registry.zig");
 const types = @import("../llm/types.zig");
 const host = @import("../sandbox/host.zig");
 const Agent = @import("loop.zig").Agent;
-const private_todos = @import("private_todos.zig");
+const private_todos = @import("../private_todos.zig");
 
 /// Bounded iteration budget for sub-agent runs.
 const sub_max_iterations: u32 = 6;

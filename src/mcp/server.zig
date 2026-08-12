@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const json = std.json;
+const build_options = @import("build_options");
 const config = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -172,7 +173,7 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
             try s.objectField("name");
             try s.write("clanker");
             try s.objectField("version");
-            try s.write("0.1.0");
+            try s.write(build_options.version);
             try s.endObject();
         } else if (std.mem.eql(u8, m, "ping")) {
             // empty result object

@@ -362,9 +362,9 @@ test "an unpriced model drops the cost segment instead of claiming it was free" 
     });
     defer std.testing.allocator.free(line);
     try std.testing.expectEqualStrings("[turn: 100 in / 20 out \u{b7} 1.0s \u{b7} 20.0 tok/s]", line);
-    try std.testing.expect(std.mem.indexOf(u8, line, "$") == null);
-    try std.testing.expect(std.mem.indexOf(u8, line, "cache") == null);
-    try std.testing.expect(std.mem.indexOf(u8, line, "ctx") == null);
+    try std.testing.expect(std.mem.find(u8, line, "$") == null);
+    try std.testing.expect(std.mem.find(u8, line, "cache") == null);
+    try std.testing.expect(std.mem.find(u8, line, "ctx") == null);
 }
 
 test "a turn with no reported usage is not worth a line" {

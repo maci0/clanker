@@ -2177,7 +2177,7 @@ const Model = struct {
         // complete the argument against the command's known value set (theme
         // names, workflow names). Commands whose argument is free text (goal,
         // arena, ...) have no set and fall through to nothing.
-        if (std.mem.indexOfScalar(u8, input, ' ')) |sp| {
+        if (std.mem.findScalar(u8, input, ' ')) |sp| {
             const cmd = std.mem.trimEnd(u8, input[0..sp], " ");
             const partial = std.mem.trimStart(u8, input[sp + 1 ..], " ");
             const pc = parseCommand(cmd) orelse return false;

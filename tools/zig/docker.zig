@@ -1,7 +1,7 @@
 //! docker: query the local Docker daemon via its Unix socket.
-//! Input:  {"path": "/v1.41/containers/json", "method": "GET"}
+//! Input:  {"path": "/v1.41/containers/json"}
 //! Output: {"ok": true, "body": "<raw response>"} or {"ok": false, "error": ...}
-//! Only GET/POST to /v1.* paths are allowed by the sandbox.
+//! Only GET requests to /v1.* paths are allowed by the sandbox.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -17,15 +17,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .string => |s| s,
         else => return lib.fail(out, "path must be a string"),
     };
-    var method: []const u8 = "GET";
-    if (obj.get("method")) |m| {
-        switch (m) {
-            .string => |s| method = s,
-            else => {},
-        }
-    }
-
-    const body = lib.dockerRequest(method, path) catch |err| {
+    const body = lib.dockerRequest("GET", path) catch |err| {
         return lib.failErr(out, err, "calling the docker socket");
     };
 

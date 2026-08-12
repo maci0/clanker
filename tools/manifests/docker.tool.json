@@ -1,15 +1,12 @@
 {
   "name": "docker",
   "description": "query the local Docker daemon via its Unix socket",
-  "llm_description": "Query the local Docker daemon via its Unix socket. {path, method?}.",
+  "llm_description": "Query the local Docker daemon via its Unix socket with GET. {path}.",
   "wasm": "zig-out/tools/docker.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "path": {
-        "type": "string"
-      },
-      "method": {
         "type": "string"
       }
     },

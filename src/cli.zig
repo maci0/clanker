@@ -18,7 +18,7 @@ const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
-const private_todos = @import("agent/private_todos.zig");
+const private_todos = @import("private_todos.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
@@ -3695,7 +3695,7 @@ fn cmdRevert(init: std.process.Init, opts: Options) !void {
 /// `::` or `::1`), IPv4 otherwise (the default `127.0.0.1`, or `0.0.0.0` for
 /// all interfaces).
 fn parseBindAddr(bind_addr: []const u8, port: u16) !std.Io.net.IpAddress {
-    if (std.mem.indexOfScalar(u8, bind_addr, ':')) |_| {
+    if (std.mem.findScalar(u8, bind_addr, ':')) |_| {
         return std.Io.net.IpAddress.parseIp6(bind_addr, port);
     }
     return std.Io.net.IpAddress.parseIp4(bind_addr, port);
@@ -3726,7 +3726,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // host:port for the log line and the clickable URL; IPv6 hosts get
     // brackets so the URL parses (`http://[::1]:17921/webui`).
     var hostbuf: [512]u8 = undefined;
-    const needs_bracket = std.mem.indexOfScalar(u8, opts.host, ':') != null;
+    const needs_bracket = std.mem.findScalar(u8, opts.host, ':') != null;
     const disp = if (needs_bracket)
         std.fmt.bufPrint(&hostbuf, "[{s}]:{d}", .{ opts.host, port }) catch "host:port"
     else

@@ -15,7 +15,7 @@ const types = @import("../llm/types.zig");
 const config_mod = @import("../config.zig");
 const registry = @import("../tools/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
-const private_todos_mod = @import("../agent/private_todos.zig");
+const private_todos_mod = @import("../private_todos.zig");
 const filelock = @import("../util/filelock.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
@@ -218,7 +218,7 @@ pub const Sandbox = struct {
     tool_self_name: []const u8 = "",
     tool_registry: ?*const registry.Registry = null,
     tool_call_depth: u8 = 0,
-    /// A nested run's private todo list (src/agent/private_todos.zig), wired
+    /// A nested run's private todo list (src/private_todos.zig), wired
     /// only by subagent.runNested. When set, todo_* ops that name no "room"
     /// operate on it instead of a shared room list; null for top-level agents.
     private_todos: ?*private_todos_mod.List = null,
@@ -1237,16 +1237,12 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         .string => |s| s,
         else => return Err.invalid,
     };
-    if (!std.mem.startsWith(u8, path, "/v1.") or std.mem.findAny(u8, path, "\r\n") != null) {
+    if (!dockerRequestAllowed(methodFromDockerInput(obj), path)) {
         log.log(.warn, "[docker] path denied: '{s}'", .{path});
         return Err.denied;
     }
 
-    var method: []const u8 = "GET";
-    if (obj.get("method")) |m| {
-        if (m == .string) method = m.string;
-    }
-    if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "POST")) return Err.denied;
+    const method = methodFromDockerInput(obj);
 
     // Connect to the Docker Unix socket (std.Io.net API in Zig 0.16).
     const ua = std.Io.net.UnixAddress.init("/var/run/docker.sock") catch |err| {
@@ -1292,6 +1288,27 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 
 fn dockerAccessAllowed(sb: *const Sandbox) bool {
     return std.mem.eql(u8, sb.tool_self_name, "docker");
+}
+
+fn methodFromDockerInput(obj: std.json.ObjectMap) []const u8 {
+    const value = obj.get("method") orelse return "GET";
+    return if (value == .string) value.string else "";
+}
+
+/// The Docker socket is equivalent to root authority on many hosts. This tool
+/// is an inspection surface, so the native boundary permits only GET even if
+/// a modified guest asks for a state-changing daemon operation.
+fn dockerRequestAllowed(method: []const u8, path: []const u8) bool {
+    return std.mem.eql(u8, method, "GET") and
+        std.mem.startsWith(u8, path, "/v1.") and
+        std.mem.findAny(u8, path, "\r\n") == null;
+}
+
+test "docker request policy is query only" {
+    try std.testing.expect(dockerRequestAllowed("GET", "/v1.41/containers/json"));
+    try std.testing.expect(!dockerRequestAllowed("POST", "/v1.41/containers/prune"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/containers/json"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/containers/json\r\nX-Evil: yes"));
 }
 
 const ChatOp = struct {
@@ -1344,7 +1361,7 @@ const chat_history_page_size = 20;
 /// (ADR 0002, docs/adrs/0002-private-todos-vs-shared-board.md); a todo_* op
 /// naming a "room" now fails with a pointer to the kanban_* tools below.
 /// The only surviving todo_* path is a run's private list (sub-agent runs
-/// only; src/agent/private_todos.zig): same op names and response shapes,
+/// only; src/private_todos.zig): same op names and response shapes,
 /// but in-memory, single-owner, and never fanned out.
 /// The fan-out, subscription filter, and persistence all live host-side so
 /// the WASM module stays thin; the descriptor config pins which op a tool is.

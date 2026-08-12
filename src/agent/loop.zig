@@ -9,7 +9,7 @@ const registry = @import("../tools/registry.zig");
 const tool_usage = @import("../tools/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const host = @import("../sandbox/host.zig");
-const private_todos = @import("private_todos.zig");
+const private_todos = @import("../private_todos.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
 const autolearn = @import("autolearn.zig");
@@ -164,7 +164,7 @@ pub const Agent = struct {
     /// This run's private todo list. `run` creates one for a top-level run;
     /// subagent.runNested attaches its own before calling `run`. Handed to
     /// every tool sandbox so todo_* calls that name no "room" reach it (see
-    /// src/agent/private_todos.zig).
+    /// src/private_todos.zig).
     private_todos: ?*private_todos.List = null,
     /// A nested run's channel to the agent that spawned it, wired by
     /// subagent.runNested and null for top-level agents. Handed to every tool
