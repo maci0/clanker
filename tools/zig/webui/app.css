@@ -2076,7 +2076,7 @@ h2#session-title {
 /* Board: columns scroll sideways as a group, each column scrolls down on
    its own, so a long Backlog never pushes Done off the bottom. */
 .board {
-  display: flex; gap: var(--space-3); margin-top: var(--space-4);
+  display: flex; gap: var(--space-3); margin-top: var(--space-3);
   overflow-x: auto; padding-bottom: var(--space-3); align-items: flex-start;
   /* Trello-style: fill available height so columns scroll internally */
   min-height: 60vh;

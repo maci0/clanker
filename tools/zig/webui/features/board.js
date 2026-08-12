@@ -1480,6 +1480,40 @@ export function bindBoard(deps) {
   if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; renderBoard(null); });
   var topMine=document.getElementById("board-mine");
   if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; renderBoard(null); });
+  // ---- Keyboard shortcuts (Trello-style) ----
+  // n = new card, / = focus filter, ? = show shortcuts, Escape = close detail
+  document.addEventListener("keydown", function(e) {
+    // Only when the board view is visible and no input is focused
+    if (el.board.hidden) return;
+    var tag = (document.activeElement || {}).tagName || "";
+    var isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+    // Escape closes card detail
+    if (e.key === "Escape") {
+      if (!el.cardDetail.hidden) {
+        openCardId = null;
+        closeCardDetail();
+        renderBoard(board);
+        e.preventDefault();
+      }
+      return;
+    }
+    if (isInput) return;
+
+    // n = focus quick-add title
+    if (e.key === "n") {
+      var qa = document.getElementById("card-qa-title");
+      if (qa) { qa.focus(); e.preventDefault(); }
+      return;
+    }
+    // / = focus filter
+    if (e.key === "/") {
+      var fi = document.getElementById("board-filter-input");
+      if (fi) { fi.focus(); e.preventDefault(); }
+      return;
+    }
+  });
+
   // Wire header list toggle button
   (function(){
     var toggleBtn = document.getElementById("board-toggle-list");

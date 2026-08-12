@@ -115,6 +115,18 @@ lamps carry further). The seven named palettes ride the same tokens.
     <div class="section-head">
       <h2 id="session-title">…</h2>
     </div>
+    <!-- What the current/last turn actually did, at a glance: whether a goal
+         is steering it, how many tool calls it made, how many of those were
+         sub-agent delegations, and the run's private todo progress. Live
+         while streaming, left as a receipt once the turn finishes; resets
+         when the next turn starts. Session-lifetime only — not persisted,
+         so a reload clears it, same as the transcript's live caret does. -->
+    <div class="session-status-bar" id="session-status-bar" hidden>
+      <span class="status-chip" id="status-goal" hidden></span>
+      <span class="status-chip" id="status-tools" hidden></span>
+      <span class="status-chip" id="status-subagent" hidden></span>
+      <span class="status-chip" id="status-todos" hidden></span>
+    </div>
     <div class="run-picker" id="session-picker">
       <div class="session-actions">
         <button type="button" class="secondary" id="session-fork">Fork</button>
@@ -721,7 +733,7 @@ lamps carry further). The seven named palettes ride the same tokens.
      of arrow keys rather than retyping it exactly and risking a near-miss
      that quietly forks a new workspace. -->
 <div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
-  <div class="overlay-box" style="max-width: 42rem;"></div>
+  <div class="overlay-box" style="max-width: 48rem; max-height: 85vh;"></div>
 </div>
 
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
