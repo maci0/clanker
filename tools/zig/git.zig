@@ -17,8 +17,14 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 /// Verbs a caller may legitimately invoke through this tool. Read-only
 /// inspection and local staging only; anything that mutates remote state or
 /// rewrites history is left to a human via a real terminal.
+///
+/// `worktree` is allowed because the agent workflow is built on it: each task
+/// runs in its own linked worktree (`.local/worktrees/`), so `git worktree
+/// add/remove` must work through this tool. It is not in the host's deny list,
+/// so this entry only makes the deny message truthful — it never widens the
+/// sandbox, which stays the final word.
 const allowed_verbs = [_][]const u8{
-    "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch",
+    "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch", "worktree",
 };
 
 /// Mirror of the host's exec_deny_tokens (src/sandbox/host.zig): verbs and
