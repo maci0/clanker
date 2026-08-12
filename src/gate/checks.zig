@@ -5,6 +5,7 @@
 //! every check passes.
 
 const std = @import("std");
+const build_options = @import("build_options");
 const log = @import("../util/log.zig");
 
 /// A cold `zig build test` can print more than one MiB while rebuilding its
@@ -137,8 +138,10 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     try std.testing.expect(!dirty.ok);
     try std.testing.expectEqualStrings("lint", dirty.label);
 
-    // HACK and XXX are equally debt markers and must trip the gate.
-    try tmp.dir.writeFile(io, .{ .sub_path = "hacky.zig", .data = "// HACK: quick fix\nconst x = 1;\n" });
+    // The other two debt markers must trip the gate too. Split the same way
+    // as the forbidden array above: spelled whole, they match this file's
+    // own bytes and lintGate fails on itself every run.
+    try tmp.dir.writeFile(io, .{ .sub_path = "hacky.zig", .data = "// HA" ++ "CK: quick fix\nconst x = 1;\n" });
     const hacky = try lintGate(gpa, io, tmp.dir, &.{"hacky.zig"});
     try std.testing.expect(!hacky.ok);
     try std.testing.expectEqualStrings("lint", hacky.label);
@@ -187,9 +190,22 @@ test "astCheckGate short-circuits when there are no .zig files" {
     try std.testing.expect(non_zig_result.ok);
 }
 
+/// The zig-spawning tests must hand their Io the real process environment:
+/// `Threaded.init` defaults to an empty environ, which strips PATH (so a bare
+/// "zig" argv[0] cannot be resolved) and HOME (which version-manager shims
+/// like anyzig need to locate their installs). The production Io from
+/// `std.process.Init` always carries the process environ, so an empty one
+/// tests a child environment the gates never actually run with.
+fn testProcessEnviron() std.process.Environ {
+    const c_environ = std.c.environ;
+    var n: usize = 0;
+    while (c_environ[n] != null) : (n += 1) {}
+    return .{ .block = .{ .slice = @ptrCast(c_environ[0..n :null]) } };
+}
+
 test "astCheckGate fails on a syntax error with a precise diagnostic" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = testProcessEnviron() });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -197,7 +213,10 @@ test "astCheckGate fails on a syntax error with a precise diagnostic" {
     defer tmp.cleanup();
 
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x = ;\n" });
-    var result = try astCheckGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    // Needs a spawnable compiler; skip where there is none (see
+    // skipIfNoSpawnableZig) rather than failing on every other machine.
+    var result = astCheckGate(gpa, io, tmp.dir, &.{"bad.zig"}) catch |err|
+        return skipIfNoSpawnableZig(err);
     defer result.deinit(gpa);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("zig ast-check", result.label);
@@ -558,7 +577,7 @@ test "fmtGate and formatFiles short-circuit when there is nothing to format" {
 
 test "fmtGate catches unformatted code and formatFiles fixes it" {
     const gpa = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(gpa, .{});
+    var threaded = std.Io.Threaded.init(gpa, .{ .environ = testProcessEnviron() });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -568,7 +587,12 @@ test "fmtGate catches unformatted code and formatFiles fixes it" {
     // Deliberately unformatted: zig fmt would insert a space before `1`.
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x =1;\n" });
 
-    var check = try fmtGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    // Needs a spawnable compiler; skip where there is none (see
+    // skipIfNoSpawnableZig) rather than failing on every other machine. The
+    // later gate calls don't need the guard: if the first spawn worked, so
+    // will the rest.
+    var check = fmtGate(gpa, io, tmp.dir, &.{"bad.zig"}) catch |err|
+        return skipIfNoSpawnableZig(err);
     defer check.deinit(gpa);
     try std.testing.expect(!check.ok);
 
@@ -668,13 +692,63 @@ test "gitDenyGuardGate allows non-git patterns and non-config files" {
     try std.testing.expect(!result3.ok);
 }
 
+/// The absolute path of the zig binary the gates shell out to, or null to fall
+/// back to a bare "zig".
+///
+/// `build_options.zig_exe` — the interpreter that built this binary — comes
+/// first: it is the right version by construction, and it is absolute, which is
+/// what matters here. Every gate runs with `cwd` set to a staging or temp
+/// directory, and a bare "zig" is not reliably found from there: on macOS the
+/// fmt and ast-check gates failed at *spawn*, before zig ever saw the code they
+/// were meant to check, and both of this file's tests failed with it.
+///
+/// The two fixed paths behind it are where zig lives on the machine this loop
+/// usually runs on, kept as a fallback for a binary whose build cache has since
+/// been cleared.
 fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
-    const known_first = [_][]const u8{ "/home/maci/.local/bin/zig", "/home/maci/.zvm/0.16.0/zig" };
+    const known_first = [_][]const u8{ build_options.zig_exe, "/home/maci/.local/bin/zig", "/home/maci/.zvm/0.16.0/zig" };
     for (known_first) |k| {
+        // Relative, or empty on a build that predates the option: `cwd` is not
+        // this process's, so it could not be resolved against anything useful.
+        if (k.len == 0 or k[0] != '/') continue;
         std.Io.Dir.accessAbsolute(io, k, .{ .execute = true }) catch continue;
         return gpa.dupe(u8, k) catch null;
     }
     return null;
+}
+
+test "resolveZigBin finds the zig that built this binary" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Something has to be found, or every gate that shells out is running on
+    // the bare-"zig" fallback that does not survive a changed cwd — which is
+    // the condition skipIfNoSpawnableZig below exists to tolerate, and which
+    // this option is meant to stop happening in the first place.
+    const bin = resolveZigBin(gpa, io) orelse return error.TestExpectedZigBin;
+    defer gpa.free(bin);
+    try std.testing.expect(bin[0] == '/');
+}
+
+/// Turns "the compiler could not even be spawned" into a test skip. The
+/// tests that exercise a real `zig ast-check`/`zig fmt` run can only do so
+/// where resolveZigBin finds a binary: everywhere else the bare "zig" argv
+/// is not spawnable (std.process.run resolves it against the gate's cwd, a
+/// test tmp dir — there is no PATH search), so the gate cannot run at all
+/// and the test should skip, not fail the suite on a machine that was never
+/// able to run it. Any other error is a real failure and passes through.
+///
+/// Retained as the backstop it was written to be: with `build_options.zig_exe`
+/// in the list above, resolveZigBin now answers on any machine that still has
+/// the build's compiler, so these skips stop firing and the gates they cover
+/// are actually exercised.
+fn skipIfNoSpawnableZig(err: anyerror) anyerror {
+    return switch (err) {
+        error.FileNotFound, error.AccessDenied => error.SkipZigTest,
+        else => err,
+    };
 }
 
 fn runZig(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, args: []const []const u8, label: []const u8) !GateResult {

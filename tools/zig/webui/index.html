@@ -34,10 +34,10 @@ lamps carry further). The seven named palettes ride the same tokens.
 <a class="skip-link" href="#task">Skip to composer</a>
 <header>
   <h1>clanker</h1>
-  <span class="chip" id="instance-chip" aria-live="polite">connecting…</span>
-  <span class="chip" id="peers-chip" aria-live="polite" hidden></span>
-  <span class="spacer"></span>
-  <span class="chip" id="session-chip" title="Conversation id: replies stay in context until you start a new chat">session …</span>
+  <button type="button" class="chip header-model" id="header-model" aria-live="polite" title="Active model — click to change">…</button>
+  <span id="instance-chip" hidden aria-hidden="true">connecting…</span>
+  <span id="peers-chip" hidden aria-hidden="true"></span>
+  <span id="session-chip" hidden aria-hidden="true">session …</span>
   <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar">◧</button>
   <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
   <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
@@ -132,7 +132,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 
     <div class="transcript" id="transcript"></div>
     <div class="run-empty" id="transcript-empty" hidden>
-      <p>No turns in this conversation yet.</p>
+      <p>What can I help with?</p>
       <!-- Suggestions are the shortest path from an empty page to seeing what
            this thing does; each one is a real task against this repo. -->
       <div class="suggestions" id="suggestions"></div>
@@ -142,7 +142,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <form id="task-form" class="composer">
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
-      <textarea id="task" name="task" placeholder="Summarise the provider config…  (type / for saved prompts)" required rows="3"
+      <textarea id="task" name="task" placeholder="Ask anything — type / for prompts" required rows="3"
                 role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
       <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       <div class="run-options">
@@ -177,6 +177,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
           </label>
+          <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)">🎙</button>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>
@@ -316,6 +317,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
         <label for="board-filter-mine" class="checkbox-row"><input type="checkbox" id="board-filter-mine"> Only mine</label>
         <label for="board-filter-blocked" class="checkbox-row"><input type="checkbox" id="board-filter-blocked"> Blocked only</label>
+        <label for="board-filter-assignee">Assignee</label>
+        <select id="board-filter-assignee"><option value="">All</option></select>
         <label for="board-filter-priority">Priority</label>
         <select id="board-filter-priority"><option value="">All</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select>
       </div>
@@ -328,7 +331,6 @@ lamps carry further). The seven named palettes ride the same tokens.
            last column and needed sideways scrolling to find, which is the
            opposite of what a first-run message is for. -->
       <p class="run-empty" id="board-empty" hidden>No cards yet. A card added here goes into the room's log, so every clanker in the room sees it.</p>
-      <div id="card-detail" class="run-detail" role="region" aria-label="Selected card" hidden></div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
     </section>
 
@@ -446,6 +448,10 @@ lamps carry further). The seven named palettes ride the same tokens.
      a datalist of the names that already exist, so picking one is a matter
      of arrow keys rather than retyping it exactly and risking a near-miss
      that quietly forks a new workspace. -->
+<div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
+  <div class="overlay-box" style="max-width: 42rem;"></div>
+</div>
+
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
   <div class="overlay-box">
     <form id="text-prompt-form" class="goal-form">

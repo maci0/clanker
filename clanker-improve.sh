@@ -38,7 +38,7 @@
 # is shown source files and answers with a patch, with no tools and no way to
 # look anything up. What it sees is chosen per instruction and bounded by a
 # byte budget, so it is a selection of src/, tools/, tests/, evals/,
-# tools/manifests/, build.zig* and config.json, not all of them; whatever did
+# tools/manifests/, build.zig* and config.toml/config.json, not all of them; whatever did
 # not fit is listed by name in the prompt so nothing is patched blind. Files
 # the instruction names by path are always included whole.
 #
@@ -152,7 +152,7 @@ fi
 # because every token here competes with source context for the same budget.
 GUARDRAILS="Build it wired in and usable, not stubbed: reachable from the CLI, the agent loop, or the REPL that it belongs to, handling the empty, zero, and malformed cases. Extend the module that already owns the concern instead of starting a parallel one, and add a test in the same file when the logic branches.
 
-Do not add third-party dependencies. Do not touch state/, config.local.json, or .env, and never move a secret into a tracked file.
+Do not add third-party dependencies. Do not touch state/, config.local.json, config.local.toml, or .env, and never move a secret into a tracked file.
 
 In \"rationale\", say what clanker can do after this patch that it could not do before."
 
@@ -236,12 +236,17 @@ fi
 
 # ---------------------------------------------------------- api keys ---------
 # Resolve the effective provider: an explicit --provider wins; otherwise the
-# default_provider from config.local.json (overrides) or config.json.
+# default_provider from config.local.toml/config.local.json (overrides) or
+# config.toml/config.json. TOML takes precedence over JSON, matching
+# src/config.zig's own load order.
 read_default_provider() {
   local f v
-  for f in config.local.json config.json; do
+  for f in config.local.toml config.local.json config.toml config.json; do
     [ -f "$f" ] || continue
-    v="$(sed -n 's/.*"default_provider"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)"
+    case "$f" in
+      *.toml) v="$(sed -n 's/^default_provider[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)" ;;
+      *.json) v="$(sed -n 's/.*"default_provider"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)" ;;
+    esac
     if [ -n "$v" ]; then printf '%s' "$v"; return; fi
   done
   printf '%s' ""

@@ -488,6 +488,21 @@ pub fn fsRead(path: []const u8) FsError![]const u8 {
     return fsPathQuery(rc);
 }
 
+pub const ConfigSource = struct { name: []const u8, text: []const u8 };
+
+/// Reads `<stem>.toml` if present, else `<stem>.json` — the same TOML-first
+/// order src/config.zig itself uses. Returns null when neither exists, so a
+/// config layer that simply isn't there (e.g. no local override) is a normal
+/// skip, not an error. Tools that read the harness config directly (rather
+/// than through `config()`, which is this tool's own descriptor settings)
+/// use this instead of hardcoding ".json", so a config.toml checkout doesn't
+/// silently look unconfigured.
+pub fn readConfigFile(comptime stem: []const u8) ?ConfigSource {
+    if (fsRead(stem ++ ".toml") catch null) |t| return .{ .name = stem ++ ".toml", .text = t };
+    if (fsRead(stem ++ ".json") catch null) |j| return .{ .name = stem ++ ".json", .text = j };
+    return null;
+}
+
 /// Lists file names under an allowed directory (JSON string array).
 pub fn fsList(path: []const u8) FsError![]const u8 {
     const p = sliceToMem(path);
