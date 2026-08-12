@@ -926,6 +926,11 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
 
+    // Which provider a bare `clanker chat` would actually use. Printed up front
+    // so it is visible even when that provider is skipped or fails below.
+    if (opts.provider == null)
+        log.log(.info, "default provider: {s}", .{cfg.default_provider});
+
     var it = cfg.providers.iterator();
     var found_any = false;
     var checked_any = false;
@@ -936,10 +941,11 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         }
         found_any = true;
         const p = kv.value_ptr.*;
+        const is_default = std.mem.eql(u8, name, cfg.default_provider);
 
         if (p.api_key_env) |env_name| {
             if (init.environ_map.get(env_name) == null) {
-                log.log(.warn, "{s}: skipped — env var {s} not set", .{ name, env_name });
+                log.log(.warn, "{s}: skipped — env var {s} not set — default={}", .{ name, env_name, is_default });
                 continue;
             }
         }
@@ -948,14 +954,14 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         var err_detail: ?[]const u8 = null;
         const t0 = std.Io.Timestamp.now(io, .awake);
         const resp = client.chat(&ctx, arena, .{ .provider = &p, .messages = &messages, .max_tokens = 1 }, &err_detail) catch |err| {
-            log.log(.error_, "{s}: {s}", .{ name, err_detail orelse @errorName(err) });
+            log.log(.error_, "{s}: {s} — default={}", .{ name, err_detail orelse @errorName(err), is_default });
             continue;
         };
         const t1 = std.Io.Timestamp.now(io, .awake);
         const ms = @divTrunc(t0.durationTo(t1).nanoseconds, std.time.ns_per_ms);
         const tok = if (resp.usage) |u| u.total_tokens else 0;
         checked_any = true;
-        log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok) cost={any}", .{ name, p.activeModelName(), ms, tok, p.activeModel().cost_per_1m_input });
+        log.log(.info, "{s}: OK — {s} — {d}ms ({d} tok) cost={any} — default={}", .{ name, p.activeModelName(), ms, tok, p.activeModel().cost_per_1m_input, is_default });
     }
     if (opts.provider != null and !found_any) return error.UnknownProvider;
     if (opts.provider != null and !checked_any) return error.ProviderCheckFailed;
