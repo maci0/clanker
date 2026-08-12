@@ -85,7 +85,7 @@ pub const Worktree = struct {
             if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
-                    resyncLocalBranch(gpa, io, branch_sha);
+                    self.resyncLocalBranch(gpa, io, branch_sha);
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -102,7 +102,7 @@ pub const Worktree = struct {
             };
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
-                resyncLocalBranch(gpa, io, commit);
+                self.resyncLocalBranch(gpa, io, commit);
                 return;
             }
             // Someone else moved base_branch between the read and the write;
@@ -112,8 +112,8 @@ pub const Worktree = struct {
     }
 
     /// After a successful merge-back, fast-forwards this worktree's own
-    /// branch (and its checked-out files) to the commit that just landed on
-    /// the base branch, so the two stay in lockstep.
+    /// branch ref to the commit that just landed on the base branch, so
+    /// the two stay in lockstep.
     ///
     /// Without this the branch keeps accumulating its own parallel history
     /// every promotion, diverging a little further from the base branch
@@ -123,8 +123,19 @@ pub const Worktree = struct {
     /// accumulated drift produced a real conflict neither side could
     /// auto-resolve, with nothing surfacing the growing backlog short of
     /// reading raw logs for "conflicts" by hand.
-    fn resyncLocalBranch(gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
-        const argv = [_][]const u8{ "git", "reset", "--hard", new_sha };
+    ///
+    /// Uses `git update-ref` on the branch ref rather than `git reset
+    /// --hard`, which would operate on whatever repo the caller's cwd
+    /// points to — potentially the MAIN working tree after the caller has
+    /// chdir'd back from the worktree, silently resetting uncommitted
+    /// work in the user's checkout.
+    fn resyncLocalBranch(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
+        const full_ref = std.fmt.allocPrint(gpa, "refs/heads/{s}", .{self.branch}) catch |err| {
+            log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
+            return;
+        };
+        defer gpa.free(full_ref);
+        const argv = [_][]const u8{ "git", "update-ref", full_ref, new_sha };
         const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
             log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
             return;
@@ -135,7 +146,7 @@ pub const Worktree = struct {
             .exited => |c| c == 0,
             else => false,
         };
-        if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+        if (!ok) log.log(.warn, "improve-self: git update-ref after merge-back failed: {s}", .{res.stderr});
     }
 };
 
@@ -218,7 +229,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl" }) |name| {
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
