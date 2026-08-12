@@ -1157,31 +1157,46 @@ fn cmdGate(init: std.process.Init, opts: Options) !void {
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
-    log.log(.info, "build: {s}", .{if (build.ok) "PASS" else "FAIL"});
-    if (!build.ok) return error.GateFailed;
+    try reportGate("build", build);
 
     var test_gate = try gate_checks.testGate(gpa, io, std.Io.Dir.cwd());
     defer test_gate.deinit(gpa);
-    log.log(.info, "tests: {s}", .{if (test_gate.ok) "PASS" else "FAIL"});
-    if (!test_gate.ok) return error.GateFailed;
+    try reportGate("tests", test_gate);
 
     var tools = try gate_checks.toolsGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer tools.deinit(gpa);
-    log.log(.info, "tools: {s}", .{if (tools.ok) "PASS" else "FAIL"});
-    if (!tools.ok) return error.GateFailed;
+    try reportGate("tools", tools);
 
     const files = try collectZigFiles(io, arena);
     var fmt = try gate_checks.fmtGate(gpa, io, std.Io.Dir.cwd(), files);
     defer fmt.deinit(gpa);
-    log.log(.info, "fmt: {s}", .{if (fmt.ok) "PASS" else "FAIL"});
-    if (!fmt.ok) return error.GateFailed;
+    try reportGate("fmt", fmt);
 
     var lint = try gate_checks.lintGate(gpa, io, std.Io.Dir.cwd(), files);
     defer lint.deinit(gpa);
-    log.log(.info, "lint: {s}", .{if (lint.ok) "PASS" else "FAIL"});
-    if (!lint.ok) return error.GateFailed;
+    try reportGate("lint", lint);
 
     log.log(.info, "all gates passed", .{});
+}
+
+/// How much of a failing gate's captured output to print. Enough for a Zig
+/// test failure with its stack trace, short of replaying a whole cold build.
+const gate_tail_bytes = 8192;
+
+/// Logs one gate's verdict, and on failure the tail of what it printed.
+///
+/// `clanker gate` used to report a bare `tests: FAIL`. The gate captures the
+/// subprocess output into `GateResult.detail` and then dropped it on the
+/// floor, so in CI — where that output is the only evidence there is — a red
+/// run said which phase failed and nothing whatsoever about why.
+fn reportGate(name: []const u8, g: gate_checks.GateResult) !void {
+    log.log(.info, "{s}: {s}", .{ name, if (g.ok) "PASS" else "FAIL" });
+    if (g.ok) return;
+    if (g.detail.len > 0) {
+        const tail = g.detail[g.detail.len -| gate_tail_bytes..];
+        log.log(.error_, "{s} output (last {d} bytes):\n{s}", .{ name, tail.len, tail });
+    }
+    return error.GateFailed;
 }
 
 /// Recursively collects all .zig file paths under the current directory.
