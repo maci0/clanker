@@ -7,9 +7,10 @@ and `ck_swarm` (`src/sandbox/host.zig`) for nested bounded agent runs,
 `src/peers/chatrooms.zig` + the peer HTTP fan-out (`POST /api/chat/message`)
 for the multi-instance transport, the Fleet pixel floor's canvas technique
 (`tools/zig/webui/features/fleet.js`, `_floorFrame`) as the rendering
-substrate, and the board tool's own-file persistence pattern
-(`state/board.json`, per `tools/zig/board.zig`) for match state. This PRD's
-job is to scope those into one coherent feature before any code is written.
+substrate, and the run graph's own-file persistence pattern
+(`state/runs/<run-id>.json`, per `src/agent/loop.zig`) for match state. This
+PRD's job is to scope those into one coherent feature before any code is
+written.
 
 ## Problem
 
@@ -80,9 +81,9 @@ the pixel art.
   false`, no image assets) extended to a battle layout, not a new drawing
   framework or asset pipeline.
 - **Not free-for-all by default.** Strict pairwise (2 combatants) is the
-  shipped shape; Battle Royale mode (Design → Battle Royale, Phase 8) is a
-  later, explicitly deferred layer on top, not assumed to fall out for free
-  from the pairwise core.
+  shipped shape; Battle Royale mode (Design → Battle Royale mode, Phase 8)
+  is a later, explicitly deferred layer on top, not assumed to fall out for
+  free from the pairwise core.
 
 ## Design
 
@@ -91,10 +92,9 @@ the pixel art.
 direct calls"). Each position gets a combatant: a `provider` name (falls
 back to the configured default) and, optionally, a `persona` string layered
 onto its system framing the same way `ck_subagent`'s `Brief` already carries
-`parent_task` context. Two positions with the same provider is allowed (the
-same model arguing against itself is a legitimate, cheaper match shape) but
-the interesting case, and the one worth defaulting examples to, is different
-providers genuinely disagreeing.
+`parent_task` context. Two positions may share a provider (the same model
+arguing against itself is a legitimate, cheaper match shape), but the case
+worth defaulting examples to is different providers genuinely disagreeing.
 
 **The move protocol.** Each combatant's turn produces one structured reply:
 
@@ -122,8 +122,8 @@ positions' opening `attack` (parallel, no prior moves to react to — this is
 the one point in a match that could reuse `ck_swarm`'s batch shape). From
 round 2 on, combatants move in a fixed order and each one's call includes
 every move so far, not just the opponent's; this is a chain of `ck_subagent`
-calls, not a `ck_swarm` batch, precisely because `ck_swarm` members can't see
-each other and this loop needs them to. A round ends when every combatant
+calls, not a `ck_swarm` batch, because `ck_swarm` members can't see each
+other and this loop needs them to. A round ends when every combatant
 has moved once; the match ends when a combatant's HP hits 0, all-but-one
 combatant has conceded, or `max_rounds` is reached (default 4, clamped to a
 ceiling the way the `rlm` tool's `max_depth` config already clamps its
@@ -143,9 +143,9 @@ to how `todo_*` used to ride chat messages before the board took over
 guarantee this needs is weaker than a general chat log's: a round doesn't
 start until every combatant's move for the previous round is visible, so as
 long as each peer waits for its cue before moving (rather than racing to
-post), out-of-order delivery across peers is a non-issue in practice — worth
-a real look under an actual network partition before this ships (see Open
-questions), not asserted safe here.
+post), out-of-order delivery across peers is a non-issue — worth a real look
+under an actual network partition before this ships (see Open questions),
+not asserted safe here.
 
 **Judging and HP.** Each combatant starts at 100 HP. After each move, a
 judge call scores it: did the attack land, did the block actually answer the
@@ -160,6 +160,24 @@ point, how much damage. Two judge modes, both configurable per match:
   scores the exchange. Costs one extra call per round but removes the
   self-scoring incentive problem entirely.
 
+**Battle Royale mode (deferred, Phase 8).** The 3-8 combatant free-for-all,
+layered on the pairwise core once it has real mileage, not the default (see
+Non-goals). Same move protocol, one addition: `attack`/`block`/`counter`
+carry a `target` naming another combatant's position; a move with no
+`target` when more than 2 combatants are in the match is refused at the tool
+boundary, same as today's duplicate-position refusal. A round with N
+combatants is N independent judged exchanges (attacker vs. its declared
+target), not one N-way brawl: the judge call shape stays identical to
+pairwise, there are just more of them per round. A combatant at 0 HP is
+eliminated for the rest of the match (no longer a legal target, no longer
+takes a turn) rather than ending the match, so a battle royale plays out
+instead of collapsing at the first knockout. Verdict: last position
+standing, or highest HP at the round cap if more than one survives, the
+same judged-on-points fallback pairwise already has. Still open: whether a
+combatant targeted by more than one attacker in the same round eats
+cumulative damage from each, or the judge scores the round holistically
+(see Open questions).
+
 **State and persistence.** A match gets its own file, `state/arena/<id>.json`
 — append a move + judge result per round, same shape as `state/runs/run-
 <id>.json` already accumulates nodes for an execution graph, not a
@@ -172,9 +190,9 @@ coordinating the match.
 standing after concessions), a synthesized answer combining the winning
 position with any point the loser landed before going down (not just "X
 won" — the actual content), and the full move transcript. Returned as the
-tool's result and, matching every other reasoning-trace tool clanker already
-has (`rlm`'s `state/reasoning.jsonl`, `history`'s promotion log), appended
-somewhere replayable rather than only returned once and forgotten.
+tool's result and, like clanker's other reasoning-trace tools (`rlm`'s
+`state/reasoning.jsonl`, `history`'s promotion log), appended somewhere
+replayable rather than only returned once and forgotten.
 
 **Self-improve integration (advisory only).** `src/improve/engine.zig` could
 run an Arena match — "promote this proposal" vs. "reject this proposal",
@@ -198,7 +216,7 @@ example). Arena's fit is making that adversarial: two candidate approaches
 to a not-yet-built tool or skill (allowlist vs. denylist validation, two
 competing wordings of a skill's system prompt, "should this move to WASM"
 argued both ways) each defend their own design and attack the other's,
-judged the same way any other match is. The output is the same kind of
+judged like any other match. The output is the same kind of
 finding a `*-review.md` prompt already reports — file/line-shaped where
 there's code to point at, prompt-wording-shaped for a skill draft — plus the
 transcript of *why* one design held up and the other didn't, which a single
@@ -263,11 +281,11 @@ way its own non-goal requires.
   decorative sequence after the verdict flash, same non-goal as everything
   else on this stage: skippable, and the status line already said who lost
   in words before this plays. A small procedural bulldozer sprite (a body
-  block, a blade rect, two tread squares that step-cycle the way the office
-  plugin's walk-cycle already steps a sprite's legs) drives in from the
-  stage edge, and the loser's sprite — still in its last kneel/damage pose —
-  gets pushed ahead of the blade toward a dark hole rect at the stage's
-  far edge, then scales down and fades into it, reusing the fade technique
+  block, a blade rect, two tread squares that step-cycle on the same
+  `t`-driven timing the idle bob already uses) drives in from the stage
+  edge, and the loser's sprite — still in its last kneel/damage pose — gets
+  pushed ahead of the blade toward a dark hole rect at the stage's far edge,
+  then scales down and fades into it, reusing the fade technique
   the `concede` pose already dims its HP bar with. A brief crossfade cuts to
   a second scene: two solid wall rects closing in from left and right on the
   now-small loser sprite, holding just short of full closure (the point is
@@ -282,29 +300,28 @@ way its own non-goal requires.
   (text cards, same tool-call card style used everywhere else) — the canvas
   never carries information the transcript doesn't also carry in words,
   same rule Fleet's node-detail panel already follows. A running match
-  polls `GET /api/arena/<id>` — this view can't reuse Fleet's
-  fetch-once-per-view-open pattern, since a match changes over real time
-  while open, so it needs the same kind of interval polling `app.js`
-  already uses elsewhere (`syncArchiveLabel`/`syncSessionMirror`,
-  ~900-1200ms), gated the same way the vaxis REPL's own tick handler is —
-  polling only while the match status is "running", stopped the moment it
-  reaches a verdict, never a background timer left ticking on a finished
-  match. No new socket: `docs/prds/0006-webui.md`'s existing constraint that
-  `/api/run`'s stream is the one long-lived channel and everything else is
-  polling holds here too.
+  polls `GET /api/arena/<id>`: a match changes while open, so this needs
+  `app.js`'s interval-polling pattern (`syncArchiveLabel`/
+  `syncSessionMirror`, ~900-1200ms) rather than Fleet's fetch-once-per-view
+  pattern, gated like the vaxis REPL's own tick handler: polling only while
+  the match status is "running", stopped the moment it reaches a verdict,
+  never a background timer left ticking on a finished match. No new socket:
+  `docs/prds/0006-webui.md`'s existing constraint that `/api/run`'s stream
+  is the one long-lived channel and everything else is polling holds here
+  too.
 - **Reduced motion.** No animation loop scheduled at all
   (`prefers-reduced-motion: reduce` skips `requestAnimationFrame` the same
   way `_floorFrame` already does); the canvas renders one static frame of
   the current state and the `aria-live` status text is authoritative,
   exactly Fleet's existing fallback, not a new one.
 
-**REPL / CLI.** `/arena "<question>" --for "<stance>" --against "<stance>"`
-in the flag-string-in-text style `/autoresearch` already established in
-`command_registry`; prints a usage block on no args the same way. Each
-round's moves render as transcript cards, one dim line per move (matching
-tool-call card style), ending in a verdict block. `clanker arena` mirrors it
-non-interactively for scripting, same pattern as `clanker autoresearch`
-alongside `/autoresearch`.
+**REPL / CLI.** `/arena "<question>" --for "<stance>" --against "<stance>"`,
+the flag-string-in-text style `/autoresearch` already established in the
+slash-command table (`command_registry`, `src/tui/repl_vaxis.zig`); prints a usage block on
+no args the same way. Each round's moves render as transcript cards, one dim
+line per move (matching tool-call card style), ending in a verdict block.
+`clanker arena` mirrors it non-interactively for scripting, same pattern as
+`clanker autoresearch` alongside `/autoresearch`.
 
 ## Failure modes
 
@@ -387,27 +404,13 @@ Phase 8 — Battle Royale mode ("with cheese," 3-8 combatants):
 
 ## Open questions / future work
 
-- **Battle Royale mode ("with cheese").** The 3-8 combatant free-for-all,
-  layered on the pairwise core once it has real mileage (still not the
-  default — see Non-goals). Same move protocol, one addition: `attack`/
-  `block`/`counter` each carry a `target` naming another combatant's
-  position; a move with no `target` when more than 2 combatants are in the
-  match is refused at the tool boundary, same as today's duplicate-position
-  refusal. A round with N combatants is N independent judged exchanges
-  (attacker vs. its one declared target), not a single N-way brawl — the
-  judge call shape stays identical to pairwise, there's just more of them
-  per round. Elimination: a combatant at 0 HP is out for the rest of the
-  match (no longer a legal target, no longer takes a turn) rather than
-  ending the match, so a battle royale actually plays out instead of
-  collapsing to the first knockout. Verdict: last position standing, or
-  highest HP at the round cap if more than one survives — the same
-  judged-on-points fallback pairwise matches already have. The name is a
-  nod, not a spec: the mode is just "more than two combatants," kept
-  because it's the one detail everyone remembers from the meeting where
-  this got approved. Still genuinely open: whether N judged exchanges per
-  round is fair when a combatant is targeted by more than one attacker at
-  once (does it eat cumulative damage from all of them, or does the judge
-  see the round holistically) — not designed blind here.
+- **Battle Royale multi-attacker judging.** Design → Battle Royale mode
+  scores each attacker-target pair independently. Still genuinely open:
+  whether that's fair when one combatant is targeted by more than one
+  attacker in the same round, cumulative damage from each, or one holistic
+  judge call for the round, not designed blind here; resolving it is
+  Phase 8's last unchecked acceptance item. The name ("with cheese") is a
+  nod to the meeting that approved the mode, not part of the spec.
 - **Cost/fairness across providers.** A free local model arguing against a
   paid frontier model is not a fair fight in the way that matters for a
   judged debate (one side can afford to think longer per move). Whether

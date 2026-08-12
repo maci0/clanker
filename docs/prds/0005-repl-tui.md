@@ -32,7 +32,8 @@ raised and weighed before the user chose to adopt anyway.
 1. A persistent, resizable REPL session running a real `Agent.run` without
    blocking the UI thread.
 2. Live status while the LLM streams or a tool executes.
-3. Multi-session support (switch, resume) with model/token visibility.
+3. Session persistence: resume a saved conversation with model visibility
+   in the status bar; token/cost visibility is tracked as open work below.
 4. Themed output consistent with `clanker run`'s ANSI theme.
 5. Untrusted text (LLM output, tool results) never reaches the terminal as
    raw control bytes.
@@ -62,9 +63,9 @@ became real terminal/tmux scrollback, copy-pastable and searchable the
 ordinary way, with only a small region (status bar + input box) redrawn in
 place. The vaxis REPL redraws the *entire* transcript into an alternate-screen
 buffer every frame, like `vim` or `htop` — native scrollback for old messages
-is gone; paging back into history becomes an in-app concern (see Acceptance
-criteria: manual scrollback is not yet built). This was seen and accepted
-live, not approved on paper alone, before the rest of the migration proceeded.
+is gone; paging back into history is an in-app concern (manual scrollback,
+shipped, see Acceptance criteria). This was seen and accepted live, not
+approved on paper alone, before the rest of the migration proceeded.
 
 **Threading and idle cost.** A background thread runs the real `Agent.run`
 (LLM calls block that thread, not the UI); a 50ms tick streams tokens live
@@ -85,17 +86,14 @@ DEL before any of it reaches the terminal, so a raw ESC byte in untrusted
 text can't inject an escape sequence. The common case (no control bytes) is
 alloc-free: it scans first and only copies if it finds something to drop.
 
-**Closing the remaining gaps — widget mapping.** Each open item in Acceptance
-criteria has a specific `vxfw` shape, not an open-ended "figure it out":
+**Closing the remaining gaps — widget mapping.** Most open items below have a
+specific `vxfw` shape, not an open-ended "figure it out":
 
 | Gap | `vxfw` mechanism |
 |---|---|
-| Slash-command palette | The same `cmd_*` internal-tool catalog the web UI's palette and the deleted REPL's Tab-completion both drew from; needs a modal keystroke-owning loop like `/model`'s (`picker_open`/`handlePickerKey`) reused for command lookup, not a new one |
-| Generated `:help` | Build from the same catalog above instead of hand-maintained prose in `printHelp` |
+| Slash-command search (fuzzy palette) | The same `cmd_*` internal-tool catalog the web UI's palette drew from; needs a modal keystroke-owning loop like `/model`'s (`picker_open`/`handlePickerKey`) reused for command lookup, not a new one. Tab-complete's prefix match over `command_registry` already shipped (see Acceptance) and is a separate, narrower mechanism |
 | Inline `ask_user`/confirm-before-write | `/model`'s modal machinery again — a prompt that owns keystrokes until answered, wired to `AskFn`/`confirm_fn` the same way the web UI's ask bridge is |
-| Manual scrollback | `vxfw.ScrollView` over the transcript, or a hand-rolled offset into the tail buffer with PgUp/PgDn bound |
 | Real markdown outside fences | `transcript.zig`'s `MdStream` already does this for `clanker run`; wire its output into a `RichText`/`Text` widget instead of a raw `Io.Writer` |
-| Bordered tool-call cards | `vxfw.Border` doesn't do "left bar only" the deleted REPL used — keep hand-drawing the left-bar style into a plain text widget rather than fighting the widget for a shape it doesn't have |
 | Multi-line input | `vxfw.TextField` has no multi-line mode; needs either a custom widget or accepting Shift+Enter has no vaxis primitive to hook |
 | Plan mode | `Agent.plan_mode` and the `needsConfirm` gate already exist (web UI drives both); needs a REPL-side toggle key and system-prompt block, no new backend |
 | Visible stats/compaction | Status bar already renders model/session/spinner; extend it the way `clanker run`'s footer or the web UI's context meter does |
@@ -105,11 +103,12 @@ criteria has a specific `vxfw` shape, not an open-ended "figure it out":
 | Condition | Behaviour |
 |---|---|
 | SIGWINCH mid-render | Handled by `vxfw.App`'s own event loop; no self-pipe, no dropped resize |
-| Ctrl-C, idle prompt | Clears the input line |
+| Ctrl-C, idle prompt | Quits the REPL (`ctx.quit = true`) |
 | Ctrl-C, mid-stream | Sets the same `stop_flag` `client.chatStream` already checks |
-| `ask_user` / `confirm_writes=always` invoked here | Falls back to the same "nobody attached" default a headless run gets — no prompt-rendering path exists yet (tracked below) |
+| `ask_user` invoked here | No `ask_fn` is wired; falls back to the same "nobody attached" default (`not_found`) a headless run gets. No prompt-rendering path exists yet (tracked below) |
+| `confirm_writes = "always"` invoked here | No `confirm_fn` is wired either, so write-capable tool calls run **ungated**, not declined. A one-line warning prints once at startup so the operator isn't left believing they're protected |
 | Control bytes in LLM/tool output | Stripped before render, per Design |
-| History exceeds visible height | No PgUp/PgDn yet — only the tail is shown |
+| History exceeds visible height | PgUp/PgDn/Home/End page it (manual scrollback, shipped) |
 
 ## Acceptance criteria
 
@@ -117,9 +116,13 @@ Shipped:
 
 - [x] Real `Agent.run` on a background thread; streamed tokens via a 50ms
       tick that only runs while a turn is in flight
-- [x] Tool-call/result status lines
+- [x] Tool-call/result status lines rendered as bordered left-bar cards
+      (`transcript.zig` card helpers), one card per tool batch
 - [x] Status bar with an animated spinner
-- [x] `Ctrl-C` (idle clears the line; mid-stream sets `stop_flag`)
+- [x] First-run hint when the transcript is empty ("Start with a task...",
+      "Try /model to switch models, /help for commands, or type anything
+      to begin.")
+- [x] `Ctrl-C` (idle quits the REPL; mid-stream sets `stop_flag`)
 - [x] Quit commands (`/quit`, `/exit`, `/q`, bare `exit`/`quit`)
 - [x] SIGWINCH handled natively by `vxfw.App`
 - [x] Untrusted text control-stripped before rendering (CWE-150)
@@ -142,7 +145,6 @@ Open:
 - [ ] Transcript search (scrollback paging exists; searching within it does not)
 - [ ] Inline `ask_user`/confirm-before-write prompt UI
 - [ ] Real markdown rendering outside fenced code blocks
-- [ ] Bordered tool-call cards (left-bar style) instead of plain dim lines
 - [ ] Multi-line input (Shift+Enter or equivalent)
 - [ ] Image/multimodal input
 - [ ] Plan mode toggle
@@ -150,9 +152,6 @@ Open:
 
 ## Open questions / future work
 
-- Whether the deleted REPL's exact left-bar card style should be reproduced
-  pixel-for-pixel or whether a `vxfw`-native shape reads better once actually
-  built — the widget mapping above is a starting point, not a locked design.
 - Order of the open items: the ask-bridge/confirm-write gap is the most
   surprising one to a user coming from the web UI, since `agent.confirm_writes
   = "always"` is documented as covering interactive REPL sessions but has no

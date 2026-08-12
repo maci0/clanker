@@ -72,19 +72,20 @@ can still explicitly name a DM room when reading history or subscribing.
 **Private todos.** The `todo_*` ops no longer accept `room` at all —
 `src/sandbox/host.zig` hard-errors any `todo_*` call that names one
 ("room todo lists are board cards now: use board_add, board_move,
-board_claim or board_list instead"). The shared/room-scoped todo list this
-section originally described has been fully replaced by the board (see
-`docs/prds/0002-kanban-board.md`). What remains: inside a sub-agent run, the host
-routes a room-less `todo_*` call to the run's private in-memory list
-(`src/agent/private_todos.zig`, wired only by `subagent.runNested`, capped
-at 100 items). Nothing is logged or fanned out; the list is discarded when
-the run returns, and its final state is appended to the sub-agent's answer
-whenever the list is non-empty (not only when the run hits its iteration
-cap). Ids are `p1`, `p2`, ... to keep them distinct from shared-list message
-ids. A private todo is the run's working plan; shared work goes on the
-board. **Outside a sub-agent run** (a top-level run), no private list is ever
-attached, so `todo_*` without `room` fails too — see `docs/prds/0003-run-todos.md`
-for the gap this leaves.
+board_claim or board_list."). The shared/room-scoped todo list this section
+originally described has been fully replaced by the board (see
+`docs/prds/0002-kanban-board.md`). What remains: a room-less `todo_*` call
+routes to the run's private in-memory list (`src/agent/private_todos.zig`,
+capped at 100 items), attached by `Agent.run` for every top-level run and by
+`subagent.runNested` for a nested one, not sub-agent runs only. Nothing is
+logged or fanned out; the list is discarded when the run returns. Only a
+sub-agent's list is folded into its answer when non-empty; a top-level run's
+list is simply dropped (see `docs/prds/0003-run-todos.md`, Open questions).
+Ids are `p1`, `p2`, ... to keep them distinct from shared-list message ids. A
+private todo is the run's working plan; shared work goes on the board. A tool
+caller that never went through `Agent.run` (e.g. the MCP server) has no list
+attached, so a room-less `todo_*` call there is a host wiring error, not a
+room todo (see Failure modes).
 
 **Inbox.** Each agent run injects a `[chatroom inbox]` user message with
 messages newer than the cursor (`state/chatrooms-cursor.json`), so a
@@ -101,9 +102,8 @@ size is 20 for the agent-facing `chat_history` tool (`src/sandbox/host.zig`),
 `has_more` when another 20-message page exists; board folding uses that
 signal so it never mistakes a full final page for a truncated log. The tool
 path also truncates each message to 600 chars; the CLI/HTTP paths don't
-truncate. The chatroom inbox
-injected into agent runs caps at the 5 newest messages, each preview
-truncated to 300 chars.
+truncate. The chatroom inbox injected into agent runs caps at the 5 newest
+messages, each preview truncated to 300 chars.
 
 **Errors name the missing field — mostly.** `InvalidArg` alone told a caller
 nothing; `send`/`history`/`subscribe` map it to a message naming the field
@@ -132,7 +132,7 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 | Unsubscribed peer | Keeps nothing: a peer retains a message only for rooms it subscribes to |
 | Missing room/text | Named error per op, no write |
 | `todo_*` called with a `room` | Hard error: room todo lists are gone, use the board |
-| `todo_*` called with no `room` outside a sub-agent run | Hard error, and the error text itself is stale (see `docs/prds/0003-run-todos.md`) |
+| `todo_*` called with no `room` and no list attached (caller outside `Agent.run`) | Hard error naming it a host wiring error, not a room todo |
 | Chatrooms disabled in config | Tools that depend on them fail loudly (board: "chatrooms are disabled, and the board is a chatroom"); bare chat tools do not, see above |
 | Duplicate delivery | Consumers deduplicate by message id (the board fold does) |
 

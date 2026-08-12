@@ -7,7 +7,7 @@ Archive toggle for done, `Drop here — or Add card` empty slots, card cover str
 member avatar + `✔ 50%` progress bar, priority `filled` due labels, Slack grouped
 messages / day `— YYYY-MM-DD —` / hover gutter + `#` composer / `/me` `/shrug`
 + link unfurl + hover action bar + room `· 3 new` badges. ChatGPT/Cursor/Claude
-theme also live. Source of truth: `tools/zig/webui/*`
+theme also live, plus a pixel-art SVG header logo. Source of truth: `tools/zig/webui/*`
 (`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
 comptime-embedded via `tools/zig/webui.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
@@ -93,16 +93,20 @@ here as the design rationale it is, not kept as a separate file.
 `<script type="module">`, no bundler, one file per concern, embedded and
 routed the same way `app.css`/`app.js` already were —
 `tools/zig/webui.zig`'s `assetFor` is a lookup table, adding a module is
-mechanical. `app.js` went from 5,511 lines to roughly 3,500 across this
-split; `core/utils.js`, `core/chat.js`, `core/labels.js`, `core/goals.js`,
-`core/stream.js`, `core/theme.js`, `core/overlay.js`, `core/search.js`,
-`core/composer.js`, `core/scroll.js`, `core/dialog.js`, `core/usage.js`,
-`core/status.js`, `core/attachments.js`, `core/logs.js`, `core/plugins.js`,
-`core/palette.js`, `core/modelpicker.js`, `core/tools.js` plus
-`lib/markdown.js`, `lib/graph.js`, `lib/board.js`, `features/fleet.js` are
-now real modules with real `import`/`export`, not `window.ck*` bridge
-globals. `app.js` itself is a native ES module (`type="module"`), not a
-classic deferred script. Every module needs three things wired together or a
+mechanical. `app.js` dropped from 5,511 lines to 3,545 right after the
+`board.js`/`goals.js` split, and sits at 4,144 today as later work (Phase 6,
+Kimi-parity) landed inline rather than in a module; `core/icons.js`,
+`core/ui.js`, `core/utils.js`, `core/vendor.js`, `core/chat.js`,
+`core/labels.js`, `core/goals.js`, `core/stream.js`, `core/theme.js`,
+`core/overlay.js`, `core/search.js`, `core/composer.js`, `core/scroll.js`,
+`core/dialog.js`, `core/usage.js`, `core/status.js`, `core/attachments.js`,
+`core/logs.js`, `core/plugins.js`, `core/palette.js`, `core/modelpicker.js`,
+`core/tools.js` plus `lib/markdown.js`, `lib/graph.js`, `lib/board.js`,
+`features/fleet.js`, `features/board.js`, `features/goals.js`,
+`features/knowledge.js`, `features/prompts.js` are now real modules with
+real `import`/`export`, not `window.ck*` bridge globals. `app.js` itself is
+a native ES module (`type="module"`), not a classic deferred script. Every
+module needs three things wired together or a
 request 404s or hits the wrong cache: an `@embedFile` + comptime `encodedLen`
 guard in `tools/zig/webui.zig`, a `<script type="module">` tag in
 `index.html`, and both an `is_webui` allow-list entry *and* a dedicated
@@ -256,8 +260,9 @@ Kimi Code harness parity (open-source CLI — `MoonshotAI/kimi-code`):
 
 Infrastructure:
 
-- [x] ES module split (`app.js` 5,511 → ~3,500 lines; all `core/*`/`lib/*`/
-      `features/*` modules embedded, routed, and individually cached)
+- [x] ES module split (`app.js` 5,511 → 3,545 lines at the `board.js`/
+      `goals.js` split, 4,144 today; all `core/*`/`lib/*`/`features/*`
+      modules embedded, routed, and individually cached)
 - [x] `lib.out_cap` comptime guard passes with headroom
 - [x] Strict CSP verified live (`curl -si`): no inline script, and inline style only from the vendored mermaid renderer (`style-src 'self' 'unsafe-inline'`, `script-src 'self'` unchanged)
 - [x] Accessibility: Phase 6 + mermaid additions 0 violations across views
@@ -270,7 +275,8 @@ Infrastructure:
 
 - **Pixel floor** now ships as a minimal decorative canvas (see Design above); richer art (Kenney CC0, `vendor/ART.md` provenance) and live `\x01` glow can be layered later without changing the contract (`aria-hidden` + status text, `prefers-reduced-motion` still frame).
 - **Phase 5 progress** now streams over the existing `/api/run` `\x01` channel; history/revert detail can be added per-run without a new transport.
-- **Remaining `app.js` decomposition** — `features/board.js`, `features/
-  goals.js`, and other view-specific logic not yet split out, now cheaper
-  than when this was first scoped because the import graph is real instead
-  of window-bridge globals.
+- **Remaining `app.js` decomposition** — `board.js` and `goals.js` split out
+  already (see Design), but `app.js` grew back from 3,545 to 4,144 lines as
+  later work landed inline; no specific next module is scoped, but splitting
+  is cheaper now that the import graph is real instead of window-bridge
+  globals.

@@ -2,8 +2,7 @@
 
 ## Status
 
-Shipped, but the "disambiguated by presence of `room`" framing below is now
-half-true. Two layers, meant to be deliberately separate:
+Shipped. Two layers, meant to be deliberately separate:
 
 - **Private todos** — `todo_add` / `todo_claim` / `todo_close` / `todo_list`
   with no `room`. Routed host-side to the run's own in-memory list
@@ -31,8 +30,9 @@ be both; conflating them was the original `state/board.json` mistake.
    persistence, zero fan-out.
 2. A shared, replicated board for durable work, with claims, subtasks,
    deadlines, and cost accrual.
-3. The same four verb names on both layers, disambiguated by the presence of
-   `room`, so the agent's habit transfers.
+3. `todo_add`/`todo_claim`/`todo_close`/`todo_list` keep one vocabulary for
+   private todos; shared durable work uses the board's own verbs, not a
+   room-scoped variant of these four.
 
 ## Non-goals
 
@@ -42,15 +42,15 @@ be both; conflating them was the original `state/board.json` mistake.
 
 ## Design
 
-**Routing on absence.** The `todo_*` tools
-share the chat module. Naming `room` now unconditionally hard-errors
-(`src/sandbox/host.zig`: "room todo lists are board cards now: use
-board_add, board_move, board_claim or board_list instead") — the shared
-room-list path this doc originally described no longer exists. Omitting
-`room` routes to `src/agent/private_todos.zig`. `Agent.run` attaches a fresh
-list for every top-level run and removes it when the run returns;
-`subagent.runNested` attaches a distinct list for its nested run. A missing
-list is therefore a host wiring error, not a cue to pass `room`.
+**Routing on absence.** The `todo_*` tools share the chat module. Naming
+`room` now unconditionally hard-errors (`src/sandbox/host.zig`: "room todo
+lists are board cards now: use board_add, board_move, board_claim or
+board_list."); the shared room-list path this doc originally described no
+longer exists. Omitting `room` routes to `src/agent/private_todos.zig`.
+`Agent.run` attaches a fresh list for every top-level run and removes it when
+the run returns; `subagent.runNested` attaches a distinct list for its nested
+run. A missing list is therefore a host wiring error, not a cue to pass
+`room` (see Failure modes).
 
 **Lifecycle.** Private: open → claimed → closed, per run, in memory, capped
 at 100 items (error: "private todo list is full; close items instead of
@@ -63,6 +63,17 @@ your working plan, gone when the run ends; if another clanker should see or
 claim it, it belongs on the board. This rule of thumb still holds even
 though the room-scoped middle ground it used to also cover is gone.
 
+## Failure modes
+
+| Condition | Behaviour |
+|---|---|
+| `todo_*` with `room` | Hard error: room todo lists are gone, use `board_add`/`board_move`/`board_claim`/`board_list` |
+| `todo_*` with no `room` and no list attached (caller never ran through `Agent.run`) | Hard error: host wiring error |
+| `todo_add` past 100 items | "private todo list is full; close items instead of adding more" |
+| `todo_add` with empty or >512-char title | Named error, no item added |
+| `todo_claim`/`todo_close` with an unknown or shared-list id | "unknown todo id in your private list; call todo_list first" |
+| Board claim race | First (ts, id) wins; the loser's answer shows who holds it (see `docs/prds/0002-kanban-board.md`) |
+
 ## Acceptance criteria
 
 - [x] Omitting `room` never touches any room log.
@@ -73,7 +84,7 @@ though the room-scoped middle ground it used to also cover is gone.
 - [x] Board claims resolve races deterministically across peers.
 - [x] A top-level run can use private todos.
 
-## Open questions
+## Open questions / future work
 
 - Should a top-level run's final answer also summarise its leftover open
   private todos? The sub-agent path already does this via the answer
