@@ -9,7 +9,7 @@ import { T, bind, state, add } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState } from "../lib/board.js";
-import { goalState, postGoal, goalIdForCard, workCardAsGoal } from "./goals.js";
+import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals } from "./goals.js";
 
 var el = null;
 var _setTabCount = null;
@@ -924,6 +924,17 @@ export function bindBoard(deps) {
 
   wireRefresh(el.boardRefresh, loadBoard);
   el.boardRoom.addEventListener("change", function () { loadBoard(); });
+  // Re-sync from goals: move every done goal's board card to the done column.
+  // The handler is the goals module's, which owns the goal->card links.
+  el.boardResyncGoals.addEventListener("click", function () {
+    el.boardResyncGoals.disabled = true;
+    var moved = syncCardsFromGoals();
+    el.boardStatus.textContent = moved
+      ? ("Moved " + moved + " card" + (moved === 1 ? "" : "s") + " to done from their goals.")
+      : "No done goals needed moving.";
+    // Let the moves' renderBoard calls flush, then re-enable.
+    loadBoard().finally(function () { el.boardResyncGoals.disabled = false; });
+  });
   ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee"].forEach(function(id){
     var n=document.getElementById(id);
     if(!n) return;
