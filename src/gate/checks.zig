@@ -199,7 +199,10 @@ test "astCheckGate fails on a syntax error with a precise diagnostic" {
     defer tmp.cleanup();
 
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x = ;\n" });
-    var result = try astCheckGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    // Needs a spawnable compiler; skip where there is none (see
+    // skipIfNoSpawnableZig) rather than failing on every other machine.
+    var result = astCheckGate(gpa, io, tmp.dir, &.{"bad.zig"}) catch |err|
+        return skipIfNoSpawnableZig(err);
     defer result.deinit(gpa);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("zig ast-check", result.label);
@@ -570,7 +573,12 @@ test "fmtGate catches unformatted code and formatFiles fixes it" {
     // Deliberately unformatted: zig fmt would insert a space before `1`.
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "const x =1;\n" });
 
-    var check = try fmtGate(gpa, io, tmp.dir, &.{"bad.zig"});
+    // Needs a spawnable compiler; skip where there is none (see
+    // skipIfNoSpawnableZig) rather than failing on every other machine. The
+    // later gate calls don't need the guard: if the first spawn worked, so
+    // will the rest.
+    var check = fmtGate(gpa, io, tmp.dir, &.{"bad.zig"}) catch |err|
+        return skipIfNoSpawnableZig(err);
     defer check.deinit(gpa);
     try std.testing.expect(!check.ok);
 
@@ -677,6 +685,20 @@ fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
         return gpa.dupe(u8, k) catch null;
     }
     return null;
+}
+
+/// Turns "the compiler could not even be spawned" into a test skip. The
+/// tests that exercise a real `zig ast-check`/`zig fmt` run can only do so
+/// where resolveZigBin finds a binary: everywhere else the bare "zig" argv
+/// is not spawnable (std.process.run resolves it against the gate's cwd, a
+/// test tmp dir — there is no PATH search), so the gate cannot run at all
+/// and the test should skip, not fail the suite on a machine that was never
+/// able to run it. Any other error is a real failure and passes through.
+fn skipIfNoSpawnableZig(err: anyerror) anyerror {
+    return switch (err) {
+        error.FileNotFound, error.AccessDenied => error.SkipZigTest,
+        else => err,
+    };
 }
 
 fn runZig(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, args: []const []const u8, label: []const u8) !GateResult {
