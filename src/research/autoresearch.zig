@@ -10,6 +10,8 @@ const harness_mod = @import("harness.zig");
 const registry = @import("../tools/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const log = @import("../util/log.zig");
+const atomic_write = @import("../util/atomic_write.zig");
+const filelock = @import("../util/filelock.zig");
 pub const Options = struct { targets: []const []const u8 = &.{}, harness_argv: []const []const u8 = &.{}, metric_name: []const u8 = "score", metric_pattern: []const u8 = "", direction: []const u8 = "min", iters: u32 = 3, dry_run: bool = false, research_dir: []const u8 = "state/autoresearch", budget_seconds: u32 = 300 };
 fn isTarget(path: []const u8, targets: []const []const u8) bool {
     for (targets) |targ| {
@@ -41,6 +43,21 @@ pub const Loop = struct {
         }
         const gpa = self.ctx.gpa;
         const io = self.ctx.io;
+        std.Io.Dir.cwd().createDirPath(io, opts.research_dir) catch {};
+        const lock_path = try std.fmt.allocPrint(gpa, "{s}/run.lock", .{opts.research_dir});
+        defer gpa.free(lock_path);
+        const run_lock = filelock.createFileRetry(io, std.Io.Dir.cwd(), lock_path, .{
+            .truncate = false,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        }) catch |err| switch (err) {
+            error.WouldBlock => {
+                log.log(.error_, "autoresearch: another run is already in progress", .{});
+                return error.Busy;
+            },
+            else => return err,
+        };
+        defer run_lock.close(io);
         var id_buf: [64]u8 = undefined;
         var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1))));
         const id = std.fmt.bufPrint(&id_buf, "ar-{d}-{x}", .{ @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000))), prng.random().int(u64) & 0xffff }) catch "ar-fallback";
@@ -194,8 +211,7 @@ pub const Loop = struct {
                     continue;
                 };
                 defer gpa.free(content);
-                if (std.mem.lastIndexOfScalar(u8, ch.file, '/')) |slash| std.Io.Dir.cwd().createDirPath(io, ch.file[0..slash]) catch {};
-                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ch.file, .data = content }) catch |err| {
+                atomic_write.writeFile(io, std.Io.Dir.cwd(), ch.file, content) catch |err| {
                     log.log(.error_, "autoresearch: new best for {s} not written back: {s}", .{ ch.file, @errorName(err) });
                 };
             }

@@ -16,6 +16,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const filelock = @import("../util/filelock.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 
 const event_path = "state/autolearn.jsonl";
 /// Hard cap on the log so a busy harness cannot grow state without bound.
@@ -142,7 +143,7 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
         try out.appendSlice(gpa, ln);
         try out.append(gpa, '\n');
     }
-    try base.writeFile(io, .{ .sub_path = event_path, .data = out.items });
+    try atomic_write.writeFile(io, base, event_path, out.items);
 }
 
 /// Records a completed run (from agent stats + used tool names).
