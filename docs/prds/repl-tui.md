@@ -128,15 +128,19 @@ Shipped:
 - [x] `/help` / `?`
 - [x] Flag wiring
 - [x] Session persistence / resume
+- [x] Every command (not just quit/`/model`/`/help`) dispatches through
+      `command_registry`; `printHelp` is generated from it, not
+      hand-maintained prose
+- [x] Tab-complete over `command_registry` (unique match completes the
+      line, several complete to their shared prefix and list the rest)
+- [x] Manual scrollback (PgUp/PgDn, Home/End)
 
 Open:
 
-- [ ] General slash-command palette (only the quit set, `/model`, `/help`
-      are recognized by literal string match)
-- [ ] `printHelp` generated from the `cmd_*` registry instead of
-      hand-maintained prose
+- [ ] Slash-command search (fuzzy palette like `/model`'s, for discovery
+      beyond Tab-complete's prefix match)
+- [ ] Transcript search (scrollback paging exists; searching within it does not)
 - [ ] Inline `ask_user`/confirm-before-write prompt UI
-- [ ] Manual scrollback (PgUp/PgDn, search)
 - [ ] Real markdown rendering outside fenced code blocks
 - [ ] Bordered tool-call cards (left-bar style) instead of plain dim lines
 - [ ] Multi-line input (Shift+Enter or equivalent)

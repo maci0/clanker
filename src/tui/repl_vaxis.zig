@@ -16,16 +16,18 @@
 //! event-driven, same principle as this session's KeyReader poll() fix in
 //! the old REPL.
 //!
-//! Deliberately not yet built (documented gaps, not oversights): slash-command
-//! tab-complete (commands dispatch through `command_registry`, the single
-//! source of truth `/help` is also generated from, but there is no completion
-//! UI over it yet — `/model` opens a fuzzy provider/model picker,
-//! `handlePickerKey`, styled like Kimi Code's), inline
+//! Deliberately not yet built (documented gaps, not oversights): inline
 //! ask_user/approval prompts (falls back to the same "nobody attached"
 //! default a headless run gets). Full list, with what a fix looks like for
 //! each: docs/ROADMAP.md's "vaxis REPL parity" entry under Planned. Tool
 //! calls render as the established left-bar cards, built as plain strings by
 //! transcript.zig's card helpers and styled into cells at draw time.
+//!
+//! Tab-complete over `command_registry` (`completeSlashCommand`) is the one
+//! completion UI that isn't a modal picker: it edits the TextField in place
+//! (single match, or several completing to a shared prefix) rather than
+//! opening `/model`'s `picker_open`/`handlePickerKey` loop, since there is
+//! nothing to navigate — just a line to finish or list.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -348,6 +350,48 @@ fn looksLikeSlashCommand(task: []const u8) bool {
     return input.len > 0 and input[0] == '/';
 }
 
+/// One registry spelling that matched a Tab-complete prefix, paired with
+/// the spec it belongs to (needed to know `takes_args` when a single match
+/// completes the line).
+const SpellingMatch = struct { spelling: []const u8, spec: *const CommandSpec };
+
+/// Comfortably above the registry's total spelling count (name + aliases,
+/// currently under 20); completion is a UI nicety, so silently truncating
+/// past this is fine rather than worth an allocator.
+const max_completions = 32;
+
+/// Every registry spelling (name or alias) starting with `prefix`, in
+/// registry order. Written into `out`; returns the matched slice.
+fn matchingSpellings(prefix: []const u8, out: *[max_completions]SpellingMatch) []const SpellingMatch {
+    var n: usize = 0;
+    for (&command_registry) |*spec| {
+        if (n < out.len and std.mem.startsWith(u8, spec.name, prefix)) {
+            out[n] = .{ .spelling = spec.name, .spec = spec };
+            n += 1;
+        }
+        for (spec.aliases) |alias| {
+            if (n < out.len and std.mem.startsWith(u8, alias, prefix)) {
+                out[n] = .{ .spelling = alias, .spec = spec };
+                n += 1;
+            }
+        }
+    }
+    return out[0..n];
+}
+
+/// The longest prefix shared by every match, for completing "/s" toward
+/// "/sessions" without picking one of several candidates arbitrarily.
+fn longestCommonPrefix(matches: []const SpellingMatch) []const u8 {
+    if (matches.len == 0) return "";
+    var prefix = matches[0].spelling;
+    for (matches[1..]) |m| {
+        var i: usize = 0;
+        while (i < prefix.len and i < m.spelling.len and prefix[i] == m.spelling[i]) : (i += 1) {}
+        prefix = prefix[0..i];
+    }
+    return prefix;
+}
+
 /// Widest "spellings [hint]" cell in the registry, computed at comptime so
 /// the generated help columns stay aligned no matter what gets added.
 const help_names_width = blk: {
@@ -456,6 +500,36 @@ test "looksLikeSlashCommand separates typo'd commands from tasks" {
     try std.testing.expect(looksLikeSlashCommand("  /nope  "));
     try std.testing.expect(!looksLikeSlashCommand("hello /world"));
     try std.testing.expect(!looksLikeSlashCommand(""));
+}
+
+test "matchingSpellings finds a unique prefix and every ambiguous one" {
+    var buf: [max_completions]SpellingMatch = undefined;
+
+    const unique = matchingSpellings("/hel", &buf);
+    try std.testing.expectEqual(@as(usize, 1), unique.len);
+    try std.testing.expectEqualStrings("/help", unique[0].spelling);
+
+    // "/s" hits /sessions and /status; "?" alone lands on /help's alias.
+    const ambiguous = matchingSpellings("/s", &buf);
+    try std.testing.expectEqual(@as(usize, 2), ambiguous.len);
+    try std.testing.expectEqualStrings("/sessions", ambiguous[0].spelling);
+    try std.testing.expectEqualStrings("/status", ambiguous[1].spelling);
+
+    try std.testing.expectEqual(@as(usize, 0), matchingSpellings("/nope", &buf).len);
+}
+
+test "longestCommonPrefix completes toward the shared stem or nowhere" {
+    var buf: [max_completions]SpellingMatch = undefined;
+    const s_matches = matchingSpellings("/s", &buf);
+    // /sessions vs /status share only "/s" — no further completion possible.
+    try std.testing.expectEqualStrings("/s", longestCommonPrefix(s_matches));
+
+    var buf2: [max_completions]SpellingMatch = undefined;
+    const wo_matches = matchingSpellings("/wo", &buf2);
+    // /workflows vs /workflow share the full shorter spelling.
+    try std.testing.expectEqualStrings("/workflow", longestCommonPrefix(wo_matches));
+
+    try std.testing.expectEqualStrings("", longestCommonPrefix(&.{}));
 }
 
 /// `CLANKER_THEME` picks a palette by name ("mocha"/"catppuccin", "latte",
@@ -1166,6 +1240,14 @@ const Model = struct {
                     self.historyNext();
                     return ctx.consumeAndRedraw();
                 }
+                // Slash-command completion, styled after readline: one match
+                // completes the line, several complete to their shared
+                // prefix and list the rest. Only intercepted for `/`-prefixed
+                // input; otherwise Tab falls through to the TextField like
+                // any other key, unchanged from before this existed.
+                if (key.matches(vaxis.Key.tab, .{}) and try self.completeSlashCommand(ctx)) {
+                    return ctx.consumeAndRedraw();
+                }
                 if (key.matches(vaxis.Key.enter, .{})) {
                     if (self.in_paste) {
                         try self.text_field.insertSliceAtCursor(" ");
@@ -1308,6 +1390,55 @@ const Model = struct {
     fn loadInputFrom(self: *Model, text: []const u8) void {
         self.text_field.clearRetainingCapacity();
         self.text_field.insertSliceAtCursor(text) catch {};
+    }
+
+    /// Tab: complete the input line against `command_registry`, readline
+    /// style. Returns whether it did anything — false (input isn't a
+    /// `/`-prefixed line, or no spelling matches it) means the caller should
+    /// let Tab fall through to the TextField as usual. A single match
+    /// completes to the full spelling, adding a trailing space when the
+    /// command takes arguments so the next keystroke lands on them; several
+    /// matches complete to their longest shared prefix, or, once that stops
+    /// advancing the line, get listed in the transcript instead of eating
+    /// the keystroke silently.
+    fn completeSlashCommand(self: *Model, ctx: *vxfw.EventContext) !bool {
+        const input = self.text_field.buf.dupe() catch return false;
+        defer self.text_field.buf.allocator.free(input);
+        if (!looksLikeSlashCommand(input)) return false;
+
+        var buf: [max_completions]SpellingMatch = undefined;
+        const matches = matchingSpellings(input, &buf);
+        if (matches.len == 0) return false;
+
+        if (matches.len == 1) {
+            const m = matches[0];
+            if (m.spec.takes_args) {
+                var out: [128]u8 = undefined;
+                const completed = std.fmt.bufPrint(&out, "{s} ", .{m.spelling}) catch return true;
+                self.loadInputFrom(completed);
+            } else {
+                self.loadInputFrom(m.spelling);
+            }
+            ctx.redraw = true;
+            return true;
+        }
+
+        const lcp = longestCommonPrefix(matches);
+        if (lcp.len > input.len) {
+            self.loadInputFrom(lcp);
+            ctx.redraw = true;
+            return true;
+        }
+
+        var line: std.ArrayList(u8) = .empty;
+        line.appendSlice(self.arena, "completions:") catch return true;
+        for (matches) |m| {
+            line.appendSlice(self.arena, "  ") catch break;
+            line.appendSlice(self.arena, m.spelling) catch break;
+        }
+        self.lines.append(self.arena, .{ .text = line.toOwnedSlice(self.arena) catch "completions:", .dim = true }) catch {};
+        ctx.redraw = true;
+        return true;
     }
 
     /// Transcript line count, read under the bridge lock: finishTurn appends
