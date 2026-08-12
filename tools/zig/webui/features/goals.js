@@ -5,7 +5,7 @@
 // listing) stay in ../core/goals.js. bindGoals() wires the DOM and the
 // app-level callbacks (view switching, the active session id).
 import { readJson } from "../core/utils.js";
-import { T, bind, UI } from "../core/ui.js";
+import { T, bind, UI, state } from "../core/ui.js";
 import { goalSortKey, goalFields } from "../core/goals.js";
 import { makeLineSplitter } from "../core/stream.js";
 import { board, postBoard } from "./board.js";
@@ -16,7 +16,7 @@ var _getSessionId = null;
 
 // ---- goals: what runs are being steered toward -------------------------
 
-export var goalState = van.state([]);
+export var goalState = state([]);
 
 /* Goals whose board mirror has already been requested, so a goal created
    from within a run (the agent's `goal` tool appends it to state/goals.json,

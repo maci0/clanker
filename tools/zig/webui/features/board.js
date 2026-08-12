@@ -5,7 +5,7 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson } from "../core/utils.js";
-import { T, bind } from "../core/ui.js";
+import { T, bind, state, add } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState } from "../lib/board.js";
@@ -38,7 +38,7 @@ export function loadBoardRooms() {
       if (rooms.indexOf("board") === -1) rooms.unshift("board");
       var keep = el.boardRoom.value;
       el.boardRoom.textContent = "";
-      van.add(el.boardRoom, rooms.map(function (name) { return T.option({ value: name }, name); }));
+      add(el.boardRoom, rooms.map(function (name) { return T.option({ value: name }, name); }));
       if (keep && rooms.indexOf(keep) !== -1) el.boardRoom.value = keep;
       return loadBoard();
     })
@@ -106,7 +106,7 @@ function cardById(id) {
    filter. It used to clear #board and rebuild it, which is what forced the
    focus snapshot and the per-card edit drafts: a sub-action anywhere rebuilt
    everything. */
-var boardState = van.state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "", assignee: "" });
+var boardState = state({ columns: [], cards: [], mine: false, me: "", open: null, text: "", blockedOnly: false, priority: "", assignee: "" });
 
 function boardFilterState() {
   return {
@@ -153,7 +153,7 @@ export function renderBoard(next) {
   // The "new card" column choice follows the board rather than a fixed list.
   var keepCol = el.cardColumn.value;
   el.cardColumn.textContent = "";
-  van.add(el.cardColumn, (board.columns || []).map(function (c) {
+  add(el.cardColumn, (board.columns || []).map(function (c) {
     return T.option({ value: c.id }, c.title);
   }));
   if (keepCol) el.cardColumn.value = keepCol;
@@ -1016,7 +1016,7 @@ export function bindBoard(deps) {
     window.renderBoard = function(next){ var r=_origRenderBoard(next); try{ renderList(); }catch(_){} return r; };
     // also directly bind to state
     try{
-      // VanJS bind doesn't expose subscribe; poll via mutation: boardState.val setter triggers list
+      // bind doesn't expose subscribe; poll via mutation: boardState.val setter triggers list
       var _lastCards="";
       setInterval(function(){
         try{

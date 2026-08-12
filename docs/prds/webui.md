@@ -72,21 +72,22 @@ the product:
    greppable files (one module per concern) survive automated rewriting
    better than framework idioms or one giant file.
 
-**Framework choice: stay on vanilla JS.** Weighed VanJS, Alpine.js,
-petite-vue, htmx, Preact, and React/Vue/Svelte/Solid against the constraints
-above. Vanilla wins because the real problem was never "no framework" — it
-was that `app.js` had become one 178 KB, ~4,300-line file. Alpine and
-petite-vue solve sprinkling interactivity onto server-rendered HTML, not a
-stateful SPA with streaming events and graph rendering; htmx assumes the
-server returns HTML fragments, and ours returns JSON; React-class frameworks
-need a build step, which constraint 1 rules out outright. Two escape hatches
-are pre-decided for if a future view (the pixel floor, or a ground-up
-composer) needs reactive binding: **VanJS** (~1 KB min+gzip, MIT, vendorable,
-copy-in VanUI components) for a small state-driven view, or **Preact + htm**
-(no JSX, tagged templates, no compile step) for a view that wants a real
-component tree. Neither justifies rewriting a working vanilla view just to
-use it. Full survey with sources: see the commit history of this document —
-folded in here as the design rationale it is, not kept as a separate file.
+**Framework choice: vanilla core, Preact family for reactivity.** Weighed
+VanJS, Alpine.js, petite-vue, htmx, Preact, and React/Vue/Svelte/Solid
+against the constraints above. Vanilla stays the core because the real
+problem was never "no framework" — it was that `app.js` had become one
+178 KB, ~4,300-line file. Alpine and petite-vue solve sprinkling
+interactivity onto server-rendered HTML, not a stateful SPA with streaming
+events and graph rendering; htmx assumes the server returns HTML fragments,
+and ours returns JSON; compile-step frameworks are ruled out by constraint 1
+outright. The reactive layer is the Preact family, all vendored ESM with no
+build step: **@preact/signals-core** backs `core/ui.js`'s `state()`/`bind()`
+and function-children (the VanJS-era `.val` API kept its spelling, VanJS
+itself is gone), and **Preact + htm** (no JSX, tagged templates) is available
+via `preact-boot.js` for any future view that wants a real component tree.
+None of that justifies rewriting a working vanilla view just to use it. Full
+survey with sources: see the commit history of this document — folded in
+here as the design rationale it is, not kept as a separate file.
 
 **ES module split.** The actual fix for the one-giant-file problem: native
 `<script type="module">`, no bundler, one file per concern, embedded and

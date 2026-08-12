@@ -1,17 +1,86 @@
-// Vanilla, no bundler. UI primitives: VanJS tags, binding, toasts, skeletons,
-// component vocabulary, and the sheet's one visual language for controls.
+// Vanilla, no bundler. UI primitives: tag factory, reactive state and
+// binding (on @preact/signals-core), toasts, skeletons, component
+// vocabulary, and the sheet's one visual language for controls.
+//
+// T builds REAL DOM nodes (not vnodes): the whole sheet appends its results
+// directly, so this stays a plain factory. Reactivity comes from signals:
+// state() wraps a signal behind VanJS's `.val` spelling (every call site and
+// the plugin API already speak it), and bind()/function-children re-run
+// inside effect(), which re-tracks whatever signals the render read.
 
-export var T = (typeof window !== "undefined" && window.van && window.van.tags) ? window.van.tags : null;
+import { signal, effect } from "/webui/vendor/signals-core.module.js";
 
-export function bind(node, state, render) {
-  if (typeof window === "undefined" || !window.van || !window.van.derive) return;
-  window.van.derive(function () {
-    var value = state.val;
+export function state(initial) {
+  var s = signal(initial);
+  return {
+    get val() { return s.value; },
+    set val(x) { s.value = x; },
+  };
+}
+
+function setAttr(node, key, value) {
+  if (value == null || value === false) return;
+  if (key.indexOf("on") === 0 && typeof value === "function") {
+    node.addEventListener(key.slice(2).toLowerCase(), value);
+    return;
+  }
+  node.setAttribute(key, value === true ? "" : String(value));
+}
+
+function appendInto(parent, child) {
+  if (child == null || child === false) return;
+  if (Array.isArray(child)) { child.forEach(function (c) { appendInto(parent, c); }); return; }
+  if (typeof child === "function") {
+    // A function child is a live binding: re-evaluated whenever a signal it
+    // reads changes. Text results update a text node in place; a Node result
+    // replaces the previous one.
+    var current = document.createTextNode("");
+    parent.appendChild(current);
+    effect(function () {
+      var v = child();
+      if (v instanceof Node) { current.replaceWith(v); current = v; }
+      else if (current.nodeType === Node.TEXT_NODE) current.nodeValue = v == null ? "" : String(v);
+      else { var t = document.createTextNode(v == null ? "" : String(v)); current.replaceWith(t); current = t; }
+    });
+    return;
+  }
+  parent.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+}
+
+export function add(parent) {
+  for (var i = 1; i < arguments.length; i++) appendInto(parent, arguments[i]);
+  return parent;
+}
+
+function isAttrs(a) {
+  return a != null && typeof a === "object" && !Array.isArray(a) && !(a instanceof Node);
+}
+
+export var T = new Proxy({}, {
+  get: function (_, name) {
+    return function () {
+      var node = document.createElement(name);
+      var i = 0;
+      if (arguments.length && isAttrs(arguments[0])) {
+        var attrs = arguments[0];
+        for (var k in attrs) setAttr(node, k, attrs[k]);
+        i = 1;
+      }
+      for (; i < arguments.length; i++) appendInto(node, arguments[i]);
+      return node;
+    };
+  },
+});
+
+export { effect };
+
+export function bind(node, st, render) {
+  effect(function () {
+    var value = st.val;
     node.textContent = "";
     var built = render(value);
     if (built == null) return;
-    if (Array.isArray(built)) built.forEach(function (n) { if (n) window.van.add(node, n); });
-    else window.van.add(node, built);
+    appendInto(node, built);
   });
 }
 
@@ -78,7 +147,7 @@ export function setTurnPhase(turn, phase) {
   }
 }
 
-// One vocabulary for the whole sheet, built on VanJS. Every view is written
+// One vocabulary for the whole sheet, built on T. Every view is written
 // in these, so a control cannot drift into its own spelling of a button or
 // label — which is how the page once had two Refresh behaviours and three
 // status conventions.
