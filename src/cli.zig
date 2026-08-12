@@ -557,6 +557,15 @@ pub fn printUsageHint(io: std.Io) void {
     writeStdErr(io, "Run `clanker --help` for the command list.\n") catch {};
 }
 
+/// Usage mistakes are interactive diagnostics, not runtime logs. Keep them
+/// free of timestamps and log levels so the recovery action is the first
+/// thing a person or shell consumer sees.
+pub fn printUsageError(io: std.Io, comptime fmt: []const u8, args: anytype) void {
+    var buf: [1024]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, "error: " ++ fmt ++ "\n", args) catch "error: invalid command line\n";
+    writeStdErr(io, line) catch {};
+}
+
 /// Returns the closest public command spelling for a short mistyped token.
 /// Keeping this beside the generated help table means suggestions cannot
 /// drift toward internal enum names or compatibility aliases.
@@ -3099,7 +3108,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
-            handleKnowledge(io, gpa, method, target, body, acceptsGzip(headers_raw), stream);
+            handleKnowledge(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
             handlePrompts(io, gpa, method, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
@@ -4214,7 +4223,7 @@ fn handleWebuiAsset(
     // lib/board.js, so these two carry the directory in the suffix and the
     // bare-name predicates below exclude them — a bare endsWith("board.js")
     // for both would alias the two caches and serve one file for the other's
-    // path (the known cache-aliasing bug class; see docs/prds/webui.md).
+    // path (the known cache-aliasing bug class; see docs/prds/0006-webui.md).
     const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
     const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
     const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
@@ -5845,222 +5854,119 @@ test validGoalStatus {
     try std.testing.expect(!validGoalStatus("deleted; drop table"));
 }
 
-fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, target: []const u8, body: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
-    const kb = @import("knowledge/store.zig");
+fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, method: []const u8, target: []const u8, body: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const rest = if (target.len > "/api/knowledge".len) target["/api/knowledge".len..] else "";
-    if (rest.len == 0 and std.mem.eql(u8, method, "GET")) {
-        const list = kb.listCollections(io, arena, std.Io.Dir.cwd()) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"list failed\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-        s.beginObject() catch return;
-        s.objectField("ok") catch return;
-        s.write(true) catch return;
-        s.objectField("collections") catch return;
-        s.beginArray() catch return;
-        for (list) |m| {
-            s.beginObject() catch return;
-            s.objectField("id") catch return;
-            s.write(m.id) catch return;
-            s.objectField("title") catch return;
-            s.write(m.title) catch return;
-            s.objectField("description") catch return;
-            s.write(m.description) catch return;
-            s.objectField("doc_count") catch return;
-            s.write(m.doc_count) catch return;
-            s.objectField("bytes") catch return;
-            s.write(m.bytes) catch return;
-            s.objectField("created") catch return;
-            s.write(m.created) catch return;
-            s.objectField("updated") catch return;
-            s.write(m.updated) catch return;
-            s.endObject() catch return;
-        }
-        s.endArray() catch return;
-        s.endObject() catch return;
-        respondCompressible(arena, stream, accepts_gzip, out.written());
-        return;
-    }
-    if (rest.len == 0 and std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(struct { title: []const u8 = "", description: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        const title = std.mem.trim(u8, req.title, " \t\r\n");
-        if (title.len == 0 or title.len > 200) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title required (1-200)\"}");
-            return;
-        }
-        if (req.description.len > 1000) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"description too long\"}");
-            return;
-        }
-        const col = kb.createCollection(io, arena, std.Io.Dir.cwd(), title, req.description) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"create failed\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s2 = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-        s2.beginObject() catch return;
-        s2.objectField("ok") catch return;
-        s2.write(true) catch return;
-        s2.objectField("id") catch return;
-        s2.write(col.id) catch return;
-        s2.objectField("title") catch return;
-        s2.write(col.title) catch return;
-        s2.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
-        return;
-    }
-    if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
-        const q = extractQueryParam(target, "q") orelse "";
-        if (q.len == 0) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"q required\"}");
-            return;
-        }
-        const cols_param = extractQueryParam(target, "collections") orelse "";
-        var col_ids2: std.ArrayList([]const u8) = .empty;
-        if (cols_param.len > 0) {
-            var it2 = std.mem.splitScalar(u8, cols_param, ',');
-            while (it2.next()) |cid| {
-                const t2 = std.mem.trim(u8, cid, " \t");
-                if (t2.len > 0) col_ids2.append(arena, t2) catch continue;
-            }
-        }
-        const hits2 = kb.search(io, arena, std.Io.Dir.cwd(), q, col_ids2.items, 20) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"search failed\"}");
-            return;
-        };
-        var out2: std.Io.Writer.Allocating = .init(arena);
-        var s2b = std.json.Stringify{ .writer = &out2.writer, .options = .{ .emit_null_optional_fields = false } };
-        s2b.beginObject() catch return;
-        s2b.objectField("ok") catch return;
-        s2b.write(true) catch return;
-        s2b.objectField("hits") catch return;
-        s2b.beginArray() catch return;
-        for (hits2) |h| {
-            s2b.beginObject() catch return;
-            s2b.objectField("collection_id") catch return;
-            s2b.write(h.collection_id) catch return;
-            s2b.objectField("collection_title") catch return;
-            s2b.write(h.collection_title) catch return;
-            s2b.objectField("doc_id") catch return;
-            s2b.write(h.doc_id) catch return;
-            s2b.objectField("doc_name") catch return;
-            s2b.write(h.doc_name) catch return;
-            s2b.objectField("snippet") catch return;
-            s2b.write(h.snippet) catch return;
-            s2b.endObject() catch return;
-        }
-        s2b.endArray() catch return;
-        s2b.endObject() catch return;
-        respondCompressible(arena, stream, accepts_gzip, out2.written());
-        return;
-    }
-    if (rest.len == 0 or rest[0] != '/') {
+
+    const tool_input = knowledgeRouteToToolInput(arena, method, rest, target, body) orelse {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         return;
+    };
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", tool_input) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"knowledge tool unavailable\"}");
+        return;
+    };
+    const status: u16 = if (std.mem.startsWith(u8, std.mem.trimStart(u8, result, " \t\r\n"), "{\"ok\":false")) 400 else 200;
+    if (accepts_gzip and status == 200)
+        respondCompressible(arena, stream, true, result)
+    else
+        respond(stream, status, if (status == 200) "OK" else "Bad Request", result);
+}
+
+fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest: []const u8, target: []const u8, body: []const u8) ?[]const u8 {
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    if (rest.len == 0 and std.mem.eql(u8, method, "GET")) {
+        return "{\"action\":\"list\"}";
     }
+    if (rest.len == 0 and std.mem.eql(u8, method, "POST")) {
+        const req = std.json.parseFromSliceLeaky(struct { title: []const u8 = "", description: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("create") catch return null;
+        s.objectField("title") catch return null;
+        s.write(req.title) catch return null;
+        s.objectField("description") catch return null;
+        s.write(req.description) catch return null;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
+    }
+    if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
+        const q = extractQueryParam(target, "q") orelse return null;
+        if (q.len == 0) return null;
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("search") catch return null;
+        s.objectField("query") catch return null;
+        s.write(q) catch return null;
+        const cols_param = extractQueryParam(target, "collections") orelse "";
+        if (cols_param.len > 0) {
+            s.objectField("collections") catch return null;
+            s.beginArray() catch return null;
+            var it = std.mem.splitScalar(u8, cols_param, ',');
+            while (it.next()) |cid| {
+                const t2 = std.mem.trim(u8, cid, " \t");
+                if (t2.len > 0) s.write(t2) catch {};
+            }
+            s.endArray() catch return null;
+        }
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
+    }
+    if (rest.len == 0 or rest[0] != '/') return null;
     const after_slash = rest[1..];
     const slash_pos = std.mem.indexOfScalar(u8, after_slash, '/');
     const col_id = if (slash_pos) |pp| after_slash[0..pp] else after_slash;
     const sub = if (slash_pos) |pp| after_slash[pp..] else "";
-    if (!kb.validCollectionId(col_id)) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}");
-        return;
-    }
+
     if (sub.len == 0 and std.mem.eql(u8, method, "GET")) {
-        const col = kb.loadCollection(io, arena, std.Io.Dir.cwd(), col_id) catch {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-        s.beginObject() catch return;
-        s.objectField("ok") catch return;
-        s.write(true) catch return;
-        s.objectField("id") catch return;
-        s.write(col.id) catch return;
-        s.objectField("title") catch return;
-        s.write(col.title) catch return;
-        s.objectField("description") catch return;
-        s.write(col.description) catch return;
-        s.objectField("docs") catch return;
-        s.beginArray() catch return;
-        for (col.docs) |d| {
-            s.beginObject() catch return;
-            s.objectField("id") catch return;
-            s.write(d.id) catch return;
-            s.objectField("name") catch return;
-            s.write(d.name) catch return;
-            s.objectField("bytes") catch return;
-            s.write(d.bytes) catch return;
-            s.objectField("created") catch return;
-            s.write(d.created) catch return;
-            s.objectField("content") catch return;
-            s.write(d.content) catch return;
-            s.endObject() catch return;
-        }
-        s.endArray() catch return;
-        s.endObject() catch return;
-        respondCompressible(arena, stream, accepts_gzip, out.written());
-        return;
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("get") catch return null;
+        s.objectField("id") catch return null;
+        s.write(col_id) catch return null;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
     }
     if (sub.len == 0 and std.mem.eql(u8, method, "DELETE")) {
-        kb.deleteCollection(io, arena, std.Io.Dir.cwd(), col_id) catch {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
-            return;
-        };
-        respond(stream, 200, "OK", "{\"ok\":true}");
-        return;
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("delete") catch return null;
+        s.objectField("id") catch return null;
+        s.write(col_id) catch return null;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
     }
     if (std.mem.eql(u8, sub, "/docs") and std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(struct { name: []const u8 = "", content: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        if (req.name.len == 0 or req.name.len > 200) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"name required (1-200)\"}");
-            return;
-        }
-        if (req.content.len == 0 or req.content.len > 500_000) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"content required, max 500KB\"}");
-            return;
-        }
-        const doc = kb.addDoc(io, gpa, arena, std.Io.Dir.cwd(), col_id, req.name, req.content) catch {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
-            return;
-        };
-        var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-        s.beginObject() catch return;
-        s.objectField("ok") catch return;
-        s.write(true) catch return;
-        s.objectField("id") catch return;
-        s.write(doc.id) catch return;
-        s.endObject() catch return;
-        respond(stream, 200, "OK", out.written());
-        return;
+        const req = std.json.parseFromSliceLeaky(struct { name: []const u8 = "", content: []const u8 = "" }, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("add_doc") catch return null;
+        s.objectField("collection_id") catch return null;
+        s.write(col_id) catch return null;
+        s.objectField("name") catch return null;
+        s.write(req.name) catch return null;
+        s.objectField("content") catch return null;
+        s.write(req.content) catch return null;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
     }
     if (std.mem.startsWith(u8, sub, "/docs/") and std.mem.eql(u8, method, "DELETE")) {
         const doc_id = sub["/docs/".len..];
-        if (doc_id.len == 0 or doc_id.len > 64) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad doc id\"}");
-            return;
-        }
-        kb.deleteDoc(io, gpa, arena, std.Io.Dir.cwd(), col_id, doc_id) catch {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
-            return;
-        };
-        respond(stream, 200, "OK", "{\"ok\":true}");
-        return;
+        if (doc_id.len == 0 or doc_id.len > 64) return null;
+        s.beginObject() catch return null;
+        s.objectField("action") catch return null;
+        s.write("delete_doc") catch return null;
+        s.objectField("collection_id") catch return null;
+        s.write(col_id) catch return null;
+        s.objectField("doc_id") catch return null;
+        s.write(doc_id) catch return null;
+        s.endObject() catch return null;
+        return arena.dupe(u8, w.written()) catch null;
     }
-    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
+    return null;
 }
 
 fn extractQueryParam(target: []const u8, key: []const u8) ?[]const u8 {
@@ -6308,11 +6214,17 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     var final_task = task_text;
     const do_memory_inject = cfg.memory.backend.len > 0 and (std.mem.eql(u8, cfg.memory.backend, "hybrid") or std.mem.eql(u8, cfg.memory.backend, "vector") or std.mem.eql(u8, cfg.memory.backend, "keyword"));
     if (req.knowledge.len > 0) {
-        const kb = @import("knowledge/store.zig");
         var kb_buf: std.ArrayList(u8) = .empty;
         for (req.knowledge) |cid| {
-            if (!kb.validCollectionId(cid)) continue;
-            const col = kb.loadCollection(io, arena, std.Io.Dir.cwd(), cid) catch continue;
+            if (cid.len == 0 or cid.len > 64) continue;
+            const slug_ok = for (cid) |c| {
+                if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_')) break false;
+            } else true;
+            if (!slug_ok) continue;
+            const KbCol = struct { title: []const u8 = "", docs: []const struct { id: []const u8 = "", name: []const u8 = "", content: []const u8 = "", bytes: usize = 0, created: i64 = 0 } = &.{} };
+            const col_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.json", .{cid}) catch continue;
+            const col_raw = std.Io.Dir.cwd().readFileAlloc(io, col_path, arena, .limited(4 << 20)) catch continue;
+            const col = std.json.parseFromSliceLeaky(KbCol, arena, col_raw, .{ .ignore_unknown_fields = true }) catch continue;
             for (col.docs) |d| {
                 if (kb_buf.items.len > 100_000) break;
                 if (kb_buf.items.len > 0) kb_buf.appendSlice(arena, "\n\n") catch continue;

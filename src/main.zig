@@ -129,18 +129,18 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(1);
         }
         switch (err) {
-            error.MissingTask => log.log(.error_, "`clanker run` needs a task text argument", .{}),
+            error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task text argument", .{}),
             error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
-                log.log(.error_, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
+                cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
             else
-                log.log(.error_, "unknown command '{s}' (see the command list below)", .{diag}),
-            error.UnknownArg => log.log(.error_, "unrecognized argument '{s}'", .{diag}),
-            error.MissingArg => log.log(.error_, "'{s}' needs a value", .{diag}),
-            error.BadIters => log.log(.error_, "--iters wants a non-negative integer, got '{s}'", .{diag}),
-            error.BadPort => log.log(.error_, "--port wants a 16-bit port number, got '{s}'", .{diag}),
-            error.BadDirection => log.log(.error_, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
-            error.FlagNotForCommand => log.log(.error_, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
-            error.BadSubcommand => log.log(.error_, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
+                cli.printUsageError(init.io, "unknown command '{s}' (see the command list below)", .{diag}),
+            error.UnknownArg => cli.printUsageError(init.io, "unrecognized argument '{s}'", .{diag}),
+            error.MissingArg => cli.printUsageError(init.io, "'{s}' needs a value", .{diag}),
+            error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{diag}),
+            error.BadPort => cli.printUsageError(init.io, "--port wants a 16-bit port number, got '{s}'", .{diag}),
+            error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{diag}),
+            error.FlagNotForCommand => cli.printUsageError(init.io, "{s} is not an option for this command (see `clanker <command> --help`)", .{diag}),
+            error.BadSubcommand => cli.printUsageError(init.io, "unrecognized subcommand '{s}' (see `clanker <command> --help`)", .{diag}),
             error.OutOfMemory => unreachable,
         }
         cli.printUsageHint(init.io);
