@@ -40,9 +40,22 @@ through a gated loop. Follow these conventions when changing this codebase.
   the due/claim/fire logic (`runner.zig`, driven by a `Fire` callback so its
   tests need no provider), and the operator surface (`command.zig`). Nothing
   here fires on its own; the system's cron calls `clanker schedule run-due`.
+- `src/research/` — the autonomous research engine (`engine.zig`, `harness.zig`,
+  `ledger.zig`) and autoresearch tool driver. Outside the protected surface so
+  clanker can improve its own research capabilities.
+- `src/stats/` — per-(provider, model) token usage tracking (`tokens.zig`),
+  appended at the LLM client choke point to `state/token_stats.jsonl`.
+- `src/tools/` — the native tool infrastructure: `registry.zig` (loads
+  `*.tool.json` descriptors), `manifest.zig` (validates them),
+  `builder.zig` (compiles WASM tools), `usage.zig` (tool call accounting).
+  `builder.zig` is part of the anti-cheat boundary.
+- `src/tui/` — libvaxis-backed REPL (`clanker repl`), syntax highlighting,
+  theme, transcript rendering, and terminal width tracking.
 - `src/mcp/`, `src/peers/`, `src/util/` — MCP server, peer chatrooms/phonebook,
   logging and dotenv. Peer notify/phonebook, patch application, knowledge
   store, and prompts store moved to sandboxed WASM tools (`tools/zig/`).
+- `src/webui_vendor/` — vendored JS dependencies for the web UI (preact,
+  d3-dag, mermaid, highlight.js). Committed, not generated.
 - Every `.zig` file lives under a subsystem directory; only `main.zig`,
   `cli.zig`, `config.zig`, and `doctor.zig` sit directly in
   `src/`. A new module with tests must be added to the `comptime` block in
