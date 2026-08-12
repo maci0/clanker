@@ -110,7 +110,9 @@ nothing; `send`/`history`/`subscribe` map it to a message naming the field
 and op that wanted it. `rooms` and the `todo_*` ops fall through to a
 generic message. When chatrooms are disabled at the sandbox level, chat
 tools surface a bare `SandboxDenied` with no friendly text, unlike the
-board's custom "chatrooms are disabled, and the board is a chatroom".
+board's custom message, which is actionable: it says the board is a chatroom,
+names the config keys to flip (`modules.chatrooms`, `chatrooms.on`) and that
+a restart is needed.
 
 ## Known issues
 
@@ -121,7 +123,8 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 - **`rooms` and `todo_*` fall through to a generic `InvalidArg` message**
   while `send`/`history`/`subscribe` get field-naming errors; and a
   sandbox-disabled chat tool surfaces a bare `SandboxDenied` instead of the
-  board's friendlier "chatrooms are disabled, and the board is a chatroom."
+  board's friendlier, actionable chatrooms-disabled message (which names the
+  config keys to enable and the restart needed).
   Inconsistent, not incorrect — low priority.
 
 ## Failure modes
@@ -133,7 +136,7 @@ board's custom "chatrooms are disabled, and the board is a chatroom".
 | Missing room/text | Named error per op, no write |
 | `todo_*` called with a `room` | Hard error: room todo lists are gone, use the board |
 | `todo_*` called with no `room` and no list attached (caller outside `Agent.run`) | Hard error naming it a host wiring error, not a room todo |
-| Chatrooms disabled in config | Tools that depend on them fail loudly (board: "chatrooms are disabled, and the board is a chatroom"); bare chat tools do not, see above |
+| Chatrooms disabled in config | Tools that depend on them fail loudly (board: an actionable message naming the config keys to enable and the restart needed); bare chat tools do not, see above |
 | Duplicate delivery | Consumers deduplicate by message id (the board fold does) |
 
 ## Acceptance criteria

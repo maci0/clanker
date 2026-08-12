@@ -266,7 +266,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const only_for = if (std.mem.eql(u8, op, "list")) (req.who orelse "") else "";
 
     const msgs = history(alloc, room) catch |err| return lib.fail(out, switch (err) {
-        error.SandboxDenied => "chatrooms are disabled, and the board is a chatroom",
+        // Make the failure actionable: the board is a chatroom, so a board
+        // that cannot reach chatrooms just says "disabled" and nothing about
+        // what to do. Tell the operator which config keys to flip and that a
+        // restart is needed (chatrooms is a startup config, not a runtime
+        // toggle), so the message names the fix instead of restating the
+        // symptom.
+        error.SandboxDenied => "chatrooms are disabled, but the board is a chatroom — enable them to use the board: set modules.chatrooms = true (and chatrooms.on = true) in config.toml or config.local.toml, then restart clanker",
         error.TooLarge => "this room's log no longer fits in one read; the board cannot be folded from a partial log",
         else => "could not read the board's room",
     });

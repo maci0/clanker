@@ -121,7 +121,7 @@ runs — this one field is not itself an array, unlike the others above).
 
 | Condition | Behaviour |
 |---|---|
-| Chatrooms disabled | `list` fails: "chatrooms are disabled, and the board is a chatroom" |
+| Chatrooms disabled | `list` fails with an actionable message: the board is a chatroom, so it names the config keys to enable (`modules.chatrooms`, `chatrooms.on`) and the restart needed |
 | Log exceeds page cap | Named error; the board refuses to fold a partial log |
 | Claim race lost | Answer shows who holds the claim |
 | Move to unknown column / unknown card | Named error before any write |
