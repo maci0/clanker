@@ -676,11 +676,31 @@ function showCardDetail(id) {
   asGoal.className = "secondary";
   asGoal.textContent = "Work as goal";
   asGoal.title = "Run this card as a goal — reuses the goal it already mirrors, or creates one. The card moves to Doing, then to Review when the run finishes.";
+  var goalRow = document.createElement("div");
+  goalRow.className = "detail-row";
+  // The same per-run iteration budget box the Goals view offers, so assigning
+  // a card as a goal honours the same cap instead of silently running at the
+  // goal's stored default (or the global agent.max_iterations). Prefill the
+  // placeholder with the mirrored goal's stored default, like the Goals view.
+  var goalIters = input("card-f-goal-iters", "number", "", "max iters (default)");
+  goalIters.min = "1"; goalIters.step = "1";
+  goalIters.title = "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations.";
+  var gid = goalIdForCard(c.id);
+  var gl = goalState.val || [];
+  for (var gi = 0; gi < gl.length; gi++) {
+    if (gl[gi].id === gid && gl[gi].max_iterations) {
+      goalIters.placeholder = "\u2264 " + gl[gi].max_iterations + " iters (default)";
+      break;
+    }
+  }
   asGoal.addEventListener("click", function () {
     delete cardDrafts[c.id];
-    workCardAsGoal(c);
+    var n = parseInt(goalIters.value, 10);
+    workCardAsGoal(c, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
   });
-  fields.appendChild(asGoal);
+  goalRow.appendChild(goalIters);
+  goalRow.appendChild(asGoal);
+  fields.appendChild(goalRow);
 
   var del = document.createElement("button");
   del.type = "button";

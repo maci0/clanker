@@ -439,13 +439,19 @@ function workOnGoal(g) {
    card with no goal at all creates one, and the mirror created by postGoal
    adopts this card by title, so the link is persisted without a second
    write. */
-export function workCardAsGoal(c) {
+export function workCardAsGoal(c, opts) {
   if (!c || !c.id) return;
+  opts = opts || {};
   var objective = (c.title || "").trim();
   if (!objective) {
     el.boardStatus.textContent = "That card has no title to turn into a goal.";
     return;
   }
+  // A per-run iteration budget chosen on the card detail modal, same rule as
+  // the Goals view's budget box: a positive number is a per-run override,
+  // anything else sends null so the server falls back to the goal's stored
+  // default, then to the global agent.max_iterations.
+  var maxIterations = opts.maxIterations || null;
   var existingId = c.goal || bestGoalIdFor(objective);
   var existing = findGoal(goalState.val, existingId);
   if (existing) {
@@ -453,10 +459,10 @@ export function workCardAsGoal(c) {
       postGoal({ id: existing.id, status: "active" }, "Goal reactivated from the board.")
         .then(function (d) {
           if (!d) return;
-          runGoal(findGoal(d.goals, existing.id) || existing, {});
+          runGoal(findGoal(d.goals, existing.id) || existing, { maxIterations: maxIterations });
         });
     } else {
-      runGoal(existing, {});
+      runGoal(existing, { maxIterations: maxIterations });
     }
     return;
   }
@@ -477,7 +483,7 @@ export function workCardAsGoal(c) {
         }
       }
       if (!created) return;
-      runGoal(created, {});
+      runGoal(created, { maxIterations: maxIterations });
     });
 }
 
