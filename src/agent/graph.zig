@@ -158,6 +158,23 @@ test "repeated steps collapse, and a step revisited later marks the loop" {
     try std.testing.expectEqual(@as(u32, 0), g.nodes.items[g.nodes.items.len - 1].loop_to);
 }
 
+test "a repeat in a later iteration collapses and reports the latest iteration" {
+    const gpa = std.testing.allocator;
+    var g = Graph{ .run_id = "run-collapse-iter", .task = "t", .provider = "p", .started_at = 0 };
+    defer g.deinit(gpa);
+
+    // The same tool retried one iteration later — a retry, not a new step —
+    // collapses into the existing node, and the node reports the iteration it
+    // ultimately ran at. Summed duration/tokens are already covered above;
+    // this pins the iteration bookkeeping that a naive collapse could get
+    // wrong (reporting the first attempt's iteration).
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "gate" });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 2, .label = "gate" });
+    try std.testing.expectEqual(@as(usize, 1), g.nodes.items.len);
+    try std.testing.expectEqual(@as(u32, 2), g.nodes.items[0].repeats);
+    try std.testing.expectEqual(@as(u32, 2), g.nodes.items[0].iteration);
+}
+
 test "consecutive final nodes are never collapsed" {
     const gpa = std.testing.allocator;
     var g = Graph{ .run_id = "run-final", .task = "t", .provider = "p", .started_at = 0 };
