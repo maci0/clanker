@@ -70,6 +70,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.testGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.fmtGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.lintGate(" },
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.toolDescriptorGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
@@ -87,7 +88,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = ".exited => |c| c == 0," },
     .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
     .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
-    .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"tools\", \"--summary\", \"all\" }, \"zig build tools\")" },
+    .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")" },
 };
 
 /// The next symbol worth looking up in `text`, reduced to its most specific
@@ -612,8 +613,11 @@ pub const Engine = struct {
 
         // ---- 5. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
-        var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, &.{});
+        var gate_timer = GateTimer.start(self.ctx.io);
+        const cache_args = self.sharedCacheArgs();
+        var build = try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, staged_dir, cache_args);
         defer build.deinit(self.ctx.gpa);
+        gate_timer.lap("build");
         if (!build.ok) {
             const tail = try errorTail(self.arena, build.detail);
             log.log(.error_, "staging build failed:", .{});
@@ -628,8 +632,9 @@ pub const Engine = struct {
         // the working directory, and a fresh staging dir has none until this
         // gate builds them. Running tests first failed every proposal on a
         // missing artifact rather than on its own merits.
-        var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir);
+        var tools = try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, staged_dir, cache_args);
         defer tools.deinit(self.ctx.gpa);
+        gate_timer.lap("tools");
         if (!tools.ok) {
             const tail = try errorTail(self.arena, tools.detail);
             log.log(.error_, "staging tools build failed:", .{});
@@ -640,8 +645,23 @@ pub const Engine = struct {
             return .failed;
         }
 
+        // Descriptor consistency: no duplicate tool names and every descriptor's
+        // wasm must exist. Runs after toolsGate so zig-out/tools/*.wasm are
+        // present; tools/bin/*.wasm are committed. Catches a proposal that
+        // shadows a tool or ships a manifest for a wasm that was never built.
+        var desc_check = try gate_checks.toolDescriptorGate(self.ctx.gpa, self.ctx.io, staged_dir, "tools/manifests");
+        defer desc_check.deinit(self.ctx.gpa);
+        if (!desc_check.ok) {
+            log.log(.error_, "tool descriptor check failed: {s}", .{desc_check.detail});
+            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, desc_check.detail, fingerprints, null);
+            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the tool manifests are inconsistent:\n{s}\nFix exactly that and re-propose.", .{desc_check.detail});
+            self.removeTree(staging);
+            return .failed;
+        }
+
         var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
         defer test_gate.deinit(self.ctx.gpa);
+        gate_timer.lap("tests");
         if (!test_gate.ok) {
             const tail = try errorTail(self.arena, test_gate.detail);
             log.log(.error_, "staging tests failed:", .{});
@@ -696,6 +716,7 @@ pub const Engine = struct {
         if (self.cfg.improve.capability_gate) {
             var cap = try self.capabilityGate(staging, staged_dir);
             defer cap.deinit(self.ctx.gpa);
+            gate_timer.lap("capability evals");
             if (!cap.ok) {
                 // A task eval is an agent run, and an agent run is not
                 // deterministic: one model turn that skips a tool call fails a
@@ -706,7 +727,12 @@ pub const Engine = struct {
                 // Only re-run the cases that actually failed: each case is a
                 // full agent run, and re-running the whole suite for one flaky
                 // case costs N runs instead of 1.
-                const failed_names = try parseFailedEvalNames(self.arena, cap.detail);
+                // Parse names from stdout alone: detail now also carries the
+                // stderr log (so the model sees why a case failed), and log
+                // lines mentioning eval names would parse as garbage case
+                // names here -- the retry then runs `clanker eval <garbage>`
+                // and dies with UnknownEval instead of retrying anything.
+                const failed_names = try parseFailedEvalNames(self.arena, cap.stdout);
                 if (failed_names.len > 0) {
                     log.log(.warn, "capability evals: {d} case(s) failed; retrying only those", .{failed_names.len});
                     var retry = try self.capabilityGateRetry(staged_dir, failed_names);
@@ -1053,7 +1079,7 @@ pub const Engine = struct {
         var g = switch (e.kind) {
             .selfhost_build => try gate_checks.buildGate(self.ctx.gpa, self.ctx.io, dir, &.{}),
             .selfhost_tests => try gate_checks.testGate(self.ctx.gpa, self.ctx.io, dir),
-            .selfhost_tools => try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, dir),
+            .selfhost_tools => try gate_checks.toolsGate(self.ctx.gpa, self.ctx.io, dir, &.{}),
             else => return error.NotAGateEval,
         };
         defer g.deinit(self.ctx.gpa);
@@ -1209,8 +1235,15 @@ pub const Engine = struct {
             return .{ .ok = true, .label = "capability evals" };
         };
 
+        // A configured eval_provider aims the staged eval agents at a fast
+        // cheap model: the cases are mechanical capability checks, and the
+        // eval phase measured ~334s of a ~368s gate on the proposal provider.
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(self.ctx.gpa);
+        try argv.appendSlice(self.ctx.gpa, &.{ exe, "eval", "--tasks" });
+        if (self.cfg.improve.eval_provider) |p| try argv.appendSlice(self.ctx.gpa, &.{ "--provider", p });
         const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
-            .argv = &.{ exe, "eval", "--tasks" },
+            .argv = argv.items,
             .cwd = .{ .dir = staged_dir },
             .stdout_limit = .limited(1 << 20),
             .stderr_limit = .limited(1 << 20),
@@ -1238,8 +1271,12 @@ pub const Engine = struct {
         var detail_buf: std.ArrayList(u8) = .empty;
         defer detail_buf.deinit(self.ctx.gpa);
         for (failed_names) |name| {
+            var argv: std.ArrayList([]const u8) = .empty;
+            defer argv.deinit(self.ctx.gpa);
+            try argv.appendSlice(self.ctx.gpa, &.{ exe, "eval", name });
+            if (self.cfg.improve.eval_provider) |p| try argv.appendSlice(self.ctx.gpa, &.{ "--provider", p });
             const result = try std.process.run(self.ctx.gpa, self.ctx.io, .{
-                .argv = &.{ exe, "eval", name },
+                .argv = argv.items,
                 .cwd = .{ .dir = staged_dir },
                 .stdout_limit = .limited(1 << 20),
                 .stderr_limit = .limited(1 << 20),
@@ -1661,6 +1698,25 @@ pub const Engine = struct {
             copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch {};
         }
     }
+
+    /// `--cache-dir <parent .zig-cache>` args for the staged gates, so a
+    /// fresh staging dir does not mean a cold cache and a full recompile on
+    /// every proposal (measured: tools 16-24s cold vs ~0.25s shared). Zig's
+    /// local cache is content-addressed and lock-guarded, so sharing changes
+    /// speed, not verdicts. Passed as build args rather than symlinking
+    /// .zig-cache into staging: a symlink there broke the sandbox tests,
+    /// whose tmp roots live under the cache path and whose no-follow
+    /// safeJoinSecure walk (correctly) refuses to traverse a symlink.
+    /// Returns an empty slice when the cwd cannot be resolved: cold build,
+    /// correct but slower.
+    fn sharedCacheArgs(self: *Engine) []const []const u8 {
+        const root = std.process.currentPathAlloc(self.ctx.io, self.arena) catch return &.{};
+        const cache = std.fmt.allocPrint(self.arena, "{s}/.zig-cache", .{root}) catch return &.{};
+        const args = self.arena.alloc([]const u8, 2) catch return &.{};
+        args[0] = "--cache-dir";
+        args[1] = cache;
+        return args;
+    }
 };
 
 /// File paths from a proposal's changes (page-allocated; caller frees).
@@ -1689,6 +1745,26 @@ fn proposalChangedPathsSlice(gpa: std.mem.Allocator, changes: []const proposal_m
 /// excerpt handed back freed memory: a gate whose output fitted in the budget
 /// segfaulted the improve run while collecting the reasons a proposal was
 /// rejected. Copying a string under 1500 bytes is not worth the aliasing.
+/// Wall-clock per gate phase, logged so the gate's cost profile is measurable
+/// from any run log. Measured on a live run before this existed: the whole
+/// gate cycle was ~85% of a 7-8 minute iteration, with nothing saying which
+/// phase (staging build vs the LLM-driven capability evals) actually costs
+/// what -- speeding the gate up starts with knowing that split.
+const GateTimer = struct {
+    io: std.Io,
+    last: i96,
+
+    fn start(io: std.Io) GateTimer {
+        return .{ .io = io, .last = std.Io.Timestamp.now(io, .real).nanoseconds };
+    }
+
+    fn lap(self: *GateTimer, name: []const u8) void {
+        const now = std.Io.Timestamp.now(self.io, .real).nanoseconds;
+        log.log(.info, "gate timing: {s} {d}ms", .{ name, @divTrunc(now - self.last, std.time.ns_per_ms) });
+        self.last = now;
+    }
+};
+
 fn errorTail(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
     const max = 1500;
     if (s.len <= max) return arena.dupe(u8, s);
@@ -1931,9 +2007,13 @@ const improve_user_fmt =
     \\
     \\# Earlier runs on this repository
     \\Work listed as accepted is already in the source you were given: do not
-    \\propose it again. Work listed as rejected failed for the stated reason;
-    \\do not repeat that mistake. The tag after the status is what the change
-    \\turned out to do, decided from the diff rather than from its summary.
+    \\propose it again, and do not undo it. When your change replaces a line
+    \\or list that an accepted improvement touched, copy the CURRENT text from
+    \\the source above and extend it -- reconstructing it from memory has
+    \\silently reverted an accepted improvement before. Work listed as
+    \\rejected failed for the stated reason; do not repeat that mistake. The
+    \\tag after the status is what the change turned out to do, decided from
+    \\the diff rather than from its summary.
     \\{s}
     \\{s}
     \\# Previous attempt feedback

@@ -85,7 +85,7 @@ pub const Worktree = struct {
             if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
-                    resyncLocalBranch(gpa, io, branch_sha);
+                    self.resyncLocalBranch(gpa, io, branch_sha);
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -102,7 +102,7 @@ pub const Worktree = struct {
             };
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
-                resyncLocalBranch(gpa, io, commit);
+                self.resyncLocalBranch(gpa, io, commit);
                 return;
             }
             // Someone else moved base_branch between the read and the write;
@@ -112,8 +112,8 @@ pub const Worktree = struct {
     }
 
     /// After a successful merge-back, fast-forwards this worktree's own
-    /// branch (and its checked-out files) to the commit that just landed on
-    /// the base branch, so the two stay in lockstep.
+    /// branch ref to the commit that just landed on the base branch, so
+    /// the two stay in lockstep.
     ///
     /// Without this the branch keeps accumulating its own parallel history
     /// every promotion, diverging a little further from the base branch
@@ -123,8 +123,19 @@ pub const Worktree = struct {
     /// accumulated drift produced a real conflict neither side could
     /// auto-resolve, with nothing surfacing the growing backlog short of
     /// reading raw logs for "conflicts" by hand.
-    fn resyncLocalBranch(gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
-        const argv = [_][]const u8{ "git", "reset", "--hard", new_sha };
+    ///
+    /// `git -C <worktree> reset --hard`: pinned to the worktree path so a
+    /// caller whose cwd has drifted (chdir'd back to the main tree) can
+    /// never reset the user's checkout — the concern that briefly moved
+    /// this to a bare `git update-ref` on the branch ref. That variant kept
+    /// the ref in lockstep but left the worktree's checked-out FILES at the
+    /// pre-merge content, and those files are what the next iteration's
+    /// context and staging copy from: proposals then build on a tree
+    /// missing everything the merge just folded in, re-introducing on the
+    /// next merge exactly what someone else had fixed. Both halves matter:
+    /// ref moved AND files synced.
+    fn resyncLocalBranch(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
+        const argv = [_][]const u8{ "git", "-C", self.path, "reset", "--hard", new_sha };
         const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
             log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
             return;
@@ -197,7 +208,14 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     const root = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(root);
 
-    for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
+    // .zig-cache deliberately NOT linked: several sandbox tests place their
+    // tmp roots at the literal path ".zig-cache/tmp/...", and the sandbox's
+    // no-follow safeJoinSecure walk (correctly) refuses to traverse a
+    // symlinked component -- a linked cache broke 3 tests in every worktree,
+    // failing the baseline gate of every subsequent run (verified in a
+    // scratch worktree; same collision as the staging-side attempt, which is
+    // why staging shares the cache via --cache-dir args instead).
+    for ([_][]const u8{ ".env", "config.local.toml", "zig-out" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
@@ -211,7 +229,7 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     defer gpa.free(state_dir);
     try std.Io.Dir.cwd().createDirPath(io, state_dir);
 
-    for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
+    for ([_][]const u8{ "state/improvements.jsonl", "state/history", "state/learnings.md", "state/autolearn.jsonl", "state/runs", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
