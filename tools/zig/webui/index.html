@@ -221,6 +221,11 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>
         </div>
       </div>
+      <div class="chat-steer" id="steer-row" hidden>
+        <input type="text" id="steer-input" placeholder="Steer the running turn mid-flight (optional)…" autocomplete="off" aria-label="Steer the running turn">
+        <button type="button" class="secondary" id="steer-btn">Steer</button>
+        <span class="meta" id="steer-hint"></span>
+      </div>
       <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
     </form>
 

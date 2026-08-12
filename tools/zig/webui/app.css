@@ -1532,6 +1532,17 @@ button.tool-name:hover { color: var(--accent-text); }
 }
 .goal-steer input { flex: 1; min-width: 0; }
 
+/* Chat-composer mid-run steering: one line in, shown only while a turn runs
+   so the run can be course-corrected without waiting for it to finish. Same
+   affordance the goals view's panel carries. */
+.chat-steer {
+  display: flex; gap: var(--space-3); align-items: center;
+  padding: var(--space-2) var(--space-3); border-top: 1px solid var(--rule);
+}
+.chat-steer[hidden] { display: none; }
+.chat-steer input { flex: 1; min-width: 0; }
+.chat-steer .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
 dd ul { list-style: none; margin: 0; padding: 0; }
 dd ul li + li { margin-top: 0.25rem; }

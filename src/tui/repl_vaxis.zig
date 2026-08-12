@@ -97,6 +97,11 @@ var bridge_gpa: std.mem.Allocator = undefined;
 var bridge_streaming: bool = false;
 var bridge_stream_buf: std.ArrayList(u8) = .empty;
 var bridge_tool_lines: std.ArrayList([]const u8) = .empty;
+/// Mid-run steering queue: messages the user typed in the composer while a
+/// turn runs, bridge_gpa-owned, drained oldest-first by tuiSteerPoll on the
+/// run thread (the same seam POST /api/steer uses for the web). Filled by the
+/// render thread's composer-as-steer-box; freed by tuiSteerPoll as it drains.
+var bridge_steer: std.ArrayListUnmanaged([]u8) = .empty;
 var bridge_stop_flag: std.atomic.Value(bool) = .init(false);
 /// Published only after runThreadMain has finished all deferred Agent cleanup.
 /// The UI thread consumes this and joins the worker before making the model
@@ -147,6 +152,28 @@ fn onToolResult(elapsed_ms: u64) void {
     bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
 }
 
+/// Frees and empties the mid-run steering queue. Called at turn start (so a
+/// message typed against a run that just ended never leaks into the next
+/// one) and at app exit. Caller must hold the bridge lock.
+fn clearBridgeSteer() void {
+    for (bridge_steer.items) |m| bridge_gpa.free(m);
+    bridge_steer.clearRetainingCapacity();
+}
+
+/// Agent.steer_fn for the REPL: pops the next steering message the user typed
+/// in the composer while this turn runs, hands back an arena copy. Runs on
+/// the run thread; takes the bridge lock. The message is already framed by
+/// the composer, so the agent reads it as the same mid-run course correction
+/// the web POST /api/steer delivers.
+fn tuiSteerPoll(arena: std.mem.Allocator) ?[]const u8 {
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    if (bridge_steer.items.len == 0) return null;
+    const msg = bridge_steer.orderedRemove(0);
+    defer bridge_gpa.free(msg);
+    return arena.dupe(u8, msg) catch null;
+}
+
 const RunThreadArgs = struct {
     model: *Model,
     task: []const u8,
@@ -169,6 +196,10 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;
     a.stop_flag = &bridge_stop_flag;
+    // Mid-run steering: messages typed into the composer while this turn
+    // runs are drained between iterations, exactly as POST /api/steer feeds
+    // a streaming web run.
+    a.steer_fn = &tuiSteerPoll;
 
     // Wall time spans the whole turn, tool rounds included, because that is
     // the wait the person at the keyboard actually sat through.
@@ -1088,7 +1119,15 @@ const Model = struct {
         bridge_mutex.lockUncancelable(bridge_io);
         const already_streaming = bridge_streaming;
         bridge_mutex.unlock(bridge_io);
-        if (already_streaming) return;
+        // While a turn runs the composer is a steering box, not a task box:
+        // the typed line is queued as a mid-run course correction instead of
+        // being dropped (the old no-op). A second turn can never start
+        // anyway — one turn at a time — so this is the only useful thing to
+        // type into it.
+        if (already_streaming) {
+            self.steerWhileRunning(ctx);
+            return;
+        }
 
         const task = try self.text_field.toOwnedSlice();
         defer self.gpa.free(task);
@@ -1122,6 +1161,37 @@ const Model = struct {
         }
 
         try self.submitTask(ctx, task);
+    }
+
+    /// While a turn runs, the composer submits a mid-run steering message
+    /// rather than a new task. Takes the bridge lock before touching either
+    /// the steer queue or self.lines, because the run thread's finishTurn /
+    /// tuiSteerPoll touch the same two under that same lock.
+    fn steerWhileRunning(self: *Model, ctx: *vxfw.EventContext) void {
+        const task = self.text_field.toOwnedSlice() catch return;
+        defer self.gpa.free(task);
+        if (std.mem.trim(u8, task, " \t\r\n").len == 0) return;
+        self.text_field.reset();
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        if (!bridge_streaming) {
+            self.lines.append(self.arena, .{ .text = "[no run to steer — the turn already ended]", .dim = true }) catch {};
+            return;
+        }
+        // Same framing POST /api/steer applies server-side, so the model reads
+        // a TUI steer as the same mid-run course correction it reads a web one.
+        const framed = std.fmt.allocPrint(bridge_gpa, "[The user interjected while this run was in progress — take the message into account and adjust course.]\n\n{s}", .{task}) catch {
+            self.lines.append(self.arena, .{ .text = "[steer failed: out of memory]", .dim = true }) catch {};
+            return;
+        };
+        bridge_steer.append(bridge_gpa, framed) catch {
+            bridge_gpa.free(framed);
+            self.lines.append(self.arena, .{ .text = "[steer failed: out of memory]", .dim = true }) catch {};
+            return;
+        };
+        const echo = std.fmt.allocPrint(self.arena, "[steering queued: {s}]", .{task}) catch "[steering queued]";
+        self.lines.append(self.arena, .{ .text = echo, .dim = true }) catch {};
+        ctx.redraw = true;
     }
 
     /// Executes one registry command from `submit`. `task` is the raw
@@ -1521,6 +1591,10 @@ const Model = struct {
         bridge_streaming = true;
         bridge_stream_buf.clearRetainingCapacity();
         bridge_tool_lines.clearRetainingCapacity();
+        // A steering message typed against the turn that just ended must not
+        // leak into this one — the composer-as-steer-box only queues while
+        // streaming, but a message can land between the last poll and here.
+        clearBridgeSteer();
         bridge_stop_flag.store(false, .release);
         bridge_turn_done.store(false, .release);
         errdefer bridge_streaming = false;
@@ -3291,6 +3365,10 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         for (bridge_tool_lines.items) |l| bridge_gpa.free(l);
         bridge_tool_lines.deinit(bridge_gpa);
         bridge_stream_buf.deinit(bridge_gpa);
+        bridge_mutex.lockUncancelable(bridge_io);
+        clearBridgeSteer();
+        bridge_steer.deinit(bridge_gpa);
+        bridge_mutex.unlock(bridge_io);
     }
     try run_result;
 }

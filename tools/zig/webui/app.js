@@ -55,6 +55,10 @@ var el = {
   attachments: document.getElementById("attachments"),
   submit: document.getElementById("submit"),
   cancel: document.getElementById("cancel"),
+  steerRow: document.getElementById("steer-row"),
+  steerInput: document.getElementById("steer-input"),
+  steerBtn: document.getElementById("steer-btn"),
+  steerHint: document.getElementById("steer-hint"),
   refresh: document.getElementById("refresh"),
   hint: document.getElementById("hint"),
   transcript: document.getElementById("transcript"),
@@ -858,6 +862,14 @@ function syncControls() {
   el.newChat.disabled = busy;
   el.task.readOnly = busy;
   el.cancel.hidden = !busy;
+  // Mid-run steering: only meaningful while a turn is in flight. Hidden and
+  // cleared the moment the run ends, so a stale course-correction is never
+  // queued against the next turn.
+  el.steerRow.hidden = !busy;
+  if (!busy) {
+    el.steerInput.value = "";
+    el.steerHint.textContent = "";
+  }
   if (busy) el.submit.textContent = "Running…";
   else syncSubmitLabel();
   document.title = busy ? "Running… · clanker" : "clanker";
@@ -878,6 +890,41 @@ function startElapsed(startedAt) {
 function stopElapsed() {
   if (elapsedTimer) { window.clearInterval(elapsedTimer); elapsedTimer = null; }
 }
+
+/* Mid-run steering for the chat composer (same POST /api/steer the goals
+   view uses, keyed by the run's session id instead of a goal id). While a
+   turn runs, a dedicated input appears beside the locked composer; sending
+   queues a course correction the agent loop drains between iterations. */
+function sendSteerChat() {
+  var msg = (el.steerInput.value || "").trim();
+  if (!msg) { el.steerHint.textContent = "Type a message to steer the running turn."; return; }
+  el.steerHint.textContent = "sending…";
+  el.steerBtn.disabled = true;
+  fetch("/api/steer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session: sessionId, message: msg })
+  }).then(function (resp) {
+    if (resp.ok) {
+      el.steerInput.value = "";
+      el.steerHint.textContent = "steering message sent — it lands on the next model step.";
+    } else {
+      return resp.json().then(function (j) {
+        el.steerHint.textContent = "steer failed: " + (j.error || ("HTTP " + resp.status));
+      }).catch(function () {
+        el.steerHint.textContent = "steer failed: HTTP " + resp.status;
+      });
+    }
+  }).catch(function (err) {
+    el.steerHint.textContent = "steer failed: " + (err && err.message ? err.message : "network error");
+  }).finally(function () {
+    el.steerBtn.disabled = false;
+  });
+}
+el.steerBtn.addEventListener("click", sendSteerChat);
+el.steerInput.addEventListener("keydown", function (e) {
+  if (e.key === "Enter") { e.preventDefault(); sendSteerChat(); }
+});
 
 /* Each submitted task gets its own turn card, appended below the last —
    a real conversation history instead of one box that forgets the past
@@ -1639,6 +1686,10 @@ el.form.addEventListener("submit", function (e) {
       // and dies with the run, so the turn card is the only place it can live.
       else if (evt.type === "todos") { try { todosRenderTurn(turn, evt.todos); } catch (_t) {} setStatusTodos(evt.todos); }
       else if (evt.type === "goal") { setStatusGoal(evt.id); }
+      // A status event is a run lifecycle note (contacting the provider, a
+      // steering message being applied) rather than answer text: show it as a
+      // bracketed log line, the same way the goals view renders it.
+      else if (evt.type === "status") { appendText(turn, "\n[ " + evt.message + " ]\n", true); }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
