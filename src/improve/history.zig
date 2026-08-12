@@ -643,3 +643,16 @@ test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
     // have errored the append and left no entry at all.
     try std.testing.expect(std.mem.indexOf(u8, raw, big_detail) != null);
 }
+
+test "firstLine trims, takes the first line, and clips to max" {
+    // Overall leading/trailing whitespace is trimmed before the first line
+    // is taken; the first line's own trailing spaces before a newline are
+    // kept, because trimming only happens at the whole-string ends.
+    try std.testing.expectEqualStrings("hello world", firstLine("  hello world\n  second", 100));
+    // A first line longer than max is clipped to max bytes.
+    try std.testing.expectEqualStrings("hel", firstLine("  hello world\n  second", 3));
+    // No newline: the whole trimmed string is returned (and clipped).
+    try std.testing.expectEqualStrings("world", firstLine("  world  ", 10));
+    // Empty / whitespace-only input yields empty.
+    try std.testing.expectEqualStrings("", firstLine("   \n  ", 10));
+}
