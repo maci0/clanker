@@ -747,3 +747,40 @@ test "setWorkspace moves a session into a workspace and back" {
     const loose = try loadSession(io, gpa, arena, tmp.dir, "ws-move");
     try std.testing.expectEqualStrings("", loose.workspace);
 }
+
+test "listSessions orders by most recently updated" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "older",
+        .title = "older",
+        .messages = &.{},
+        .created = 100,
+        .updated = 100,
+    });
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "newer",
+        .title = "newer",
+        .messages = &.{},
+        .created = 50,
+        .updated = 200,
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 2), list.len);
+    try std.testing.expectEqualStrings("newer", list[0].id);
+    try std.testing.expectEqualStrings("older", list[1].id);
+}
