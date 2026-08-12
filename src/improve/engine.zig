@@ -102,6 +102,8 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // value line without the section header. Without these, the detail
     // string can survive in dead code while the actual check is removed.
     .{ .file = "src/gate/checks.zig", .needle = "weakensImprove(obj)" },
+    .{ .file = "src/gate/checks.zig", .needle = "weakensAgent(obj)" },
+    .{ .file = "src/gate/checks.zig", .needle = "agent.git_commit must not be disabled" },
     .{ .file = "src/gate/checks.zig", .needle = "hasGitInExecAllow(obj)" },
     // A build.zig change can make `zig build` succeed without installing the
     // staged executable. Capability evaluation must fail closed in that case,

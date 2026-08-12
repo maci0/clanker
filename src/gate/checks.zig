@@ -1044,13 +1044,28 @@ pub fn configWeakeningGate(
                 else => {},
             }
         }
+        if (obj.get("agent")) |agent_val| {
+            switch (agent_val) {
+                .object => |agent| {
+                    if (weakensAgent(agent)) |r| return r;
+                },
+                else => {},
+            }
+        }
         // The proposal's "new" text may be a replacement fragment without
-        // the [improve] section header, so "capability_gate = false" parses
-        // as a root-level key. Check here too or the gate is bypassable by
-        // keeping the replacement small.
+        // the section header, so "capability_gate = false" or
+        // "git_commit = false" parses as a root-level key. Check here too
+        // or the gate is bypassable by keeping the replacement small.
         if (weakensImprove(obj)) |r| return r;
+        if (weakensAgent(obj)) |r| return r;
     }
     return .{ .ok = true, .label = "config-weakening" };
+}
+
+fn weakensAgent(obj: std.json.ObjectMap) ?GateResult {
+    if (isFalse(obj.get("git_commit")))
+        return .{ .ok = false, .label = "config-weakening", .detail = "agent.git_commit must not be disabled" };
+    return null;
 }
 
 fn weakensImprove(obj: std.json.ObjectMap) ?GateResult {
@@ -1150,6 +1165,28 @@ test "configWeakeningGate catches a fragment without the [improve] header" {
     const frag4 = [_][]const u8{"plan_phase = false"};
     const result4 = configWeakeningGate(gpa, &files, &frag4);
     try std.testing.expect(!result4.ok);
+}
+
+test "configWeakeningGate rejects disabling agent.git_commit" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const new_texts = [_][]const u8{
+        \\[agent]
+        \\git_commit = false
+    };
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+    try std.testing.expect(std.mem.find(u8, result.detail, "git_commit") != null);
+}
+
+test "configWeakeningGate catches git_commit fragment without [agent] header" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const frag = [_][]const u8{"git_commit = false"};
+    const result = configWeakeningGate(gpa, &files, &frag);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "git_commit") != null);
 }
 
 test "configWeakeningGate ignores non-config files" {

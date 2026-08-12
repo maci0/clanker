@@ -359,7 +359,7 @@ fn serialiseMessage(m: Message, out: *std.ArrayList(u8), gpa: std.mem.Allocator)
     var w: std.Io.Writer = .fixed(&line_buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
     s.beginObject() catch return error.TooLarge;
-    inline for (std.meta.fields(Message)) |f| {
+    inline for (@typeInfo(Message).@"struct".fields) |f| {
         s.objectField(f.name) catch return error.TooLarge;
         s.write(@field(m, f.name)) catch return error.TooLarge;
     }
