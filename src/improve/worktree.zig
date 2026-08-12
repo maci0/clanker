@@ -234,6 +234,20 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh worktree). The worktree builds its own zig-out once at run start;
     // staging already reuses the build cache via --cache-dir, so the link
     // bought nothing there anyway.
+    // chains/ and workflows/ are gitignored directories read by the HOST
+    // (chain loader, workflow catalog), never traversed by sandboxed tools,
+    // so symlinks are safe here — same reasoning as .env / config.local.toml.
+    for ([_][]const u8{ "chains", "workflows" }) |name| {
+        var src_dir = std.Io.Dir.cwd().openDir(io, name, .{}) catch continue;
+        src_dir.close(io);
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
+        defer gpa.free(target);
+        const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(link_path);
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = true }) catch |err|
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+    }
+
     for ([_][]const u8{ ".env", "config.local.toml" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
