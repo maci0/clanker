@@ -24,6 +24,12 @@ pub const Worktree = struct {
     path: []const u8,
     branch: []const u8,
     base_branch: []const u8,
+    /// Set to true by mergeBack when it successfully lands the branch's
+    /// tip onto the base branch. cleanup uses this to decide whether to
+    /// force-remove the worktree: an unmerged worktree is kept so the
+    /// developer (or a later run) can inspect and land the stranded work
+    /// manually.
+    merged: bool = false,
 
     pub fn deinit(self: *Worktree, gpa: std.mem.Allocator) void {
         gpa.free(self.path);
@@ -33,7 +39,14 @@ pub const Worktree = struct {
 
     /// Removes the worktree and its branch. Must be called after chdir-ing
     /// back out of it: git refuses to remove a worktree that is anyone's cwd.
+    /// When the branch was never merged back, the worktree and branch are
+    /// kept so the stranded work remains reachable (`git worktree list`
+    /// shows it, `git log <branch>` has the commits).
     pub fn cleanup(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io) void {
+        if (!self.merged) {
+            log.log(.warn, "improve-self: worktree {s} was not merged; keeping it and branch {s} for manual recovery", .{ self.path, self.branch });
+            return;
+        }
         {
             const argv = [_][]const u8{ "git", "worktree", "remove", "--force", self.path };
             const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
@@ -45,8 +58,8 @@ pub const Worktree = struct {
             };
             if (!ok) log.log(.warn, "git worktree remove {s} failed: {s}", .{ self.path, res.stderr });
         }
-        // Best-effort: fails harmlessly (still merged in, or has commits
-        // ahead) when mergeBack never fully landed the branch.
+        // The branch was successfully merged, so -d (which refuses to
+        // delete unmerged branches) is safe and will succeed.
         {
             const argv = [_][]const u8{ "git", "branch", "-d", self.branch };
             const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
@@ -87,6 +100,7 @@ pub const Worktree = struct {
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
                     log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
                     self.resyncLocalBranch(gpa, io, branch_sha);
+                    @as(*bool, @constCast(&self.merged)).* = true;
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -105,6 +119,7 @@ pub const Worktree = struct {
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
                 log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
                 self.resyncLocalBranch(gpa, io, commit);
+                @as(*bool, @constCast(&self.merged)).* = true;
                 return;
             }
             // Someone else moved base_branch between the read and the write;
