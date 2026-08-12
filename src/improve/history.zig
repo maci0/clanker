@@ -458,17 +458,6 @@ pub const History = struct {
             }
             try buf.appendSlice(arena, ": ");
             try buf.appendSlice(arena, firstLine(e.summary, 160));
-            // Which files were touched: the summary says what was attempted,
-            // but without the paths the model cannot tell whether its next
-            // idea targets a file that just failed.
-            if (e.files.len > 0) {
-                try buf.appendSlice(arena, " [");
-                for (e.files, 0..) |f, fi| {
-                    if (fi > 0) try buf.appendSlice(arena, ", ");
-                    try buf.appendSlice(arena, f);
-                }
-                try buf.appendSlice(arena, "]");
-            }
             // Why it failed is the part worth carrying: the summary alone says
             // what was attempted, not what went wrong with it.
             if (!std.mem.eql(u8, e.status, "accepted") and e.detail.len > 0) {
@@ -777,10 +766,8 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
         const summary = try hist.recentSummary(arena, 2);
         // e3 is rejected and has detail; e4 is accepted.
         try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected: three") != null);
-        try std.testing.expect(std.mem.indexOf(u8, summary, "[src/three.zig, src/one.zig]") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "rejected because: why not") != null);
         try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: four") != null);
-        try std.testing.expect(std.mem.indexOf(u8, summary, "[src/one.zig, src/four.zig]") != null);
     }
 
     {
@@ -838,8 +825,6 @@ test "the class of an accepted change is recorded, rendered, and counted as a st
     try std.testing.expect(std.mem.indexOf(u8, summary, "- rejected [inert]: refused") != null);
     // The pre-classification entry has no tag to render.
     try std.testing.expect(std.mem.indexOf(u8, summary, "- accepted: unclassified") != null);
-    // Files are shown on every entry that has them.
-    try std.testing.expect(std.mem.indexOf(u8, summary, "[src/a.zig]") != null);
 }
 
 test "an over-1 MiB detail is logged whole, not dropped by a fixed buffer" {
