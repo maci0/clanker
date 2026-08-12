@@ -1,6 +1,6 @@
-// Goals view — ES module, no bundler.
-// Owns #view-goals: goal cards, per-goal streamed runs, and the goal<->board
-// mirroring glue (a goal's board card follows its run lifecycle). The board
+// Goal workflow — ES module, no bundler.
+// Goals are the board's durable cards. This module owns goal creation,
+// per-goal streamed runs, and the goal<->board reconciliation. The board
 // side of that glue lives in ./board.js; the pure helpers (sorting, field
 // listing, the status->column mapping) stay in ../core/goals.js. bindGoals()
 // wires the DOM and the app-level callbacks (view switching, the active
@@ -75,8 +75,8 @@ function findGoal(goals, gid) {
    construction: a goal whose card exists is only reconciled (link persisted
    if missing, column corrected when the status pins one), and a goal without
    a card gets exactly one, in the column its status asks for. Done and
-   abandoned goals get no posthumous card — mirroring exists to make live
-   work visible, not to backfill history. Waits for the board to have loaded
+   legacy abandoned goals get no posthumous card; archived goals do, because
+   archive is retained history rather than deletion. Waits for the board to have loaded
    first: mirroring against an unfetched (empty) card list is what used to
    create a duplicate card on every visit. */
 function mirrorGoalsToBoard(goals) {
@@ -95,7 +95,7 @@ function mirrorGoalsToBoard(goals) {
         }
         return;
       }
-      if (status === "done" || status === "abandoned") return;
+      if (status === "abandoned") return;
       if (goalMirrorRequested[g.id]) return;
       goalMirrorRequested[g.id] = true;
       // A board card title is capped at 512 characters but a goal objective
@@ -148,12 +148,10 @@ function goalCard(g) {
           title: "Optional per-run max iterations. Blank uses the goal's stored default, then the global agent.max_iterations."
         }),
         UI.button("Work on this", function () { workOnGoal(g); },
-          { label: "Work on goal: " + (g.objective || g.id) }),
-        UI.button("Re-evaluate", function () { reEvaluateGoal(g); },
-          { label: "Re-evaluate whether goal is done: " + (g.objective || g.id) })));
+          { label: "Work on goal: " + (g.objective || g.id) })));
     }
     [["Mark done", "done", "Goal marked done."],
-     ["Abandon", "abandoned", "Goal abandoned."],
+     ["Archive", "archived", "Goal archived and retained for future learning."],
      ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
       if ((g.status || "active") === pair[1]) return;
       actions.push(UI.button(pair[0], function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); }));
@@ -348,7 +346,7 @@ function runGoal(g, opts) {
     (g.objective || "") + "\nDone when: " + (g.completion_criterion || ""));
   var controller = new AbortController();
   goalRuns[g.id] = { controller: controller, status: "running", text: "" };
-  _showView("goals", true);
+  _showView("board", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
   moveGoalCard(g, "doing");
@@ -435,22 +433,6 @@ function workOnGoal(g) {
   runGoal(g, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
 }
 
-/* Re-evaluates whether the goal is already done: runs the agent against the
-   completion criterion and asks it to inspect the current state and give a
-   verdict, rather than doing the work. Streams into the goal's own panel like
-   any other run, and lands the goal in review like any other run — the
-   verdict is exactly what a reviewer wants on screen when they decide. */
-function reEvaluateGoal(g) {
-  if (!g || !g.id) return;
-  runGoal(g, {
-    task: "Re-evaluate whether this goal is already done. Do NOT do the work " +
-      "or make changes unless strictly needed to verify. Inspect the current " +
-      "state (files, board, recorded runs) and report clearly whether the " +
-      "completion criterion is met, and why.\n\nObjective: " +
-      (g.objective || "") + "\nDone when: " + (g.completion_criterion || "")
-  });
-}
-
 /* Runs a board card as a goal. If the card already mirrors a goal (its
    `goal` field, or an unlinked card whose title matches one), that goal is
    reused — clicking "Work as goal" twice must not mint a twin goal. Only a
@@ -520,9 +502,11 @@ export function postGoal(payload, status) {
             moveGoalCard(changed, "done");
           } else if (payload.status === "review") {
             moveGoalCard(changed, "review");
+          } else if (payload.status === "archived" || payload.status === "abandoned") {
+            moveGoalCard(changed, "archive");
           } else if (payload.status === "active") {
             var card = cardOfGoal(changed);
-            if (card && (card.column === "done" || card.column === "review")) {
+            if (card && (card.column === "done" || card.column === "review" || card.column === "archive")) {
               postBoard({ op: "move", id: card.id, column: "ready", goal_sync: false }, null);
             }
           }
@@ -599,7 +583,7 @@ export function syncCardsFromGoals() {
     if (!card) return;
     var target = goalPinnedColumn(g, isGoalRunning(g.id));
     if (!target && (g.status || "active") === "active" &&
-        (card.column === "doing" || card.column === "review" || card.column === "done")) {
+        (card.column === "doing" || card.column === "review" || card.column === "done" || card.column === "archive")) {
       target = "ready";
     }
     if (target && card.column !== target) {

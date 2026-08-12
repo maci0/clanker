@@ -866,7 +866,10 @@ test "a tool_result's content is an array of text blocks, not a bare string" {
     defer arena.free(body);
 
     const parsed = try json.parseFromSliceLeaky(json.Value, arena, body, .{});
-    const blocks = parsed.object.get("messages").?.array.items[2].object.get("content").?.array.items;
+    const outer = parsed.object.get("messages").?.array.items[2].object.get("content").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), outer.len);
+    try std.testing.expectEqualStrings("tool_result", outer[0].object.get("type").?.string);
+    const blocks = outer[0].object.get("content").?.array.items;
     try std.testing.expectEqual(@as(usize, 1), blocks.len);
     try std.testing.expectEqualStrings("text", blocks[0].object.get("type").?.string);
     try std.testing.expectEqualStrings("tool output", blocks[0].object.get("text").?.string);

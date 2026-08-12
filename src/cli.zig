@@ -5805,7 +5805,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             var updated = g;
             if (req.status) |s| {
                 if (!validGoalStatus(s)) {
-                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, review, done or abandoned\"}");
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, review, done, archived or abandoned\"}");
                     return;
                 }
                 updated.status = s;
@@ -6776,19 +6776,21 @@ const StoredGoal = struct {
     updated: i64 = 0,
 };
 
-/// A goal's status is one of four words. Anything else is refused rather
+/// A goal's status is one of the workflow words. Anything else is refused rather
 /// than written, so the file cannot grow states nothing knows how to read.
 /// `review` is a run's parting gift: the work is believed done and waits for
 /// a human verdict — mark it done or send it back to active.
 fn validGoalStatus(s: []const u8) bool {
     return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or
-        std.mem.eql(u8, s, "abandoned") or std.mem.eql(u8, s, "review");
+        std.mem.eql(u8, s, "archived") or std.mem.eql(u8, s, "abandoned") or
+        std.mem.eql(u8, s, "review");
 }
 
 test validGoalStatus {
     try std.testing.expect(validGoalStatus("active"));
     try std.testing.expect(validGoalStatus("done"));
     try std.testing.expect(validGoalStatus("abandoned"));
+    try std.testing.expect(validGoalStatus("archived"));
     try std.testing.expect(validGoalStatus("review"));
     try std.testing.expect(!validGoalStatus("Active"));
     try std.testing.expect(!validGoalStatus(""));
