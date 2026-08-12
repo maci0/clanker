@@ -56,6 +56,10 @@ const width_mod = @import("width.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 
+/// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
+/// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
+const stream_tick_ms: u32 = 33;
+
 /// A C0 control or DEL that must not reach the terminal, mirroring
 /// src/tui/transcript.zig's writeSanitized (CWE-150): everything rendered
 /// here is text clanker didn't generate itself.
@@ -314,6 +318,9 @@ const CommandAction = union(enum) {
     autoresearch,
     /// Prints usage, or runs one judged debate as a normal agent task.
     arena,
+    /// Lists themes (no args) or switches the active color theme for this
+    /// session (with a name).
+    theme,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
     tool: struct { name: []const u8, args: []const u8 },
 };
@@ -347,6 +354,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/goal", .takes_args = true, .arg_hint = "<intent>", .help = "design and persist a structured goal", .action = .goal },
     .{ .name = "/autoresearch", .takes_args = true, .arg_hint = "...", .help = "measurement loop (see /autoresearch --help)", .action = .autoresearch },
     .{ .name = "/arena", .takes_args = true, .arg_hint = "...", .help = "judged debate between two positions (see /arena --help)", .action = .arena },
+    .{ .name = "/theme", .takes_args = true, .arg_hint = "[name]", .help = "list or switch color theme (mocha, latte, tokyonight, ...)", .action = .theme },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
 };
 
@@ -796,8 +804,14 @@ const Model = struct {
     text_field: vxfw.TextField,
     thread: ?std.Thread = null,
     spinner_frame: u8 = 0,
+    /// Counts stream-redraw ticks so the spinner advances every third one
+    /// while the transcript itself repaints at the full ~30fps tick rate.
+    tick_count: u32 = 0,
     status_buf: [192]u8 = undefined,
     scroll_buf: [32]u8 = undefined,
+    /// `/theme <name>` sets this for the session, overriding `CLANKER_THEME`.
+    /// Arena-owned. Null = fall back to the env var (then the default).
+    theme_override: ?[]const u8 = null,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op — there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -1042,6 +1056,28 @@ const Model = struct {
                     return;
                 };
                 try self.submitTask(ctx, prompt);
+            },
+            .theme => {
+                if (pc.args.len == 0) {
+                    const current = self.theme_override orelse themeName(self.ctx.environ_map) orelse "default";
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme: {s}", .{current}) catch "theme", .dim = true }) catch {};
+                    var buf: std.ArrayList(u8) = .empty;
+                    buf.appendSlice(self.arena, "  available:") catch {};
+                    for (theme_mod.names) |n| {
+                        buf.appendSlice(self.arena, " ") catch {};
+                        buf.appendSlice(self.arena, n) catch {};
+                    }
+                    self.lines.append(self.arena, .{ .text = buf.toOwnedSlice(self.arena) catch "  available: (see docs)", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "  /theme <name> to switch; color needs a truecolor terminal", .dim = true }) catch {};
+                    return;
+                }
+                if (!theme_mod.isKnown(pc.args)) {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "[unknown theme '{s}' — /theme lists them]", .{pc.args}) catch "[unknown theme]", .dim = true }) catch {};
+                    return;
+                }
+                self.theme_override = self.arena.dupe(u8, pc.args) catch pc.args;
+                self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "theme set to {s}", .{pc.args}) catch "theme set", .dim = true }) catch {};
+                ctx.redraw = true;
             },
             .workflows => {
                 _ = self.runWorkflowsTool("");
@@ -1372,7 +1408,7 @@ const Model = struct {
         self.thread = try std.Thread.spawn(.{}, runThreadMain, .{RunThreadArgs{ .model = self, .task = owned_task }});
 
         // Kick off the tick heartbeat that picks up streamed deltas.
-        try ctx.tick(50, self.widget());
+        try ctx.tick(stream_tick_ms, self.widget());
     }
 
     /// Writes the conversation to `state/sessions/<id>.json` so a later
@@ -1576,8 +1612,13 @@ const Model = struct {
                 const still_streaming = bridge_streaming;
                 bridge_mutex.unlock(bridge_io);
                 if (still_streaming) {
-                    self.spinner_frame +%= 1;
-                    try ctx.tick(50, self.widget());
+                    // Redraw at ~30fps so streamed text lands smoothly instead
+                    // of in visible 50ms (20fps) batches, but advance the
+                    // spinner only every third frame so it still animates at a
+                    // readable ~100ms/step rather than a blur.
+                    self.tick_count +%= 1;
+                    if (self.tick_count % 3 == 0) self.spinner_frame +%= 1;
+                    try ctx.tick(stream_tick_ms, self.widget());
                 }
                 ctx.redraw = true;
             },
@@ -1889,7 +1930,7 @@ const Model = struct {
         // were already painted in the theme-less default style, so a chosen
         // CLANKER_THEME only ever showed up inside fenced code — everywhere
         // else in the vaxis REPL's chrome ignored it).
-        const active = theme_mod.select(themeName(self.ctx.environ_map), self.ctx.environ_map);
+        const active = theme_mod.select(self.theme_override orelse themeName(self.ctx.environ_map), self.ctx.environ_map);
         const dim: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.dim } } else .{ .dim = true };
         const rule_style: vaxis.Style = if (active.rgb) |c| .{ .fg = .{ .rgb = c.rule } } else .{};
         const tool_style: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.tool } } else dim;
