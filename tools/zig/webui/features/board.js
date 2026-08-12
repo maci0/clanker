@@ -1480,6 +1480,23 @@ export function bindBoard(deps) {
   if(boardMine) boardMine.addEventListener("change", function(){ var top=document.getElementById("board-mine"); if(top) top.checked=boardMine.checked; renderBoard(null); });
   var topMine=document.getElementById("board-mine");
   if(topMine) topMine.addEventListener("change", function(){ var b=document.getElementById("board-filter-mine"); if(b) b.checked=topMine.checked; renderBoard(null); });
+  // Wire header list toggle button
+  (function(){
+    var toggleBtn = document.getElementById("board-toggle-list");
+    var columns = document.getElementById("board-columns");
+    var listViewEl = document.getElementById("board-list-view");
+    if (!toggleBtn) return;
+    var isListMode = false;
+    toggleBtn.addEventListener("click", function(){
+      isListMode = !isListMode;
+      toggleBtn.setAttribute("aria-pressed", isListMode ? "true" : "false");
+      toggleBtn.textContent = isListMode ? "▦" : "☰";
+      toggleBtn.title = isListMode ? "Switch to board view" : "Switch to list view";
+      if (columns) columns.hidden = isListMode;
+      if (listViewEl) listViewEl.hidden = !isListMode;
+    });
+  })();
+
   // board list view (full-fledged todo list)
   (function(){
     var listView=document.getElementById("board-list-view");

@@ -1816,8 +1816,27 @@ mark {
 .board-goal-form label { grid-row: 1; }
 .board-goal-form input, .board-goal-form button { grid-row: 2; }
 .board-goal-form label { flex-basis: auto; }
+/* Board header — Trello-style top bar */
+.board-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: var(--space-2) 0; margin-top: var(--space-3);
+}
+.board-header-icon { font-size: 1.2rem; }
+.board-header-title {
+  font-size: 1.1rem; font-weight: 700; margin: 0; letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.board-header-sep { flex: 1; }
+.board-header-btn {
+  font-size: 1rem; background: none; border: 1px solid var(--rule);
+  border-radius: 6px; padding: 0.2rem 0.5rem; cursor: pointer;
+  color: var(--fg-muted); transition: background 120ms ease;
+}
+.board-header-btn:hover { background: var(--surface-2); }
+.board-header-btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .board-filter {
-  margin-top: var(--space-3); border-radius: var(--radius);
+  margin-top: var(--space-2); border-radius: var(--radius);
   display: grid; grid-template-columns: auto minmax(10rem, 1fr) auto auto auto minmax(5rem, auto) auto minmax(5rem, auto) auto minmax(5rem, auto);
   align-items: center;
 }
@@ -2172,14 +2191,22 @@ h2#session-title {
 .card-cover-img { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 7px 7px 0 0; }
 .card-cover--img { height: auto; background: transparent; }
 
-/* Trello-style labels: pill chips on card face */
+/* Trello-style labels: pill chips on card face — compact bars that expand on hover */
 .card-labels { display: flex; flex-wrap: wrap; gap: 3px; }
 .card-label {
   font-size: 0; font-weight: 700; letter-spacing: 0.02em;
   padding: 0; width: 40px; height: 8px; border-radius: 4px;
   color: #fff; line-height: 1.4; cursor: pointer;
+  transition: height 120ms ease, width 80ms ease, padding 80ms ease, font-size 80ms ease;
+  overflow: hidden; white-space: nowrap;
 }
 .card-labels .card-label { cursor: default; }
+/* On card hover, expand labels to show text (Trello-style toggle) */
+.card:hover .card-label,
+.card:focus-within .card-label {
+  font-size: 11px; height: auto; width: auto; min-width: 40px;
+  padding: 0.1rem 0.5rem;
+}
 .card-label[data-color="green"] { background: #22a24a; }
 .card-label[data-color="yellow"] { background: #c9a50a; color: #111; }
 .card-label[data-color="orange"] { background: #e07a1a; }
