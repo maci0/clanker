@@ -289,8 +289,19 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
         defer gpa.free(target);
         const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(link_path);
-        std.Io.Dir.cwd().symLink(io, target, link_path, .{}) catch |err|
-            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
+        const is_dir = std.mem.endsWith(u8, name, "history");
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| {
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}; falling back to copy", .{ name, @errorName(err) });
+            // Symlinks can fail on filesystems that don't support them.
+            // Fall back to copying so the worktree still has cross-run
+            // memory even when linking is impossible.
+            if (std.mem.eql(u8, name, "state/improvements.jsonl")) {
+                const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
+                defer gpa.free(data);
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = link_path, .data = data }) catch |werr|
+                    log.log(.warn, "improve-self: copy fallback for {s} also failed: {s}", .{ name, @errorName(werr) });
+            }
+        };
     }
 
     // Sandbox-readable cross-run memory is COPIED instead: real files, so
