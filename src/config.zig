@@ -760,14 +760,14 @@ pub const Config = struct {
         if (obj.get("git_commit")) |k| {
             a.git_commit = switch (k) {
                 .bool => |b| b,
-                else => a.git_commit,
+                else => return error.FieldNotBool,
             };
             f.git_commit = true;
         }
         if (obj.get("git_remote_ops")) |k| {
             a.git_remote_ops = switch (k) {
                 .bool => |b| b,
-                else => a.git_remote_ops,
+                else => return error.FieldNotBool,
             };
             f.git_remote_ops = true;
         }
@@ -799,7 +799,7 @@ pub const Config = struct {
         if (obj.get("tool_catalog")) |k| {
             a.tool_catalog = switch (k) {
                 .bool => |b| b,
-                else => a.tool_catalog,
+                else => return error.FieldNotBool,
             };
             f.tool_catalog = true;
         }
