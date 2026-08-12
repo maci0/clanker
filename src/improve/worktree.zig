@@ -164,14 +164,6 @@ pub const Worktree = struct {
             else => false,
         };
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
-
-        // Re-copy untracked shared state files so subsequent iterations of
-        // the improve loop see fresh cross-run memory (learnings, autolearn
-        // usage, plugin config, token stats, reasoning traces). These are
-        // gitignored, so `git reset --hard` above does not touch them; they
-        // go stale the moment the main tree accumulates anything after the
-        // worktree was created.
-        refreshSharedStateCopies(gpa, io, self.path);
     }
 };
 
@@ -291,10 +283,6 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
-    // Same for improvements.jsonl: without this, a fresh checkout skips the
-    // symlink and the worktree starts with no dedup log, re-proposing changes
-    // that were already accepted or rejected in earlier runs.
-    ensureFileExists(gpa, io, "state/improvements.jsonl");
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
@@ -339,32 +327,6 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err|
             log.log(.warn, "improve-self: could not copy {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
-}
-
-/// Re-copies the untracked state files that `linkSharedState` originally
-/// populated. Called after a successful `resyncLocalBranch` so the next
-/// improve iteration works with current cross-run memory rather than the
-/// snapshot taken when the worktree was first created.
-fn refreshSharedStateCopies(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) void {
-    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
-        const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
-        defer gpa.free(data);
-        const dst = std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name }) catch continue;
-        defer gpa.free(dst);
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err|
-            log.log(.warn, "improve-self: could not refresh {s} in worktree after merge-back: {s}", .{ name, @errorName(err) });
-    }
-}
-
-/// Creates an empty file at `path` if it doesn't already exist, so a
-/// subsequent symlink has a target. A no-op when the file is already there.
-fn ensureFileExists(gpa: std.mem.Allocator, io: std.Io, path: []const u8) void {
-    std.Io.Dir.cwd().access(io, path, .{}) catch {
-        // File doesn't exist; create an empty one so the symlink target is valid.
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "" }) catch |err|
-            log.log(.warn, "improve-self: could not create {s}: {s}", .{ path, @errorName(err) });
-    };
-    _ = gpa;
 }
 
 fn run1(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) ![]u8 {
