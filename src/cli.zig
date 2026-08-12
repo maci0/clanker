@@ -2680,6 +2680,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugin_asset = std.mem.eql(u8, method, "GET") and
             std.mem.startsWith(u8, path, "/webui/plugins/");
+        const is_files = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/files");
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
         if (is_webui and !cfg.modules.webui) {
@@ -2772,6 +2773,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleWebuiPlugins(io, gpa, method, body, stream);
         } else if (is_webui_plugin_asset) {
             handleWebuiPluginAsset(io, gpa, target, acceptsGzip(headers_raw), stream);
+        } else if (is_files) {
+            handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
             handleLogs(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
@@ -4953,6 +4956,128 @@ fn clipTo(arena: std.mem.Allocator, s: []const u8, max: usize) []const u8 {
 /// default in system_prompt.zig); the list scans must agree with the read.
 const max_skill_bytes = 24 * 1024;
 
+/// A single entry in the folder browser. Paths travel relative to the process
+/// working directory so nothing needs the server's absolute location.
+const workspace_cap = 1 << 16;
+
+/// `GET /api/files?path=<rel>` — list one directory inside the current
+/// workspace. The workspace is the process working directory, which is all the
+/// server is allowed to see; a requested path is resolved component-wise and
+/// any attempt to escape above it (`..`) is clamped to the workspace root.
+fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var requested: []const u8 = "";
+    if (std.mem.indexOfScalar(u8, target, '?')) |q| {
+        var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
+        while (params.next()) |pair| {
+            if (std.mem.indexOfScalar(u8, pair, '=')) |eq| {
+                const k = pair[0..eq];
+                const v = pair[eq + 1 ..];
+                if (std.mem.eql(u8, k, "path")) requested = percentDecode(arena, v) catch v;
+            }
+        }
+    }
+    if (requested.len > workspace_cap) {
+        respond(stream, 413, "Content Too Large", "{\"ok\":false,\"error\":\"path too long\"}");
+        return;
+    }
+
+    // Normalize: skip empty and `.` components, and clamp `..` at the root so
+    // no amount of traversal reaches outside the workspace.
+    var comps: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, requested, '/');
+    while (it.next()) |c| {
+        if (c.len == 0 or std.mem.eql(u8, c, ".")) continue;
+        if (std.mem.eql(u8, c, "..")) {
+            if (comps.items.len > 0) _ = comps.pop();
+            continue;
+        }
+        comps.append(arena, arena.dupe(u8, c) catch c) catch return;
+    }
+    const path = std.mem.join(arena, "/", comps.items) catch "";
+
+    // Open the resolved directory; a path that cannot be opened (nonexistent
+    // after normalization) is clamped back to the workspace root.
+    var dir = std.Io.Dir.cwd().openDir(io, if (path.len > 0) path else ".", .{ .iterate = true }) catch
+        std.Io.Dir.cwd().openDir(io, ".", .{ .iterate = true }) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"open failed\"}");
+        return;
+    };
+    defer dir.close(io);
+
+    const root = workspaceName(io, arena);
+
+    // Parent breadcrumb: the directory one level up, or empty at the root.
+    var parent_buf: []const u8 = "";
+    if (path.len > 0) {
+        if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| {
+            parent_buf = if (slash == 0) "" else path[0..slash];
+        } else {
+            parent_buf = "";
+        }
+    }
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("path") catch return;
+    s.write(path) catch return;
+    s.objectField("root") catch return;
+    s.write(root) catch return;
+    s.objectField("parent") catch return;
+    s.write(parent_buf) catch return;
+    s.objectField("at_root") catch return;
+    s.write(path.len == 0) catch return;
+    s.objectField("entries") catch return;
+    s.beginArray() catch return;
+
+    const Ent = struct { name: []const u8, is_dir: bool, size: u64, mtime: i64 };
+    var list: std.ArrayList(Ent) = .empty;
+    var dit = dir.iterate();
+    while (dit.next(io) catch null) |entry| {
+        const st = dir.statFile(io, entry.name, .{}) catch continue;
+        const is_dir = entry.kind == .directory;
+        const mtime: i64 = std.math.cast(i64, @divTrunc(st.mtime.nanoseconds, @as(i96, std.time.ns_per_s))) orelse 0;
+        list.append(arena, .{ .name = arena.dupe(u8, entry.name) catch continue, .is_dir = is_dir, .size = st.size, .mtime = mtime }) catch return;
+    }
+    std.mem.sort(Ent, list.items, {}, struct {
+        fn lt(_: void, a: Ent, b: Ent) bool {
+            if (a.is_dir != b.is_dir) return a.is_dir;
+            return std.ascii.orderIgnoreCase(a.name, b.name) == .lt;
+        }
+    }.lt);
+
+    for (list.items) |e| {
+        s.beginObject() catch return;
+        s.objectField("name") catch return;
+        s.write(e.name) catch return;
+        s.objectField("is_dir") catch return;
+        s.write(e.is_dir) catch return;
+        s.objectField("size") catch return;
+        s.print("{d}", .{e.size}) catch return;
+        s.objectField("mtime") catch return;
+        s.print("{d}", .{e.mtime}) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+/// Basename of the absolute working directory, used as the workspace label.
+fn workspaceName(io: std.Io, arena: std.mem.Allocator) []const u8 {
+    const abs = std.Io.Dir.cwd().realPathFileAlloc(io, ".", arena) catch return "";
+    const trimmed = std.mem.trimEnd(u8, abs, "/");
+    if (trimmed.len == 0) return "";
+    if (std.mem.lastIndexOfScalar(u8, trimmed, '/')) |slash| return trimmed[slash + 1 ..];
+    return trimmed;
+}
+
 fn handleSkills(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -5413,20 +5538,30 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
         s.beginObject() catch return;
-        s.objectField("ok") catch return; s.write(true) catch return;
-        s.objectField("collections") catch return; s.beginArray() catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("collections") catch return;
+        s.beginArray() catch return;
         for (list) |m| {
             s.beginObject() catch return;
-            s.objectField("id") catch return; s.write(m.id) catch return;
-            s.objectField("title") catch return; s.write(m.title) catch return;
-            s.objectField("description") catch return; s.write(m.description) catch return;
-            s.objectField("doc_count") catch return; s.write(m.doc_count) catch return;
-            s.objectField("bytes") catch return; s.write(m.bytes) catch return;
-            s.objectField("created") catch return; s.write(m.created) catch return;
-            s.objectField("updated") catch return; s.write(m.updated) catch return;
+            s.objectField("id") catch return;
+            s.write(m.id) catch return;
+            s.objectField("title") catch return;
+            s.write(m.title) catch return;
+            s.objectField("description") catch return;
+            s.write(m.description) catch return;
+            s.objectField("doc_count") catch return;
+            s.write(m.doc_count) catch return;
+            s.objectField("bytes") catch return;
+            s.write(m.bytes) catch return;
+            s.objectField("created") catch return;
+            s.write(m.created) catch return;
+            s.objectField("updated") catch return;
+            s.write(m.updated) catch return;
             s.endObject() catch return;
         }
-        s.endArray() catch return; s.endObject() catch return;
+        s.endArray() catch return;
+        s.endObject() catch return;
         respondCompressible(arena, stream, accepts_gzip, out.written());
         return;
     }
@@ -5436,8 +5571,14 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
             return;
         };
         const title = std.mem.trim(u8, req.title, " \t\r\n");
-        if (title.len == 0 or title.len > 200) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title required (1-200)\"}"); return; }
-        if (req.description.len > 1000) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"description too long\"}"); return; }
+        if (title.len == 0 or title.len > 200) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"title required (1-200)\"}");
+            return;
+        }
+        if (req.description.len > 1000) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"description too long\"}");
+            return;
+        }
         const col = kb.createCollection(io, arena, std.Io.Dir.cwd(), title, req.description) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"create failed\"}");
             return;
@@ -5445,21 +5586,30 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
         var out: std.Io.Writer.Allocating = .init(arena);
         var s2 = std.json.Stringify{ .writer = &out.writer, .options = .{} };
         s2.beginObject() catch return;
-        s2.objectField("ok") catch return; s2.write(true) catch return;
-        s2.objectField("id") catch return; s2.write(col.id) catch return;
-        s2.objectField("title") catch return; s2.write(col.title) catch return;
+        s2.objectField("ok") catch return;
+        s2.write(true) catch return;
+        s2.objectField("id") catch return;
+        s2.write(col.id) catch return;
+        s2.objectField("title") catch return;
+        s2.write(col.title) catch return;
         s2.endObject() catch return;
         respond(stream, 200, "OK", out.written());
         return;
     }
     if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
         const q = extractQueryParam(target, "q") orelse "";
-        if (q.len == 0) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"q required\"}"); return; }
+        if (q.len == 0) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"q required\"}");
+            return;
+        }
         const cols_param = extractQueryParam(target, "collections") orelse "";
         var col_ids2: std.ArrayList([]const u8) = .empty;
         if (cols_param.len > 0) {
             var it2 = std.mem.splitScalar(u8, cols_param, ',');
-            while (it2.next()) |cid| { const t2 = std.mem.trim(u8, cid, " \t"); if (t2.len > 0) col_ids2.append(arena, t2) catch continue; }
+            while (it2.next()) |cid| {
+                const t2 = std.mem.trim(u8, cid, " \t");
+                if (t2.len > 0) col_ids2.append(arena, t2) catch continue;
+            }
         }
         const hits2 = kb.search(io, arena, std.Io.Dir.cwd(), q, col_ids2.items, 20) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"search failed\"}");
@@ -5468,27 +5618,41 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
         var out2: std.Io.Writer.Allocating = .init(arena);
         var s2b = std.json.Stringify{ .writer = &out2.writer, .options = .{ .emit_null_optional_fields = false } };
         s2b.beginObject() catch return;
-        s2b.objectField("ok") catch return; s2b.write(true) catch return;
-        s2b.objectField("hits") catch return; s2b.beginArray() catch return;
+        s2b.objectField("ok") catch return;
+        s2b.write(true) catch return;
+        s2b.objectField("hits") catch return;
+        s2b.beginArray() catch return;
         for (hits2) |h| {
             s2b.beginObject() catch return;
-            s2b.objectField("collection_id") catch return; s2b.write(h.collection_id) catch return;
-            s2b.objectField("collection_title") catch return; s2b.write(h.collection_title) catch return;
-            s2b.objectField("doc_id") catch return; s2b.write(h.doc_id) catch return;
-            s2b.objectField("doc_name") catch return; s2b.write(h.doc_name) catch return;
-            s2b.objectField("snippet") catch return; s2b.write(h.snippet) catch return;
+            s2b.objectField("collection_id") catch return;
+            s2b.write(h.collection_id) catch return;
+            s2b.objectField("collection_title") catch return;
+            s2b.write(h.collection_title) catch return;
+            s2b.objectField("doc_id") catch return;
+            s2b.write(h.doc_id) catch return;
+            s2b.objectField("doc_name") catch return;
+            s2b.write(h.doc_name) catch return;
+            s2b.objectField("snippet") catch return;
+            s2b.write(h.snippet) catch return;
             s2b.endObject() catch return;
         }
-        s2b.endArray() catch return; s2b.endObject() catch return;
+        s2b.endArray() catch return;
+        s2b.endObject() catch return;
         respondCompressible(arena, stream, accepts_gzip, out2.written());
         return;
     }
-    if (rest.len == 0 or rest[0] != '/') { respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}"); return; }
+    if (rest.len == 0 or rest[0] != '/') {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
+        return;
+    }
     const after_slash = rest[1..];
     const slash_pos = std.mem.indexOfScalar(u8, after_slash, '/');
     const col_id = if (slash_pos) |pp| after_slash[0..pp] else after_slash;
     const sub = if (slash_pos) |pp| after_slash[pp..] else "";
-    if (!kb.validCollectionId(col_id)) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}"); return; }
+    if (!kb.validCollectionId(col_id)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad collection id\"}");
+        return;
+    }
     if (sub.len == 0 and std.mem.eql(u8, method, "GET")) {
         const col = kb.loadCollection(io, arena, std.Io.Dir.cwd(), col_id) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
@@ -5497,21 +5661,32 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
         s.beginObject() catch return;
-        s.objectField("ok") catch return; s.write(true) catch return;
-        s.objectField("id") catch return; s.write(col.id) catch return;
-        s.objectField("title") catch return; s.write(col.title) catch return;
-        s.objectField("description") catch return; s.write(col.description) catch return;
-        s.objectField("docs") catch return; s.beginArray() catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("id") catch return;
+        s.write(col.id) catch return;
+        s.objectField("title") catch return;
+        s.write(col.title) catch return;
+        s.objectField("description") catch return;
+        s.write(col.description) catch return;
+        s.objectField("docs") catch return;
+        s.beginArray() catch return;
         for (col.docs) |d| {
             s.beginObject() catch return;
-            s.objectField("id") catch return; s.write(d.id) catch return;
-            s.objectField("name") catch return; s.write(d.name) catch return;
-            s.objectField("bytes") catch return; s.write(d.bytes) catch return;
-            s.objectField("created") catch return; s.write(d.created) catch return;
-            s.objectField("content") catch return; s.write(d.content) catch return;
+            s.objectField("id") catch return;
+            s.write(d.id) catch return;
+            s.objectField("name") catch return;
+            s.write(d.name) catch return;
+            s.objectField("bytes") catch return;
+            s.write(d.bytes) catch return;
+            s.objectField("created") catch return;
+            s.write(d.created) catch return;
+            s.objectField("content") catch return;
+            s.write(d.content) catch return;
             s.endObject() catch return;
         }
-        s.endArray() catch return; s.endObject() catch return;
+        s.endArray() catch return;
+        s.endObject() catch return;
         respondCompressible(arena, stream, accepts_gzip, out.written());
         return;
     }
@@ -5528,8 +5703,14 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
             return;
         };
-        if (req.name.len == 0 or req.name.len > 200) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"name required (1-200)\"}"); return; }
-        if (req.content.len == 0 or req.content.len > 500_000) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"content required, max 500KB\"}"); return; }
+        if (req.name.len == 0 or req.name.len > 200) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"name required (1-200)\"}");
+            return;
+        }
+        if (req.content.len == 0 or req.content.len > 500_000) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"content required, max 500KB\"}");
+            return;
+        }
         const doc = kb.addDoc(io, gpa, arena, std.Io.Dir.cwd(), col_id, req.name, req.content) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such collection\"}");
             return;
@@ -5537,15 +5718,20 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, method: []const u8, targe
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
         s.beginObject() catch return;
-        s.objectField("ok") catch return; s.write(true) catch return;
-        s.objectField("id") catch return; s.write(doc.id) catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("id") catch return;
+        s.write(doc.id) catch return;
         s.endObject() catch return;
         respond(stream, 200, "OK", out.written());
         return;
     }
     if (std.mem.startsWith(u8, sub, "/docs/") and std.mem.eql(u8, method, "DELETE")) {
         const doc_id = sub["/docs/".len..];
-        if (doc_id.len == 0 or doc_id.len > 64) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad doc id\"}"); return; }
+        if (doc_id.len == 0 or doc_id.len > 64) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad doc id\"}");
+            return;
+        }
         kb.deleteDoc(io, gpa, arena, std.Io.Dir.cwd(), col_id, doc_id) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
             return;
@@ -5580,18 +5766,26 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: [
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
         s.beginObject() catch return;
-        s.objectField("ok") catch return; s.write(true) catch return;
-        s.objectField("prompts") catch return; s.beginArray() catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("prompts") catch return;
+        s.beginArray() catch return;
         for (all) |pp| {
             s.beginObject() catch return;
-            s.objectField("id") catch return; s.write(pp.id) catch return;
-            s.objectField("title") catch return; s.write(pp.title) catch return;
-            s.objectField("content") catch return; s.write(pp.content) catch return;
-            s.objectField("created") catch return; s.write(pp.created) catch return;
-            s.objectField("updated") catch return; s.write(pp.updated) catch return;
+            s.objectField("id") catch return;
+            s.write(pp.id) catch return;
+            s.objectField("title") catch return;
+            s.write(pp.title) catch return;
+            s.objectField("content") catch return;
+            s.write(pp.content) catch return;
+            s.objectField("created") catch return;
+            s.write(pp.created) catch return;
+            s.objectField("updated") catch return;
+            s.write(pp.updated) catch return;
             s.endObject() catch return;
         }
-        s.endArray() catch return; s.endObject() catch return;
+        s.endArray() catch return;
+        s.endObject() catch return;
         respond(stream, 200, "OK", out.written());
         return;
     }
@@ -5601,7 +5795,10 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: [
             return;
         };
         if (req.id) |id| {
-            if (!ps.validPromptId(id)) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}"); return; }
+            if (!ps.validPromptId(id)) {
+                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}");
+                return;
+            }
             const t = if (req.title.len > 0) req.title else null;
             const c = if (req.content.len > 0) req.content else null;
             const pp = ps.update(io, arena, std.Io.Dir.cwd(), id, t, c) catch {
@@ -5611,8 +5808,10 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: [
             var out: std.Io.Writer.Allocating = .init(arena);
             var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
             s.beginObject() catch return;
-            s.objectField("ok") catch return; s.write(true) catch return;
-            s.objectField("id") catch return; s.write(pp.id) catch return;
+            s.objectField("ok") catch return;
+            s.write(true) catch return;
+            s.objectField("id") catch return;
+            s.write(pp.id) catch return;
             s.endObject() catch return;
             respond(stream, 200, "OK", out.written());
             return;
@@ -5628,8 +5827,10 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: [
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
         s.beginObject() catch return;
-        s.objectField("ok") catch return; s.write(true) catch return;
-        s.objectField("id") catch return; s.write(pp.id) catch return;
+        s.objectField("ok") catch return;
+        s.write(true) catch return;
+        s.objectField("id") catch return;
+        s.write(pp.id) catch return;
         s.endObject() catch return;
         respond(stream, 200, "OK", out.written());
         return;
@@ -5639,7 +5840,10 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, method: []const u8, body: [
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
             return;
         };
-        if (!ps.validPromptId(req.id)) { respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}"); return; }
+        if (!ps.validPromptId(req.id)) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad id\"}");
+            return;
+        }
         ps.remove(io, arena, std.Io.Dir.cwd(), req.id) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such prompt\"}");
             return;

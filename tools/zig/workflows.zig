@@ -19,6 +19,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (parsed != .object) return lib.fail(out, "expected a JSON object");
     const name = lib.optStr(parsed, "name");
     const args = lib.optStr(parsed, "args") orelse lib.optStr(parsed, "arguments") orelse "";
+    const wants_chain = lib.optStr(parsed, "chain") != null;
 
     // Read workflows_dir from harness config so the tool tracks config.toml, not a stale descriptor value.
     // This mirrors how config_view resolves paths — from the loaded config.
@@ -86,6 +87,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     }
     const wf = found orelse return lib.fail(out, "no workflow named with that id");
+    // Unified surface: a workflow can also carry a chain pipeline (frontmatter `chain:`).
+    // When the caller asks with {"name":"x","chain":""} or simply inspects, surface it.
+    if (wants_chain) {
+        const c = extractChainFrontmatter(lib.alloc, wf.body) catch null;
+        if (c) |cj| {
+            const chain_field = lib.optStr(parsed, "chain") orelse "";
+            if (chain_field.len == 0) return writeOneWithChain(out, wf, cj) else return writeOneWithChain(out, wf, cj);
+        }
+    }
     if (args.len > 0) {
         const expanded = instantiate(lib.alloc, wf.body, args) catch return lib.fail(out, "could not expand workflow");
         return writePrompt(out, wf.name, expanded);
@@ -237,6 +247,55 @@ fn writeOne(out: *lib.Out, wf: FileWorkflow) !void {
     try s.endObject();
     try s.endObject();
     lib.commit(out, &w);
+}
+
+fn writeOneWithChain(out: *lib.Out, wf: FileWorkflow, chain_json: []const u8) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("workflow");
+    try s.beginObject();
+    try s.objectField("name");
+    try s.write(wf.name);
+    try s.objectField("description");
+    try s.write(wf.description);
+    try s.objectField("arg_hint");
+    try s.write(wf.arg_hint);
+    try s.objectField("rel_path");
+    try s.write(wf.rel_path);
+    try s.objectField("body");
+    try s.write(wf.body);
+    try s.objectField("chain");
+    try s.write(chain_json);
+    try s.endObject();
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+fn extractChainFrontmatter(alloc: std.mem.Allocator, body: []const u8) !?[]const u8 {
+    // Very small frontmatter chain extraction: look for `chain:` line in leading `---` block.
+    if (!std.mem.startsWith(u8, body, "---")) return null;
+    const first_nl = std.mem.indexOfScalar(u8, body, '\n') orelse return null;
+    const first_line = std.mem.trim(u8, body[0..first_nl], " \t\r");
+    if (!std.mem.eql(u8, first_line, "---")) return null;
+    const rel = std.mem.indexOf(u8, body[first_nl + 1 ..], "\n---") orelse return null;
+    const fm = body[first_nl + 1 .. first_nl + 1 + rel];
+    var lines = std.mem.splitScalar(u8, fm, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        const key = std.mem.trim(u8, trimmed[0..colon], " \t");
+        if (!std.ascii.eqlIgnoreCase(key, "chain")) continue;
+        var val = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
+        if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
+            val = val[1 .. val.len - 1];
+        }
+        if (val.len > 0) return try alloc.dupe(u8, val);
+    }
+    return null;
 }
 
 fn writePrompt(out: *lib.Out, name: []const u8, prompt: []const u8) !void {

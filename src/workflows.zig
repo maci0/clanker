@@ -25,6 +25,12 @@ pub const Workflow = struct {
     body: []const u8,
     /// Relative path under workflows_dir, for diagnostics.
     rel_path: []const u8,
+    /// Optional chain pipeline embedded in frontmatter: JSON array of steps
+    /// (same schema as `chain` tool's `steps`). Lets a workflow double as a
+    /// prompt AND a tool pipeline — `clanker workflow run plan "..."` expands
+    /// the prompt while `chain: {chain:"plan"}` or inline steps can be invoked
+    /// from the workflow body.
+    chain_json: ?[]const u8 = null,
 };
 
 const max_file_bytes: usize = 64 * 1024;
@@ -145,15 +151,18 @@ pub fn instantiate(arena: std.mem.Allocator, body: []const u8, args: []const u8)
 }
 
 /// Short catalog line for the system prompt / `workflow list` table.
+/// Chains (tool pipelines) are flagged with `[chain]` so the agent can
+/// discover them as executable pipelines without guessing.
 pub fn catalogText(arena: std.mem.Allocator, workflows: []const Workflow) ![]const u8 {
     if (workflows.len == 0) return "";
     var w: std.Io.Writer.Allocating = .init(arena);
     for (workflows) |wf| {
         const hint = if (wf.arg_hint.len > 0) wf.arg_hint else "";
+        const chain_tag: []const u8 = if (wf.chain_json != null) " [chain]" else "";
         if (hint.len > 0) {
-            try w.writer.print("- {s} {s}: {s}\n", .{ wf.name, hint, wf.description });
+            try w.writer.print("- {s} {s}: {s}{s}\n", .{ wf.name, hint, wf.description, chain_tag });
         } else {
-            try w.writer.print("- {s}: {s}\n", .{ wf.name, wf.description });
+            try w.writer.print("- {s}: {s}{s}\n", .{ wf.name, wf.description, chain_tag });
         }
     }
     return w.written();
@@ -165,6 +174,7 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
     var name = try arena.dupe(u8, stem);
     var description: []const u8 = "";
     var arg_hint: []const u8 = "";
+    var chain_json: ?[]const u8 = null;
     var body: []const u8 = raw;
 
     // Frontmatter: leading `---\n` ... `\n---\n` (or `\n---` at EOF).
@@ -198,6 +208,8 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
                         description = try arena.dupe(u8, val);
                     } else if ((std.ascii.eqlIgnoreCase(key, "argument-hint") or std.ascii.eqlIgnoreCase(key, "arg_hint") or std.ascii.eqlIgnoreCase(key, "args_hint")) and val.len > 0) {
                         arg_hint = try arena.dupe(u8, val);
+                    } else if (std.ascii.eqlIgnoreCase(key, "chain") and val.len > 0) {
+                        chain_json = try arena.dupe(u8, val);
                     }
                 }
             }
@@ -225,6 +237,7 @@ fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []const u
         .arg_hint = arg_hint,
         .body = try arena.dupe(u8, body),
         .rel_path = try arena.dupe(u8, rel_path),
+        .chain_json = if (chain_json) |c| try arena.dupe(u8, c) else null,
     };
 }
 

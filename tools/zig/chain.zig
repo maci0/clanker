@@ -36,8 +36,25 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
-    const cfg = std.json.parseFromSliceLeaky(Config, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Config{};
-    const chains_dir = if (cfg.chains_dir.len > 0) cfg.chains_dir else "chains";
+    const chains_cfg = std.json.parseFromSliceLeaky(Config, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Config{};
+    // chains_dir is also available via harness config (agent.chains_dir) so
+    // `chain` tracks `config.toml` like `workflows` does — not a stale descriptor copy.
+    var chains_dir: []const u8 = chains_cfg.chains_dir;
+    {
+        const cfg_raw = lib.harnessConfig();
+        if (cfg_raw.len > 4) {
+            const cfg_val = std.json.parseFromSliceLeaky(std.json.Value, alloc, cfg_raw, .{ .ignore_unknown_fields = true }) catch null;
+            if (cfg_val) |c| if (c == .object) {
+                if (c.object.get("agent")) |ag| if (ag == .object) {
+                    if (ag.object.get("chains_dir")) |cd| {
+                        if (cd == .string) chains_dir = cd.string;
+                    }
+                };
+            };
+        }
+    }
+    if (chains_dir.len == 0) chains_dir = "chains";
+    const cfg = chains_cfg;
     const parsed = std.json.parseFromSliceLeaky(Input, alloc, input, .{ .ignore_unknown_fields = true }) catch {
         return lib.fail(out, "expected {steps:[...], chain:\"name\", vars:{}, list:bool, show:\"name\"}");
     };

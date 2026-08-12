@@ -122,6 +122,7 @@ skills_dir = "skills"
 system_prompt_file = "skills/SYSTEM.md"
 learnings_file = "state/learnings.md"
 workflows_dir = "workflows"
+chains_dir = "chains"
 sandbox_root = "."
 seed = 0
 compact_threshold_bytes = 0

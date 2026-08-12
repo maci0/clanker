@@ -3171,8 +3171,11 @@ function showView(name, focusPanel) {
     name = "runs";
   }
   var pendingBoardCard = null;
+  var pendingKnowledgeId = null;
   if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "board"; }
+  if (name.indexOf("knowledge/") === 0) { pendingKnowledgeId = decodeURIComponent(name.slice(10)); name = "knowledge"; }
   if (pendingBoardCard) window._pendingBoardCard = pendingBoardCard;
+  if (pendingKnowledgeId) window._pendingKnowledgeId = pendingKnowledgeId;
   if (VIEWS.indexOf(name) === -1) name = "chat";
   // The rooms poll has no idea the view switched away from under it — only
   // document.hidden stopped it before, so leaving Rooms for Chat or Board
@@ -3226,6 +3229,38 @@ function showView(name, focusPanel) {
     window._pendingRunNode = deepNode || null;
     if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
     else pendingRunId = deepRun;
+  }
+  if (pendingKnowledgeId) {
+    setTimeout(function(){
+      try {
+        kbLoad().then(function(){
+          try {
+            // Reuse the same path as Knowledge Open button: populate detail via API
+            fetch("/api/knowledge/"+encodeURIComponent(pendingKnowledgeId)).then(function(r){ return r.json(); }).then(function(d){
+              var detail = document.getElementById("knowledge-detail");
+              if (!detail) return;
+              detail.hidden = false;
+              detail.textContent = "";
+              var head = document.createElement("div"); head.className = "run-detail-head";
+              var tt = document.createElement("span"); tt.className = "run-detail-title"; tt.textContent = d.title || pendingKnowledgeId; head.appendChild(tt);
+              var close = document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close";
+              close.addEventListener("click", function(){ detail.hidden = true; }); head.appendChild(close);
+              detail.appendChild(head);
+              if (d.description) { var desc=document.createElement("p"); desc.className="meta"; desc.textContent=d.description; detail.appendChild(desc); }
+              var docs = d.docs || [];
+              if (!docs.length) { var empty=document.createElement("p"); empty.className="meta"; empty.textContent="No documents yet."; detail.appendChild(empty); }
+              else docs.forEach(function(doc){
+                var row=document.createElement("div"); row.className="knowledge-doc";
+                var dn=document.createElement("span"); dn.textContent=doc.name+" ("+doc.bytes+" bytes)"; row.appendChild(dn);
+                var pre=document.createElement("pre"); pre.className="knowledge-preview"; pre.textContent=(doc.content||"").slice(0,800); row.appendChild(pre);
+                detail.appendChild(row);
+              });
+              try { detail.scrollIntoView({behavior:"smooth", block:"nearest"}); } catch(_){}
+            }).catch(function(){});
+          } catch(_){}
+        }).catch(function(){});
+      } catch(_){}
+    }, 450);
   }
   if (pendingBoardCard) {
     // need board loaded first — defer until after viewLoaders[board] would have fired, then poll
@@ -3611,6 +3646,11 @@ el.task.addEventListener("keydown", function (e) {
   }
   if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
     e.preventDefault();
+    if(kbMentionActive){
+      var kbItem = el.promptList.querySelector(".palette-item");
+      if(kbItem) kbItem.dispatchEvent(new MouseEvent("mousedown", {bubbles:true, cancelable:true}));
+      return;
+    }
     if(isSlash){
       var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[promptIndex];
       if(m) useSlash(m, q2.rest);
@@ -3672,6 +3712,23 @@ el.sessionCompact.addEventListener("click", function () {
 });
 
 function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, currentSessionMeta, sessionId); }
+(function(){
+  var btn = document.getElementById("session-share");
+  if (!btn) return;
+  btn.addEventListener("click", function(){
+    var id = sessionId || "";
+    var url = window.location.origin + window.location.pathname + "#chat";
+    // Prefer session deep-link when available
+    try {
+      if (id) url = window.location.origin + window.location.pathname + "#chat?session=" + encodeURIComponent(id);
+      // Also include session title hint for standalone share
+      navigator.clipboard.writeText(url).then(function(){
+        btn.textContent = "Copied";
+        setTimeout(function(){ btn.textContent = "Share"; }, 1200);
+      }, function(){ prompt("Share link", url); });
+    } catch(_){ try { prompt("Share link", url); } catch(__){} }
+  });
+})();
 var downloadText = compDownloadText;
 
 el.sessionExport.addEventListener("click", function () {
@@ -3976,7 +4033,7 @@ function renderKbMentionList() {
       var label = document.createElement("span"); label.className="palette-label"; label.textContent=c.doc_count + " docs"; li.appendChild(label);
       li.addEventListener("mousedown", function(e){
         e.preventDefault();
-        if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) kbSelected.push(c.id);
+        if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) { kbSelected.push(c.id); try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(kbSelected)); } catch(_){} } 
         var before = el.task.value.slice(0, mq.at);
         var after = el.task.value.slice(mq.at + 1 + mq.q.length);
         el.task.value = before + "#" + c.title + " " + after;
@@ -3993,15 +4050,26 @@ function renderKbMentionList() {
     el.task.setAttribute("aria-activedescendant","prompt-item-"+kbMentionIndex);
   }).catch(function(){});
 }
-var _origTaskHandler = taskInputHandler;
-function taskInputHandler2(){
+// Integrated input handler so #knowledge and / prompts + Delete share one promptList cleanly
+function integratedTaskInputHandler(){
   var mq = kbMentionQuery();
-  if (mq) { renderKbMentionList(); return; }
+  if (mq && mq.q.length >= 0) {
+    // Only trigger knowledge suggest when the # is the trailing token and not mid-slash
+    var beforeHash = el.task.value.slice(0, mq.at);
+    var afterHash = el.task.value.slice(mq.at + 1);
+    // If the input is exactly a slash command prefix, prefer slash; otherwise allow #
+    var slashQ = (function(){ try{ return slashQuery(); }catch(_){ return null; } })();
+    if (!slashQ) {
+      renderKbMentionList();
+      // slight debounce-friendly: grow still handled by separate autoGrow listener
+      return;
+    }
+  }
   kbMentionActive = false;
-  _origTaskHandler();
+  taskInputHandler();
 }
 el.task.removeEventListener("input", taskInputHandler);
-el.task.addEventListener("input", taskInputHandler2);
+el.task.addEventListener("input", integratedTaskInputHandler);
 
 renderSessionChip();
 renderSessionOptions([]);

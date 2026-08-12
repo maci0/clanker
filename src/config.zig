@@ -149,6 +149,10 @@ pub const Agent = struct {
     sandbox_root: []const u8 = ".",
     /// Directory holding reusable prompt templates ("workflows", Cursor-style).
     workflows_dir: []const u8 = "workflows",
+    /// Directory for shared chain pipelines (tool-level, not prompt-level).
+    /// When equal to workflows_dir, chains are stored as workflows/*.json
+    /// alongside the prompt templates for a single place to manage them.
+    chains_dir: []const u8 = "chains",
     /// Commit promoted improvements with git (git_commit_after_improve).
     git_commit: bool = true,
     /// Whether the `git` tool may run the PR-lifecycle verbs it otherwise
@@ -208,6 +212,7 @@ pub const AgentFields = struct {
     state_dir: bool = false,
     sandbox_root: bool = false,
     workflows_dir: bool = false,
+    chains_dir: bool = false,
     git_commit: bool = false,
     git_remote_ops: bool = false,
     exec_pattern_allow: bool = false,
@@ -808,7 +813,7 @@ pub const Config = struct {
             "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
             "hot_tools",           "tools_dir",               "skills_dir",
             "system_prompt_file",  "learnings_file",          "global_instructions_file",
-            "state_dir",           "sandbox_root",            "workflows_dir",
+            "state_dir",           "sandbox_root",            "workflows_dir",           "chains_dir",
             "git_commit",          "git_remote_ops",          "exec_pattern_allow",
             "seed",                "ask_timeout_seconds",     "confirm_writes",
         }, "agent");
@@ -863,6 +868,10 @@ pub const Config = struct {
         if (obj.get("workflows_dir")) |k| {
             a.workflows_dir = try jsonStr(k, "workflows_dir");
             f.workflows_dir = true;
+        }
+        if (obj.get("chains_dir")) |k| {
+            a.chains_dir = try jsonStr(k, "chains_dir");
+            f.chains_dir = true;
         }
         if (obj.get("git_commit")) |k| {
             a.git_commit = switch (k) {
@@ -947,6 +956,7 @@ pub const Config = struct {
         if (fields.state_dir) dst.state_dir = src.state_dir;
         if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
         if (fields.workflows_dir) dst.workflows_dir = src.workflows_dir;
+        if (fields.chains_dir) dst.chains_dir = src.chains_dir;
         if (fields.git_commit) dst.git_commit = src.git_commit;
         if (fields.git_remote_ops) dst.git_remote_ops = src.git_remote_ops;
         if (fields.exec_pattern_allow) dst.exec_pattern_allow = src.exec_pattern_allow;

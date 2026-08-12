@@ -1,5 +1,32 @@
 // Knowledge view — OpenWebUI parity single-user. Collections of documents.
-export var selectedKnowledge = [];
+export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
+function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
+function ensureBadge(){
+  var existing = document.getElementById("knowledge-badge");
+  if (existing) return existing;
+  var composer = document.getElementById("task-form");
+  var badge = document.createElement("div");
+  badge.id = "knowledge-badge";
+  badge.className = "meta";
+  badge.style.cssText = "display:none;margin:0.35rem 0 0;padding:0.35rem 0.55rem;border:1px dashed var(--rule);border-radius:8px;background:var(--surface-2)";
+  if (composer) composer.insertBefore(badge, composer.querySelector(".toolbar") || null);
+  return badge;
+}
+function refreshBadge(){
+  var badge = ensureBadge();
+  if (!badge) return;
+  if (!selectedKnowledge.length){ badge.style.display="none"; badge.textContent=""; return; }
+  badge.style.display="block";
+  // Reuse knowledge hint text when available
+  var hint = document.getElementById("knowledge-hint");
+  var msg = hint ? hint.textContent : (selectedKnowledge.length + " collection(s) will be included in the next prompt.");
+  badge.textContent = msg + " ";
+  var clear = document.createElement("button");
+  clear.type="button"; clear.className="secondary"; clear.textContent="Clear";
+  clear.style.cssText="margin-left:0.4rem;padding:0.15rem 0.45rem;min-height:22px;font-size:11px";
+  clear.addEventListener("click", function(){ selectedKnowledge.length=0; persistKnowledge(); updateHint(); refreshBadge(); });
+  badge.appendChild(clear);
+}
 function updateHint(){
   var hint=document.getElementById("knowledge-hint");
   if(!hint) return;
@@ -24,7 +51,7 @@ export function loadKnowledge(){
         cb.addEventListener("change",function(){
           if(cb.checked){ if(selectedKnowledge.indexOf(c.id)===-1) selectedKnowledge.push(c.id); }
           else { var at=selectedKnowledge.indexOf(c.id); if(at!==-1) selectedKnowledge.splice(at,1); }
-          updateHint();
+          persistKnowledge(); updateHint(); refreshBadge();
         });
         title.appendChild(cb);
         var name=document.createElement("span"); name.textContent=" "+c.title+"  ·  "+c.doc_count+" docs  ·  "+(c.bytes||0)+" bytes";
@@ -38,7 +65,7 @@ export function loadKnowledge(){
       });
     }
     if(status) status.textContent=cols.length+(cols.length===1?" collection.":" collections.");
-    updateHint();
+    updateHint(); refreshBadge();
   }).catch(function(err){ if(status) status.textContent="Could not load knowledge: "+err.message; });
 }
 function openCollection(id){
@@ -47,6 +74,11 @@ function openCollection(id){
     detail.hidden=false; detail.textContent="";
     var head=document.createElement("div"); head.className="run-detail-head";
     var t=document.createElement("span"); t.className="run-detail-title"; t.textContent=data.title||id; head.appendChild(t);
+    var share=document.createElement("button"); share.type="button"; share.className="secondary"; share.textContent="Copy link"; share.style.marginLeft="0.5rem";
+    share.addEventListener("click", function(){
+      var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);
+      try { navigator.clipboard.writeText(url); share.textContent="Copied"; setTimeout(function(){ share.textContent="Copy link"; }, 1200); } catch(_){ prompt("Share link", url); }
+    }); head.appendChild(share);
     var close=document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close";
     close.addEventListener("click",function(){ detail.hidden=true; }); head.appendChild(close); detail.appendChild(head);
     if(data.description){ var desc=document.createElement("p"); desc.className="meta"; desc.textContent=data.description; detail.appendChild(desc); }
@@ -94,7 +126,7 @@ function deleteCollection(id,title){
   if(!confirm("Delete collection \""+title+"\" and all its documents?")) return;
   fetch("/api/knowledge/"+encodeURIComponent(id),{method:"DELETE"})
     .then(function(r){return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; });})
-    .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); var detail=document.getElementById("knowledge-detail"); if(detail) detail.hidden=true; loadKnowledge(); })
+    .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); var detail=document.getElementById("knowledge-detail"); if(detail) detail.hidden=true; loadKnowledge(); updateHint(); refreshBadge(); })
     .catch(function(err){ alert(err.message); });
 }
 export function bindKnowledge(){

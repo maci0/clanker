@@ -1,0 +1,6 @@
+{
+  "name": "files",
+  "title": "Files",
+  "description": "Browse the current workspace from the server's working directory: enter folders, and read file sizes and modification times.",
+  "group": "Work"
+}

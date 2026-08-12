@@ -1080,7 +1080,14 @@ pub const Engine = struct {
             .exited => |c| c == 0,
             else => false,
         };
-        const detail: []const u8 = if (ok) "" else if (result.stdout.len > 0) result.stdout else result.stderr;
+        // stdout alone is just the final "<name>: <score> FAIL" summary line
+        // clanker eval prints; the actual reason (which tool ran, what it did,
+        // why the score wasn't 1.0) is in the log lines on stderr. Detail with
+        // only the summary told the model nothing to act on, so the same
+        // proposal (e.g. a change that broke the `gate` tool's own `zig`
+        // invocation) came back reworded every time it was rejected instead
+        // of getting fixed or dropped for an understood reason.
+        const detail: []const u8 = if (ok) "" else try std.fmt.allocPrint(self.arena, "{s}\n{s}", .{ result.stdout, result.stderr });
         return .{ .ok = ok, .label = "capability evals", .detail = detail, .stdout = result.stdout, .stderr = result.stderr };
     }
 
@@ -1104,8 +1111,11 @@ pub const Engine = struct {
             };
             if (!case_ok) {
                 all_ok = false;
-                const out = if (result.stdout.len > 0) result.stdout else result.stderr;
-                detail_buf.appendSlice(self.ctx.gpa, out) catch {};
+                // Same reasoning as capabilityGate: stdout alone is just the
+                // score line, stderr carries what actually happened.
+                detail_buf.appendSlice(self.ctx.gpa, result.stdout) catch {};
+                detail_buf.append(self.ctx.gpa, '\n') catch {};
+                detail_buf.appendSlice(self.ctx.gpa, result.stderr) catch {};
                 detail_buf.append(self.ctx.gpa, '\n') catch {};
             }
             self.ctx.gpa.free(result.stdout);

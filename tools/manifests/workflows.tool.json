@@ -1,13 +1,14 @@
 {
   "name": "workflows",
-  "description": "List or inspect reusable prompt workflows stored as markdown files in workflows/ (and .cursor/workflows). Input: {} to list, {\"name\":\"plan\"} to show one, {\"name\":\"plan\",\"args\":\"feature\"} to expand it into the full prompt. The agent should use this to discover repeatable task templates instead of improvising.",
+  "description": "List or inspect reusable prompt workflows stored as markdown files in workflows/ (and .cursor/workflows). Chain-aware: workflows flagged [chain] carry an embedded tool pipeline (frontmatter chain:) and the chain tool can execute them. Input: {} to list, {\"name\":\"plan\"} to show one, {\"name\":\"plan\",\"args\":\"feature\"} to expand it into the full prompt, {\"name\":\"plan\",\"chain\":\"\"} to surface the embedded chain.",
   "wasm": "zig-out/tools/workflows.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "name": { "type": "string", "description": "Workflow name (file stem of workflows/<name>.md). Omit to list all." },
       "args": { "type": "string", "description": "Arguments to substitute for {{args}} / $ARGUMENTS in the workflow body." },
-      "arguments": { "type": "string", "description": "Alias for args." }
+      "arguments": { "type": "string", "description": "Alias for args." },
+      "chain": { "type": "string", "description": "When provided (any string), include the embedded chain pipeline from frontmatter chain: if present." }
     }
   },
   "fs_prefixes": ["workflows", ".cursor/workflows"],

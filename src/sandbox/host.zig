@@ -804,6 +804,14 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config) ![
     }
     try s.endArray();
 
+    try s.objectField("agent");
+    try s.beginObject();
+    try s.objectField("workflows_dir");
+    try s.write(cfg.agent.workflows_dir);
+    try s.objectField("chains_dir");
+    try s.write(cfg.agent.chains_dir);
+    try s.endObject();
+
     try s.endObject();
     return w.toOwnedSlice();
 }
