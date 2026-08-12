@@ -498,7 +498,7 @@ test "board wasm tool folds a room log longer than one history page completely" 
     // adds land within a second or two, so they share a timestamp — exactly
     // the shape that used to fold to its newest page only: the host answered
     // history newest-first, the fold's `ts > after` cursor jumped to the top,
-    // and the oldest cards silently vanished from every board_list.
+    // and the oldest cards silently vanished from every kanban_list.
     var i: usize = 1;
     while (i <= 25) : (i += 1) {
         const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"title\":\"card-{d:0>2}\"}}", .{i});
@@ -566,7 +566,7 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
     defer std.testing.allocator.free(first);
     try std.testing.expect(std.mem.find(u8, first, "\"ok\":true") != null);
 
-    // board_add's manifested `assignee` puts the card on someone at creation.
+    // kanban_add's manifested `assignee` puts the card on someone at creation.
     const second = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"taken\",\"assignee\":\"beta\"}");
     defer std.testing.allocator.free(second);
     try std.testing.expect(std.mem.find(u8, second, "\"ok\":true") != null);
@@ -579,7 +579,7 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
     const end = std.mem.findScalarPos(u8, first, start, '"') orelse return error.TestUnexpectedResult;
     const card_id = first[start..end];
 
-    // board_update's manifested `assignee` reassigns (it used to be silently
+    // kanban_update's manifested `assignee` reassigns (it used to be silently
     // dropped by ignore_unknown_fields when only `who` was wired).
     const upd = try std.fmt.allocPrint(std.testing.allocator, "{{\"id\":\"{s}\",\"assignee\":\"gamma\"}}", .{card_id});
     defer std.testing.allocator.free(upd);

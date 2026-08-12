@@ -1,6 +1,6 @@
 {
   "name": "todo_list",
-  "description": "List this run's private checklist with each todo's id, title and status (open/claimed/closed). See board_list for shared work.",
+  "description": "List this run's private checklist with each todo's id, title and status (open/claimed/closed). See kanban_list for shared work.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",

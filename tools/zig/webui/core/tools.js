@@ -11,6 +11,25 @@ var _clip = null;
 var _readJson = null;
 var _scrollTo = vendorScrollTo;
 
+/* The list groups by each tool's manifest `category` (already sent by
+   /api/plugins, already shown as a detail-view tag) so the surface reads as
+   a handful of sections instead of a wall of a hundred rows. Which sections
+   you have folded away is a property of how you are browsing right now, not
+   of the tools, so it lives in this browser like the rail's day-groups do. */
+function loadCollapsedToolGroups() {
+  try { return JSON.parse(window.localStorage.getItem("clanker.toolGroupsCollapsed") || "[]"); } catch (e) { return []; }
+}
+var collapsedToolGroups = loadCollapsedToolGroups();
+function isToolGroupCollapsed(g) { return collapsedToolGroups.indexOf(g) !== -1; }
+function toggleToolGroupCollapsed(g) {
+  var at = collapsedToolGroups.indexOf(g);
+  if (at === -1) collapsedToolGroups.push(g); else collapsedToolGroups.splice(at, 1);
+  try { window.localStorage.setItem("clanker.toolGroupsCollapsed", JSON.stringify(collapsedToolGroups)); } catch (e) {}
+  renderTools(null);
+}
+
+function groupLabel(cat) { return cat.charAt(0).toUpperCase() + cat.slice(1); }
+
 export function renderTools(filterText) {
   _toolState.val = {
     tools: _allToolsHolder.list,
@@ -383,7 +402,44 @@ export function bindTools(ctx) {
           ? "No tool matches " + s.filter + "."
           : "No tools registered. `zig build tools` compiles them.");
       }
-      return shown.map(buildToolRow);
+
+      // Groups a filter matched stay open regardless of stored collapse
+      // state: a search result hidden behind an earlier fold reads as a bug,
+      // not a feature.
+      var filtering = !!s.filter;
+      var groups = {};
+      var order = [];
+      shown.forEach(function (t) {
+        var cat = t.category || "other";
+        if (!groups[cat]) { groups[cat] = []; order.push(cat); }
+        groups[cat].push(t);
+      });
+      order.sort(function (a, b) {
+        if (a === b) return 0;
+        if (a === "other") return 1;
+        if (b === "other") return -1;
+        return a < b ? -1 : 1;
+      });
+
+      var out = [];
+      order.forEach(function (cat) {
+        var items = groups[cat];
+        var collapsed = !filtering && isToolGroupCollapsed(cat);
+        var head = ctx.T.button({
+          type: "button",
+          class: "tool-group",
+          "aria-expanded": String(!collapsed),
+          "aria-label": (collapsed ? "Expand " : "Collapse ") + groupLabel(cat),
+          title: (collapsed ? "Show " : "Hide ") + items.length + (items.length === 1 ? " tool" : " tools") + " in " + groupLabel(cat),
+          onclick: function () { toggleToolGroupCollapsed(cat); }
+        }, ctx.T.span({ class: "tool-group-caret" }, collapsed ? "▸" : "▾"),
+          ctx.T.span({ class: "tool-group-name" }, groupLabel(cat)),
+          ctx.T.span({ class: "tool-group-count" }, String(items.length)));
+        out.push(head);
+        if (collapsed) return;
+        items.forEach(function (t) { out.push(buildToolRow(t)); });
+      });
+      return out;
     });
   }
   var timer = null;

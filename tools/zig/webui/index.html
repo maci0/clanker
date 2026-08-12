@@ -201,6 +201,10 @@ lamps carry further). The seven named palettes ride the same tokens.
             <input type="checkbox" id="research-mode">
             <span>Research</span>
           </label>
+          <label for="unlimited-iterations" class="checkbox-row plan-toggle" title="Raise this run's iteration budget to the hard ceiling (1000) instead of the configured default (usually 50), for tasks that legitimately need many steps. Not truly unlimited: the harness always stops eventually.">
+            <input type="checkbox" id="unlimited-iterations">
+            <span>No limit</span>
+          </label>
           <button type="button" class="secondary" id="voice-btn" title="Voice input (hold or click)">🎙</button>
           <button type="button" class="secondary danger" id="cancel" hidden>Stop</button>
           <button type="submit" id="submit" disabled>Run (Ctrl+Enter)</button>

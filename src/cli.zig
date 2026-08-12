@@ -138,6 +138,12 @@ pub const Options = struct {
     /// whatever the server can do (tool calls, write confirmations) to anyone
     /// who can reach the port, so prefer a firewall over binding broadly.
     host: []const u8 = "127.0.0.1",
+    /// `serve --allow-host <name>`, repeatable: extra hostnames the Host
+    /// header may carry. IP literals and `localhost` are always accepted, so
+    /// this is only needed when clanker is reached by a real name — a reverse
+    /// proxy, a `.lan` entry, a tailnet name. Names, unlike IP literals, are
+    /// what DNS rebinding needs, which is why each one is opted into by hand.
+    allow_hosts: []const []const u8 = &.{},
     /// Set when `--help` followed a command: print that command's help rather
     /// than the whole list.
     help_for: ?Command = null,
@@ -337,6 +343,18 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--host")) {
                 opts.host = try takeValue(args, &idx, inline_value, a, diag);
                 used = .host;
+            } else if (std.mem.eql(u8, a, "--allow-host")) {
+                // Repeatable, and not comma-split, for the same reason `--with`
+                // is not: one flag per name is what makes the whole policy
+                // legible in a shell history or a service file.
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                const gpa = std.heap.page_allocator;
+                var list: std.ArrayList([]const u8) = .empty;
+                for (opts.allow_hosts) |x| try list.append(gpa, x);
+                const trimmed = std.mem.trim(u8, v, " \t");
+                if (trimmed.len > 0) try list.append(gpa, trimmed);
+                opts.allow_hosts = try list.toOwnedSlice(gpa);
+                used = .allow_host;
             } else if (std.mem.eql(u8, a, "--target")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 const gpa = std.heap.page_allocator;
@@ -928,6 +946,7 @@ const Flag = enum {
     tasks,
     port,
     host,
+    allow_host,
     yes,
     research_target,
     research_harness,
@@ -964,6 +983,7 @@ const Flag = enum {
             .tasks => "--tasks",
             .port => "--port",
             .host => "--host",
+            .allow_host => "--allow-host",
             .yes => "--yes",
             .research_target => "--target",
             .research_harness => "--harness",
@@ -1032,7 +1052,7 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve [--host <addr>] [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host }, .detail = "Binds 127.0.0.1 (loopback) by default.\\n\\n--host <addr>    interface to bind. Default 127.0.0.1; use 0.0.0.0 (or ::)\\n                  to reach the web UI and HTTP API from the LAN. Binding\\n                  broadly exposes whatever the server can do (tool calls,\\n                  write confirmations) to anyone who can reach the port,\\n                  so pair it with a firewall.\\n--port <port>    listen port (default 17921)." },
+    .{ .command = .serve, .usage = "serve [--host <addr>] [--allow-host <name>]... [--port <port>]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .port, .host, .allow_host }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--allow-host <name>    an extra hostname requests may address this server by.\n                       Repeatable.\n--port <port>          listen port (default 17921).\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--allow-host pass, so a reverse proxy or a tailnet name has to be named:\n--allow-host clanker.lan." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect },
@@ -1487,6 +1507,17 @@ fn writeCheckSummary(w: *std.Io.Writer, rows: []const CheckRow) !void {
     }
 }
 
+/// A full provider sweep is primarily a recovery command. If the provider
+/// selected for unqualified runs cannot answer, finish with the exact next
+/// action instead of making the operator infer it from the table's `*` row.
+fn writeDefaultProviderRecovery(w: *std.Io.Writer, rows: []const CheckRow) !void {
+    for (rows) |r| {
+        if (!r.is_default or r.status == .ok) continue;
+        try w.print("\nDefault provider '{s}' is {s}. Fix its config or choose another with `default_provider` in config.local.toml.\n", .{ r.name, r.status.label() });
+        return;
+    }
+}
+
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "models")) {
         return cmdProvidersModels(init, opts);
@@ -1585,6 +1616,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         var out: std.Io.Writer.Allocating = .init(arena);
         try out.writer.writeAll("\n");
         try writeCheckSummary(&out.writer, rows.items);
+        try writeDefaultProviderRecovery(&out.writer, rows.items);
         try std.Io.File.stdout().writeStreamingAll(io, out.written());
     }
 }
@@ -2600,13 +2632,20 @@ const HotReload = struct {
 /// already used for other REPL cross-cutting state.
 var hot_reload_active: ?*HotReload = null;
 
-fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8) ![]const []const u8 {
+/// Every flag that shapes what the listener is and who it answers to has to be
+/// repeated here, or a hot-reload re-exec silently narrows the policy the
+/// operator started the server with.
+fn buildServeArgvTail(arena: std.mem.Allocator, port: u16, bind_addr: []const u8, allow_hosts: []const []const u8) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
     try argv.append(arena, "--host");
     try argv.append(arena, bind_addr);
     try argv.append(arena, "--port");
     try argv.append(arena, try std.fmt.allocPrint(arena, "{d}", .{port}));
+    for (allow_hosts) |name| {
+        try argv.append(arena, "--allow-host");
+        try argv.append(arena, name);
+    }
     return argv.items;
 }
 
@@ -3294,7 +3333,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     const exe_path = try std.process.executablePathAlloc(io, gpa);
     defer gpa.free(exe_path);
     if (cfg.modules.hot_reload) {
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host));
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, port, opts.host, opts.allow_hosts));
     }
 
     while (true) {
@@ -3302,7 +3341,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
-        serveConnection(io, gpa, &cfg, init.environ_map, port, stream);
+        serveConnection(io, gpa, &cfg, init.environ_map, port, opts.allow_hosts, stream);
     }
 }
 
@@ -3314,6 +3353,10 @@ const Connection = struct {
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     port: u16,
+    /// `serve --allow-host` entries, allocated once at startup and read-only
+    /// for the life of the process, so sharing the slice across threads is
+    /// safe on the same terms as `cfg`.
+    allow_hosts: []const []const u8,
     stream: std.Io.net.Stream,
 };
 
@@ -3340,7 +3383,7 @@ var http_latency_le_1s = std.atomic.Value(u64).init(0);
 var http_latency_le_10s = std.atomic.Value(u64).init(0);
 var http_latency_total_ms = std.atomic.Value(u64).init(0);
 
-fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, allow_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     // A bound, so a flood of slow clients cannot make the process spawn
     // threads without limit. Over it, say so and close rather than queueing:
     // a client that waits behind 64 in-flight agent turns has already lost.
@@ -3354,17 +3397,17 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 
     const conn = gpa.create(Connection) catch {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, allow_hosts, stream);
         return;
     };
-    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .stream = stream };
+    conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .allow_hosts = allow_hosts, .stream = stream };
 
     const thread = std.Thread.spawn(.{}, connectionThread, .{conn}) catch {
         // Out of threads: serving it on the accept loop is slower than a
         // dedicated thread but still correct, and beats dropping the client.
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, stream);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, allow_hosts, stream);
         return;
     };
     thread.detach();
@@ -3376,18 +3419,18 @@ fn connectionThread(conn: *Connection) void {
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
     }
-    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.stream);
+    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.allow_hosts, conn.stream);
 }
 
-fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, allow_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     // A hot-reload must never fire mid-request (would drop the client
     // mid-response); see HotReload's doc comment.
     if (hot_reload_active) |hr| hr.begin();
     defer if (hot_reload_active) |hr| hr.end();
-    handleConnection(io, gpa, cfg, environ_map, port, stream);
+    handleConnection(io, gpa, cfg, environ_map, port, allow_hosts, stream);
 }
 
-fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, stream: std.Io.net.Stream) void {
+fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, allow_hosts: []const []const u8, stream: std.Io.net.Stream) void {
     defer stream.close(io);
     var request_id_buf: [24]u8 = undefined;
     const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
@@ -3453,18 +3496,20 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // make the browser treat this control plane as its own origin. Require
         // the authority the server actually advertises before serving even a
         // GET, since several read endpoints expose logs and conversations.
-        if (unexpectedHost(headers_raw, port)) {
+        // An IP literal cannot be rebound, so `--host 0.0.0.0` is reachable by
+        // address; a name needs `--allow-host` (see `allowedAuthority`).
+        if (unexpectedHost(headers_raw, port, allow_hosts)) {
             respond(stream, 421, "Misdirected Request", "{\"ok\":false,\"error\":\"invalid host\"}");
             return;
         }
-        // The listen socket is 127.0.0.1-only, but any page open in the
-        // user's browser can still reach it: every non-GET route here either
+        // The listen socket is loopback-only by default, but any page open in
+        // the user's browser can still reach it: every non-GET route here either
         // runs the agent, execs sandboxed tools, or writes state, so a
         // cross-origin POST from an unrelated site the user happens to have
         // open is CSRF, not a hypothetical. A request with no Origin header
         // (curl, or the raw API used directly) is not a browser cross-site
         // request and is let through.
-        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port)) {
+        if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "HEAD") and crossOriginRequest(headers_raw, port, allow_hosts)) {
             respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"cross-origin request refused\"}");
             return;
         }
@@ -7926,28 +7971,106 @@ test "request correlation ids are safe for logs and response headers" {
     try std.testing.expect(requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: bad\rvalue\r\n") == null);
 }
 
+/// True when `value` — an HTTP authority, `host` or `host:port` — is one this
+/// listener answers to. Shared by the `Host` and `Origin` guards below so the
+/// two can never disagree: an address the Host guard admits would otherwise be
+/// refused a second time as "cross-origin".
+///
+/// The rule exists for DNS rebinding, and DNS rebinding needs a *name* whose
+/// resolution the attacker controls. An IP literal has no resolution step and
+/// cannot be rebound, so any IP literal at this listener's port is accepted —
+/// that is what makes `serve --host 0.0.0.0` reachable from the LAN. A name
+/// can be rebound, so only `localhost` and the names an operator listed with
+/// `--allow-host` pass, and `attacker.example:17921` stays refused however the
+/// socket is bound.
+///
+/// The port has to be present and has to be this listener's, with one
+/// deliberate exception: a bare name carrying no port is accepted when it is
+/// in `allow_hosts`, because that is exactly what a reverse proxy terminating
+/// on 443 forwards. A portless IP literal or `localhost` means port 80, which
+/// is not this server, and nobody opted into it, so those stay refused.
+fn allowedAuthority(value: []const u8, port: u16, allow_hosts: []const []const u8) bool {
+    var hostname = value;
+    var port_text: ?[]const u8 = null;
+    var bracketed = false;
+    if (value.len > 0 and value[0] == '[') {
+        // An IPv6 literal is bracketed in an authority precisely so its own
+        // colons cannot be mistaken for the port separator.
+        const close = std.mem.findScalar(u8, value, ']') orelse return false;
+        hostname = value[1..close];
+        bracketed = true;
+        const rest = value[close + 1 ..];
+        if (rest.len > 0) {
+            if (rest[0] != ':') return false;
+            port_text = rest[1..];
+        }
+    } else if (std.mem.findScalar(u8, value, ':')) |colon| {
+        hostname = value[0..colon];
+        const rest = value[colon + 1 ..];
+        // A second colon is an unbracketed IPv6 literal, which is not a legal
+        // authority. Refuse it rather than guess where the port begins.
+        if (std.mem.findScalar(u8, rest, ':') != null) return false;
+        port_text = rest;
+    }
+    if (hostname.len == 0) return false;
+
+    if (port_text) |text| {
+        const got = std.fmt.parseInt(u16, text, 10) catch return false;
+        if (got != port) return false;
+    } else {
+        if (bracketed) return false;
+        for (allow_hosts) |allowed| {
+            if (std.ascii.eqlIgnoreCase(hostname, allowed)) return true;
+        }
+        return false;
+    }
+
+    // Parsed rather than pattern-matched, so "999.1.2.3" and "1.2.3.4.5" are
+    // names that happen to look numeric, not addresses.
+    if (bracketed) {
+        _ = std.Io.net.IpAddress.parseIp6(hostname, port) catch return false;
+        return true;
+    }
+    if (std.Io.net.IpAddress.parseIp4(hostname, port)) |_| {
+        return true;
+    } else |_| {}
+    if (std.ascii.eqlIgnoreCase(hostname, "localhost")) return true;
+    for (allow_hosts) |allowed| {
+        if (std.ascii.eqlIgnoreCase(hostname, allowed)) return true;
+    }
+    return false;
+}
+
 /// True when the request carries an `Origin` header naming something other
 /// than this server itself. Browsers attach `Origin` to every cross-site
 /// fetch/XHR/form submission (and to same-origin ones too, which is why a
 /// same-host origin is accepted alongside the missing-header case rather than
 /// rejected as "not GET/HEAD").
-fn crossOriginRequest(headers_raw: []const u8, port: u16) bool {
+///
+/// Same authority rule as `unexpectedHost`: comparing against the two loopback
+/// origins alone meant a LAN browser reaching a `--host 0.0.0.0` server could
+/// load the page and then have every POST from it refused as cross-origin.
+fn crossOriginRequest(headers_raw: []const u8, port: u16, allow_hosts: []const []const u8) bool {
     const origin = headerValue(headers_raw, "origin") orelse return false;
-    var buf: [40]u8 = undefined;
-    const want_ip = std.fmt.bufPrint(&buf, "http://127.0.0.1:{d}", .{port}) catch return true;
-    if (std.mem.eql(u8, origin, want_ip)) return false;
-    var buf2: [40]u8 = undefined;
-    const want_host = std.fmt.bufPrint(&buf2, "http://localhost:{d}", .{port}) catch return true;
-    if (std.mem.eql(u8, origin, want_host)) return false;
-    return true;
+    const authority = if (std.mem.startsWith(u8, origin, "http://"))
+        origin["http://".len..]
+    else if (std.mem.startsWith(u8, origin, "https://"))
+        origin["https://".len..]
+    else
+        return true;
+    // An origin is a scheme and an authority and nothing else, so a path (or
+    // "null", handled by the scheme check above) is malformed, not same-site.
+    if (std.mem.findScalar(u8, authority, '/') != null) return true;
+    return !allowedAuthority(authority, port, allow_hosts);
 }
 
-/// Refuse requests addressed through any authority other than the two local
-/// names exposed by `clanker serve`. This closes DNS rebinding for both the
-/// state-changing API and sensitive GET endpoints. HTTP/1.1 requires Host;
-/// treating a missing or duplicate Host as invalid also avoids ambiguity
-/// between intermediaries and this deliberately small parser.
-fn unexpectedHost(headers_raw: []const u8, port: u16) bool {
+/// Refuse requests addressed through any authority this `clanker serve` does
+/// not answer to; see `allowedAuthority` for the rule. This closes DNS
+/// rebinding for both the state-changing API and sensitive GET endpoints.
+/// HTTP/1.1 requires Host; treating a missing or duplicate Host as invalid
+/// also avoids ambiguity between intermediaries and this deliberately small
+/// parser.
+fn unexpectedHost(headers_raw: []const u8, port: u16, allow_hosts: []const []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     var authority: ?[]const u8 = null;
     while (lines.next()) |line| {
@@ -7957,30 +8080,85 @@ fn unexpectedHost(headers_raw: []const u8, port: u16) bool {
         authority = std.mem.trim(u8, line[colon + 1 ..], " \t");
     }
     const value = authority orelse return true;
-    var ip_buf: [32]u8 = undefined;
-    const ip = std.fmt.bufPrint(&ip_buf, "127.0.0.1:{d}", .{port}) catch return true;
-    if (std.mem.eql(u8, value, ip)) return false;
-    var local_buf: [32]u8 = undefined;
-    const local = std.fmt.bufPrint(&local_buf, "localhost:{d}", .{port}) catch return true;
-    return !std.ascii.eqlIgnoreCase(value, local);
+    return !allowedAuthority(value, port, allow_hosts);
 }
 
-test "unexpectedHost only accepts the loopback authorities for this listener" {
-    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\n", 4173));
-    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nhOsT: LOCALHOST:4173\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: attacker.example:4173\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:9999\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nUser-Agent: test\r\n", 4173));
-    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:4173\r\nHost: attacker.example\r\n", 4173));
+test "unexpectedHost accepts IP literals, localhost and allowlisted names only" {
+    const none: []const []const u8 = &.{};
+    const allow: []const []const u8 = &.{ "clanker.lan", "Box.Tailnet.Ts.Net" };
+
+    // Loopback, as before the --host flag existed.
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\n", 4173, none));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nhOsT: LOCALHOST:4173\r\n", 4173, none));
+
+    // An IP literal cannot be rebound, so a LAN client reaching a
+    // `--host 0.0.0.0` listener by address is served with nothing else set.
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 192.168.1.5:4173\r\n", 4173, none));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: 0.0.0.0:4173\r\n", 4173, none));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: [::1]:4173\r\n", 4173, none));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: [fe80::1]:4173\r\n", 4173, none));
+
+    // A name can be, so it is refused until an operator names it.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: attacker.example:4173\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: clanker.lan:4173\r\n", 4173, none));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: clanker.lan:4173\r\n", 4173, allow));
+    // Matched case-insensitively, in both directions.
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: box.tailnet.ts.net:4173\r\n", 4173, allow));
+    // Allowlisting a name does not allowlist every other one.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: attacker.example:4173\r\n", 4173, allow));
+
+    // The port is still this listener's, allowlisted or not.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:9999\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: clanker.lan:9999\r\n", 4173, allow));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 192.168.1.5:9999\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: [::1]:9999\r\n", 4173, none));
+
+    // Numeric-looking is not numeric: these are names, and unlisted ones.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 999.1.2.3:4173\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 1.2.3.4.5:4173\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 1.2.3:4173\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: [not:an:address]:4173\r\n", 4173, none));
+    // An unbracketed IPv6 literal is not a legal authority, and guessing where
+    // its port starts is how a parser differs from the intermediary in front.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: ::1:4173\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: [::1\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: :4173\r\n", 4173, none));
+
+    // No port at all: refused, as before, unless the operator named it, which
+    // is the reverse-proxy-on-443 case --allow-host exists for.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: [::1]\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: clanker.lan\r\n", 4173, none));
+    try std.testing.expect(!unexpectedHost("GET / HTTP/1.1\r\nHost: clanker.lan\r\n", 4173, allow));
+
+    // Structural rejections, unchanged.
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nUser-Agent: test\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: localhost:4173\r\nHost: attacker.example\r\n", 4173, none));
+    try std.testing.expect(unexpectedHost("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\nHost: 127.0.0.1:4173\r\n", 4173, none));
 }
 
 test "crossOriginRequest allows same-origin and no-Origin requests, refuses others" {
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: x\r\n", 4173));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:4173\r\n", 4173));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173\r\n", 4173));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:9999\r\n", 4173));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: null\r\n", 4173));
+    const none: []const []const u8 = &.{};
+    const allow: []const []const u8 = &.{"clanker.lan"};
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: x\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:9999\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: null\r\n", 4173, none));
+    // The web UI a LAN client actually loaded posts back from that origin, so
+    // refusing it made --host 0.0.0.0 serve a page that could not do anything.
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://192.168.1.5:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://[fe80::1]:4173\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://clanker.lan:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://clanker.lan:4173\r\n", 4173, allow));
+    // A proxy terminating TLS in front of an allowlisted name.
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: https://clanker.lan\r\n", 4173, allow));
+    // A scheme that is not http(s), or an origin carrying a path, is not one
+    // of ours however its authority reads.
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: file://localhost:4173\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173/evil\r\n", 4173, none));
 }
 
 fn acceptsGzip(headers_raw: []const u8) bool {
@@ -8055,16 +8233,18 @@ test "ifNoneMatchHits matches only its own header line and exact value" {
 test "fuzz: header parsing never panics on bytes straight off the socket" {
     // headers_raw here is attacker-controlled the same way rawhttp.zig's
     // framing input is: it comes from the raw bytes of an unauthenticated
-    // connection to the 127.0.0.1 listener, before any validation. These
-    // functions all slice on colons/commas/semicolons found in that input, the
-    // same category of bug that overflowed rawhttp's Content-Length check.
+    // connection to the listener, before any validation. These functions all
+    // slice on colons/commas/semicolons/brackets found in that input, the same
+    // category of bug that overflowed rawhttp's Content-Length check.
     const Ctx = struct {
         fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var buf: [4096]u8 = undefined;
             const len = smith.slice(&buf);
             const headers_raw = buf[0..len];
+            const allow: []const []const u8 = &.{"clanker.lan"};
             _ = headerValue(headers_raw, "origin");
-            _ = crossOriginRequest(headers_raw, 4173);
+            _ = crossOriginRequest(headers_raw, 4173, allow);
+            _ = unexpectedHost(headers_raw, 4173, allow);
             _ = acceptsGzip(headers_raw);
             _ = ifNoneMatchHits(headers_raw, "\"abc\"");
         }
@@ -8122,6 +8302,23 @@ test "flags take their value in either form" {
     try std.testing.expectEqualStrings("::", h3.host);
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--host=" }, null));
 
+    // --allow-host: empty by default, repeatable, and takes its value in
+    // either form. IP literals and localhost never need it, so an empty list
+    // is the whole default policy.
+    try std.testing.expectEqual(@as(usize, 0), h1.allow_hosts.len);
+    const ah1 = try parse(&.{ "clanker", "serve", "--allow-host", "clanker.lan" }, null);
+    try std.testing.expectEqual(@as(usize, 1), ah1.allow_hosts.len);
+    try std.testing.expectEqualStrings("clanker.lan", ah1.allow_hosts[0]);
+    const ah2 = try parse(&.{ "clanker", "serve", "--allow-host=clanker.lan" }, null);
+    try std.testing.expectEqual(@as(usize, 1), ah2.allow_hosts.len);
+    try std.testing.expectEqualStrings("clanker.lan", ah2.allow_hosts[0]);
+    const ah3 = try parse(&.{ "clanker", "serve", "--host", "0.0.0.0", "--allow-host", "clanker.lan", "--allow-host=box.tailnet.ts.net" }, null);
+    try std.testing.expectEqual(@as(usize, 2), ah3.allow_hosts.len);
+    try std.testing.expectEqualStrings("clanker.lan", ah3.allow_hosts[0]);
+    try std.testing.expectEqualStrings("box.tailnet.ts.net", ah3.allow_hosts[1]);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--allow-host=" }, null));
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--allow-host" }, null));
+
     // A following option is not the missing value. Consuming it would hide
     // the actual mistake and reinterpret all remaining arguments.
     var diag: []const u8 = "";
@@ -8131,6 +8328,43 @@ test "flags take their value in either form" {
     // Dash-prefixed literal values still have an explicit, unambiguous form.
     const literal = try parse(&.{ "clanker", "autoresearch", "--pattern=-", "--target=x", "--harness=true" }, null);
     try std.testing.expectEqualStrings("-", literal.research_pattern.?);
+}
+
+test "the hot-reload re-exec keeps the bind address and the host allowlist" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const bare = try buildServeArgvTail(arena, 17921, "127.0.0.1", &.{});
+    try std.testing.expectEqual(@as(usize, 5), bare.len);
+    try std.testing.expectEqualStrings("serve", bare[0]);
+    try std.testing.expectEqualStrings("--host", bare[1]);
+    try std.testing.expectEqualStrings("127.0.0.1", bare[2]);
+    try std.testing.expectEqualStrings("--port", bare[3]);
+    try std.testing.expectEqualStrings("17921", bare[4]);
+
+    // Dropping these on re-exec would leave the rebuilt process refusing every
+    // request the operator started the server to accept.
+    const wide = try buildServeArgvTail(arena, 8080, "0.0.0.0", &.{ "clanker.lan", "box.tailnet.ts.net" });
+    try std.testing.expectEqual(@as(usize, 9), wide.len);
+    try std.testing.expectEqualStrings("0.0.0.0", wide[2]);
+    try std.testing.expectEqualStrings("8080", wide[4]);
+    try std.testing.expectEqualStrings("--allow-host", wide[5]);
+    try std.testing.expectEqualStrings("clanker.lan", wide[6]);
+    try std.testing.expectEqualStrings("--allow-host", wide[7]);
+    try std.testing.expectEqualStrings("box.tailnet.ts.net", wide[8]);
+
+    // And the round trip is what actually matters: re-parsing the tail must
+    // rebuild the same policy.
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(std.testing.allocator);
+    try argv.append(std.testing.allocator, "clanker");
+    for (wide) |x| try argv.append(std.testing.allocator, x);
+    const reparsed = try parse(argv.items, null);
+    try std.testing.expectEqualStrings("0.0.0.0", reparsed.host);
+    try std.testing.expectEqual(@as(u16, 8080), reparsed.port);
+    try std.testing.expectEqual(@as(usize, 2), reparsed.allow_hosts.len);
+    try std.testing.expectEqualStrings("box.tailnet.ts.net", reparsed.allow_hosts[1]);
 }
 
 test "a flag the command does not take is refused, not ignored" {
@@ -8518,6 +8752,20 @@ test "the sweep summary is one row per provider, with the default marked in the 
         \\openai      not configured  gpt-4o-mini        -
         \\
     , out.written());
+}
+
+test "provider sweep ends with recovery when the default cannot answer" {
+    const rows = [_]CheckRow{
+        .{ .name = "openai", .status = .not_configured, .model = "gpt-4o-mini", .ms = null, .is_default = true },
+        .{ .name = "ollama", .status = .ok, .model = "qwen3.5", .ms = 81, .is_default = false },
+    };
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try writeDefaultProviderRecovery(&out.writer, &rows);
+    try std.testing.expectEqualStrings(
+        "\nDefault provider 'openai' is not configured. Fix its config or choose another with `default_provider` in config.local.toml.\n",
+        out.written(),
+    );
 }
 
 test "a canceled or refused socket is unreachable, an HTTP error status is a failure" {

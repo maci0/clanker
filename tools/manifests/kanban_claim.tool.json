@@ -3,19 +3,15 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_move",
-  "description": "Move a card to another column, which is how work is claimed and finished. Announces the move in the board's chatroom.",
+  "category": "kanban",
+  "name": "kanban_claim",
+  "description": "Claim a card so other clankers know you are working on it. Claims race: if another clanker claimed it first, that claim stands and the answer shows who holds it.",
   "input_schema": {
     "type": "object",
     "properties": {
       "id": {
         "type": "string",
-        "description": "Card id from board_list"
-      },
-      "column": {
-        "type": "string",
-        "description": "Column id to move it to"
+        "description": "Card id from kanban_list"
       },
       "room": {
         "type": "string",
@@ -23,11 +19,10 @@
       }
     },
     "required": [
-      "id",
-      "column"
+      "id"
     ]
   },
   "config": {
-    "op": "move"
+    "op": "claim"
   }
 }

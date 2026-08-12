@@ -3,8 +3,8 @@
   "fs_prefixes": [],
   "network_allow": [],
   "sequential": true,
-  "category": "board",
-  "name": "board_depend",
+  "category": "kanban",
+  "name": "kanban_depend",
   "description": "Say a card is waiting on another, or that it no longer is. A card whose dependencies are not finished is shown as blocked rather than being forbidden to move.",
   "input_schema": {
     "type": "object",
