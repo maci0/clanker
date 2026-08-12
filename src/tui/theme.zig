@@ -440,8 +440,15 @@ pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Th
 /// (`catppuccin`, `tokyo-night`, `storm`, `day`, ...); these are the names to
 /// show and cycle through.
 pub const names = [_][]const u8{
-    "default",    "mono",             "mocha",          "latte", "frappe",
-    "macchiato",  "tokyonight",       "tokyonight-storm", "tokyonight-day",
+    "default",
+    "mono",
+    "mocha",
+    "latte",
+    "frappe",
+    "macchiato",
+    "tokyonight",
+    "tokyonight-storm",
+    "tokyonight-day",
 };
 
 /// Whether `select` recognizes `name` (canonical spelling or a known alias),
