@@ -317,13 +317,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const only_for = if (std.mem.eql(u8, op, "list")) (req.who orelse "") else "";
 
     const msgs = history(alloc, room) catch |err| return lib.fail(out, switch (err) {
-        // Make the failure actionable: the board is a chatroom, so a board
-        // that cannot reach chatrooms just says "disabled" and nothing about
-        // what to do. Tell the operator which config keys to flip and that a
-        // restart is needed (chatrooms is a startup config, not a runtime
-        // toggle), so the message names the fix instead of restating the
-        // symptom.
+        // Make the failure actionable. The board is a chatroom, so a board
+        // that cannot reach chatrooms for *either* reason says "disabled" and
+        // nothing about what to do. Distinguish the two denials the host can
+        // return: chatrooms switched off (a config the operator set, fix by
+        // flipping the flag + restart) versus this board tool being denied
+        // chat access (a code/version mismatch — e.g. the host binary predates
+        // a tool rename — fix by rebuilding/restarting clanker). Reporting the
+        // wrong one as a config problem is what sent an operator hunting for a
+        // modules flag that was already on.
         error.SandboxDenied => "chatrooms are disabled, but the board is a chatroom — enable them to use the board: set modules.chatrooms = true (and chatrooms.on = true) in config.toml or config.local.toml, then restart clanker",
+        error.NoAccess => "the board tool is denied chat access to its room (not the chatrooms module — that is on); this is a tool-permission / clanker-version mismatch, rebuild clanker and restart it",
         error.TooLarge => "this room's log no longer fits in one read; the board cannot be folded from a partial log",
         else => "could not read the board's room",
     });

@@ -51,6 +51,11 @@ pub const Err = struct {
     pub const network: u32 = 4;
     pub const invalid: u32 = 5;
     pub const mismatch: u32 = 6;
+    /// A specific denial: the *tool* was refused this host operation (e.g. a
+    /// chat op the tool is not allowlisted for), as opposed to the *module*
+    /// being off. Distinct from `denied` so a guest can tell "my access was
+    /// denied" from "the feature is disabled", which lead to different fixes.
+    pub const no_access: u32 = 7;
 };
 
 /// Asks the human a multiple-choice question and returns the option they
@@ -1360,7 +1365,12 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const op = parsed.op orelse return Err.invalid;
     if (!chatAccessAllowed(h.sandbox.tool_self_name, op)) {
         log.log(.warn, "[sandbox] ck_chat denied op '{s}' for tool '{s}'", .{ op, h.sandbox.tool_self_name });
-        return Err.denied;
+        // Distinct from the chatrooms-module gate below so a guest (the board)
+        // can tell "this tool is not allowlisted for chat" from "chatrooms is
+        // switched off". Both are denials, but the fixes are different: a
+        // tool-access denial is a code/version mismatch (rebuild clanker), not
+        // a config the operator set.
+        return Err.no_access;
     }
 
     // A todo_* op that names no room targets the run's private list (wired
