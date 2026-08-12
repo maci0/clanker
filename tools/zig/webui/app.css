@@ -400,6 +400,7 @@ body {
   line-height: 1.6;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -421,6 +422,7 @@ header {
   padding: 0.55rem 0.9rem; border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   position: sticky; top: 0; z-index: 5;
+  flex: none;
   backdrop-filter: saturate(1.15) blur(10px);
 }
 @media (max-width: 34rem) {
@@ -1916,18 +1918,19 @@ mark {
   }
 }
 
-.shell { display: flex; align-items: flex-start; gap: 0; min-height: calc(100vh - 3.2rem); }
+.shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 auto; min-height: 0; }
 
 main {
   background: var(--bg);
   border: 0;
   box-shadow: none;
-  min-height: calc(100vh - 3.2rem);
-  flex: 1;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
 }
 .rail {
   flex: none; width: 15rem;
-  position: sticky; top: 3.2rem; height: calc(100vh - 3.2rem);
+  height: 100%;
   display: flex; flex-direction: column; overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: transparent transparent;
