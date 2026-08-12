@@ -1,7 +1,7 @@
 //! Terminal display width of Unicode text.
 //!
 //! Zig's stdlib ships no wcwidth equivalent, and pulling in a full East Asian
-//! Width table is precision this codebase doesn't need yet — the actual
+//! Width table is precision this codebase doesn't need yet, the actual
 //! requirement is "box borders don't visibly drift for CJK text in tool
 //! output," not full Unicode conformance.
 //!

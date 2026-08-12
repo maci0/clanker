@@ -4,7 +4,7 @@
 //! has open in the shared working tree. Two improve-self runs already
 //! serialize on state/improve.lock; nothing until now protected the tree
 //! from everyone else, and running it live against a repo with another
-//! active session caught it mid-edit repeatedly — a transient but real
+//! active session caught it mid-edit repeatedly, a transient but real
 //! build break every time, and once a real collision: both sides proposing
 //! content for the same new file.
 //!
@@ -80,7 +80,7 @@ pub const Worktree = struct {
 
     /// Folds the branch's current tip into `base_branch` without checking
     /// out or touching any working tree. Not fatal on failure (a real
-    /// conflict, or losing the CAS race twice) — the commit stays reachable
+    /// conflict, or losing the CAS race twice), the commit stays reachable
     /// from the branch either way, so a failed merge-back never loses work,
     /// only delays it.
     pub fn mergeBack(self: *Worktree, gpa: std.mem.Allocator, io: std.Io, message: []const u8) void {
@@ -144,7 +144,7 @@ pub const Worktree = struct {
     /// landed commit (resyncLocalBranch below), so the branch's next delta
     /// starts there too: advance the pinned merge base with it, or the next
     /// merge would re-count (and re-land) work that is already on the base
-    /// branch — including work a human removed from it in the meantime.
+    /// branch, including work a human removed from it in the meantime.
     fn advanceCreatedFrom(self: *Worktree, gpa: std.mem.Allocator, landed: []const u8) void {
         const next = gpa.dupe(u8, landed) catch return; // keep the old pin on OOM
         gpa.free(self.created_from);
@@ -158,7 +158,7 @@ pub const Worktree = struct {
     /// Without this the branch keeps accumulating its own parallel history
     /// every promotion, diverging a little further from the base branch
     /// each time even though its content already landed there under a
-    /// different commit object — confirmed live: the first 7 promotions of
+    /// different commit object, confirmed live: the first 7 promotions of
     /// a run merged cleanly, and every one after silently failed once
     /// accumulated drift produced a real conflict neither side could
     /// auto-resolve, with nothing surfacing the growing backlog short of
@@ -166,7 +166,7 @@ pub const Worktree = struct {
     ///
     /// `git -C <worktree> reset --hard`: pinned to the worktree path so a
     /// caller whose cwd has drifted (chdir'd back to the main tree) can
-    /// never reset the user's checkout — the concern that briefly moved
+    /// never reset the user's checkout, the concern that briefly moved
     /// this to a bare `git update-ref` on the branch ref. That variant kept
     /// the ref in lockstep but left the worktree's checked-out FILES at the
     /// pre-merge content, and those files are what the next iteration's
@@ -244,7 +244,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 }
 
 /// Symlinks the runtime paths a fresh worktree checkout doesn't get on its
-/// own — they're gitignored, so `git worktree add` never populates them.
+/// own, they're gitignored, so `git worktree add` never populates them.
 /// .env and config.local.toml carry the API keys and local overrides
 /// nothing else provides. state/improvements.jsonl and state/history/ are
 /// the cross-run memory (the dedup log, the revert snapshots) and have to
@@ -255,7 +255,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, id: []const u8) !Worktree {
 /// deliberately not linked at all: patch_apply and friends are sandboxed to
 /// fs_prefixes ["state/staging"], and that check walks the path from the
 /// root with symlinks left unresolved specifically so one can't be used to
-/// step outside the sandbox — a symlinked `state` made every write under
+/// step outside the sandbox, a symlinked `state` made every write under
 /// state/staging/ look like exactly that and get refused. state/ is a real
 /// directory local to the worktree; only the two entries below are linked
 /// back in, as leaves the sandboxed tools never traverse through.

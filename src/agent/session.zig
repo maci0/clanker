@@ -196,8 +196,8 @@ pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 /// The message index just past turn `n`'s answer: the Nth user message plus
 /// everything up to and including the assistant message that completes the
 /// turn (tool-call steps and tool results in between included). A turn
-/// whose reply is still pending — a stopped run with no final assistant
-/// content — cuts before its user message, so a branch never strands half a
+/// whose reply is still pending, a stopped run with no final assistant
+/// content, cuts before its user message, so a branch never strands half a
 /// turn. `n` is 1-based; past the last turn is `error.TurnOutOfRange`.
 fn turnCutoff(messages: []const types.Message, n: usize) !usize {
     var users: usize = 0;
@@ -226,7 +226,7 @@ fn turnCutoff(messages: []const types.Message, n: usize) !usize {
 /// `turn_no` copied under a new id, titled "branch of <old title>". Turns
 /// before the branch point stay shared context; nothing after it exists in
 /// the branch yet, so continuing it explores a different direction without
-/// touching the original — the per-turn branch a chat UI offers, as opposed
+/// touching the original, the per-turn branch a chat UI offers, as opposed
 /// to `forkSession`'s whole-conversation copy. Returns the new id
 /// (arena-owned).
 pub fn branchSession(
@@ -286,7 +286,7 @@ pub const SessionMeta = struct {
     bytes: usize = 0,
 };
 
-/// Lists every saved session, most recently updated first — the order a
+/// Lists every saved session, most recently updated first, the order a
 /// picker wants, since the session you were just in is the one you are most
 /// likely to return to. A file that cannot be read or parsed is skipped
 /// rather than failing the whole listing: one corrupt session should not make
@@ -331,7 +331,7 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]S
     return out.toOwnedSlice(arena);
 }
 
-/// The most recently updated session's id, or null when none exist — what
+/// The most recently updated session's id, or null when none exist, what
 /// `--continue` means, for both `clanker run` and the REPL.
 pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?[]const u8 {
     const metas = listSessions(io, arena, base) catch return null;
@@ -464,7 +464,7 @@ test "compactMessages counts tool-call arguments toward the token estimate" {
     try messages.append(std.testing.allocator, .{ .role = .user, .content = "bbbb" });
 
     // System (1) + tool call (4) + user (1) = 6 tokens. A budget of 4 evicts
-    // the oldest non-system message — the 4-token tool call — and leaves
+    // the oldest non-system message, the 4-token tool call, and leaves
     // system + the 1-token user message. If arguments were not counted the
     // tool call would be free, the total would be 2 ≤ 4, and nothing would
     // be dropped.

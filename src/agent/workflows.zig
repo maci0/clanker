@@ -25,7 +25,7 @@ pub const Workflow = struct {
     /// workflow's frontmatter has no `llm_description`, so an unmigrated
     /// workflow still works, just not as cheaply.
     llm_description: []const u8 = "",
-    /// Free-form facets from frontmatter `tags: a, b, c` (comma-separated —
+    /// Free-form facets from frontmatter `tags: a, b, c` (comma-separated;
     /// the frontmatter parser is a key:value-per-line subset, not real YAML,
     /// so no bracketed array syntax). For filtering/organization; not sent
     /// to the model.
@@ -38,7 +38,7 @@ pub const Workflow = struct {
     rel_path: []const u8,
     /// Optional chain pipeline embedded in frontmatter: JSON array of steps
     /// (same schema as `chain` tool's `steps`). Lets a workflow double as a
-    /// prompt AND a tool pipeline — `clanker workflow run plan "..."` expands
+    /// prompt AND a tool pipeline, `clanker workflow run plan "..."` expands
     /// the prompt while `chain: {chain:"plan"}` or inline steps can be invoked
     /// from the workflow body.
     chain_json: ?[]const u8 = null,
@@ -78,12 +78,12 @@ pub fn loadAll(arena: std.mem.Allocator, io: std.Io, workflows_dir: []const u8) 
         const raw = dir.readFileAlloc(io, fname, arena, .limited(max_file_bytes)) catch continue;
         const stem = fname[0 .. fname.len - 3];
         const parsed = parseWorkflow(arena, stem, fname, raw) catch continue;
-        // Skip files with empty body — they would produce an empty prompt.
+        // Skip files with empty body, they would produce an empty prompt.
         if (std.mem.trim(u8, parsed.body, " \t\r\n").len == 0) continue;
         try out.append(arena, parsed);
     }
 
-    // Already sorted by filename; a frontmatter `name:` can reorder — re-sort by final name.
+    // Already sorted by filename; a frontmatter `name:` can reorder, re-sort by final name.
     std.mem.sort(Workflow, out.items, {}, struct {
         fn lt(_: void, a: Workflow, b: Workflow) bool {
             return std.mem.lessThan(u8, a.name, b.name);
@@ -135,7 +135,7 @@ pub fn instantiate(arena: std.mem.Allocator, body: []const u8, args: []const u8)
     // Fast path: no placeholder present.
     if (std.mem.find(u8, body, "{{") == null and std.mem.find(u8, body, "$ARGUMENTS") == null) {
         if (args.len == 0) return body;
-        // No placeholder but args given: append them (Cursor does similarly — extra args become trailing context).
+        // No placeholder but args given: append them (Cursor does similarly, extra args become trailing context).
         return try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ body, args });
     }
     var out: std.ArrayList(u8) = .empty;

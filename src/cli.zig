@@ -48,7 +48,7 @@ const schedule_runner = @import("schedule/runner.zig");
 const schedule_store = @import("schedule/store.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
-// WASM "webui" tool — its shared output buffer, lib.zig's out_cap, is 64 KiB,
+// WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
 // far smaller than these). Vendored rather than CDN-loaded so the page has
 // zero runtime network dependencies and needs no change to the webui CSP.
 const webui_vendor_preact = @embedFile("webui_vendor/preact.module.js");
@@ -141,13 +141,13 @@ pub const Options = struct {
     port: u16 = 17921,
     /// `serve --host <addr>`: the interface to bind the HTTP server to.
     /// Defaults to 127.0.0.1 (loopback only). `0.0.0.0` (or `::`) makes the
-    /// web UI and HTTP API reachable from the LAN — which also exposes
+    /// web UI and HTTP API reachable from the LAN, which also exposes
     /// whatever the server can do (tool calls, write confirmations) to anyone
     /// who can reach the port, so prefer a firewall over binding broadly.
     host: []const u8 = "127.0.0.1",
     /// `serve --serve-as <name>`, repeatable: hostnames this server may
     /// present itself as. IP literals and `localhost` are always accepted, so
-    /// this is only needed when clanker is reached by a real name — a reverse
+    /// this is only needed when clanker is reached by a real name, a reverse
     /// proxy, a `.lan` entry, a tailnet name. Names, unlike IP literals, are
     /// what DNS rebinding needs, which is why each one is opted into by hand.
     serve_as_hosts: []const []const u8 = &.{},
@@ -173,7 +173,7 @@ pub const Options = struct {
     plugins_sub: ?[]const u8 = null,
     plugin_target: ?[]const u8 = null,
     /// `arena`: the two stances, and who argues them. A side with no provider
-    /// of its own falls back to `--provider`, then to the configured default —
+    /// of its own falls back to `--provider`, then to the configured default,
     /// so the same model arguing both sides needs no flags at all.
     arena_for: ?[]const u8 = null,
     arena_against: ?[]const u8 = null,
@@ -216,7 +216,7 @@ pub const Options = struct {
     schedule_arg2: ?[]const u8 = null,
     /// `schedule add --tz-offset`: minutes east of UTC the cron fields are
     /// read at, written `+02:00`, `-05:00`, `UTC` or a plain minute count.
-    /// Fixed, never a DST-aware zone — see src/schedule/cron.zig.
+    /// Fixed, never a DST-aware zone, see src/schedule/cron.zig.
     schedule_tz: ?[]const u8 = null,
 };
 
@@ -286,8 +286,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         }
         defer inline_value = null;
 
-        // Once git is the active command, every remaining token — including
-        // dash-prefixed ones like git's own flags/options — passes through to
+        // Once git is the active command, every remaining token, including
+        // dash-prefixed ones like git's own flags/options, passes through to
         // git verbatim, so `clanker git status --porcelain` keeps its args.
         // cmdGit re-reads the raw argv itself; recording the token here only
         // absorbs it so it never reaches the flag parser below (no alloc).
@@ -1276,8 +1276,8 @@ pub fn run(init: std.process.Init, opts: Options) !void {
 
 /// The one piece of `schedule` that cannot live in `src/schedule/`: turning a
 /// stored entry into an actual agent run means calling `cmdRun`, which is
-/// here. Everything else — the store, the cron arithmetic, the due/claim/
-/// ledger logic, the printing — is behind `schedule_cmd.cmd`, which takes this
+/// here. Everything else, the store, the cron arithmetic, the due/claim/
+/// ledger logic, the printing, is behind `schedule_cmd.cmd`, which takes this
 /// as a callback so its tests can drive the whole path without a provider.
 const ScheduleFire = struct {
     init: std.process.Init,
@@ -1573,8 +1573,8 @@ fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) i64 {
 
 /// Which kind of not-working a failed ping was. `error.ApiError` is the client's
 /// "the endpoint answered with a status >= 400 (or an error body behind a 200)",
-/// so it is the one error that proves the host is there; everything else —
-/// refused, DNS, TLS, a canceled socket — means nothing answered.
+/// so it is the one error that proves the host is there; everything else,
+/// refused, DNS, TLS, a canceled socket, means nothing answered.
 fn classifyChatError(err: anyerror) CheckStatus {
     return switch (err) {
         error.ApiError => .failed,
@@ -1828,7 +1828,7 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     }
 }
 
-/// `clanker providers models [provider]` — list a provider's models with their
+/// `clanker providers models [provider]`, list a provider's models with their
 /// context window. With provider name "openrouter", pulls OpenRouter's model
 /// database (context_length + per-1M pricing) filtered to our providers'
 /// model families.
@@ -1926,7 +1926,7 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
 /// by hand.
 const models_dev_url = "https://models.dev/api.json";
 
-/// `clanker providers catalog <query>` — search the models.dev directory for
+/// `clanker providers catalog <query>`, search the models.dev directory for
 /// provider or model ids/families containing `query` (case-insensitive) and
 /// print what it knows about each match. Read-only; nothing here touches
 /// config.toml.
@@ -1987,7 +1987,7 @@ fn renderCatalogRow(arena: std.mem.Allocator, provider_id: []const u8, model_id:
     });
 }
 
-/// `clanker providers fill <name>` — for a provider already declared in
+/// `clanker providers fill <name>`, for a provider already declared in
 /// config.toml, print each of its configured models' specs as known by the
 /// models.dev catalog, ready to paste as a top-level `[models."<provider>/
 /// <name>"]` table. Never writes config.toml itself: reformatting the whole
@@ -2026,8 +2026,8 @@ fn cmdProvidersFill(init: std.process.Init, opts: Options) !void {
 /// The models.dev provider entry whose API this clanker provider talks to:
 /// an exact `base_url` match first (most precise), then same host, then (for
 /// providers with no fixed public host, e.g. a local relay) a shared
-/// `api_key_env` name. Ambiguous on env alone — several models.dev entries
-/// can share one vendor's env var name — so it is only the last resort.
+/// `api_key_env` name. Ambiguous on env alone, several models.dev entries
+/// can share one vendor's env var name, so it is only the last resort.
 fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.json.Value {
     if (catalog != .object) return null;
     const want_base = std.mem.trimEnd(u8, p.base_url, "/");
@@ -2064,7 +2064,7 @@ fn findCatalogProvider(catalog: std.json.Value, p: *const config.Provider) ?std.
 }
 
 /// A catalog provider's model matching `model_name`, trying the exact key
-/// first and then the part after the last `/` — config model names are
+/// first and then the part after the last `/`, config model names are
 /// sometimes written OpenRouter-style (`moonshotai/kimi-k3`) even against a
 /// vendor's own API, which the catalog keys bare (`kimi-k3`).
 fn findCatalogModel(provider_entry: std.json.Value, model_name: []const u8) ?std.json.Value {
@@ -2155,7 +2155,7 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
     var http: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http.deinit();
     // Growable: a fixed buffer here used to cap every response at 1 MiB,
-    // which silently truncated (or outright failed) anything past it — the
+    // which silently truncated (or outright failed) anything past it, the
     // models.dev catalog alone runs to several MiB.
     var body: std.Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
@@ -2173,7 +2173,7 @@ fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []
     return arena.dupe(u8, body.written());
 }
 
-/// `clanker autolearn` — review usage observations, refresh the roadmap
+/// `clanker autolearn`, review usage observations, refresh the roadmap
 /// Autolearn section, and print the generated items. The aggregate-and-write
 /// logic lives in the cmd_autolearn tool (fs-scoped read/aggregate/write,
 /// same shape as roadmap/history/learnings); this just runs it and reports.
@@ -2405,8 +2405,8 @@ fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]c
 const ResolvedTask = struct {
     task: []const u8,
     /// The goal that actually steered this run, whether it was named
-    /// explicitly or picked by auto-steer. Callers use this — not the raw
-    /// `goal_id` argument — for anything that must track the run to its
+    /// explicitly or picked by auto-steer. Callers use this, not the raw
+    /// `goal_id` argument, for anything that must track the run to its
     /// goal (registry, iteration budget, the post-run status transition):
     /// an auto-steered run has no explicit id, but it still has a goal, and
     /// skipping that goal's own bookkeeping is what previously left every
@@ -2556,8 +2556,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     const turn_start = std.Io.Timestamp.now(io, .awake);
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         // Running out of iterations or budget is an outcome, not a crash. The
-        // run did real work — often minutes of it and a measurable amount of
-        // money — and returning the error threw all of it away behind a Zig
+        // run did real work, often minutes of it and a measurable amount of
+        // money, and returning the error threw all of it away behind a Zig
         // stack trace that points at loop.zig internals and reads like a bug
         // in the harness.
         switch (err) {
@@ -2590,7 +2590,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
 
     // The run this goal carried completed: move it to review so it stops
     // being picked up as still-active work. `resolved_task.goal_id` covers
-    // both `--goal <id>` and auto-steer alike — using only an explicit id
+    // both `--goal <id>` and auto-steer alike, using only an explicit id
     // here previously left every auto-steered goal `active` forever, so the
     // same one kept being re-run from scratch on each later invocation.
     if (resolved_task.goal_id) |gid| setGoalStatusIf(io, init.gpa, std.Io.Dir.cwd(), gid, "active", "review");
@@ -2726,7 +2726,7 @@ fn execSelf(gpa: std.mem.Allocator, exe_path: [:0]const u8, argv_tail: []const [
 /// mid-turn: `begin()`/`end()` bracket the unsafe window (wrap exactly the
 /// `a.run()` turn in the REPL, or exactly `handleConnection` in `serve`) so
 /// a reload never drops a client mid-response or loses an in-progress REPL
-/// turn before its session save — sessions always resume cleanly because
+/// turn before its session save, sessions always resume cleanly because
 /// nothing that mutates them is ever interrupted.
 ///
 /// While idle (the common case: blocked in `accept()` or the stdin read),
@@ -2782,7 +2782,7 @@ const HotReload = struct {
     /// `MOVED_TO` on its basename (covers both write-in-place and
     /// atomic-rename-replace build outputs). Run on its own thread; returns
     /// (silently giving up) if inotify is unavailable, e.g. an overlay/
-    /// network filesystem that doesn't support it — the process just never
+    /// network filesystem that doesn't support it, the process just never
     /// gets an idle-triggered reload in that case.
     fn watch(self: *HotReload) void {
         const dir_path = std.fs.path.dirname(self.exe_path) orelse ".";
@@ -2884,7 +2884,7 @@ var run_answer_started = false;
 
 /// `clanker run`'s stdout content writer: kept separate from `repl_out`
 /// (which, in `run`, points at stderr for the spinner/tool-status line) so
-/// streamed answer bytes never share a stream with status noise — piping
+/// streamed answer bytes never share a stream with status noise, piping
 /// stdout stays byte-identical to a plain, non-streamed run.
 var run_out: ?*std.Io.File.Writer = null;
 var run_stdout_color = false;
@@ -2927,7 +2927,7 @@ fn cmdSessions(init: std.process.Init) !void {
     try printInternalTool(init, &cfg, "cmd_sessions", "");
 }
 
-/// `clanker session export <id> [path]` — one saved conversation written out
+/// `clanker session export <id> [path]`, one saved conversation written out
 /// as a self-contained HTML transcript.
 ///
 /// Rendering and the default state/exports write live in the internal
@@ -2964,7 +2964,7 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     try writeStdOut(io, line);
 }
 
-/// `clanker graph [run-id]` — list persisted execution graphs, or render one
+/// `clanker graph [run-id]`, list persisted execution graphs, or render one
 /// as an ASCII timeline of LLM calls and tool invocations.
 /// Runs an internal `cmd_*` WASM tool and returns its `text` (arena-owned).
 /// The CLI subcommands that render persisted state go through here, so the
@@ -2990,7 +2990,7 @@ fn toolJson(
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
     const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
         if (err == error.UnknownTool) {
-            // Descriptor missing from tools_dir — not a missing .wasm rebuild.
+            // Descriptor missing from tools_dir, not a missing .wasm rebuild.
             log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, cfg.agent.tools_dir });
         } else {
             log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
@@ -3278,7 +3278,7 @@ fn pluginsValidate(init: std.process.Init, path: []const u8) !void {
 /// module it names exist, and does a guest that calls the model say so.
 ///
 /// The second is the same rule `registry.zig`'s conformance test enforces for
-/// this repo, applied where a third party can actually see it — an undeclared
+/// this repo, applied where a third party can actually see it, an undeclared
 /// model caller runs on the parallel worker pool and races the shared
 /// access-token cache, which is a crash in someone else's tool, not theirs.
 fn withCrossChecks(
@@ -3459,7 +3459,7 @@ fn cmdImproveSelf(init: std.process.Init, opts: Options) !void {
     // caught it mid-edit repeatedly (a transient but real build break each
     // time) and once for real: both sides proposing content for the same
     // new file. Falls back to running directly in the current tree (old
-    // behavior) if git or disk can't give us a worktree — degraded, not
+    // behavior) if git or disk can't give us a worktree, degraded, not
     // blocked. Skipped for --dry-run, which never writes anything anyway.
     const original_cwd: ?[:0]u8 = if (!opts.dry_run) std.process.currentPathAlloc(io, gpa) catch null else null;
     defer if (original_cwd) |p| gpa.free(p);
@@ -3657,7 +3657,7 @@ fn cmdStats(init: std.process.Init) !void {
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
     _ = opts;
-    // Convenience passthrough (unrestricted — this is the user's own shell).
+    // Convenience passthrough (unrestricted, this is the user's own shell).
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(init.gpa);
     try argv.append(init.gpa, "git");
@@ -3772,15 +3772,15 @@ const Connection = struct {
 };
 
 /// One accepted connection previously ran to completion inside the accept
-/// loop, so a single `/api/run` — an agent turn that can take minutes — stalled
+/// loop, so a single `/api/run`, an agent turn that can take minutes, stalled
 /// every other client, including a `/api/status` poll from the same page. Each
 /// connection now gets its own detached thread.
 ///
 /// The shared state this exposes is deliberately small: `cfg` is read-only for
 /// the lifetime of the process, `environ_map` is only read (writes happen once
 /// at startup in dotenv.load), `gpa` and the `Io` implementation are threadsafe
-/// per std.process.Init, and the two pieces of genuinely mutable server state —
-/// the streaming socket and the gzip cache — are made per-thread and mutex-
+/// per std.process.Init, and the two pieces of genuinely mutable server state,
+/// the streaming socket and the gzip cache, are made per-thread and mutex-
 /// guarded respectively.
 const max_connection_threads = 64;
 var connection_threads = std.atomic.Value(u32).init(0);
@@ -3853,7 +3853,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     var request_path: []const u8 = "unknown";
     // `total` must outlive the log defer below, because request_path is a
     // slice into total.items. Defers run LIFO, so declaring total.deinit
-    // first makes the log defer run while the buffer is still allocated —
+    // first makes the log defer run while the buffer is still allocated;
     // otherwise request_path dangles and reading it faults.
     var total: std.ArrayList(u8) = .empty;
     defer total.deinit(gpa);
@@ -3892,7 +3892,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             target = it.next() orelse "";
         }
         // Routes match the path, never the whole target. Comparing the target
-        // meant any URL carrying a query string missed its route and 404'd —
+        // meant any URL carrying a query string missed its route and 404'd:
         // "/" was fine but "/?v=3" was not, and the board could not name its
         // room until this was special-cased for one endpoint.
         const path = target[0..(std.mem.findScalar(u8, target, '?') orelse target.len)];
@@ -4213,7 +4213,7 @@ const ChatMessageBody = struct {
     id: ?[]const u8 = null,
 };
 
-/// POST /api/chat/message — a peer clanker delivering a chatroom message.
+/// POST /api/chat/message, a peer clanker delivering a chatroom message.
 /// Appends it only when this instance subscribes to the room and answers
 /// {"ok":true,"subscribed":bool} so the sender knows delivery succeeded.
 fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -4285,7 +4285,7 @@ test "fuzz: chat message body never crashes the parse/validate path" {
     try std.testing.fuzz({}, Ctx.one, .{});
 }
 
-/// GET /api/chat/messages?room=dev&after=123 — room history (newest first).
+/// GET /api/chat/messages?room=dev&after=123, room history (newest first).
 fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, target: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -4369,7 +4369,7 @@ fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-/// `POST /api/chat/send` — this instance speaking, as opposed to
+/// `POST /api/chat/send`, this instance speaking, as opposed to
 /// `/api/chat/message`, which is the inbound endpoint peers post to. The
 /// difference matters: sending appends locally *and* fans the message out to
 /// every configured peer, while the inbound path deliberately refuses rooms
@@ -4398,7 +4398,7 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     }
     // Speaking in a room implies belonging to it. Without this a direct
     // message would be silently dropped by `append`, which only logs rooms
-    // this instance has joined — and a DM room has no reason to exist in the
+    // this instance has joined, and a DM room has no reason to exist in the
     // config before someone opens it.
     if (!chatrooms.isSubscribed(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room)) {
         chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, true) catch |err| {
@@ -4426,7 +4426,7 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-/// `POST /api/chat/subscribe` — join or leave a room, so the web UI can open a
+/// `POST /api/chat/subscribe`, join or leave a room, so the web UI can open a
 /// direct message that no config file has ever mentioned.
 fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -4726,7 +4726,7 @@ const ChatTopicBody = struct {
     topic: ?[]const u8 = null,
 };
 
-/// GET /api/chat/rooms — room stats + this instance's subscriptions.
+/// GET /api/chat/rooms, room stats + this instance's subscriptions.
 fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -4773,7 +4773,7 @@ fn handleChatRooms(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
-/// GET /api/stats — aggregated token usage per provider/model.
+/// GET /api/stats, aggregated token usage per provider/model.
 fn handleStats(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -5022,7 +5022,7 @@ const RunRequestBody = struct {
     /// is set, cfg.agent.max_iterations applies. Clamped to 1..=1000.
     max_iterations: ?u32 = null,
     /// Knowledge context: collection ids whose documents are injected into the
-    /// task context (OpenWebUI parity — #<collection> / @doc pattern).
+    /// task context (OpenWebUI parity, #<collection> / @doc pattern).
     knowledge: []const []const u8 = &.{},
 };
 
@@ -5134,7 +5134,7 @@ fn runStreamToolResult(ms: u64) void {
 /// The run's private todo list, pushed down its own stream whenever a `todo_*`
 /// call moves it (webui PRD 0006 phase 3.3). `todos_json` is already a JSON
 /// array from `private_todos.listJson`, so it is spliced in rather than
-/// re-encoded — `writeStreamEvent` would escape it into a string, and its
+/// re-encoded, `writeStreamEvent` would escape it into a string, and its
 /// 4 KiB stack buffer cannot hold a full list anyway (100 items x 512-char
 /// titles). Nothing is stored: the browser is watching an in-memory list that
 /// still dies with the run.
@@ -5175,7 +5175,7 @@ const PendingAsk = struct {
 };
 
 // pthread primitives via std.c rather than std.Io.Mutex/Condition: AskFn is
-// a bare function pointer, so serveAsk has no `Io` to wait through — and the
+// a bare function pointer, so serveAsk has no `Io` to wait through, and the
 // Io condition has no timed wait, which the bounded block below cannot do
 // without. Both types' zero-default is their static initializer.
 var ask_mutex: std.c.pthread_mutex_t = .{};
@@ -5206,7 +5206,7 @@ fn askRegister(options: []const []const u8) ?u64 {
 const AskResolve = enum { ok, not_found, bad_option, out_of_memory };
 
 /// Delivers the browser's answer to the waiting run. The answer must match
-/// one of the offered options byte for byte — anything else is refused, so a
+/// one of the offered options byte for byte, anything else is refused, so a
 /// hand-written request cannot inject free text into a tool that promised
 /// the model a multiple-choice pick.
 fn askResolve(gpa: std.mem.Allocator, id: u64, answer: []const u8) AskResolve {
@@ -5260,7 +5260,7 @@ fn askAwait(id: u64, timeout_ns: u64) ?[]u8 {
 /// `ask` control event on the run's own stream, then blocks this connection
 /// thread until POST /api/ask delivers a pick or the timeout fires. On
 /// timeout it returns error.NoUser, which ckAsk maps to the same "nobody
-/// attached" answer a headless run gets — a closed tab degrades to the model
+/// attached" answer a headless run gets, a closed tab degrades to the model
 /// deciding for itself rather than hanging the run forever.
 fn serveAsk(question: []const u8, options: []const []const u8) anyerror![]const u8 {
     const fd = run_stream_socket orelse return error.NoUser;
@@ -5283,7 +5283,7 @@ var serve_gpa: ?std.mem.Allocator = null;
 /// as a `confirm` control event on the run's own stream, then blocks this
 /// connection thread until POST /api/ask answers "allow" or "deny", riding
 /// the ask machinery above unchanged. Everything that fails to produce an
-/// explicit "allow" — no stream, no free slot, a timeout, "deny" — refuses
+/// explicit "allow", no stream, no free slot, a timeout, "deny", refuses
 /// the call: an unattended gate that waves writes through protects nothing,
 /// and the model is told to take another path rather than left hanging.
 fn serveConfirm(tool_name: []const u8, args_preview: []const u8) bool {
@@ -5349,9 +5349,9 @@ const SteerSlot = struct {
     /// The session this run streams into, when it has one (a goal-only
     /// `--goal` CLI run has none; a chat run has one but no goal). Carried
     /// so a *different* browser/session can find and open the live transcript
-    /// of a run some other client started — without this, GET /api/goals
+    /// of a run some other client started, without this, GET /api/goals
     /// could say a goal is running but nothing on the page could point at
-    /// where — and so a chat run is steerable by session id.
+    /// where, and so a chat run is steerable by session id.
     session_len: usize = 0,
     session_buf: [session_id_cap]u8 = @splat(0),
     /// Queued steering messages, serve_gpa-owned, drained oldest-first by
@@ -5416,7 +5416,7 @@ fn runRelease() void {
 
 /// Writes `{"id":..., "session":...}` for every goal with a run in flight, as
 /// a JSON array, for GET /api/goals' `running` field. `session` is "" when
-/// the run has none to point at. Only goal-keyed slots appear — a chat run
+/// the run has none to point at. Only goal-keyed slots appear, a chat run
 /// with no goal is steerable but is not a goal the board should show as
 /// running.
 fn appendRunningGoals(w: *std.Io.Writer) void {
@@ -5488,7 +5488,7 @@ const SteerBody = struct { goal: []const u8 = "", session: []const u8 = "", mess
 /// Agent.steer_fn). Body: {"goal":"<id>","message":"..."} targets a goal run;
 /// {"session":"<id>","message":"..."} targets the chat run streaming that
 /// session. One key is required. 404 when no streaming run currently carries
-/// that key — steering has nowhere to land.
+/// that key, steering has nowhere to land.
 fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream, body: []const u8) void {
     _ = cfg;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -5524,7 +5524,7 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
 /// Flips a goal's status in state/goals.json, but only when it currently
 /// holds `from`. Used when a run carrying a goal completes: the goal moves
 /// active -> review on the server, so a closed tab or a crashed browser
-/// cannot leave finished work marked active. Best-effort — a goal already
+/// cannot leave finished work marked active. Best-effort, a goal already
 /// moved by hand (or deleted) is left alone, and failures only log.
 fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, from: []const u8, to: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -5781,7 +5781,7 @@ fn renderWebuiCached(
 /// One list, because there used to be two: the module gate (`is_webui`, which
 /// decides whether a disabled `modules.webui` should 404) and the asset route
 /// itself were hand-maintained copies of the same set, and
-/// `features/arena.js` — embedded and routed in `tools/zig/webui.zig` — was
+/// `features/arena.js`, embedded and routed in `tools/zig/webui.zig`, was
 /// missing from both, so the Arena view's dynamic `import()` 404'd. Keeping
 /// the set in one place is what stops the next module from doing the same.
 /// `tools/zig/webui.zig`'s `assetFor` still has to learn each new path too;
@@ -5853,7 +5853,7 @@ fn handleWebuiAsset(
     const is_boot = std.mem.endsWith(u8, target, "preact-boot.js");
     // The feature views share their file names with core/goals.js and
     // lib/board.js, so these two carry the directory in the suffix and the
-    // bare-name predicates below exclude them — a bare endsWith("board.js")
+    // bare-name predicates below exclude them, a bare endsWith("board.js")
     // for both would alias the two caches and serve one file for the other's
     // path (the known cache-aliasing bug class; see docs/prds/0006-webui.md).
     const is_board_view = std.mem.endsWith(u8, target, "features/board.js");
@@ -5904,7 +5904,7 @@ fn handleWebuiAsset(
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
     // These are compiled into the binary and change with every rebuild, so
-    // they cannot carry a far-future cache lifetime — but re-sending the same
+    // they cannot carry a far-future cache lifetime, but re-sending the same
     // 187 KB of script on every single page load when nothing changed is the
     // other extreme. ETag lets a returning visitor confirm "still current" in
     // a bodyless 304 instead of paying for either side's mistake.
@@ -6174,7 +6174,7 @@ test validPluginName {
 }
 
 /// Only these files are served from a plugin directory. Anything else it
-/// happens to contain — notes, sources, a stray key — stays on disk. The list
+/// happens to contain, notes, sources, a stray key, stays on disk. The list
 /// is exact names rather than extensions on purpose: a plugin cannot serve
 /// arbitrary files by naming them well, and adding a kind of asset is a
 /// deliberate edit here.
@@ -6363,7 +6363,7 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8
     rawhttp.writeAllFd(stream.socket.handle, out);
 }
 
-/// `GET /api/janitor` — how much litter is lying around, so the office view can
+/// `GET /api/janitor`, how much litter is lying around, so the office view can
 /// show the janitor working when there is work and sitting down when there is
 /// not. Read-only: it never deletes. `clanker janitor --yes` is the only thing
 /// that removes anything.
@@ -6655,7 +6655,7 @@ fn handleSessions(
     if (rest.len > 1 and rest[0] == '/') {
         const id = rest[1..];
         // `POST /api/sessions/<id>/branch/<n>` cuts the conversation at turn
-        // n (1-based) and continues in a copy — the per-turn branch a chat
+        // n (1-based) and continues in a copy, the per-turn branch a chat
         // UI offers. The numeric suffix is handled before id validation, for
         // the same reason the fork suffix is: "<id>/branch/<n>" contains
         // separators and would never pass isSlug.
@@ -6823,7 +6823,7 @@ const BranchRef = struct { src: []const u8, turn: usize };
 /// Splits a `POST /api/sessions/<id>/branch/<n>` target into its source id
 /// and 1-based turn number. Returns null when the target is not a branch
 /// request: no `/branch/` marker, or a turn number that is missing, zero, or
-/// not an integer. The source id is returned unchecked — `validSessionId`
+/// not an integer. The source id is returned unchecked, `validSessionId`
 /// is the caller's job, since it must reject traversal attempts the same
 /// way the fork suffix does.
 fn branchSuffix(id: []const u8) ?BranchRef {
@@ -6869,7 +6869,7 @@ const SkillMeta = struct {
 /// Skills are markdown files in `skills_dir` the system prompt embeds
 /// wholesale (system_prompt.zig reads every *.md except SYSTEM.md with
 /// >= 20 bytes of content, sorted for prompt-cache stability). This mirrors
-/// that discovery exactly — same dir, same filters, same sort — so the web
+/// that discovery exactly, same dir, same filters, same sort, so the web
 /// UI's Skills list can never drift from what the agent actually sees. Only
 /// the first `# ` heading and the first prose paragraph after it are sent,
 /// clipped; the page gets a catalogue, not the bodies.
@@ -6930,7 +6930,7 @@ const max_skill_bytes = 24 * 1024;
 /// working directory so nothing needs the server's absolute location.
 const workspace_cap = 1 << 16;
 
-/// `GET /api/files?path=<rel>` — list one directory inside the current
+/// `GET /api/files?path=<rel>`, list one directory inside the current
 /// workspace. The workspace is the process working directory, which is all the
 /// server is allowed to see; a requested path is resolved component-wise and
 /// any attempt to escape above it (`..`) is clamped to the workspace root.
@@ -7331,8 +7331,8 @@ fn handlePlugins(
 }
 
 /// A workspace is a folder name shown in the rail and stored in the session
-/// file, so it is restricted the way a session id is. It is never a path —
-/// nothing joins it to the filesystem — but it is displayed, sorted and
+/// file, so it is restricted the way a session id is. It is never a path;
+/// nothing joins it to the filesystem, but it is displayed, sorted and
 /// compared, and a name carrying separators or control characters would make
 /// the rail lie about what is nested in what.
 fn validWorkspace(name: []const u8) bool {
@@ -7358,11 +7358,11 @@ const SessionPatchBody = struct {
     title: ?[]const u8 = null,
     /// Absent means "leave it where it is"; "" means the default folder.
     workspace: ?[]const u8 = null,
-    /// When set, archives/unarchives the chat (OpenWebUI parity — archive).
+    /// When set, archives/unarchives the chat (OpenWebUI parity, archive).
     archived: ?bool = null,
-    /// When true with messages, creates a new imported chat (OpenWebUI parity — import).
+    /// When true with messages, creates a new imported chat (OpenWebUI parity, import).
     import_chat: ?bool = null,
-    /// Messages array for import — array of {role,content}
+    /// Messages array for import, array of {role,content}
     messages: ?[]const session.StoredMessage = null,
 };
 
@@ -7371,7 +7371,7 @@ const PluginToggleBody = struct {
     on: bool = true,
 };
 
-/// `POST /api/plugins/config {"name":…,"config":{…}}` — change a plugin's
+/// `POST /api/plugins/config {"name":…,"config":{…}}`, change a plugin's
 /// tunable settings.
 ///
 /// Written to `state/plugin_config.json` rather than the descriptor: the
@@ -7464,7 +7464,7 @@ fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Con
     respond(stream, 200, "OK", "{\"ok\":true}");
 }
 
-/// `GET /api/goals` — the structured goals that steer runs, straight from
+/// `GET /api/goals`, the structured goals that steer runs, straight from
 /// `state/goals.json`. Read natively rather than through the goal tool, which
 /// only writes: it appends a new goal and has no read mode.
 const GoalPost = struct {
@@ -7494,7 +7494,7 @@ const StoredGoal = struct {
 /// A goal's status is one of the workflow words. Anything else is refused rather
 /// than written, so the file cannot grow states nothing knows how to read.
 /// `review` is a run's parting gift: the work is believed done and waits for
-/// a human verdict — mark it done or send it back to active.
+/// a human verdict, mark it done or send it back to active.
 fn validGoalStatus(s: []const u8) bool {
     return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or
         std.mem.eql(u8, s, "archived") or std.mem.eql(u8, s, "abandoned") or
@@ -7780,7 +7780,7 @@ fn handleCompare(
 ///
 /// `"reveal": false` on both read paths is the whole point of this mapping. The
 /// browser is the blind view, so it must not be handed a payload naming which
-/// model wrote which answer — not in a tooltip, not in an attribute, and not in
+/// model wrote which answer, not in a tooltip, not in an attribute, and not in
 /// JSON it holds and declines to paint. The tool honours it by withholding the
 /// key from the reply itself, and by overriding it once a pick is on record.
 ///
@@ -7835,7 +7835,7 @@ test "compare route keeps a browser read blind and carries a pick through" {
     // The listing: blind, because a ledger row names the winning provider.
     try std.testing.expectEqualStrings("{\"reveal\":false}", compareRouteToToolInput(arena, "GET", "/api/compare", "").?);
     try std.testing.expectEqualStrings("{\"reveal\":false}", compareRouteToToolInput(arena, "GET", "/api/compare/", "").?);
-    // Reading one: blind too. This is the assertion the whole view rests on —
+    // Reading one: blind too. This is the assertion the whole view rests on;
     // a `true` here would hand the page the key it exists not to show.
     try std.testing.expectEqualStrings(
         "{\"id\":\"compare-1786550737-ab12cd34\",\"reveal\":false}",
@@ -7962,7 +7962,7 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
     respond(stream, 200, "OK", out.written());
 }
 
-/// Every configured peer with the A2A agent card it is serving right now —
+/// Every configured peer with the A2A agent card it is serving right now:
 /// name, description, skills, and whether it answered at all. Dispatched
 /// through the sandboxed `peers` tool (the same scan `clanker phonebook`
 /// prints), so peer traffic stays behind that tool's `network_from_config`
@@ -8016,7 +8016,7 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
 
 /// Whether a model can be handed image_url content blocks. A model that
 /// declares its capabilities (non-empty) but omits `image_in` is telling us
-/// it is not vision-capable — DeepSeek v4-flash's endpoint, for example, only
+/// it is not vision-capable, DeepSeek v4-flash's endpoint, for example, only
 /// accepts `content` as a plain string and rejects the typed block array with
 /// an opaque JSON-deserialize 400 ("unknown variant `image_url`, expected
 /// `text`"). A model with no capabilities declared leaves it unknown, so the
@@ -8076,7 +8076,7 @@ fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8) ?
 /// provider error ("HTTP 400: decrypt error") tells the user nothing about
 /// which backend or whether it is their config, a harness bug, or the
 /// provider. Prefix the provider name always; when images were attached, add
-/// a hint that the model may not be vision-capable — the most common
+/// a hint that the model may not be vision-capable, the most common
 /// image-upload failure class.
 fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {
     if (!had_images) {
@@ -8130,7 +8130,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
     const task_text = resolved.task;
-    // Inject knowledge context when requested — selected collections' documents
+    // Inject knowledge context when requested, selected collections' documents
     // are prepended to the task so the model sees them without extra tool calls.
     // The boundary is part of the prompt contract: collection contents are
     // untrusted retrieval data and must not be allowed to masquerade as the
@@ -8224,7 +8224,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         provider_copy.default_model = req.model;
     }
     // Image attachments need a vision-capable model. If the selected provider
-    // cannot take the image, route the run to a fallback provider that can —
+    // cannot take the image, route the run to a fallback provider that can:
     // the preferred `agent.fallback_provider` if it qualifies, else the first
     // other configured provider with a vision model. Chosen here, before the
     // agent is built, because the agent holds the provider pointer. When the
@@ -8362,7 +8362,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // as long as this connection works it, keyed by its goal id (a goal
         // run) and/or its session id (a chat run), whichever the client can
         // name. Registration failing (full table, oversize key) just means
-        // this run cannot be steered — not that it cannot run. `resolved
+        // this run cannot be steered, not that it cannot run. `resolved
         // .goal_id` so an auto-steered run registers too, not only one named
         // by explicit id. The session id (may be empty) lets a different
         // browser/session find and open this run's transcript.
@@ -8371,11 +8371,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // With a browser on the other end of this stream, ask_user has
         // somebody to ask: the question goes down as an `ask` control event
         // and the answer comes back through POST /api/ask. Streaming runs
-        // only — without the stream there is no channel to carry a question.
+        // only, without the stream there is no channel to carry a question.
         a.ask_fn = &serveAsk;
         // Confirm-before-write: with a browser on the stream, write-capable
         // tool calls wait for its allow/deny (`browser` and `always` both
-        // cover this surface). Non-streaming runs stay ungated like ask —
+        // cover this surface). Non-streaming runs stay ungated like ask;
         // without the stream there is no channel to carry the question.
         if (cfg.agent.confirm_writes != .never) a.confirm_fn = &serveConfirm;
         a.on_token = &runStreamDelta;
@@ -8391,13 +8391,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
         // When the selected provider could not take the image and the run was
-        // routed to a fallback provider, say so — the user asked for model X
+        // routed to a fallback provider, say so, the user asked for model X
         // and is getting model Y, and should not have to guess why.
         if (used_fallback) |fb| {
             writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "The selected provider cannot take the image; using '{s}' instead.", .{fb}) catch "Using a fallback provider for the image." });
         }
         // Tells the client which goal (explicit or auto-steered) is behind
-        // this turn, if any — the client has no other way to know an
+        // this turn, if any, the client has no other way to know an
         // auto-steered run was steered at all, since that resolution
         // happens entirely server-side.
         if (resolved.goal_id) |gid| writeStreamEvent(stream.socket.handle, "goal", .{ .id = gid });
@@ -8408,7 +8408,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             return;
         };
         // When modules.streaming is off the agent never invokes on_token,
-        // so nothing was streamed — write the answer directly or the client
+        // so nothing was streamed, write the answer directly or the client
         // would receive an empty body (just the trailer) for a successful run.
         if (!cfg.modules.streaming) {
             if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
@@ -8539,7 +8539,7 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // from script (the composer's auto-grow) working without reopening inline
 // <style> blocks.
 // Mermaid (the diagram renderer, loaded lazily for `mermaid` fences) injects
-// its theme as a <style> element inside the SVG it renders — the only place
+// its theme as a <style> element inside the SVG it renders, the only place
 // the page emits an inline style block, and it comes from a vendored,
 // same-origin script, never from page content. style-src therefore allows
 // 'unsafe-inline': script-src stays 'self' (the meaningful boundary for a page
@@ -8548,11 +8548,11 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
 // The html/svg preview pane opens a fully sandboxed iframe (`sandbox=""`,
 // no scripts, opaque origin) over a blob: URL, so frame-src allows 'self'
 // blob:. The frame inherits this document's policy, which is what actually
-// keeps the untrusted markup inert — the sandbox attribute is belt, the
+// keeps the untrusted markup inert, the sandbox attribute is belt, the
 // inherited script-src is braces.
 // Video input (Kimi Code parity) decodes a dropped recording through a blob:
 // URL <video> element and samples frames client-side, so media-src allows
-// blob: — the frames themselves ride the image path, which needs nothing.
+// blob:, the frames themselves ride the image path, which needs nothing.
 const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src blob:; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The page, compressed when the client will take it. This is the response
@@ -8607,7 +8607,7 @@ const GzipCache = struct {
 /// A rendered web UI asset, kept for the life of the process.
 ///
 /// The markup, stylesheet and script are compiled into this binary, so they
-/// cannot change while it runs — and when a rebuild changes them, hot reload
+/// cannot change while it runs, and when a rebuild changes them, hot reload
 /// replaces the process, so a stale entry is not reachable. Without this every
 /// request paid for reading the tool's wasm off disk, instantiating a zwasm
 /// module, and JSON-decoding the result: 348ms and 187 KB for app.js on this
@@ -8778,7 +8778,7 @@ fn gzipAlloc(gpa: std.mem.Allocator, raw: []const u8, level: std.compress.flate.
 }
 
 /// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). They are
-/// gzipped when the client asks — they are the two largest bodies this server
+/// gzipped when the client asks, they are the two largest bodies this server
 /// sends, and the page is routinely opened from another machine on the LAN.
 ///
 /// Cached for an hour and revalidated by ETag after that, rather than the
@@ -8834,14 +8834,14 @@ test "request correlation ids are safe for logs and response headers" {
     try std.testing.expect(requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: bad\rvalue\r\n") == null);
 }
 
-/// True when `value` — an HTTP authority, `host` or `host:port` — is one this
+/// True when `value`, an HTTP authority, `host` or `host:port`, is one this
 /// listener answers to. Shared by the `Host` and `Origin` guards below so the
 /// two can never disagree: an address the Host guard admits would otherwise be
 /// refused a second time as "cross-origin".
 ///
 /// The rule exists for DNS rebinding, and DNS rebinding needs a *name* whose
 /// resolution the attacker controls. An IP literal has no resolution step and
-/// cannot be rebound, so any IP literal at this listener's port is accepted —
+/// cannot be rebound, so any IP literal at this listener's port is accepted;
 /// that is what makes `serve --host 0.0.0.0` reachable from the LAN. A name
 /// can be rebound, so only `localhost` and the names an operator listed with
 /// `--serve-as` pass, and `attacker.example:17921` stays refused however the
@@ -9863,7 +9863,7 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
     const snippet = try renderModelSnippet(arena, "kimi-k3", "kimi-k3", model);
 
     // The point of the test: the snippet has to parse as real TOML (right
-    // quoting on the composite table key, no stray commas — TOML is not
+    // quoting on the composite table key, no stray commas, TOML is not
     // JSON) and paste straight into config.toml as a top-level table.
     var parser = toml.Parser(toml.Table).init(arena);
     defer parser.deinit();
@@ -9885,7 +9885,7 @@ test "webui registry-miss error names tools_dir and does not sole-blame zig buil
     const arena = arena_state.allocator();
 
     // Drive the real helper renderWebui uses for the HTTP error body when
-    // reg.get("webui") is null — not a reimplementation of the string.
+    // reg.get("webui") is null, not a reimplementation of the string.
     const body = try webuiMissingRegistryError(arena, "tools/no-such-manifests");
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
     const err_msg = parsed.object.get("error").?.string;
@@ -9917,14 +9917,14 @@ fn arenaArtifact(io: std.Io, arena: std.mem.Allocator, value: []const u8) !Arena
     return .{ .text = contents, .path = value };
 }
 
-/// `clanker arena "<question>" --for X --against Y` — one match, non-interactive,
+/// `clanker arena "<question>" --for X --against Y`, one match, non-interactive,
 /// the same way `clanker autoresearch` mirrors `/autoresearch`.
 ///
 /// The whole match runs inside the `arena` WASM tool, so this is only argument
 /// marshalling and printing: the round loop, the judging and the persistence are
 /// the tool's, and the CLI cannot drift from what an agent calling the same tool
 /// gets. `arena` reaches its providers through `ck_llm`, which needs no parent
-/// agent run — that is what lets this be a plain subcommand.
+/// agent run, that is what lets this be a plain subcommand.
 fn cmdArena(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -10046,7 +10046,7 @@ fn splitCompareTarget(spec: []const u8) struct { provider: []const u8, model: []
     return .{ .provider = spec, .model = "" };
 }
 
-/// `clanker compare "<prompt>" --with a --with b@model` — one prompt to several
+/// `clanker compare "<prompt>" --with a --with b@model`, one prompt to several
 /// models at once, answers shown unlabeled. Builds the `compare` tool's input
 /// and prints its rendered text, the same shape `cmdArena` has: the blinding,
 /// the concurrency and the persistence all live in the tool and its host

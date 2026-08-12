@@ -56,7 +56,7 @@ pub const Usage = struct {
     }
 
     /// The `n` most-called tools, most first. Ties break by name so the set is
-    /// stable between runs rather than shuffling with hash order — a tool list
+    /// stable between runs rather than shuffling with hash order, a tool list
     /// that changes shape for no reason invalidates the provider's prompt
     /// cache on every request.
     pub fn top(self: *const Usage, arena: std.mem.Allocator, n: usize) ![]Entry {

@@ -4,10 +4,10 @@
 //! auth is not one-per-wire-kind: a provider can offer an API key *and* OAuth
 //! over the same wire format. Two concerns are separated here:
 //!
-//!  1. **Credential acquisition** (this module) — where the secret comes from:
+//!  1. **Credential acquisition** (this module), where the secret comes from:
 //!     an env var, a pasted OAuth access token, or a token minted and renewed
 //!     in-process. That is the `Strategy`.
-//!  2. **Header application** — how the resolved credential rides the request
+//!  2. **Header application**, how the resolved credential rides the request
 //!     (`Authorization: Bearer` vs `x-api-key`, plus any beta header). That is
 //!     a per-wire-kind detail and lives in each provider's `authHeaders`.
 //!

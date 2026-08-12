@@ -1,4 +1,4 @@
-//! Spawns `zig build` / `zig build test` as child processes — the compile and
+//! Spawns `zig build` / `zig build test` as child processes, the compile and
 //! test gates used by the eval harness and the self-improvement engine.
 
 const std = @import("std");

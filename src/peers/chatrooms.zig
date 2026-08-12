@@ -257,7 +257,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     // createFileRetry, not createFile: racing creates of a not-yet-existing
     // lock file spuriously fail ENOENT on macOS (see filelock.zig), and every
-    // such failure here is a concurrent append running unserialised — i.e. a
+    // such failure here is a concurrent append running unserialised, i.e. a
     // silently dropped message.
     const lock = filelock.createFileRetry(io, base, lock_path, .{ .truncate = false, .lock = .exclusive }) catch |err| blk: {
         // Best effort: a chat message is worth delivering unserialised rather
@@ -564,7 +564,7 @@ pub fn togglePin(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     if (!gop.found_existing) gop.value_ptr.* = .{};
 
     if (gop.value_ptr.pins) |existing| {
-        // Check if already pinned — if so, remove
+        // Check if already pinned, if so, remove
         var new_pins: std.ArrayList([]const u8) = .empty;
         var was_pinned = false;
         for (existing) |p| {
@@ -925,7 +925,7 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
     cfg.chatrooms.rooms = &.{"board"};
     cfg.chatrooms.max_history = 100;
 
-    // 6 messages: ts 1, 2, 2, 2, 3, 4 — plus one in another room that must
+    // 6 messages: ts 1, 2, 2, 2, 3, 4, plus one in another room that must
     // never appear. Appended newest-first-ish on purpose: the page boundary
     // is only a real ts boundary after the sort inside readHistoryAsc.
     const specs = [_]struct { ts: i64, id: []const u8 }{

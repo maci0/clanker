@@ -3,7 +3,7 @@
 //! Every gate in the improve loop answers one question: is this change *safe*?
 //! It compiles, its unit tests pass, its formatting is clean, it breaks no
 //! capability the eval suite checks. Nothing asks whether it changes what the
-//! program does — and a change that does nothing at all passes every one of
+//! program does, and a change that does nothing at all passes every one of
 //! those checks by construction, because there is nothing in it to break.
 //!
 //! That is a reward the loop will find. Two shapes of it are already in this
@@ -16,7 +16,7 @@
 //!     three separate promotions that each added a function, added a test for
 //!     that function, and added no caller. They are still unreachable. An
 //!     earlier run produced about fifteen `History` helper methods the same way
-//!     ("so the engine can detect ...") — every one of them unreachable,
+//!     ("so the engine can detect ..."), every one of them unreachable,
 //!     because the engine that would have called them is outside the surface
 //!     the loop may write, and all fifteen were later deleted by hand.
 //!
@@ -41,7 +41,7 @@ pub const Class = enum {
     /// Purely additive, and every callable it adds is unreachable: nothing
     /// outside a test block refers to it.
     inert,
-    /// Anything else — existing code changed, or something new is reachable.
+    /// Anything else, existing code changed, or something new is reachable.
     behavior,
 
     pub fn asStr(self: Class) []const u8 {

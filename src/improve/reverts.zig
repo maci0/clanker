@@ -3,7 +3,7 @@
 //! A merge is not the end of a change's review: maintainers revert
 //! improvement commits after the fact, and until that signal lands back in
 //! improvements.jsonl the loop's memory says "accepted" about work that is
-//! no longer in the tree. That mismatch is worse than no memory at all —
+//! no longer in the tree. That mismatch is worse than no memory at all ,
 //! the prompt tells the model the work is already in the source while the
 //! source shows it undone, which is how one improvement got merged,
 //! reverted, re-proposed, re-merged and reverted again. This module reads
@@ -20,8 +20,8 @@
 //! reverted elsewhere) is simply not matched rather than mismatched.
 //!
 //! Message shapes are not enough, though: humans word reverts freely. Both
-//! real reverts of promoted improvements on this repository were prose —
-//! "Reverted in the working tree before this commit, not by me" — naming no
+//! real reverts of promoted improvements on this repository were prose ,
+//! "Reverted in the working tree before this commit, not by me", naming no
 //! sha and matching neither shape, so the loop's history kept saying
 //! accepted and it re-proposed and re-merged the exact same work. The
 //! second half of this module is therefore message-blind: `addedLines` and
@@ -40,7 +40,7 @@ pub const Reverted = struct {
 };
 
 /// The `git log` invocation `scan` parses: one record per commit, fields
-/// split by the unit separator, records by the record separator — bytes no
+/// split by the unit separator, records by the record separator, bytes no
 /// subject can contain, unlike the newlines a `%b` body is full of.
 pub const git_log_args = [_][]const u8{ "log", "-n", "400", "--format=%H%x1f%s%x1f%b%x1e" };
 
@@ -106,8 +106,8 @@ pub const ImpCommit = struct { sha: []const u8, id: []const u8 };
 
 /// Every non-revert commit in the log (in the `git_log_args` format)
 /// carrying an `[imp-...]` tag, in log order. The same id can appear more
-/// than once — an improvement that was reverted and re-landed has two
-/// commits — and a caller judging whether the work is still in the tree
+/// than once, an improvement that was reverted and re-landed has two
+/// commits, and a caller judging whether the work is still in the tree
 /// must consider all of them.
 pub fn improvementCommits(arena: std.mem.Allocator, raw: []const u8) ![]const ImpCommit {
     const commits = try parseCommits(arena, raw);
@@ -120,7 +120,7 @@ pub fn improvementCommits(arena: std.mem.Allocator, raw: []const u8) ![]const Im
 }
 
 /// The `git show` invocation whose output `addedLines` parses: no commit
-/// message, no context lines, no colour — just the patch.
+/// message, no context lines, no colour, just the patch.
 pub const git_show_args = [_][]const u8{ "show", "--format=", "--unified=0", "--no-color" };
 
 /// The lines a commit added to one file, trimmed of surrounding whitespace
@@ -163,8 +163,8 @@ pub fn addedLines(arena: std.mem.Allocator, diff: []const u8) ![]const FileAdds 
 }
 
 /// Drops added lines that already existed in the parent version of their
-/// file. Boilerplate a commit repeats — `defer arena_state.deinit();`, a
-/// test's scaffolding, a loop header the file already had — matches the
+/// file. Boilerplate a commit repeats, `defer arena_state.deinit();`, a
+/// test's scaffolding, a loop header the file already had, matches the
 /// tree whether the improvement survived or not, and counting it as a
 /// survivor is how one fully reverted improvement kept reading as present:
 /// its 8 "surviving" lines were all in the parent file too. `parents` is
@@ -206,7 +206,7 @@ const min_content_signal = 3;
 /// is anything with `read(path) ?[]const u8` returning a file's current
 /// contents, or null when it no longer exists (a deleted file's lines are
 /// all gone by definition). Matching is substring on the trimmed line, so
-/// re-indented survivors still count — the check errs toward `present`,
+/// re-indented survivors still count, the check errs toward `present`,
 /// because a false `gone` would brand live work as human-refused, while a
 /// false `present` merely leaves the message-based scan to catch it.
 pub fn presence(adds: []const FileAdds, files: anytype) Presence {

@@ -1,15 +1,15 @@
 //! Per-subagent private todo lists: a nested run's own scratch list, distinct
 //! from the shared Kanban board (the `board` tool; see
 //! docs/adrs/0002-private-todos-vs-shared-board.md). Private to one run and
-//! held in memory only — never written to the chatroom log, never fanned out
-//! to peers — and discarded when the run returns. What survives is a summary
+//! held in memory only, never written to the chatroom log, never fanned out
+//! to peers, and discarded when the run returns. What survives is a summary
 //! appended to the sub-agent's final answer, so the parent can see how far a
 //! multi-step run got even when it hit the iteration cap.
 //!
 //! Tool surface: the same todo_* tools as the shared lists. A todo_* call
 //! without a "room" lands here when a list is attached (ck_chat routes it),
 //! so an agent uses one vocabulary for both kinds of list. Ids are "p1",
-//! "p2", ... — the p marks them private, so a model cannot confuse them with
+//! "p2", ..., the p marks them private, so a model cannot confuse them with
 //! the message-id keys of a shared room list.
 
 const std = @import("std");
@@ -150,7 +150,7 @@ pub fn applyTodoOp(
 
 /// The `todos` array as the model and the browser both see it. Factored out so
 /// `todo_list`'s reply and the streamed checklist event can never disagree
-/// about field names or status spellings — one writer, two callers.
+/// about field names or status spellings, one writer, two callers.
 fn writeTodoArray(s: *std.json.Stringify, list: *List) !void {
     try s.beginArray();
     for (list.items.items) |*it| {
@@ -272,7 +272,7 @@ test "todo_list reply for a full list of long escaped titles exceeds any fixed b
 
     // Titles of max length whose every char is a double-quote, so the JSON
     // escapes each to two bytes (\"): 100 items × ~1 KB each makes the
-    // serialized list >64 KiB — the size of the old fixed reply buffer.
+    // serialized list >64 KiB, the size of the old fixed reply buffer.
     const title = try arena.alloc(u8, max_title_len);
     @memset(title, '"');
     var i: usize = 0;

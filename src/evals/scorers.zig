@@ -1,5 +1,5 @@
 //! Eval task model and scoring. Evals are the verification harness the
-//! self-improvement engine gates on — including "selfhost" evals that build
+//! self-improvement engine gates on, including "selfhost" evals that build
 //! and test clanker itself.
 
 const std = @import("std");
@@ -237,7 +237,7 @@ test "excludes rejects an answer that says both things" {
 test "every shipped eval definition parses and is complete" {
     // loadAll drops a file it cannot parse (`catch continue`): a malformed
     // eval silently stops being run and nothing goes red. This is the loud
-    // version — run from the repo root it parses every shipped definition
+    // version, run from the repo root it parses every shipped definition
     // and asserts a task eval actually asserts something.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -280,7 +280,7 @@ test "every shipped eval definition parses and is complete" {
 
 test "every eval requires_tool names a shipped tool" {
     // requires_tool is matched against transcript tool-call names at score
-    // time, so a tool rename strands the eval at a permanent score of 0 —
+    // time, so a tool rename strands the eval at a permanent score of 0 ,
     // which the improve loop reads as its own regression. Cross-check the
     // name against the manifests the registry actually loads.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

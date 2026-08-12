@@ -148,7 +148,7 @@ pub fn validateReadPath(path: []const u8) bool {
 /// patch against text it never saw, which fails the match gate every time.
 ///
 /// Returns null unless the response carries a non-empty `need` array *and* no
-/// changes — a response that patches and asks is a patch, and answering the
+/// changes, a response that patches and asks is a patch, and answering the
 /// question instead would throw the patch away. Paths outside the readable
 /// surface are dropped rather than failing the whole request, so the useful
 /// ones still get through; `refused` names the first one dropped so the caller

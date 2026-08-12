@@ -91,7 +91,7 @@ pub fn isDoneSentinel(payload: []const u8) bool {
 }
 
 /// The one auth application shared by every kind that presents its credential
-/// as `Authorization: Bearer` regardless of how it was acquired — which is
+/// as `Authorization: Bearer` regardless of how it was acquired, which is
 /// every kind except Anthropic's `x-api-key` path.
 pub fn bearerAuthHeaders(
     cred: auth.Credential,

@@ -1,10 +1,10 @@
-//! `clanker schedule <sub>` — the operator surface over `state/schedule.json`.
+//! `clanker schedule <sub>`, the operator surface over `state/schedule.json`.
 //!
 //! Lives here rather than in `cli.zig` for the same reason `doctor.zig` and
 //! `peers/phonebook.zig` do: `cli.zig` owns argument parsing and dispatch, and
 //! a subsystem's own printing is not argument parsing. What `cli.zig` keeps is
 //! the flag table, one dispatch arm, and the `Fire` callback that turns an
-//! entry into an actual agent run — the one piece that has to reach back into
+//! entry into an actual agent run, the one piece that has to reach back into
 //! the run path.
 
 const std = @import("std");

@@ -1,4 +1,4 @@
-//! Execution graph: records how an agent run unfolded — each LLM call and
+//! Execution graph: records how an agent run unfolded, each LLM call and
 //! tool invocation with timing, token usage, and outcome. `Agent.run` hands
 //! the assembled graph to the `cmd_graph` WASM tool once, at the end of the
 //! run, which persists it under `state/runs/<run-id>.json` and also renders
@@ -36,16 +36,16 @@ pub const Node = struct {
     /// to. 0 when this node is not a loop edge.
     loop_to: u32 = 0,
     /// Truncated preview of what this node actually produced (tool result
-    /// content, or the model's message content) — capped at
+    /// content, or the model's message content), capped at
     /// `output_preview_cap` bytes so a large tool result can't blow up the
     /// graph file. Lets the web UI show what happened, not just its size.
     output: []const u8 = "",
-    /// Truncated preview of the tool call's arguments (JSON) — the input a
+    /// Truncated preview of the tool call's arguments (JSON), the input a
     /// step consumed, complementing `output`, which says what it produced.
     /// What an edit tool changed lives here (path/old/new), and the run
     /// detail renders it as a per-file diff; the result line alone ("replaced
     /// 1 match") says nothing about the change itself. Capped at
-    /// `arguments_preview_cap` — and, unlike output, a truncated preview is
+    /// `arguments_preview_cap`, and, unlike output, a truncated preview is
     /// unparseable JSON, so the UI degrades to a note instead of a broken
     /// diff. Empty for non-tool nodes and for runs recorded before the field.
     arguments: []const u8 = "",
@@ -83,7 +83,7 @@ pub fn truncatedArgs(s: []const u8) []const u8 {
 
 pub const Graph = struct {
     run_id: []const u8,
-    /// The run id of the agent that spawned this run — empty for top-level
+    /// The run id of the agent that spawned this run, empty for top-level
     /// runs. A nested sub-agent run records its own graph (webui-plan 3.1);
     /// this is the upward link that parents it to the caller's timeline.
     parent_run_id: []const u8 = "",
@@ -230,7 +230,7 @@ test "a repeat in a later iteration collapses and reports the latest iteration" 
     var g = Graph{ .run_id = "run-collapse-iter", .task = "t", .provider = "p", .started_at = 0 };
     defer g.deinit(gpa);
 
-    // The same tool retried one iteration later — a retry, not a new step —
+    // The same tool retried one iteration later (a retry, not a new step)
     // collapses into the existing node, and the node reports the iteration it
     // ultimately ran at. Summed duration/tokens are already covered above;
     // this pins the iteration bookkeeping that a naive collapse could get

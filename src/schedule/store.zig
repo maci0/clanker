@@ -1,4 +1,4 @@
-//! `state/schedule.json` — the list of scheduled entries — and
+//! `state/schedule.json`, the list of scheduled entries, and
 //! `state/schedule/log.jsonl`, the append-only record of what actually fired.
 //!
 //! Persistence follows the discipline the rest of `state/` already uses: a
@@ -66,7 +66,7 @@ pub const Entry = struct {
     /// through the backlog one window per invocation. See the missed-run
     /// policy in docs/prds/0009-schedule.md.
     last_run: i64 = 0,
-    /// "", "ok" or "error" — the outcome of that last fire.
+    /// "", "ok" or "error", the outcome of that last fire.
     last_status: []const u8 = "",
     runs: u32 = 0,
     failures: u32 = 0,
@@ -93,7 +93,7 @@ pub const Record = struct {
 /// The whole store plus the lock that serialises writing it back. Callers do
 /// `var s = try open(...); defer s.close();` and then read `s.entries`,
 /// mutate, and `try s.save()`. Holding the lock across the read and the write
-/// is the point — a load/save pair that dropped it in between is exactly the
+/// is the point, a load/save pair that dropped it in between is exactly the
 /// lost-update the lock exists to prevent.
 pub const Session = struct {
     io: std.Io,

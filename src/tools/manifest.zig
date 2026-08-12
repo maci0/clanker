@@ -1,6 +1,6 @@
 //! The plugin manifest schema: what a `*.tool.json` descriptor may say, and
-//! what it means. `registry.zig` is the loader — deliberately forgiving, since
-//! one bad manifest must not take the other ninety down with it — so a typo'd
+//! what it means. `registry.zig` is the loader, deliberately forgiving, since
+//! one bad manifest must not take the other ninety down with it, so a typo'd
 //! key, a fuel budget above the ceiling, or a `tool_allow` with no `tool_call`
 //! all load without complaint and simply do nothing. This module is the other
 //! half: a pure validator that says so, with the file and the offending key.
@@ -40,7 +40,7 @@ pub const default_fuel: u64 = 10_000_000_000;
 /// `parameters` is OpenAI's spelling of `input_schema`, accepted by
 /// `Registry.normalizedSchema` for compatibility. `category` is read by the
 /// `cmd_tools` and `cmd_plugins` guests (for grouping and the web UI's tool
-/// panel), not by the registry — it is honored, just not by the loader.
+/// panel), not by the registry, it is honored, just not by the loader.
 pub const known_keys = [_][]const u8{
     "manifest_version",
     "name",
@@ -211,7 +211,7 @@ const Validator = struct {
 
 /// Validate one manifest's raw bytes. `file` is only ever echoed back in the
 /// report, so a caller with no path (a test, a piped document) may pass any
-/// label. Never fails on a bad manifest — a malformed document is a finding,
+/// label. Never fails on a bad manifest, a malformed document is a finding,
 /// not an error return; the error set is allocation only.
 pub fn validate(arena: std.mem.Allocator, file: []const u8, raw: []const u8) !Report {
     var v = Validator{ .arena = arena };
@@ -486,7 +486,7 @@ fn checkCoherence(v: *Validator, obj: json.ObjectMap) !void {
 
     // A transform is hidden from the model like an internal tool, but it is
     // the one internal thing `/plugins` can switch off, so the pairing is a
-    // convention rather than a requirement — a transform without it is still
+    // convention rather than a requirement, a transform without it is still
     // offered to the model as a callable tool, which is not what a wrapper is.
     if (obj.get("transform") != null and !boolAt(obj, "internal")) {
         try v.add(.warn, "transform", "a transform wraps other tools rather than being called; pair it with \"internal\": true");

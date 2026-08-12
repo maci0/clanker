@@ -68,8 +68,8 @@ pub const AskFn = *const fn (
 
 /// Puts one write-capable tool call to the human before it runs
 /// (agent.confirm_writes) and returns whether they allowed it. Installed by
-/// the surfaces that have a human to ask — the streaming web run, the
-/// interactive REPL — and left null everywhere else, which means "allow":
+/// the surfaces that have a human to ask, the streaming web run, the
+/// interactive REPL, and left null everywhere else, which means "allow":
 /// the improve loop and headless runs must never be gated on an answer
 /// nobody is there to give. The preview is truncated by the caller; a
 /// confirm that cannot reach its human (closed tab, timeout) answers deny,
@@ -85,8 +85,8 @@ pub const ConfirmFn = *const fn (
 /// and freed by the caller.
 ///
 /// The concurrency decision this type encodes: the answer is a *re-entrant
-/// path* — one bounded completion on the parent's provider over a snapshot of
-/// the parent's transcript — not a queue that resolves at the parent's next
+/// path*, one bounded completion on the parent's provider over a snapshot of
+/// the parent's transcript, not a queue that resolves at the parent's next
 /// turn boundary. A queue cannot work here: ck_subagent joins the nested
 /// thread, so the parent never reaches a turn boundary while its sub-agent
 /// waits. The same join is what makes the re-entrant path safe: the subagent
@@ -211,7 +211,7 @@ pub const Sandbox = struct {
     exec_pattern_allow: []const []const u8 = &.{},
     /// Environment variables a guest may read, from the tool's manifest.
     env_allow: []const []const u8 = &.{},
-    /// May call another tool via `ck_tool`. Default false — only the chain
+    /// May call another tool via `ck_tool`. Default false, only the chain
     /// tool sets this.
     tool_call: bool = false,
     tool_allow: ?[]const []const u8 = null,
@@ -604,7 +604,7 @@ const CkLlmRequest = struct {
 };
 
 /// Parses `raw` as a ck_llm request object. Returns null when `raw` is not a
-/// JSON object — the caller then treats it as a bare prompt.
+/// JSON object, the caller then treats it as a bare prompt.
 fn parseCkLlmRequest(arena: std.mem.Allocator, raw: []const u8) ?CkLlmRequest {
     const v = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
     if (v != .object) return null;
@@ -704,7 +704,7 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .max_tokens = max_tokens,
     }, &err_detail) catch |err| {
         const failed_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
-        log.log(.warn, "[llm] ✗ ck_llm … {d}ms — {s} ({s})", .{ failed_ms, @errorName(err), err_detail orelse "" });
+        log.log(.warn, "[llm] ✗ ck_llm … {d}ms: {s} ({s})", .{ failed_ms, @errorName(err), err_detail orelse "" });
         return Err.network;
     };
     const content = resp.message.content orelse "";
@@ -983,7 +983,7 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
 /// models, instance, peers, default_provider), as JSON. Distinct from
 /// ck_config: that returns this *tool's* descriptor `config` object; this
 /// returns clanker's config.toml/config.local.toml, merged, as the harness
-/// parsed it — regardless of whether the checkout uses TOML or (legacy)
+/// parsed it, regardless of whether the checkout uses TOML or (legacy)
 /// JSON. Guests need this because a wasm32-freestanding module carries no
 /// TOML parser: reading config.toml's raw bytes directly only works for
 /// tools that just display the file (config_view's whole-dump path); a tool
@@ -1030,7 +1030,7 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
 /// Serializes the fields of `Config` that guests actually consume. Providers
 /// keep their nested `models` map (the shape guests already parse) even
 /// though the harness itself now stores it distributed that way in memory
-/// from a flat `[models."provider/model"]` table on disk — see
+/// from a flat `[models."provider/model"]` table on disk, see
 /// distributeModels in config.zig.
 fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, access: HarnessConfigAccess) ![]const u8 {
     var w: std.Io.Writer.Allocating = .init(arena);
@@ -1345,7 +1345,7 @@ fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []c
 /// a full final page.
 const chat_history_page_size = 20;
 
-/// ck_chat(op_json) — chatroom operations for the chat_* tools, plus the
+/// ck_chat(op_json), chatroom operations for the chat_* tools, plus the
 /// private-list todo_* ops (see below).
 /// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
 ///          "room"|"to":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
@@ -1695,7 +1695,7 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     } else if (std.mem.startsWith(u8, op, "todo_")) {
         // A room todo was a second, thinner copy of a board card: a title, a
         // claim, a closed flag, folded out of the same room log the board now
-        // folds. One concept, so one implementation, and it is the board tool —
+        // folds. One concept, so one implementation, and it is the board tool ,
         // folding a log is application logic, while this host's job is the
         // append, the fan-out and the subscription filter. The branch near the
         // top of this function still handles a todo_* op with no room, which is
@@ -1896,7 +1896,7 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
         .response_writer = &w,
         // network_allow only checks `hostname` above, once, against the
         // requested URL. std.http.Client auto-follows redirects by default,
-        // and a redirect target is never re-checked against that allowlist —
+        // and a redirect target is never re-checked against that allowlist ,
         // an allowed host could 302 the sandboxed tool to an internal address
         // (e.g. a cloud metadata IP) the allowlist exists to block. Refusing
         // redirects outright keeps every request confined to the host that
@@ -1960,7 +1960,7 @@ test "parseCustomHeaders handles null, empty, non-object, and non-string values"
     try std.testing.expectEqual(@as(u32, 0), parseCustomHeaders(arena, "", &hdrs));
     // Non-object JSON.
     try std.testing.expectEqual(@as(u32, 0), parseCustomHeaders(arena, "[1,2]", &hdrs));
-    // Object with non-string value — those entries are skipped.
+    // Object with non-string value, those entries are skipped.
     const n2 = parseCustomHeaders(arena, "{\"X-Good\":\"yes\",\"X-Bad\":42}", &hdrs);
     try std.testing.expectEqual(@as(u32, 1), n2);
     try std.testing.expectEqualStrings("X-Good", hdrs[0].name);
@@ -2009,7 +2009,7 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
-/// ck_fs_find(dir_path, pattern) — recursively find files under a sandbox
+/// ck_fs_find(dir_path, pattern), recursively find files under a sandbox
 /// directory whose names match a simple glob pattern. The pattern supports
 /// '*' (matches any sequence of non-'/' chars) and '?' (matches exactly one
 /// non-'/' char); everything else is a literal match. Returns a JSON string
@@ -2117,7 +2117,7 @@ pub fn globMatch(pattern: []const u8, name: []const u8) bool {
     return true;
 }
 
-/// ck_fs_grep(dir_path, pattern) — search for lines containing a literal
+/// ck_fs_grep(dir_path, pattern), search for lines containing a literal
 /// substring in files under a sandbox directory. Returns a JSON array of
 /// `{"file":"<relative-path>","line":<number>,"text":"<line-content>"}` objects
 /// in the host arena. Searches recursively up to `fs_grep_max_depth` levels
@@ -2231,7 +2231,7 @@ fn fsGrepFile(
     }
 }
 
-/// ck_fs_stat(path) — stat a path under the sandbox root.
+/// ck_fs_stat(path), stat a path under the sandbox root.
 /// Returns a JSON object in the host arena:
 ///   {"exists":true,"kind":"file","size":1234}
 /// kind is one of "file", "directory", or "other".
@@ -2272,7 +2272,7 @@ pub fn ckFsStat(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
-/// ck_fs_copy(src_path, dst_path) — copy a file under the sandbox root.
+/// ck_fs_copy(src_path, dst_path), copy a file under the sandbox root.
 /// Both paths must pass the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 /// Creates parent directories for the destination automatically.
 /// Returns Err.not_found when the source does not exist, Err.too_large when
@@ -2316,7 +2316,7 @@ fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u
     return h.writeResult(mem_bytes, json);
 }
 
-/// ck_fs_rename(old_path, new_path) — rename/move a file under the sandbox root.
+/// ck_fs_rename(old_path, new_path), rename/move a file under the sandbox root.
 /// Both paths must pass the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 /// Returns Err.not_found when the source does not exist.
 pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u32, new_len: u32) u32 {
@@ -2336,7 +2336,7 @@ pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u3
     return Err.ok;
 }
 
-/// ck_fs_delete(path) — delete a file under the sandbox root.
+/// ck_fs_delete(path), delete a file under the sandbox root.
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
@@ -2360,7 +2360,7 @@ pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return Err.ok;
 }
 
-/// ck_fs_mkdir(path) — create a directory (and parents) under the sandbox root.
+/// ck_fs_mkdir(path), create a directory (and parents) under the sandbox root.
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsMkdir(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
@@ -2383,7 +2383,7 @@ pub fn ckFsRead(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return fsReadImpl(h, bytes, path);
 }
 
-/// ck_fs_read_range(path, offset, length) — read a byte range from a file
+/// ck_fs_read_range(path, offset, length), read a byte range from a file
 /// under the sandbox root. Returns the slice [offset, offset+length) of the
 /// file in the host arena. If the file is shorter than offset+length the
 /// returned data is truncated to what is available (which may be empty if
@@ -2396,7 +2396,7 @@ pub fn ckFsReadRange(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, offset
     return fsReadRangeImpl(h, bytes, path, offset, length);
 }
 
-/// ck_fs_write_range(path, offset, data) — write data at a byte offset in a
+/// ck_fs_write_range(path, offset, data), write data at a byte offset in a
 /// file under the sandbox root. The file must already exist. Bytes in
 /// [offset, offset+data.len) are overwritten; if offset+data.len exceeds the
 /// current file size the file is extended. `data.len` is capped at
@@ -2466,7 +2466,7 @@ fn fsReadRangeImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, offset: u32,
     return h.writeResult(mem_bytes, buf[0..n]);
 }
 
-/// ck_fs_append(path, data) — append data to a file under the sandbox root.
+/// ck_fs_append(path, data), append data to a file under the sandbox root.
 /// Creates the file if it doesn't exist. Enforces the same fs_prefixes
 /// policy as ck_fs_read / ck_fs_write.
 pub fn ckFsAppend(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32 {
@@ -2540,7 +2540,7 @@ fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8
     return h.writeResult(mem_bytes, json);
 }
 
-/// ck_fs_write_if(path, expected_hash, data) — compare-and-swap file write.
+/// ck_fs_write_if(path, expected_hash, data), compare-and-swap file write.
 /// Acquires an exclusive lock on a separate .lock file, reads the current
 /// contents, hashes them to lowercase hex SHA-256, compares with
 /// expected_hash, and writes data only if they match. A file that does not
@@ -2589,7 +2589,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
 
     // Compare: empty expected matches empty file (FileNotFound above).
     if (expected_hex.len == 0 and current.len == 0) {
-        // Creating a new file — hash matches (both empty).
+        // Creating a new file, hash matches (both empty).
     } else if (expected_hex.len != hex.len or !std.mem.eql(u8, expected_hex, &hex)) {
         return Err.mismatch;
     }
@@ -2607,7 +2607,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     return Err.ok;
 }
 
-/// ck_getenv(name) — alias of ck_env, kept for modules linked against the
+/// ck_getenv(name), alias of ck_env, kept for modules linked against the
 /// older symbol name. Delegating keeps the validation contract (empty name
 /// -> Err.invalid) identical for both entry points.
 pub fn ckGetenv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
@@ -2705,7 +2705,7 @@ fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
     return remote_ops and (std.mem.eql(u8, v, "push") or std.mem.eql(u8, v, "merge") or std.mem.eql(u8, v, "checkout"));
 }
 
-/// Whether `pattern` names `cmd` — i.e. its first whitespace-delimited token
+/// Whether `pattern` names `cmd`, i.e. its first whitespace-delimited token
 /// is exactly `cmd`. A pattern whose command token carries a `*` cannot name a
 /// specific command, so it does not make the command strict (it can still
 /// grant an argv via globMatch).
@@ -2771,7 +2771,7 @@ fn execPolicyFor(
 /// ckExec passes argv straight to std.process.run, never through a shell, so
 /// these cannot be interpreted as operators by anything else: in an argument to
 /// rg or ast-grep they are ordinary pattern syntax. Refusing them everywhere
-/// broke the search tools this allowlist exists to serve — a review run was
+/// broke the search tools this allowlist exists to serve, a review run was
 /// denied the pattern "jsonInt|float => |@intFromFloat" because it contains a
 /// greater-than sign. "|" was already exempt for the same reason; the rest
 /// follow it.
@@ -2784,11 +2784,11 @@ const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 /// from "the parent environment", but that resolution did not find `zig` (on
 /// PATH, confirmed executable) when called from this sandboxed exec path,
 /// while the identical bare-name call from the non-sandboxed gate checks
-/// succeeded — every capability eval that shells out (zig_check, test_file)
+/// succeeded, every capability eval that shells out (zig_check, test_file)
 /// failed on a plain FileNotFound before ever reaching the tool's own logic.
 /// Resolving here removes the dependency on that implicit lookup entirely.
 /// Returns null (falls back to the bare name) if `cmd` already looks like a
-/// path, PATH is unset, or nothing on it matches — never a hard failure, so
+/// path, PATH is unset, or nothing on it matches, never a hard failure, so
 /// exec_allow commands that behave fine today keep behaving the same way.
 pub fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
     if (std.mem.findScalar(u8, cmd, '/') != null) return null;
@@ -2825,7 +2825,7 @@ pub const ExecDenial = union(enum) {
 
 /// The argv-level half of the ck_exec gate, factored out of `ckExec` so the
 /// decision lives in exactly one place. Callers check `execAllowed(cmd)` first
-/// — that half needs only the command name, and refusing there avoids a PATH
+///, that half needs only the command name, and refusing there avoids a PATH
 /// scan for a command that was never permitted.
 ///
 /// `cmd` is the command as the caller named it (bare, before PATH resolution);
@@ -2878,7 +2878,7 @@ fn runsAShell(cmd: []const u8) bool {
 /// tree and return up to 40 matching lines (signatures, doc comments, usage).
 ///
 /// Use this to verify that a function, type, or field actually exists in
-/// std before writing code that calls it — especially after a Zig version
+/// std before writing code that calls it, especially after a Zig version
 /// bump when APIs may have changed.  The search is a literal substring match
 /// (not fuzzy), so pass the shortest unambiguous fragment (e.g.
 /// "splitScalar" not "std.mem.splitScalar").  Do NOT use this for non-std
@@ -2905,13 +2905,13 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
 ///
 /// Use this when a task is self-contained ("summarize this file", "write unit
 /// tests for X") and does not need to share mutable state with the caller.
-/// Do NOT use it for tasks that are trivial enough to do inline — every
-/// sub-agent call pays a full agent-loop startup cost — or when you need the
+/// Do NOT use it for tasks that are trivial enough to do inline, every
+/// sub-agent call pays a full agent-loop startup cost, or when you need the
 /// sub-agent to modify files you are currently editing (it works on a
 /// snapshot, not on your live state).
 ///
-/// ck_ask: put a multiple-choice question to the human — or, with
-/// {"to": "parent"}, to the agent that spawned this sub-agent — and return
+/// ck_ask: put a multiple-choice question to the human, or, with
+/// {"to": "parent"}, to the agent that spawned this sub-agent, and return
 /// the pick.
 ///
 /// Use this when a decision is genuinely ambiguous and the asker cannot
@@ -3012,7 +3012,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             child_sb.llm = .{ .ctx = parent_llm.ctx, .provider = parent_llm.provider, .max_tokens = parent_llm.max_tokens };
         }
     }
-    // Inline WASM load (avoid runtime import cycle) — same as runtime.ToolModule but without the type wrapper.
+    // Inline WASM load (avoid runtime import cycle), same as runtime.ToolModule but without the type wrapper.
     const zwasm_mod = @import("zwasm");
     var engine = zwasm_mod.Engine.init(h.sandbox.gpa, .{}) catch return Err.invalid;
     defer engine.deinit();
@@ -3131,7 +3131,7 @@ pub fn ckAsk(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     }
 
     const ask = h.sandbox.ask_fn orelse return Err.not_found;
-    // An installed ask_fn can still end up with nobody to answer — the serve
+    // An installed ask_fn can still end up with nobody to answer, the serve
     // bridge times out when the browser tab is gone. That is the same
     // situation as no ask_fn at all, and not_found is what tells the tool to
     // say "decide yourself" rather than "the ask was malformed".
@@ -3228,7 +3228,7 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
 const max_swarm_tasks: usize = 8;
 
 /// Fans `tasks` out to that many nested agents on their own threads
-/// (reusing the same subagent_runner as ck_subagent — a swarm member is
+/// (reusing the same subagent_runner as ck_subagent, a swarm member is
 /// just a subagent run, bounded iterations and all), running concurrently,
 /// then joins every one before returning. The join is load-bearing for the
 /// same reason ck_subagent's is: it is what keeps the parent parked on this
@@ -3259,7 +3259,7 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const cfg = h.sandbox.cfg orelse return Err.not_found;
     // Each member gets the same brief a lone subagent would: what larger
     // work this serves. Unlike subagent, there is no per-task context/files
-    // — a swarm task is expected to be a complete, self-contained brief
+    //, a swarm task is expected to be a complete, self-contained brief
     // since members cannot see each other or the parent's transcript.
     const brief = Brief{ .parent_task = h.sandbox.parent_task };
 
@@ -3307,7 +3307,7 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     }
     for (threads[0..spawned]) |th| th.join();
     // Any call past `spawned` never ran: result and err both stay null,
-    // which the encoding loop below reports as "spawn failed" — the same
+    // which the encoding loop below reports as "spawn failed", the same
     // shape as a member that ran and errored, so the batch's other results
     // are never lost to one thread-spawn failure.
 
@@ -3417,8 +3417,8 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const exec_t0 = std.Io.Timestamp.now(h.sandbox.io, .awake);
     var child_env = execEnvironment(h.sandbox.gpa, h.sandbox) catch return Err.invalid;
     defer child_env.deinit();
-    // A tool that needs to *talk* to a process, not just launch one — an LSP
-    // client is the reason this exists — hands over the bytes to write to its
+    // A tool that needs to *talk* to a process, not just launch one, an LSP
+    // client is the reason this exists, hands over the bytes to write to its
     // stdin. std.process.run cannot do that (it hardcodes .ignore), so that
     // case spawns the child directly.
     if (obj.get("stdin")) |sv| {
@@ -3450,7 +3450,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         // Carries the ✗ and a duration like the exit-code branch below, so
         // every → has a finish line in the same shape whatever went wrong.
         const failed_ms = @divTrunc(exec_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
-        log.log(.warn, "[exec] ✗ {s} … {d}ms — failed to run: {s}", .{ cmd, failed_ms, @errorName(err) });
+        log.log(.warn, "[exec] ✗ {s} … {d}ms, failed to run: {s}", .{ cmd, failed_ms, @errorName(err) });
         return switch (err) {
             error.FileNotFound => Err.not_found,
             error.StreamTooLong, error.FileTooBig, error.NoSpaceLeft => Err.too_large,
@@ -3468,7 +3468,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     if (code == 0) {
         log.log(.info, "[exec] ✓ {s} … {d}ms", .{ cmd, exec_ms });
     } else {
-        log.log(.info, "[exec] ✗ {s} … {d}ms — exit code {d}", .{ cmd, exec_ms, code });
+        log.log(.info, "[exec] ✗ {s} … {d}ms, exit code {d}", .{ cmd, exec_ms, code });
     }
 
     const wbuf = h.sandbox.gpa.alloc(u8, 96 * 1024) catch return Err.too_large;
@@ -3533,13 +3533,13 @@ pub const ExecAttempt = union(enum) {
 
 /// The ck_exec gate for a caller that is not a WASM guest: resolves the
 /// command through PATH, runs it past `execAllowed` + `execDenial`, and spawns
-/// it with the same filtered environment (`execEnvironment`) a guest gets — so
+/// it with the same filtered environment (`execEnvironment`) a guest gets, so
 /// an allowed binary still cannot print this project's API keys.
 ///
 /// `clanker repl`'s `!` shell escape is the caller. It exists so that escape
 /// is *not* a raw shell: it runs a fixed argv through the same policy a tool
 /// goes through, with no shell interposed to expand globs, variables, pipes or
-/// redirections. There is deliberately no `cwd`, no stdin and no shell here —
+/// redirections. There is deliberately no `cwd`, no stdin and no shell here ,
 /// the process cwd is the sandbox root the REPL was started in.
 pub fn execUnderPolicy(
     sb: *const Sandbox,
@@ -3590,7 +3590,7 @@ pub fn execUnderPolicy(
         .stdout_limit = .limited(stdout_limit),
         .stderr_limit = .limited(stderr_limit),
     }) catch |err| {
-        log.log(.warn, "[exec] ✗ {s} — failed to run: {s}", .{ cmd, @errorName(err) });
+        log.log(.warn, "[exec] ✗ {s}, failed to run: {s}", .{ cmd, @errorName(err) });
         return .{ .failed = err };
     };
     return .{ .ran = .{
@@ -4016,7 +4016,7 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expectEqualStrings("--force", forced.deny_token.arg);
 
     // For `git` the verb allowlist is consulted first, so a destructive verb
-    // is refused as an unlisted verb rather than as a deny token — the same
+    // is refused as an unlisted verb rather than as a deny token, the same
     // refusal either way, but the precedence is worth pinning.
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "reset", "--hard" }).? == .git_verb);
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "ls-remote" }).? == .git_verb);
@@ -4623,7 +4623,7 @@ test "ck_chat access covers every shipped caller, one op at a time" {
     // board.wasm is registered under eleven manifest names and needs two ops:
     // "send" replicates a card into the room, "history" folds that log back on
     // read. Granting one op per tool broke replication silently, because the
-    // board ignores a failed chat call — so this is pinned per name, not just
+    // board ignores a failed chat call, so this is pinned per name, not just
     // for the bare "board".
     //
     // The names are read off the shipped manifests rather than written out

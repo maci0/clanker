@@ -18,7 +18,7 @@ const max_line = 1 << 20;
 
 /// Compiled tool modules, keyed by tool name and kept for the life of the
 /// stdio session. Without this, every `tools/call` re-read the .wasm file and
-/// re-parsed/re-linked/re-instantiated it from scratch — the agent loop
+/// re-parsed/re-linked/re-instantiated it from scratch, the agent loop
 /// avoids exactly this cost with its own `wasm_cache`/`self.modules`, and an
 /// MCP client issuing many calls in a session deserves the same reuse.
 const ModuleCache = std.StringHashMapUnmanaged(*runtime.ToolModule);

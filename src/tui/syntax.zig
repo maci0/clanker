@@ -9,11 +9,11 @@
 //! with per-language keyword tables and toggles for comment/string syntax;
 //! Python gets its own toggles on the same lexer. Unknown fence languages
 //! fall back to the C-like lexer with no keywords, which still picks out
-//! strings, numbers and comments correctly more often than not — and
+//! strings, numbers and comments correctly more often than not, and
 //! wrong-but-readable highlighting beats a crash or a wall of one color.
 //!
 //! Safety: `emit`/`spansVaxis` strip C0 controls (except \n, \t), DEL and
-//! UTF-8 C1 controls the same way transcript.zig's writeSanitized does —
+//! UTF-8 C1 controls the same way transcript.zig's writeSanitized does ,
 //! everything rendered here is model output (CWE-150). Highlighter state
 //! (unterminated strings, block comments) is carried across lines by the
 //! caller, so a multi-line string keeps its color until its closing quote.
@@ -362,7 +362,7 @@ pub fn highlightLine(state: *State, gpa: std.mem.Allocator, line: []const u8, ou
             plain_start = i;
             continue;
         }
-        // Numbers: hex/binary/octal/floats — close enough by accepting
+        // Numbers: hex/binary/octal/floats, close enough by accepting
         // [0-9a-fA-F._xob'] runs that start with a digit.
         if (std.ascii.isDigit(c)) {
             try flushPlain(out, gpa, line, plain_start, i);

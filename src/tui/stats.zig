@@ -6,7 +6,7 @@
 //! string to its transcript, so the two can't drift into two dialects of
 //! "1234 in / 567 out". Everything here is pure: a struct of numbers in, a
 //! string out, no allocator-per-frame and no terminal, which is what makes it
-//! testable at all — the vaxis event loop is not.
+//! testable at all, the vaxis event loop is not.
 //!
 //! Two deliberate omissions, both about not printing a confident zero:
 //!
@@ -192,7 +192,7 @@ pub const Compaction = struct {
 };
 
 /// `[history compacted: dropped 12 messages, freed 48 KB]`, or null when the
-/// call left the conversation alone — which is the overwhelmingly common
+/// call left the conversation alone, which is the overwhelmingly common
 /// case, so the caller can measure unconditionally and print only on a hit.
 pub fn formatCompaction(alloc: std.mem.Allocator, c: Compaction) !?[]u8 {
     const dropped = c.droppedMessages();

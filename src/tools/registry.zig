@@ -14,7 +14,7 @@ pub const Tool = struct {
     /// file means 1: every manifest written before the key existed is a v1
     /// manifest, so the default is what keeps them loading unchanged. A
     /// version this build does not understand is refused at parse time rather
-    /// than read with v1 rules — see `manifest.zig`.
+    /// than read with v1 rules, see `manifest.zig`.
     manifest_version: i64 = manifest.current_version,
     name: []const u8,
     /// The human-facing description: what a person reads in the webui Tools
@@ -24,7 +24,7 @@ pub const Tool = struct {
     /// in the full schema when this tool is core or revealed, so its cost is
     /// paid on nearly every request. Defaults to `description` when a
     /// manifest omits `llm_description` (see `parseDescriptor`), so an
-    /// unmigrated tool still works — just not as cheaply.
+    /// unmigrated tool still works, just not as cheaply.
     llm_description: []const u8 = "",
     /// Where the module is, as resolved by `resolveWasmPath` at load: a path
     /// with a separator (`zig-out/tools/x.wasm`) is read from the process's
@@ -59,7 +59,7 @@ pub const Tool = struct {
     /// `"internal": true` so the model never calls it.
     statusline: bool = false,
     /// Runs once after each REPL turn (empty input) and may print a line
-    /// into the transcript — a general REPL-behavior plugin, as opposed to
+    /// into the transcript, a general REPL-behavior plugin, as opposed to
     /// `statusline`'s fixed one-line segment. Pair with `"internal": true`
     /// so the model never calls it.
     turn_hook: bool = false,
@@ -70,8 +70,8 @@ pub const Tool = struct {
     config: json.Value = .{ .object = .{} },
     /// `config`, pre-serialized once at registry load. `config` never changes
     /// after `Registry.load` returns (see `applyConfigOverrides`), so
-    /// re-serializing it on every `sandboxFor` call — previously once per
-    /// tool invocation, transform run, and worker spawn — redid the same
+    /// re-serializing it on every `sandboxFor` call, previously once per
+    /// tool invocation, transform run, and worker spawn, redid the same
     /// work every time instead of once.
     config_json: []const u8 = "{}",
     /// Which `config` keys may be changed at runtime, from the descriptor's
@@ -104,8 +104,8 @@ pub const Tool = struct {
 
     /// Ask the human before running this tool, when a confirm channel is
     /// installed (agent.confirm_writes). Unset, the answer is derived from
-    /// what the descriptor grants: anything with exec or filesystem access —
-    /// fs_prefixes carry write access, there is no read-only grant — is a
+    /// what the descriptor grants: anything with exec or filesystem access,
+    /// where fs_prefixes carry write access (there is no read-only grant), is a
     /// write in a viewer's eyes. Read-only tools opt out with
     /// `"confirm": false` so reads keep running free; a tool whose risk its
     /// grants understate (delegation, say) opts in with `"confirm": true`.
@@ -170,7 +170,7 @@ pub const Registry = struct {
         var dir = base.openDir(io, tools_dir, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => {
                 // Wrong/missing path is a config problem (agent.tools_dir), not a
-                // missing guest rebuild — `zig build tools` only fills zig-out/tools.
+                // missing guest rebuild, `zig build tools` only fills zig-out/tools.
                 log.log(.warn, "tools dir '{s}' not found; check agent.tools_dir (expected a directory of *.tool.json manifests)", .{tools_dir});
                 return reg;
             },
@@ -311,7 +311,7 @@ pub const Registry = struct {
     /// Returns all enabled tools that have `turn_hook: true`. Same cadence
     /// as `statuslineTools` (invoked with empty input once after each turn),
     /// but the caller treats a non-empty result as a line to print into the
-    /// transcript rather than a status-bar segment — for plugins that react
+    /// transcript rather than a status-bar segment, for plugins that react
     /// to what just happened instead of only decorating the status line.
     pub fn turnHookTools(self: *const Registry, arena: std.mem.Allocator) ![]const *const Tool {
         var out: std.ArrayList(*const Tool) = .empty;
@@ -451,7 +451,7 @@ pub const Registry = struct {
     /// A tool's JSON Schema, with the shape providers insist on filled in.
     ///
     /// Anthropic rejects a request whose tool list contains a schema with no
-    /// "type" — and it rejects the *entire* request, so one manifest written
+    /// "type", and it rejects the *entire* request, so one manifest written
     /// with OpenAI's "parameters" key, or with the type omitted, silently
     /// breaks every tool call for every tool. Accept both spellings here and
     /// default the type rather than shipping a request no provider will take.
@@ -501,7 +501,7 @@ pub const Registry = struct {
             .wasm = try strField(obj, "wasm"),
             // A schema without a "type" is rejected by the provider, and it
             // rejects the *whole* request: one malformed manifest takes every
-            // tool call down with it. Normalize here instead — an object
+            // tool call down with it. Normalize here instead, an object
             // schema is what every tool in this registry has.
             .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
         };
@@ -851,7 +851,7 @@ test "config overrides apply only to keys the descriptor opted in" {
 }
 
 test "a descriptor schema always reaches the provider with a type" {
-    // Anthropic rejects the whole request — every tool, not just the bad one —
+    // Anthropic rejects the whole request (every tool, not just the bad one)
     // when any tool's input_schema has no "type". A manifest written with
     // OpenAI's "parameters" key, or with the type left out, used to do exactly
     // that and broke every run until the file was found by hand.
@@ -878,7 +878,7 @@ test "a descriptor schema always reaches the provider with a type" {
 }
 
 test "a missing tools_dir yields an empty registry without error" {
-    // Wrong path is a soft miss (warn + empty), not a hard fail — serve and
+    // Wrong path is a soft miss (warn + empty), not a hard fail, serve and
     // doctor both load this way. The log must not sole-blame zig build tools;
     // that phrasing is asserted by source grep in the change's verification.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -947,7 +947,7 @@ test "a tool that calls the model says so in its descriptor" {
 
     // Every guest helper that reaches a model. `lib.llmSystem` and
     // `lib.llmMany` were missing, so `arena` (which only ever calls
-    // llmSystem) and `compare` (llmMany) were both invisible to this check —
+    // llmSystem) and `compare` (llmMany) were both invisible to this check;
     // the exact hole it exists to close. The list lives in manifest.zig
     // because `clanker plugins validate` applies the same rule to a
     // third-party plugin directory; a helper added to lib.zig without a line

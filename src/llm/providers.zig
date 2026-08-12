@@ -4,7 +4,7 @@
 //! under `providers/`, holding that provider's wire codec, auth strategy and
 //! transport quirks together. Adding one is a new file plus a row in
 //! `registry` below (and the matching `kind = "..."` tag on
-//! `config.ProviderKind`, which is the config surface and stays there) — not
+//! `config.ProviderKind`, which is the config surface and stays there), not
 //! an edit to seven switches spread across the client. See
 //! [ADR 0004](../../docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md).
 //!

@@ -5,14 +5,14 @@
 //!
 //! Architecture: a single root `vxfw.Widget` ("Model") drives everything.
 //! `vxfw.App.run` already handles SIGWINCH (`.winsize` events resize and
-//! redraw automatically — no self-pipe needed, unlike src/tui/term.zig)
+//! redraw automatically, no self-pipe needed, unlike src/tui/term.zig)
 //! and owns the render loop. A submitted task runs `Agent.run` on a
 //! background thread (LLM calls and tool execution are blocking); the
 //! callbacks it takes (`on_token`/`on_tool_call`/`on_tool_result`) are bare
 //! function pointers with no userdata slot, so they write into module-level,
 //! mutex-guarded state, and the Model's `.tick` handler re-schedules itself
 //! every 50ms *only while a turn is in flight* to pick up new streamed
-//! content — idle, there is no timer running and the app is purely
+//! content, idle, there is no timer running and the app is purely
 //! event-driven, same principle as this session's KeyReader poll() fix in
 //! the old REPL.
 //!
@@ -25,7 +25,7 @@
 //!
 //! A submitted line is one of three things, decided in `submit` in this
 //! order: a `!`-prefixed shell escape (runs here and now through the ck_exec
-//! gate — see `parseShellEscape`), a `/`-prefixed command from
+//! gate, see `parseShellEscape`), a `/`-prefixed command from
 //! `command_registry`, or a task for the agent. Only the third reaches the
 //! LLM.
 //!
@@ -33,7 +33,7 @@
 //! completion UI that isn't a modal picker: it edits the TextField in place
 //! (single match, or several completing to a shared prefix) rather than
 //! opening `/model`'s `picker_open`/`handlePickerKey` loop, since there is
-//! nothing to navigate — just a line to finish or list.
+//! nothing to navigate, just a line to finish or list.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -124,7 +124,7 @@ fn onToken(delta: []const u8) void {
 /// Each batch of calls becomes one left-bar card (transcript.zig's card
 /// builders): the first call opens it, the rest of the batch joins the body,
 /// each call's arguments follow as a truncated one-line preview, and
-/// onToolResult closes it — the agent reports one timing per batch, so
+/// onToolResult closes it, the agent reports one timing per batch, so
 /// per-call cards would draw open corners nothing ever closes. Name and
 /// arguments are untrusted; the builders control-strip them (CWE-150).
 fn onToolCall(calls: []const types.ToolCall) void {
@@ -285,7 +285,7 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config) ![]
                 .category = mentry.value_ptr.category,
             });
         }
-        // Sorted within this provider only — grouped-by-provider stays the
+        // Sorted within this provider only, grouped-by-provider stays the
         // outer shape, category just orders the models inside each group.
         // Empty category sorts last (uncategorized models keep falling to
         // the bottom rather than jumping ahead of every categorized peer).
@@ -356,7 +356,7 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
 // ---------------------------------------------------------------------
 // Slash-command registry: the single source of truth for what `submit`
 // dispatches and what `/help` prints. Adding an entry here is the whole
-// job — dispatch and the generated help list both derive from it, so a
+// job, dispatch and the generated help list both derive from it, so a
 // command can no longer ship undocumented (the hazard docs/prds/0005-repl-tui.md
 // tracked against the old hand-maintained `printHelp` prose).
 // ---------------------------------------------------------------------
@@ -439,7 +439,7 @@ fn matchSpelling(spec: *const CommandSpec, spelling: []const u8, input: []const 
 }
 
 /// Registry lookup for a submitted line: trims, then tries every spelling
-/// of every entry. Null means "not a command" — bare text is a task for the
+/// of every entry. Null means "not a command", bare text is a task for the
 /// agent, and `submit` reports unrecognized /slash input instead of sending
 /// it (see `looksLikeSlashCommand`).
 fn parseCommand(task: []const u8) ?ParsedCommand {
@@ -454,13 +454,13 @@ fn parseCommand(task: []const u8) ?ParsedCommand {
 }
 
 // ---------------------------------------------------------------------
-// `!cmd` — the inline shell escape. A third input mode next to the
+// `!cmd`, the inline shell escape. A third input mode next to the
 // slash commands above and a task for the agent: the line runs locally,
 // right now, and nothing about it is sent to the LLM.
 //
 // It is not a shell. `!` builds one fixed argv and hands it to
 // `host.execUnderPolicy`, the non-WASM entry point to the same ck_exec
-// gate every tool goes through — the command must be on an allowlist,
+// gate every tool goes through, the command must be on an allowlist,
 // the deny tokens still apply, and the child gets the filtered
 // environment a guest gets rather than this process's (which holds the
 // API keys). Nothing expands globs, `$VAR`, pipes or redirections,
@@ -481,7 +481,7 @@ fn parseShellEscape(task: []const u8) ?[]const u8 {
 }
 
 /// Comfortably more arguments than a hand-typed command line carries. Past
-/// this the line is refused rather than silently truncated — a command run
+/// this the line is refused rather than silently truncated, a command run
 /// with half its arguments is worse than one that did not run.
 const max_escape_args = 64;
 
@@ -491,7 +491,7 @@ const ShellSplitError = error{ TooManyArgs, UnterminatedQuote };
 /// arguments; an argument that *starts* with `'` or `"` runs to the matching
 /// quote, so `!rg "foo bar" src` is three arguments. A quote inside an
 /// otherwise unquoted argument is literal, and there are no backslash escapes
-/// — the grammar is deliberately the smallest one that lets a quoted argument
+///, the grammar is deliberately the smallest one that lets a quoted argument
 /// hold a space, not a re-implementation of shell word splitting that would
 /// invite the expansions this path does not do.
 ///
@@ -520,7 +520,7 @@ fn splitShellArgs(line: []const u8, out: *[max_escape_args][]const u8) ShellSpli
 }
 
 /// Output a `!` command may produce before it is cut, matching what ck_exec
-/// gives a guest — the escape has no reason to be more or less generous than
+/// gives a guest, the escape has no reason to be more or less generous than
 /// the tools.
 const escape_stdout_limit = 1 << 20;
 const escape_stderr_limit = 64 * 1024;
@@ -550,7 +550,7 @@ fn lessThanCmd(_: void, a: []const u8, b: []const u8) bool {
 const shell_escape_help =
     \\shell escape:
     \\  !<command>        run it here, now, under the same ck_exec policy the
-    \\                    tools run under — not a shell, so no pipes, globs,
+    \\                    tools run under, not a shell, so no pipes, globs,
     \\                    redirections or $VAR expansion
     \\  !                 list the commands the escape may run
 ;
@@ -657,7 +657,7 @@ const help_names_width = blk: {
 };
 
 /// The command section of `/help`, generated from `command_registry`: one
-/// line per entry — every spelling comma-separated, the arg hint, then the
+/// line per entry, every spelling comma-separated, the arg hint, then the
 /// help text in a common column. Returned as one newline-joined slice the
 /// caller owns.
 fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
@@ -863,7 +863,7 @@ test "matchingSpellings finds a unique prefix and every ambiguous one" {
 test "longestCommonPrefix completes toward the shared stem or nowhere" {
     var buf: [max_completions]SpellingMatch = undefined;
     const s_matches = matchingSpellings("/s", &buf);
-    // /sessions vs /status share only "/s" — no further completion possible.
+    // /sessions vs /status share only "/s", no further completion possible.
     try std.testing.expectEqualStrings("/s", longestCommonPrefix(s_matches));
 
     var buf2: [max_completions]SpellingMatch = undefined;
@@ -898,10 +898,10 @@ const Model = struct {
     /// after every completed turn; null only when the sessions module is off
     /// and no `--session` was given.
     session_id: ?[]const u8 = null,
-    /// Unix seconds when this conversation was first created — preserved
+    /// Unix seconds when this conversation was first created, preserved
     /// across resume so a continued session keeps its original birth date.
     session_created: i64 = 0,
-    /// First task of the conversation, trimmed — the line `clanker sessions`
+    /// First task of the conversation, trimmed, the line `clanker sessions`
     /// shows. Kept from a loaded session; set once on the first submit.
     session_title: []const u8 = "",
 
@@ -944,14 +944,14 @@ const Model = struct {
     /// Arena-owned. Null = fall back to the env var (then the default).
     theme_override: ?[]const u8 = null,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
-    /// single-line widget (Enter either submits or is a no-op — there is no
+    /// single-line widget (Enter either submits or is a no-op, there is no
     /// way to insert a literal newline into one), so a multi-line paste's
     /// embedded Enters would otherwise submit the task early, mid-paste.
     /// While true, Enter is folded to a space and inserted instead.
     in_paste: bool = false,
     /// vxfw.App.run() unconditionally enables mouse reporting (setMouseMode),
     /// which takes click-drag away from the terminal's own text selection in
-    /// most emulators (Konsole included) — so this app owes its own
+    /// most emulators (Konsole included), so this app owes its own
     /// selection + clipboard copy in exchange for grabbing the mouse.
     /// Row-major, drag-to-select over the transcript region only (not the
     /// status line or input box); copies via OSC 52 on release.
@@ -960,14 +960,14 @@ const Model = struct {
     sel_start: vxfw.Point = .{ .row = 0, .col = 0 },
     sel_end: vxfw.Point = .{ .row = 0, .col = 0 },
     /// The last frame's rendered cells, kept only to read back the plain
-    /// text under a selection (surface.readCell) — its backing arena is the
+    /// text under a selection (surface.readCell), its backing arena is the
     /// draw arena, valid until the next redraw actually runs, which is
     /// after event handling in vxfw.App's own loop.
     last_surface: ?vxfw.Surface = null,
     transcript_top: u16 = 0,
     transcript_bottom: u16 = 0,
     /// Manual scrollback anchor: null while the transcript follows its tail
-    /// (the default — new output scrolls into view as it arrives). Non-null
+    /// (the default, new output scrolls into view as it arrives). Non-null
     /// pins the visible window to end at this absolute line index
     /// (exclusive), so a streaming turn can append to `lines` without
     /// yanking a reader back down. PgUp/PgDn/Home/End/Esc drive it; the
@@ -990,7 +990,7 @@ const Model = struct {
     /// Every configured provider/model, flattened once at startup (config
     /// does not change mid-session). `/model` opens `picker_open`, and while
     /// it's true every key press is routed to `handlePickerKey` instead of
-    /// the normal input handling below — a small modal, not a second widget.
+    /// the normal input handling below, a small modal, not a second widget.
     model_candidates: []const ModelCandidate = &.{},
     picker_open: bool = false,
     /// What the open picker is choosing: a provider/model or a color theme.
@@ -1115,7 +1115,7 @@ const Model = struct {
     /// Writes the conversation to `state/sessions/<id>.json`, called after
     /// every completed turn (never mid-turn: the caller joins the worker
     /// first, so `self.messages` is stable). A failed write is reported at
-    /// error level — the only log level this REPL leaves enabled — and the
+    /// error level, the only log level this REPL leaves enabled, and the
     /// next turn's save retries; it must not kill the session over a disk
     /// hiccup.
     fn persistSession(self: *Model) void {
@@ -1156,7 +1156,7 @@ const Model = struct {
         // and self.arena from the background thread. self.arena is a plain
         // ArenaAllocator (no internal locking) and self.lines is a plain
         // ArrayList, so a second in-flight turn spawned here would race the
-        // first turn's background thread on both — not just contend for
+        // first turn's background thread on both, not just contend for
         // bridge_mutex-guarded state, but corrupt the arena's free-list and the
         // transcript's backing storage. Leaving typed input untouched (no
         // toOwnedSlice yet) is a no-op keystroke while the picker is modal
@@ -1167,7 +1167,7 @@ const Model = struct {
         // While a turn runs the composer is a steering box, not a task box:
         // the typed line is queued as a mid-run course correction instead of
         // being dropped (the old no-op). A second turn can never start
-        // anyway — one turn at a time — so this is the only useful thing to
+        // anyway, one turn at a time, so this is the only useful thing to
         // type into it.
         if (already_streaming) {
             self.steerWhileRunning(ctx);
@@ -1180,14 +1180,14 @@ const Model = struct {
         self.text_field.reset();
 
         // `!cmd` is intercepted first: it never reaches the registry (no
-        // CommandSpec can match it — see shell_escape_help) and it must never
+        // CommandSpec can match it, see shell_escape_help) and it must never
         // reach the LLM, which is what a bare `!ls` used to do.
         if (parseShellEscape(task)) |line| {
             self.runShellEscape(line);
             return;
         }
 
-        // Slash commands dispatch through `command_registry` — one lookup
+        // Slash commands dispatch through `command_registry`, one lookup
         // covering every spelling, instead of literal matches strewn about.
         // An unrecognized /command is reported in the transcript rather than
         // sent to the LLM (a typo'd command is not a task); bare text without
@@ -1443,7 +1443,7 @@ const Model = struct {
     /// not something that takes the session down.
     fn runShellEscape(self: *Model, line: []const u8) void {
         // Like submitting a task, this snaps a scrolled-up view back to the
-        // tail — the output lands there and hiding it reads as a no-op Enter.
+        // tail, the output lands there and hiding it reads as a no-op Enter.
         self.view_end = null;
         const allow = self.escapeExecAllow();
 
@@ -1487,7 +1487,7 @@ const Model = struct {
         if (argv.len == 0) return;
 
         // The escape's own sandbox: no filesystem prefixes and no network,
-        // because `execUnderPolicy` uses neither — what it does use is
+        // because `execUnderPolicy` uses neither, what it does use is
         // exec_allow, the deny tokens, git's verb allowlist, and the filtered
         // child environment, which is why an allowed binary still cannot read
         // this project's API keys out of the process env.
@@ -1642,7 +1642,7 @@ const Model = struct {
         bridge_stream_buf.clearRetainingCapacity();
         bridge_tool_lines.clearRetainingCapacity();
         // A steering message typed against the turn that just ended must not
-        // leak into this one — the composer-as-steer-box only queues while
+        // leak into this one, the composer-as-steer-box only queues while
         // streaming, but a message can land between the last poll and here.
         clearBridgeSteer();
         bridge_stop_flag.store(false, .release);
@@ -1664,7 +1664,7 @@ const Model = struct {
 
     /// Writes the conversation to `state/sessions/<id>.json` so a later
     /// `--session <id>` or `--continue` resumes it. Called once when the app
-    /// is about to return (every quit path — /quit, Ctrl-C while idle — ends
+    /// is about to return (every quit path, /quit, Ctrl-C while idle, ends
     /// in `app.run` returning). A fresh conversation gets an id minted here;
     /// a resumed one keeps the id it was loaded under. Nothing is written
     /// when the sessions module is off, the id is invalid, or there is no
@@ -1727,7 +1727,7 @@ const Model = struct {
     }
 
     /// The command list is generated from `command_registry`
-    /// (`buildCommandHelp`), so a registry entry can never go undocumented —
+    /// (`buildCommandHelp`), so a registry entry can never go undocumented ,
     /// the property the deleted REPL's generated `:help` had
     /// (docs/prds/0005-repl-tui.md). The `!` escape and the key bindings stay
     /// hand-written here for the same reason as each other: neither is
@@ -1802,7 +1802,7 @@ const Model = struct {
     /// `model_candidates` order (config order, so unfiltered is grouped by
     /// provider). Filters into `self.arena` on every keystroke rather than
     /// caching: the candidate list itself is small (one provider's worth of
-    /// models, times however many providers are configured — tens, not
+    /// models, times however many providers are configured, tens, not
     /// thousands), so re-scanning it is cheaper than the bookkeeping to
     /// avoid doing so.
     fn filteredCandidates(self: *Model) []const ModelCandidate {
@@ -1815,7 +1815,7 @@ const Model = struct {
         return out.items;
     }
 
-    /// Switches the active provider/model for the *next* turn onward — the
+    /// Switches the active provider/model for the *next* turn onward, the
     /// conversation (`self.messages`) is untouched, so the switch lands
     /// mid-session exactly like `--model` does at startup, just later.
     fn applyModelSelection(self: *Model, cand: ModelCandidate) void {
@@ -1939,7 +1939,7 @@ const Model = struct {
                 if (self.picker_open) return self.handlePickerKey(ctx, key);
                 // Manual scrollback. PgUp/PgDn page the transcript by a
                 // screenful (one line of overlap); Home jumps to the top and
-                // End/Esc return to the tail — but Home/End only act on the
+                // End/Esc return to the tail, but Home/End only act on the
                 // scroll while already scrolled up, so at the tail they keep
                 // their TextField cursor-motion meaning (aliases of
                 // Ctrl-A/Ctrl-E there). The paging math is pure
@@ -2038,7 +2038,7 @@ const Model = struct {
             .paste_end => self.in_paste = false,
             // Answer to our OSC 52 clipboard request (Ctrl+Shift+V). The
             // payload is terminal-supplied text, so newlines are folded to
-            // spaces — the TextField is single-line and a raw newline would
+            // spaces, the TextField is single-line and a raw newline would
             // otherwise submit mid-paste.
             .paste => |text| {
                 defer ctx.alloc.free(text);
@@ -2168,7 +2168,7 @@ const Model = struct {
     }
 
     /// Tab: complete the input line against `command_registry`, readline
-    /// style. Returns whether it did anything — false (input isn't a
+    /// style. Returns whether it did anything, false (input isn't a
     /// `/`-prefixed line, or no spelling matches it) means the caller should
     /// let Tab fall through to the TextField as usual. A single match
     /// completes to the full spelling, adding a trailing space when the
@@ -2293,7 +2293,7 @@ const Model = struct {
         return self.lines.items.len;
     }
 
-    /// The transcript height as of the last draw — what one "page" means.
+    /// The transcript height as of the last draw, what one "page" means.
     /// Zero before the first frame, which the scroll math treats as a
     /// one-line page.
     fn availRows(self: *const Model) u16 {
@@ -2307,7 +2307,7 @@ const Model = struct {
         var surface = try vxfw.Surface.init(ctx.arena, self.widget(), max);
         // Computed up front (draw order used to put this after the box/status
         // were already painted in the theme-less default style, so a chosen
-        // CLANKER_THEME only ever showed up inside fenced code — everywhere
+        // CLANKER_THEME only ever showed up inside fenced code, everywhere
         // else in the vaxis REPL's chrome ignored it).
         const active = theme_mod.select(self.theme_override orelse themeName(self.ctx.environ_map), self.ctx.environ_map);
         const dim: vaxis.Style = if (active.rgb) |c| .{ .dim = true, .fg = .{ .rgb = c.dim } } else .{ .dim = true };
@@ -2346,7 +2346,7 @@ const Model = struct {
         // Manual scrollback: while `view_end` is set the visible window is
         // anchored to an absolute line index, so a streaming turn appends to
         // `lines` without yanking the reader back to the tail. Re-clamped
-        // every frame — a resize changes `avail_rows`, and once everything
+        // every frame, a resize changes `avail_rows`, and once everything
         // fits on screen the anchor dissolves back to tail-following.
         const line_count = self.lines.items.len;
         if (self.view_end != null and line_count <= avail_rows) self.view_end = null;
@@ -2355,7 +2355,7 @@ const Model = struct {
 
         const spinner_glyphs = [_][]const u8{ "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc", "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f" };
         const activity = if (streaming) spinner_glyphs[self.spinner_frame % spinner_glyphs.len] else "";
-        // "-N" is how many transcript lines sit below the frozen window —
+        // "-N" is how many transcript lines sit below the frozen window ,
         // the reader's distance from the tail, and the cue that the view is
         // not following new output right now.
         const scroll_hint: []const u8 = if (self.view_end != null)
@@ -2531,7 +2531,7 @@ const Model = struct {
     }
 
     /// Draws the `/model` picker as a modal box over the tail of the
-    /// transcript, just above the input — same left-bar box style as the
+    /// transcript, just above the input, same left-bar box style as the
     /// input itself (`drawBox`), so it reads as part of this REPL rather
     /// than a bolted-on popup.
     fn drawModelPicker(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, sel_style: vaxis.Style) void {
@@ -2630,7 +2630,7 @@ const Model = struct {
 
 /// How many trailing entries of `lines` to start from so the transcript
 /// shows its tail, not its head, once history exceeds the visible height.
-/// A rough heuristic (one line of history per visible row) — long entries
+/// A rough heuristic (one line of history per visible row), long entries
 /// still wrap past that during draw, so this under- rather than
 /// over-estimates what fits, which just means the top of the visible
 /// region can be blank rather than truncating the newest content.
@@ -2702,7 +2702,7 @@ fn tailWindow(lines: []const Line, view_end: usize, avail_rows: u16, width: u16)
 // ---------------------------------------------------------------------
 // Manual-scrollback math. All pure over (anchor, line_count, avail_rows)
 // so the paging behaviour is unit-testable without a terminal: the anchor
-// is Model.view_end — null means "follow the tail", non-null is the
+// is Model.view_end, null means "follow the tail", non-null is the
 // absolute line index (exclusive) the visible window ends at. Counted in
 // `lines` entries, same rough one-entry-per-row heuristic as tailStart.
 // ---------------------------------------------------------------------
@@ -2721,8 +2721,8 @@ fn clampViewEnd(view_end: usize, line_count: usize, avail_rows: u16) usize {
     return @max(min_end, @min(view_end, line_count));
 }
 
-/// PgUp: one page up from `cur` (null = following the tail). Returns null —
-/// stay at the tail — when the whole transcript already fits on screen, so
+/// PgUp: one page up from `cur` (null = following the tail). Returns null ,
+/// stay at the tail, when the whole transcript already fits on screen, so
 /// PgUp in a short session is a no-op rather than a stuck anchor.
 fn scrollUpEnd(cur: ?usize, line_count: usize, avail_rows: u16) ?usize {
     if (line_count <= avail_rows) return null;
@@ -2781,7 +2781,7 @@ test "scrollHomeEnd jumps to the top only when there is history above" {
 
 test "an anchored view end holds its lines while the transcript grows" {
     // Frozen view: the anchor is an absolute index, so appended lines (a
-    // growing line_count) leave the visible window exactly where it was —
+    // growing line_count) leave the visible window exactly where it was ,
     // the stick-to-tail behaviour lives entirely in the null anchor.
     try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 200, 24));
     try std.testing.expectEqual(@as(usize, 50), clampViewEnd(50, 500, 24));
@@ -3069,7 +3069,7 @@ fn writeWrappedCard(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, t
 }
 
 /// Writes `text` wrapped at `width`, advancing `*row` a line at a time,
-/// stopping at `bottom`. Simple hard-wrap (no word-break) — good enough for
+/// stopping at `bottom`. Simple hard-wrap (no word-break), good enough for
 /// a live streaming tail and for completed turns (which must not be clipped
 /// to a single row); MdStream-quality wrapping is follow-up work.
 fn writeWrapped(surface: vxfw.Surface, row: *u16, bottom: u16, width: u16, text: []const u8, style: vaxis.Style) void {
@@ -3159,7 +3159,7 @@ fn extractSelectionText(alloc: std.mem.Allocator, surface: vxfw.Surface, a: vxfw
 /// Folds CR/LF runs in clipboard text to single spaces so a multi-line
 /// paste lands on one line of the single-line TextField instead of
 /// submitting early (Enter submits). Returns the input unchanged when
-/// there's nothing to fold — caller frees only when the pointer differs.
+/// there's nothing to fold, caller frees only when the pointer differs.
 fn singleLinePaste(alloc: std.mem.Allocator, text: []const u8) []const u8 {
     var out: ?[]u8 = null;
     defer if (out) |o| alloc.free(o);
@@ -3190,7 +3190,7 @@ pub const ReplOptions = struct {
 /// Session ids become path fragments under `state/sessions/`, so only the
 /// same slug shape the rest of clanker accepts is allowed here (alphanumeric,
 /// `-`, `_`, length 1..64). Anything with a separator or a dot is refused
-/// before it could walk out of the store — this mirrors `cli.zig`'s
+/// before it could walk out of the store, this mirrors `cli.zig`'s
 /// `validSessionId`, restated locally because the REPL deliberately does not
 /// import cli.zig.
 fn validSessionId(id: []const u8) bool {
@@ -3322,7 +3322,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // Which conversation this is: `--session <id>` names one, `--continue`
     // picks up the most recently touched one, and otherwise (sessions module
     // on) a fresh `repl-<ts>` id is minted so the conversation is findable in
-    // `clanker sessions` afterwards — the same contract the deleted REPL and
+    // `clanker sessions` afterwards, the same contract the deleted REPL and
     // `clanker run` honor. With the module off, nothing is read or written.
     const now_s: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     var session_id: ?[]const u8 = opts.session;
@@ -3383,7 +3383,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     if (session_id) |sid| {
         // Say which conversation was resumed, so re-entering `--continue` is
         // not indistinguishable from a fresh REPL. Only when it actually
-        // loaded something — a brand-new minted id has nothing to announce.
+        // loaded something, a brand-new minted id has nothing to announce.
         var non_system: usize = 0;
         for (model.messages.items) |m| {
             if (m.role != .system) non_system += 1;

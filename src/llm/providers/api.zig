@@ -4,8 +4,8 @@
 //! Per [ADR 0004](../../../docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md)
 //! a provider is a struct of native function pointers, not a WASM module: the
 //! API key must not enter the sandbox, and the transport is on the per-token
-//! hot path. Each provider groups its three concerns — wire codec, auth
-//! strategy, transport quirks — in one file; the shared HTTP/SSE/retry/
+//! hot path. Each provider groups its three concerns, wire codec, auth
+//! strategy, transport quirks, in one file; the shared HTTP/SSE/retry/
 //! token-counting core stays a single module (`../client.zig`).
 //!
 //! Nothing in here does I/O or touches a credential's source: `buildRequest`,
@@ -125,7 +125,7 @@ pub const Provider = struct {
     parseErrorDetail: *const fn (arena: std.mem.Allocator, body: []const u8) ?[]const u8,
 
     /// Parses one SSE `data:` payload. Null means "ignore this frame"
-    /// (unknown event type, or unparseable — the core logs the byte count).
+    /// (unknown event type, or unparseable, the core logs the byte count).
     /// Returned slices may point into `chunk_arena` or into `payload`; the
     /// core copies out everything it keeps before either is reused.
     parseStreamEvent: *const fn (

@@ -63,7 +63,7 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
 
 // ----------------------------------------------------------------- appending --
 
-/// Appends one usage record. Best-effort: failures are logged, never fatal —
+/// Appends one usage record. Best-effort: failures are logged, never fatal ,
 /// a stats write must not break a chat completion. O(1) append via a
 /// truncate-free open + seek to end (the caller holds the only writer).
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {

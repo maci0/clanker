@@ -1,6 +1,6 @@
 //! Print-once transcript elements: the streaming markdown renderer for the
 //! assistant's prose, and bordered "cards" for tool calls. Nothing here is
-//! redrawn — each element is written once and scrolls with the terminal, per
+//! redrawn, each element is written once and scrolls with the terminal, per
 //! the fixed-region-compositor design (only the status bar + input box at
 //! the bottom get diffed; see region.zig's doc comment for why).
 //!
@@ -19,8 +19,8 @@ pub const Theme = theme_mod.Theme;
 
 // -------------------------------------------------------- control stripping --
 //
-// Everything this file renders is text clanker didn't generate itself — LLM
-// responses, tool output, peer chat received over HTTP — so a raw ESC byte in
+// Everything this file renders is text clanker didn't generate itself, LLM
+// responses, tool output, peer chat received over HTTP, so a raw ESC byte in
 // that text would otherwise print straight to the user's terminal (CWE-150,
 // terminal injection). Control bytes are dropped at these chokepoints; the
 // printable remainder of an escape sequence (e.g. the "[31m" after a stripped
@@ -37,7 +37,7 @@ fn strippedControl(c: u8) bool {
 
 /// Writes `bytes` with C0 controls (except \n and \t), DEL, and UTF-8-encoded
 /// C1 controls (0xC2 0x80..0x9F, i.e. U+0080..U+009F) removed. Bare
-/// continuation bytes in that range are left alone — they are the tails of
+/// continuation bytes in that range are left alone, they are the tails of
 /// legitimate multi-byte codepoints like "€" (0xE2 0x82 0xAC).
 fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
     var start: usize = 0;
@@ -110,7 +110,7 @@ pub const MdStream = struct {
 
     /// Emits the accumulated fence line through the syntax highlighter,
     /// initialized on first use from fence_lang. Lines longer than the
-    /// buffer are emitted unhighlighted (still control-stripped) — a
+    /// buffer are emitted unhighlighted (still control-stripped), a
     /// 4 KiB source line is a paste artifact, not something to color.
     fn emitFenceLine(self: *MdStream, w: *std.Io.Writer) void {
         const line = self.fence_line[0..self.fence_line_len];
@@ -348,8 +348,8 @@ pub const MdStream = struct {
 //
 // The left-bar card from the module doc, as pure line builders. The vaxis
 // REPL stores its transcript as plain strings and styles them into cells at
-// draw time (no ANSI), so the card is built here as text — one place owns
-// the shape and the sanitizing rules — and any surface that renders through
+// draw time (no ANSI), so the card is built here as text, one place owns
+// the shape and the sanitizing rules, and any surface that renders through
 // strings reuses it instead of redrawing the style from memory.
 
 /// The card glyphs: `╭─` opens, `│` rules the body, `╰─` closes. No right
@@ -360,13 +360,13 @@ pub const card_bar = "\u{2502}";
 pub const card_close = "\u{2570}\u{2500}";
 
 /// Byte cap on a card body preview, matching loop.zig's argsPreview: enough
-/// of the arguments to judge the call, never all of them — a whole file
+/// of the arguments to judge the call, never all of them, a whole file
 /// write would drown the transcript.
 pub const card_preview_cap = 400;
 
 /// One-line bounded preview of untrusted text for a card line. Controls are
 /// dropped under the same rule writeSanitized enforces (CWE-150), except
-/// that newline and tab each flatten to one space — a card line is one line
+/// that newline and tab each flatten to one space, a card line is one line
 /// by construction. The cap cuts between code points, never through one (a
 /// split code point is not a shorter preview but a malformed one), and a
 /// cut is marked with "…".
@@ -412,7 +412,7 @@ pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
 /// The line naming a tool call: "╭─ ⚙ <name>" for the call that opens the
 /// card, "│  ⚙ <name>" for the rest of its batch. A batch of parallel calls
 /// shares one card because the agent reports one timing per batch (see
-/// loop.zig's on_tool_result) — per-call open corners would draw cards that
+/// loop.zig's on_tool_result), per-call open corners would draw cards that
 /// nothing ever closes. The name is untrusted (the model chose it), so it
 /// takes the same preview pass as the body.
 pub fn toolCardHeader(gpa: std.mem.Allocator, name: []const u8, first: bool) ![]u8 {
@@ -423,7 +423,7 @@ pub fn toolCardHeader(gpa: std.mem.Allocator, name: []const u8, first: bool) ![]
 }
 
 /// A card body line for the call's arguments: "│  <preview>". Null when
-/// there is nothing worth a line — no arguments, or the no-argument call's
+/// there is nothing worth a line, no arguments, or the no-argument call's
 /// literal "{}", which says nothing the header didn't.
 pub fn toolCardArgs(gpa: std.mem.Allocator, args: []const u8) !?[]u8 {
     const clean = try cardPreview(gpa, args);
@@ -435,7 +435,7 @@ pub fn toolCardArgs(gpa: std.mem.Allocator, args: []const u8) !?[]u8 {
     return try std.fmt.allocPrint(gpa, card_bar ++ "  {s}", .{clean});
 }
 
-/// The closing line: "╰─ done in <N>ms" — the same wording the plain status
+/// The closing line: "╰─ done in <N>ms", the same wording the plain status
 /// line used, so logs and muscle memory carry over.
 pub fn toolCardFooter(gpa: std.mem.Allocator, elapsed_ms: u64) ![]u8 {
     return std.fmt.allocPrint(gpa, card_close ++ " done in {d}ms", .{elapsed_ms});

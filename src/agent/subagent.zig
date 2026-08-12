@@ -49,7 +49,7 @@ pub fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]
     if (buf.items.len == 0) return task;
     try buf.appendSlice(arena, "Your task: ");
     try buf.appendSlice(arena, task);
-    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs. For multi-step work, track your steps on your private todo list (todo_add / todo_close / todo_list with no \"room\"): its final state is reported back with your answer, so your caller sees your progress even if you run out of iterations. If a decision hinges on something only your parent knows — context it did not put in this brief — ask it with ask_user {\"parent\": true} instead of guessing or burning iterations rediscovering it.");
+    try buf.appendSlice(arena, "\n\nAnswer with the result and the evidence for it. You have a short iteration budget, so do not explore beyond what the task needs. For multi-step work, track your steps on your private todo list (todo_add / todo_close / todo_list with no \"room\"): its final state is reported back with your answer, so your caller sees your progress even if you run out of iterations. If a decision hinges on something only your parent knows (context it did not put in this brief), ask it with ask_user {\"parent\": true} instead of guessing or burning iterations rediscovering it.");
     return buf.toOwnedSlice(arena);
 }
 
@@ -91,8 +91,8 @@ pub fn runNested(
     a.parent_ask = parent_ask;
     // The nested run records its own execution graph (webui-plan 3.1). Its
     // id is nanosecond-resolution because the default "run-<seconds>" would
-    // collide with the parent's — or a sibling's, spawned within the same
-    // second — and one graph would silently overwrite the other. The "sub-"
+    // collide with the parent's, or a sibling's, spawned within the same
+    // second, and one graph would silently overwrite the other. The "sub-"
     // prefix makes a nested run recognizable in state/runs/, and
     // parent_run_id is the upward link to the caller's timeline.
     const sub_run_id = try std.fmt.allocPrint(arena, "sub-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
@@ -120,7 +120,7 @@ pub fn runNested(
     // The link down: the parent's graph node records this result as its
     // output preview, so the sub-run id riding on the answer is what lets a
     // viewer walk from the parent's timeline into the nested one. Only when
-    // a graph was actually persisted — a note pointing at nothing is noise.
+    // a graph was actually persisted, a note pointing at nothing is noise.
     if (cfg.modules.graphs) {
         try answer.appendSlice(arena, "\n\n[subagent run: ");
         try answer.appendSlice(arena, sub_run_id);

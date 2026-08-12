@@ -78,7 +78,7 @@ pub fn dueAt(entry: store.Entry, now: i64) ?i64 {
         return null;
     };
     // An entry that has never run counts from when it was added, so adding one
-    // at 12:03 does not fire it instantly — the first run is the first real
+    // at 12:03 does not fire it instantly, the first run is the first real
     // window after the add.
     const from = if (entry.last_run > 0) entry.last_run else entry.created;
     const next = spec.nextAfter(from, entry.tz_offset_minutes) orelse return null;
@@ -116,7 +116,7 @@ pub fn runDue(
     defer lock.close(io);
 
     // Phase one: claim. The store lock is taken, the due set is decided and
-    // written back as already-run, and the lock is dropped — all before the
+    // written back as already-run, and the lock is dropped, all before the
     // first model call. Holding it across a run that takes minutes would block
     // `schedule add` for those minutes, and dropping the claim until after the
     // run would let a killed sweep fire the same window twice.
@@ -163,7 +163,7 @@ pub fn runDue(
 
 /// Fires one entry by id right now, whatever its schedule says. What `schedule
 /// run <id>` is for: proving an entry works without waiting for its window.
-/// It counts as a real run — it updates `last_run` and lands in the ledger —
+/// It counts as a real run, it updates `last_run` and lands in the ledger ,
 /// because pretending it did not would leave the next window computed from a
 /// run that visibly happened.
 pub fn runOne(
@@ -245,7 +245,7 @@ fn fireOne(
 /// Not `util/runlock.zig`: that one decides whether a lock is stale by looking
 /// the owning pid up in `/proc`, which does not exist on macOS, so every lock
 /// there reads as abandoned and gets taken over. A kernel-held flock needs no
-/// liveness check — it is released when the process dies, however it dies.
+/// liveness check, it is released when the process dies, however it dies.
 fn acquireRunLock(io: std.Io, base: std.Io.Dir) !std.Io.File {
     base.createDirPath(io, store.ledger_dir) catch {};
     return filelock.createFileRetry(io, base, run_lock_path, .{
@@ -491,8 +491,8 @@ test "schedule run fires one entry regardless of its window, and says so in the 
     const recs = try store.readRecords(f.io(), f.arena(), f.tmp.dir, 10);
     try testing.expectEqualStrings("manual", recs[0].trigger);
 
-    // A manual run of a disabled entry still runs — the operator asked for it
-    // by id — but an unknown id is an error rather than a silent no-op.
+    // A manual run of a disabled entry still runs, the operator asked for it
+    // by id, but an unknown id is an error rather than a silent no-op.
     try testing.expectError(store.Error.NoSuchEntry, runOne(f.io(), testing.allocator, f.arena(), f.tmp.dir, "sch-9", t0, rec.fire()));
 }
 

@@ -1,6 +1,6 @@
 //! Configuration loading: `config.toml` (committed example) merged with
 //! `config.local.toml` (gitignored, user-specific). API keys are never stored
-//! here — providers reference an environment variable by name instead.
+//! here, providers reference an environment variable by name instead.
 //!
 //! Providers and their models are declared separately: `[providers.<name>]`
 //! holds connection settings (kind, base_url, api_key_env), and a top-level
@@ -10,7 +10,7 @@
 //! its provider's `Provider.models` map at load time, so everything below
 //! that point (`Provider.activeModel()`, `resolveProvider`, `merge`, and
 //! every caller across the LLM client/agent loop) still sees the same
-//! per-provider model map it always has — only the on-disk shape changed.
+//! per-provider model map it always has, only the on-disk shape changed.
 
 const std = @import("std");
 const json = std.json;
@@ -33,7 +33,7 @@ pub const ProviderKind = enum {
     }
 };
 
-/// How a provider's credential is acquired — a separate axis from the wire
+/// How a provider's credential is acquired, a separate axis from the wire
 /// kind, because one wire format can accept several (docs/adrs/0005). Left
 /// unset, each kind auto-detects from the credential's shape where the two
 /// are distinguishable, which is what keeps Anthropic zero-config.
@@ -242,8 +242,8 @@ pub const Agent = struct {
     /// yet (see docs/ROADMAP.md, "vaxis REPL: close the gap left by the
     /// deleted REPL"): only cli.zig's serve path reads this field, gated on
     /// `!= .never`, so `always` behaves identically to `browser` until the
-    /// REPL wires a confirm_fn of its own. Runs with no human channel —
-    /// headless one-shots, the improve loop, nested sub-agents — are never
+    /// REPL wires a confirm_fn of its own. Runs with no human channel:
+    /// headless one-shots, the improve loop, nested sub-agents, are never
     /// gated, whatever this says: a confirm nobody can answer would deny
     /// every write instead of protecting anything.
     confirm_writes: ConfirmWrites = .never,
@@ -333,7 +333,7 @@ pub const Improve = struct {
     /// improvements, the engine dedups them against history, picks the first
     /// novel one, pins its files into the context and asks the patch call to
     /// implement exactly that. Off, the patch call picks its own idea and
-    /// writes an exact-match patch blind in the same breath — the shape every
+    /// writes an exact-match patch blind in the same breath, the shape every
     /// stuck-idea loop this repo has seen grew out of.
     plan_phase: bool = true,
     /// Provider the capability gate runs the staged eval suite on. The evals
@@ -450,7 +450,7 @@ pub const ModulesFields = struct {
 /// allowlists at load, so granting a research site is a config edit, not a
 /// manifest edit.
 pub const Web = struct {
-    /// Hostnames (no scheme, no path — matched against the URL's host) the
+    /// Hostnames (no scheme, no path, matched against the URL's host) the
     /// research tools may reach. Default empty: out of the box the sandbox
     /// still lets a tool reach only its own `network_allow` hosts, which for
     /// `fetch_web` is a small static set. Adding a host here widens research
@@ -483,7 +483,7 @@ pub const Config = struct {
     peers_present: bool = false,
     web_present: bool = false,
     notify_present: bool = false,
-    /// Path of the file that set `default_provider`, as actually read — the
+    /// Path of the file that set `default_provider`, as actually read, the
     /// `.json` sibling when that is what answered. Null means no config named
     /// one and the struct fallback above is in force. Reported by `providers
     /// check`: "the default is X" is not much use without "because Y says so",
@@ -829,7 +829,7 @@ pub const Config = struct {
         warnUnknownKeys(obj, &.{
             // "provider" is consumed by distributeModels (which provider this
             // entry belongs to, before the table-key prefix is stripped down
-            // to the bare model name passed in here) — accepted, not unknown.
+            // to the bare model name passed in here), accepted, not unknown.
             "provider",
             "context_window",
             "max_tokens",
@@ -1264,7 +1264,7 @@ pub const Config = struct {
             try dst.providers.put(arena, kv.key_ptr.*, kv.value_ptr.*);
         }
         // Agent is field-merged: a local file that only sets e.g. sandbox_root
-        // must not reset tools_dir (and the rest) to Agent{} defaults — that
+        // must not reset tools_dir (and the rest) to Agent{} defaults, that
         // made every tool disappear when tools_dir fell back to the struct
         // default instead of config.toml's "tools/manifests".
         if (src.agent_present) applyAgentFields(&dst.agent, src.agent, src.agent_fields);
@@ -1704,7 +1704,7 @@ test "default_provider provenance names the file that set it" {
     try std.testing.expectEqualStrings("config.toml", named.default_provider_from.?);
 
     // Nothing sets it, so the struct fallback is in force and provenance is
-    // null — which is what tells `providers check` to say so out loud.
+    // null, which is what tells `providers check` to say so out loud.
     var bare = std.testing.tmpDir(.{});
     defer bare.cleanup();
     try bare.dir.writeFile(io, .{

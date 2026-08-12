@@ -23,7 +23,7 @@ pub const Rgb = struct {
     preproc: Rgb24,
     comment: Rgb24,
     /// UI roles beyond fenced-code syntax, for the vaxis REPL's chrome (box
-    /// border, status line, tool-call lines, error text) — everything the
+    /// border, status line, tool-call lines, error text), everything the
     /// ANSI-escape fields already colour but a cell-based renderer can't
     /// read out of an escape string.
     dim: Rgb24,
@@ -458,7 +458,7 @@ pub const Theme = struct {
 };
 
 /// `default` unless `NO_COLOR` is set (to any non-empty value, matching the
-/// https://no-color.org/ convention) or `name` asks for `"mono"` — an
+/// https://no-color.org/ convention) or `name` asks for `"mono"`, an
 /// explicit `--theme mono`/config value wins even if `NO_COLOR` is unset.
 pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Theme {
     if (name) |n| {

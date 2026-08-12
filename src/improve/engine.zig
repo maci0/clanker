@@ -269,7 +269,7 @@ pub const Engine = struct {
     hist: history_mod.History,
     instructions: []const u8,
     /// Set when this run is isolated in its own git worktree (the normal
-    /// case — see cmdImproveSelf). Each promotion merges back into the base
+    /// case, see cmdImproveSelf). Each promotion merges back into the base
     /// branch through this at the ref level; null runs promote straight
     /// into whatever tree the process is already in, unisolated.
     worktree: ?*worktree_mod.Worktree = null,
@@ -306,7 +306,7 @@ pub const Engine = struct {
     plan_next: usize = 0,
     /// The idea the current iteration implements, rendered as a prompt block
     /// (header included, like mixHint). Empty when planning is off, failed,
-    /// or ran dry — which leaves the iteration exactly as it was before the
+    /// or ran dry, which leaves the iteration exactly as it was before the
     /// plan phase existed.
     plan_current: []const u8 = "",
 
@@ -338,7 +338,7 @@ pub const Engine = struct {
         // same question every time it runs dry, so once it starts saying "no
         // changes needed" it tends to keep saying it: nothing about the input
         // changes between iterations. Left unchecked, a large --iters spends
-        // its remainder on calls that were never going to do anything — this
+        // its remainder on calls that were never going to do anything, this
         // stops the run instead of grinding through them.
         const no_change_stop_threshold = 8;
         var consecutive_no_change: usize = 0;
@@ -440,8 +440,8 @@ pub const Engine = struct {
         // of a run; the instruction and the last error are a few hundred and
         // change every attempt. Caching is a prefix match, so the bulk goes in
         // the system half (cached) and only the volatile part in the user
-        // message. Sent the other way round — as one user message beginning
-        // with the instruction — every attempt re-billed the whole context at
+        // message. Sent the other way round, as one user message beginning
+        // with the instruction, every attempt re-billed the whole context at
         // full price, which is why this path ran at a 0% cache hit rate.
         const system_prompt = try std.fmt.allocPrint(self.arena, improve_system_fmt, .{ improve_system, context.bulk });
         const focus_prompt = if (context.focus.len > 0)
@@ -491,7 +491,7 @@ pub const Engine = struct {
         var json_text = stripFences(self.arena, content);
         if (json_text.len == 0) {
             // Reasoning models (DeepSeek v4) can exhaust the output budget and
-            // leave content empty — the answer usually trails the reasoning.
+            // leave content empty, the answer usually trails the reasoning.
             if (resp.reasoning) |rc| {
                 log.log(.warn, "content empty; extracting proposal from reasoning ({d} chars)", .{rc.len});
                 if (lastProposalJson(self.arena, rc)) |js| {
@@ -922,7 +922,7 @@ pub const Engine = struct {
                 // some files promoted and others not: nothing here has been
                 // recorded to history yet, so it would look, to the next
                 // run, like a half-applied change nobody knows about.
-                log.log(.error_, "promotion of '{s}' failed: {s} — restoring the pre-promotion snapshot", .{ c.file, @errorName(err) });
+                log.log(.error_, "promotion of '{s}' failed: {s}, restoring the pre-promotion snapshot", .{ c.file, @errorName(err) });
                 self.hist.restoreFiles(id, files);
                 self.removeTree(staging);
                 return err;
@@ -933,7 +933,7 @@ pub const Engine = struct {
         // best-effort and safe to lose: a crash here must not leave a
         // promoted file set with no history entry, because that entry is
         // both the dedup guard (`alreadyAccepted`) and the only way to
-        // `revert` a promotion — without it a half-crashed run looks, to
+        // `revert` a promotion, without it a half-crashed run looks, to
         // the next one, like work that never happened.
         const live = try self.gateScore();
         const score_after = live.score / @as(f64, @floatFromInt(@max(live.total, 1)));
@@ -957,8 +957,8 @@ pub const Engine = struct {
     }
 
     /// Chooses the idea the coming iteration will implement, planning a fresh
-    /// batch when the previous one is spent. Ideas history already records —
-    /// accepted or rejected — are skipped mechanically, which is what the
+    /// batch when the previous one is spent. Ideas history already records ,
+    /// accepted or rejected, are skipped mechanically, which is what the
     /// "do not repeat that mistake" prose never managed. Never fails the
     /// run: planning off, erroring, or running dry leaves plan_current empty,
     /// and an empty plan block is exactly the pre-plan prompt.
@@ -1178,7 +1178,7 @@ pub const Engine = struct {
     /// The existence check is what keeps a hallucinated path from being
     /// granted: `collectFile` drops a file it cannot read with only a debug
     /// line, so an invented path would look, from the next prompt, exactly
-    /// like a granted file that happened to be empty — and the model would
+    /// like a granted file that happened to be empty, and the model would
     /// spend the rest of the run patching against nothing.
     fn grant(self: *Engine, paths: []const []const u8, missing: *std.ArrayList([]const u8)) !usize {
         var list: std.ArrayList([]const u8) = .empty;
@@ -1241,7 +1241,7 @@ pub const Engine = struct {
     /// change's review: maintainers revert improvement commits after the
     /// fact, and until that lands back in improvements.jsonl the prompt
     /// keeps telling the model the work is "already in the source" while
-    /// the source shows it undone — the mismatch that got one improvement
+    /// the source shows it undone, the mismatch that got one improvement
     /// merged, reverted, re-proposed near-verbatim, re-merged and reverted
     /// again. Two passes: `reverts.scan` resolves recognisable revert
     /// messages, then `contentReverts` convicts accepted work whose added
@@ -1309,7 +1309,7 @@ pub const Engine = struct {
     /// knows, so history kept saying accepted and the loop re-proposed and
     /// re-merged the same work a human had just deleted. Appends the ids it
     /// convicts to `ids`; anything inconclusive, re-landed, over budget, or
-    /// failing a git spawn is left alone — the safe verdict is "still there".
+    /// failing a git spawn is left alone, the safe verdict is "still there".
     fn contentReverts(self: *Engine, arena: std.mem.Allocator, raw_log: []const u8, ids: *std.ArrayList([]const u8)) void {
         const imps = reverts_mod.improvementCommits(arena, raw_log) catch return;
         if (imps.len == 0) return;
@@ -1341,7 +1341,7 @@ pub const Engine = struct {
     }
 
     /// Whether the lines one commit added still exist in the working tree.
-    /// Any failure — git missing, sha gone, unreadable diff — answers
+    /// Any failure, git missing, sha gone, unreadable diff, answers
     /// `present`, never `gone`: a false revert brands live work as
     /// human-refused.
     fn commitContentPresence(self: *Engine, arena: std.mem.Allocator, sha: []const u8) reverts_mod.Presence {
@@ -1830,7 +1830,7 @@ pub const Engine = struct {
         // The source budget tracks the model's own window: roughly 3 bytes per
         // token over about a third of the window comes out at the window
         // itself in bytes. The ceiling is a cost decision, not a capacity one.
-        // There is deliberately no floor — a floor above the window would make
+        // There is deliberately no floor, a floor above the window would make
         // small-window models overshoot their own capacity on every attempt.
         return @min(window, 256 * 1024);
     }
@@ -1885,7 +1885,7 @@ pub const Engine = struct {
         // visible in the existing guests: the entry point's exact signature
         // and how lib.zig is imported. Keyword scoring will not surface those
         // for an instruction about, say, an "lsp" tool, and the model then
-        // guesses — "../lib.zig" instead of "lib.zig", three attempts running.
+        // guesses, "../lib.zig" instead of "lib.zig", three attempts running.
         if (std.mem.find(u8, instructions, "tools/zig") != null or
             std.mem.find(u8, instructions, "WASM tool") != null or
             std.mem.find(u8, instructions, "wasm tool") != null)
@@ -1968,8 +1968,8 @@ pub const Engine = struct {
         for (bulk_order) |c| {
             if (pathIn(churn, c.path)) continue;
             // Anything the focus block already carries. A pinned or granted
-            // file that recent runs had not touched used to be emitted twice —
-            // once in the focus and again here — which for an instruction
+            // file that recent runs had not touched used to be emitted twice ,
+            // once in the focus and again here, which for an instruction
             // naming src/cli.zig meant paying for 310 KB of it a second time.
             if (c.score >= request_score) continue;
             included_any = true;
@@ -2291,7 +2291,7 @@ fn errorTail(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
     // This excerpt is the only thing the model sees about why its patch was
     // rejected. Zig prints the diagnosis first and build-runner noise last
     // ("referenced by", "Build Summary", "failed command"), so a plain tail
-    // keeps the noise and drops the cause — anchor the window on the first
+    // keeps the noise and drops the cause, anchor the window on the first
     // `error:` line instead, with a few lines of lead-in for the location.
     if (std.mem.find(u8, s, "error:")) |hit| {
         var start = hit;
@@ -2344,7 +2344,7 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
 }
 
 /// Parses eval names out of the capability gate output. The staged binary
-/// prints lines like `calculator: 0.00 FAIL` — one per case. Returns the
+/// prints lines like `calculator: 0.00 FAIL`, one per case. Returns the
 /// names of every case that reported FAIL (arena-owned).
 fn parseFailedEvalNames(arena: std.mem.Allocator, detail: []const u8) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
@@ -2458,8 +2458,8 @@ const improve_system =
     \\}
     \\
     \\The context below is a byte-budgeted selection of a much larger tree, not
-    \\all of it. When the file you need to read is not there — including anything
-    \\listed as NOT INCLUDED — do not guess at its contents. Ask for it instead,
+    \\all of it. When the file you need to read is not there, including anything
+    \\listed as NOT INCLUDED, do not guess at its contents. Ask for it instead,
     \\with no "changes" key:
     \\{"need": ["src/cli.zig", "docs/ROADMAP.md"], "reason": "why you need them"}
     \\You will be asked again with those files added, and they stay for the rest
@@ -2521,7 +2521,7 @@ const improve_user_fmt =
     \\the source above and extend it -- reconstructing it from memory has
     \\silently reverted an accepted improvement before. Work listed as
     \\rejected failed for the stated reason; do not repeat that mistake.
-    \\Work listed as reverted was merged and then undone by a human review —
+    \\Work listed as reverted was merged and then undone by a human review ,
     \\a stronger no than rejected. Never propose it again in any wording,
     \\and never rebuild what it did under a different summary. The
     \\tag after the status is what the change turned out to do, decided from
@@ -2533,7 +2533,7 @@ const improve_user_fmt =
     \\{s}
     \\
     \\Produce the patch proposal JSON now. Your response must be ONLY the JSON
-    \\object — no markdown fences, no prose.
+    \\object, no markdown fences, no prose.
 ;
 
 /// The planning call's user half. The system half is the same rules-and-source
@@ -2546,11 +2546,11 @@ const plan_user_fmt =
     \\# Earlier runs on this repository
     \\Everything listed as accepted is already done; everything listed as
     \\rejected was tried and refused for the stated reason; everything
-    \\listed as reverted was merged and then undone by a human review — the
+    \\listed as reverted was merged and then undone by a human review, the
     \\strongest no of the three. None of them may appear in your plan.
     \\{s}
     \\{s}
-    \\# Plan first — do NOT send a patch in this reply
+    \\# Plan first, do NOT send a patch in this reply
     \\Before any patch is written, name the best small improvements you can
     \\see in the source above. Instead of the patch-proposal object, respond
     \\with ONLY this JSON object (no markdown fences, no prose):
@@ -2559,7 +2559,7 @@ const plan_user_fmt =
     \\- 3 to 5 ideas, best first, each small enough for a single patch.
     \\- Each idea must change what the program does when it runs. Ideas that
     \\  only add tests, or add code nothing calls, will be refused later at
-    \\  the gate — do not spend a slot on one.
+    \\  the gate, do not spend a slot on one.
     \\- "files" must be real paths: taken from the context above, or from the
     \\  NOT INCLUDED list. Never invent a path.
     \\- Every idea must respect the writable surface. {s}
@@ -2638,7 +2638,7 @@ test "errorTail falls back to the end when nothing looks like an error" {
 
 test "a granted file reaches the context, once, in the focus block" {
     // The whole point of the request round: docs/ is never collected, so
-    // docs/ROADMAP.md cannot reach the model any other way — which is why
+    // docs/ROADMAP.md cannot reach the model any other way, which is why
     // clanker-improve.sh pastes the planned items into the instruction by hand.
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -2718,7 +2718,7 @@ test "granting is bounded, refuses what does not exist, and does not double-coun
     try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{"build.zig"}, &missing));
     try std.testing.expectEqual(@as(usize, 1), engine.granted.len);
 
-    // Asking again for something already granted adds nothing — which is what
+    // Asking again for something already granted adds nothing, which is what
     // makes the engine answer "you already have this" instead of looping.
     try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"build.zig"}, &missing));
     try std.testing.expectEqual(@as(usize, 1), engine.granted.len);

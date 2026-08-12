@@ -177,7 +177,7 @@ test "lintGate flags forbidden markers only in changed .zig files" {
 ///   - points a descriptor at a `.wasm` that does not exist (the exact broken
 ///     state `clanker doctor` flags as the most common one in this repo).
 ///
-/// It is intentionally pure file/JSON inspection — no npm, no zig build — so
+/// It is intentionally pure file/JSON inspection, no npm, no zig build, so
 /// it is deterministic and cheap to run for every proposal. The engine runs it
 /// after `toolsGate`, by which point `zig-out/tools/*.wasm` exist in the
 /// staged tree; `tools/bin/*.wasm` are committed and must be present.
@@ -696,7 +696,7 @@ test "proposalDiffGate rejects no-op and empty proposals" {
 test "proposalDiffGate accepts an append-style change where old text is empty" {
     // An empty `old` is the append convention in the improvement protocol:
     // the change inserts `new` at the end of the file. It differs from new,
-    // so it must pass — unlike an empty proposal, which has no changes at all
+    // so it must pass, unlike an empty proposal, which has no changes at all
     // and must be rejected as a no-op. Pinning this keeps the two callers'
     // (opposite) failure modes from being confused by a future refactor.
     const append = proposalDiffGate(&.{""}, &.{"const x = 1;\n"});
@@ -862,7 +862,7 @@ test "gitDenyGuardGate allows non-git patterns and non-config files" {
 /// The absolute path of the zig binary the gates shell out to, or null to fall
 /// back to a bare "zig".
 ///
-/// `build_options.zig_exe` — the interpreter that built this binary — comes
+/// `build_options.zig_exe`, the interpreter that built this binary, comes
 /// first: it is the right version by construction, and it is absolute, which is
 /// what matters here. Every gate runs with `cwd` set to a staging or temp
 /// directory, and a bare "zig" is not reliably found from there: on macOS the
@@ -891,7 +891,7 @@ test "resolveZigBin finds the zig that built this binary" {
     const io = threaded.io();
 
     // Something has to be found, or every gate that shells out is running on
-    // the bare-"zig" fallback that does not survive a changed cwd — which is
+    // the bare-"zig" fallback that does not survive a changed cwd, which is
     // the condition skipIfNoSpawnableZig below exists to tolerate, and which
     // this option is meant to stop happening in the first place.
     const bin = resolveZigBin(gpa, io) orelse return error.TestExpectedZigBin;
@@ -903,7 +903,7 @@ test "resolveZigBin finds the zig that built this binary" {
 /// tests that exercise a real `zig ast-check`/`zig fmt` run can only do so
 /// where resolveZigBin finds a binary: everywhere else the bare "zig" argv
 /// is not spawnable (std.process.run resolves it against the gate's cwd, a
-/// test tmp dir — there is no PATH search), so the gate cannot run at all
+/// test tmp dir, there is no PATH search), so the gate cannot run at all
 /// and the test should skip, not fail the suite on a machine that was never
 /// able to run it. Any other error is a real failure and passes through.
 ///

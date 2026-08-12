@@ -1,8 +1,8 @@
 //! The 5-field cron subset `clanker schedule` accepts, and the arithmetic that
 //! turns one into a next-fire timestamp. Pure: no allocator, no clock, no
 //! filesystem, no `std.Io`. Everything here is a function of its arguments,
-//! which is what makes the awkward parts — month lengths, leap years, the
-//! day-of-month vs day-of-week rule — testable on the host without a fixture.
+//! which is what makes the awkward parts, month lengths, leap years, the
+//! day-of-month vs day-of-week rule, testable on the host without a fixture.
 //!
 //! Dialect: `minute hour day-of-month month day-of-week`, each field one of
 //! `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.
@@ -77,7 +77,7 @@ pub const Spec = struct {
 
     /// The first fire time strictly after `after`, both in Unix seconds UTC,
     /// with the spec's fields read at `tz_offset_minutes` east of UTC.
-    /// `null` when the spec cannot fire within `search_years` — either it
+    /// `null` when the spec cannot fire within `search_years`, either it
     /// never can (`0 0 30 2 *`) or it is rarer than the horizon.
     pub fn nextAfter(self: Spec, after: i64, tz_offset_minutes: i32) ?i64 {
         const offset_secs: i64 = @as(i64, tz_offset_minutes) * 60;
@@ -528,7 +528,7 @@ test "field syntax: star, number, list, range and step" {
 test "day-of-week takes 0 and 7 for Sunday, in ranges too" {
     try std.testing.expectEqual(@as(u8, 1 << 0), (try parse("0 0 * * 0")).dow);
     try std.testing.expectEqual(@as(u8, 1 << 0), (try parse("0 0 * * 7")).dow);
-    // 5-7 is Friday, Saturday, Sunday — not a backwards range. Folding 7 to 0
+    // 5-7 is Friday, Saturday, Sunday, not a backwards range. Folding 7 to 0
     // before the range check is what used to make this one.
     try std.testing.expectEqual(@as(u8, (1 << 5) | (1 << 6) | (1 << 0)), (try parse("0 0 * * 5-7")).dow);
     // And 7-7 is Sunday alone, not every day of the week.

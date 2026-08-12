@@ -23,8 +23,8 @@ pub const Idea = struct {
 /// The idea list a planning call returns:
 /// `{"ideas": [{"idea": "...", "files": ["src/x.zig"]}]}`.
 ///
-/// Returns null when the response is not that shape — including when the
-/// model answered with a patch proposal despite being asked to plan — so the
+/// Returns null when the response is not that shape, including when the
+/// model answered with a patch proposal despite being asked to plan, so the
 /// caller can fall back to the unplanned behaviour instead of failing the
 /// iteration. Files outside the readable surface are dropped rather than
 /// failing the idea: the path was advisory (it steers context pinning), and

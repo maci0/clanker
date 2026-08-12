@@ -322,7 +322,7 @@ fn parseStreamEvent(chunk_arena: std.mem.Allocator, payload: []const u8) api.Str
 
     const chunk = json.parseFromSliceLeaky(StreamChunk, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
         // Dropping a frame silently hides truncated or re-framed streams as
-        // "the model said nothing". Log the byte count only — the payload is
+        // "the model said nothing". Log the byte count only, the payload is
         // raw provider output that may contain generated content or echoed
         // user data.
         log.log(.debug, "unparseable stream frame ({d} bytes)", .{payload.len});

@@ -10,7 +10,7 @@ pub const Status = enum {
     accepted,
     rejected,
     failed,
-    /// Accepted, merged, and later undone by a human — recorded after the
+    /// Accepted, merged, and later undone by a human, recorded after the
     /// fact by the revert sync, never written by a run directly. A stronger
     /// refusal than `rejected`: the change passed every gate and a person
     /// still said no to it.
@@ -85,13 +85,13 @@ pub const History = struct {
 
     /// True when a human reverted an improvement that made exactly this
     /// edit. The strongest signal in the log: the change passed every gate,
-    /// merged, and was still undone in review — proposing it again is the
+    /// merged, and was still undone in review, proposing it again is the
     /// one outcome that review already refused.
     pub fn revertedByHuman(self: *History, arena: std.mem.Allocator, fingerprints: []const u64) !bool {
         return self.anyWithStatus(arena, "reverted", fingerprints);
     }
 
-    /// Ids of every improvement the log still records as accepted — the set
+    /// Ids of every improvement the log still records as accepted, the set
     /// whose "already in the source" claim the revert sync has to verify
     /// against the tree.
     pub fn acceptedIds(self: *History, arena: std.mem.Allocator) ![]const []const u8 {
@@ -125,9 +125,9 @@ pub const History = struct {
     }
 
     /// Flips the logged status of the given improvement ids from accepted
-    /// to reverted, in place. The rewrite is surgical — only the status
+    /// to reverted, in place. The rewrite is surgical, only the status
     /// field of a matched line changes, every other byte is carried through
-    /// — and idempotent: a line already flipped no longer says accepted and
+    ///, and idempotent: a line already flipped no longer says accepted and
     /// is left alone. Returns how many entries were flipped.
     pub fn markReverted(self: *History, ids: []const []const u8) !usize {
         if (ids.len == 0) return 0;
@@ -195,7 +195,7 @@ pub const History = struct {
         changes: []const u64,
         /// What the change did, when the caller got far enough to know. null
         /// at the failure paths that reject a proposal before it is
-        /// classified — a build that never compiled has no class, and writing
+        /// classified, a build that never compiled has no class, and writing
         /// one anyway would put guesses into the record the next run reads.
         class: ?inert.Class,
     ) !void {
@@ -217,7 +217,7 @@ pub const History = struct {
         // only the new record here meant every improvement erased the record
         // of the one before it: a .jsonl that never held more than one line.
         // With no memory of what it had already done, the loop re-proposed the
-        // same change until something else happened to stop it — the reason
+        // same change until something else happened to stop it, the reason
         // `repl_md = .{};` was promoted into src/cli.zig three separate times.
         if (self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch null) |prior| {
             defer self.gpa.free(prior);
@@ -351,7 +351,7 @@ pub const History = struct {
         changes: []const u64 = &.{},
         /// What the change did, as `inert.Class.asStr` wrote it. Absent on
         /// entries written before classification existed, which read back as
-        /// `behavior` — an unclassified promotion must not be counted toward a
+        /// `behavior`, an unclassified promotion must not be counted toward a
         /// monoculture streak nobody measured.
         class: []const u8 = "",
     };
@@ -447,7 +447,7 @@ pub const History = struct {
     /// what was already done, and what was tried and rejected.
     ///
     /// Nothing carried across runs before this, so the same mistake came back
-    /// indefinitely — one wrong import proposed in three separate runs — and
+    /// indefinitely, one wrong import proposed in three separate runs, and
     /// work already promoted got proposed again as a no-op that passed every
     /// gate because it changed nothing that mattered.
     pub fn recentSummary(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const u8 {
@@ -485,7 +485,7 @@ pub const History = struct {
     /// The raw summaries of the last `max_entries` attempts, oldest first,
     /// every status included. The planner dedups its candidate ideas against
     /// these: an accepted summary means the idea is already done, a rejected
-    /// one that it was tried and refused — either way not worth an iteration.
+    /// one that it was tried and refused, either way not worth an iteration.
     pub fn recentSummaries(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
         const entries = try self.loadAll(arena);
         if (entries.len == 0) return &.{};

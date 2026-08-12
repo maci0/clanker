@@ -8,7 +8,7 @@
 //!   - streaming is a different verb (`:streamRawPredict`), not a body flag
 //!     alone;
 //!   - the credential is a GCP OAuth access token minted from a service
-//!     account and renewed in-process — `oauth_refresh` in ADR 0005's terms.
+//!     account and renewed in-process, `oauth_refresh` in ADR 0005's terms.
 
 const std = @import("std");
 const api = @import("api.zig");

@@ -24,12 +24,12 @@ const mock_server = @import("../llm/mock_server.zig");
 const exact_format_suffix = "\n\nIMPORTANT: When the user requests a specific output format (exact string, JSON, number, etc.), respond with ONLY that exact value. Do not wrap it in markdown fences, do not add prose, explanations, or punctuation. Return the value verbatim, preserving exact capitalization and punctuation.";
 
 /// Appended to the system prompt when [[Agent.plan_mode]] is set. The prompt
-/// alone is not the gate — executeCalls refuses write-capable tools in plan
-/// mode whatever the model decides — but telling the model up front is what
+/// alone is not the gate, executeCalls refuses write-capable tools in plan
+/// mode whatever the model decides, but telling the model up front is what
 /// turns those refusals from confusing failures into a coherent mode.
 const plan_mode_suffix = "\n\nPLAN MODE: This run is a proposal, not an execution. Read-only tools work normally; any tool that could change state (files, commands, delegation) is refused by the harness in this mode, so do not attempt it. Investigate as needed, then answer with a concrete, numbered plan of the steps you would take. The user reviews the plan and applies it as a follow-up run.";
 
-/// Appended to the system prompt when [[Agent.research_mode]] is set — the
+/// Appended to the system prompt when [[Agent.research_mode]] is set, the
 /// composer's Research toggle, the web-search parity control. A directive,
 /// not a gate: web_search/fetch_web are ordinary enabled tools the model
 /// could already call; this tells it the operator wants web-backed answers
@@ -88,13 +88,13 @@ pub const Agent = struct {
     /// The system prompt (arena-owned), rebuilt when skills change.
     system_prompt_text: []const u8,
     /// Instance identity and peer names, kept so refreshSystemPrompt rebuilds
-    /// the same prompt init built — without them a mid-session refresh
+    /// the same prompt init built, without them a mid-session refresh
     /// silently drops the Identity section from the system prompt.
     instance_name: []const u8 = "",
     instance_id: []const u8 = "",
     peer_names: []const []const u8 = &.{},
     /// Loaded tool modules, keyed by tool name (wasm modules are stateful in
-    /// zwasm for AssemblyScript guests — cache and reuse instead of
+    /// zwasm for AssemblyScript guests, cache and reuse instead of
     /// re-instantiating per call).
     modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
     /// Loaded tool wasm bytes, keyed by the tool's wasm path (gpa-owned):
@@ -118,7 +118,7 @@ pub const Agent = struct {
     ask_fn: ?host.AskFn = null,
     /// Human approval for write-capable tool calls, wired by the surfaces
     /// agent.confirm_writes opts in (the streaming web run, the REPL). Null
-    /// means no gate — the state headless runs, the improve loop and nested
+    /// means no gate, the state headless runs, the improve loop and nested
     /// sub-agents must stay in, because they have nobody to answer.
     confirm_fn: ?host.ConfirmFn = null,
     /// Mid-run steering, wired by the streaming web run (POST /api/steer):
@@ -136,7 +136,7 @@ pub const Agent = struct {
     /// Research mode (the composer's Research toggle): [[research_mode_suffix]]
     /// is threaded into the system prompt, directing the run to consult
     /// web_search/fetch_web for current, sourced facts. A directive, not a
-    /// gate — the tools stay ordinary and the model stays free.
+    /// gate, the tools stay ordinary and the model stays free.
     research_mode: bool = false,
     /// Images a caller (the /api/run composer) wants attached to the next
     /// task message. run() consumes them once and clears the slot, so a
@@ -154,7 +154,7 @@ pub const Agent = struct {
     /// nested run's graph cannot collide with its parent's (or a sibling's,
     /// spawned in the same second) and is recognizable in state/runs/.
     run_id_override: ?[]const u8 = null,
-    /// The run id of the agent that spawned this one — empty for top-level
+    /// The run id of the agent that spawned this one, empty for top-level
     /// runs. Recorded into the execution graph so a nested run's timeline
     /// links back to its caller's (webui-plan 3.1).
     parent_run_id: []const u8 = "",
@@ -188,7 +188,7 @@ pub const Agent = struct {
     /// Optional hook fired after a tool batch that changed this run's private
     /// todo list, with the list as a bare JSON array (see
     /// `private_todos.listJson`). Lets a viewer watch the run's own checklist
-    /// while it runs — the list itself is still in-memory and still discarded
+    /// while it runs, the list itself is still in-memory and still discarded
     /// when the run returns, so this is a window, not a second store. Fired on
     /// the run thread after `executeCalls` has joined its workers, and only on
     /// an actual change (`List.rev`), so a run that never touches todo_* never
@@ -349,7 +349,7 @@ pub const Agent = struct {
         // `stats`, and `session_stats` double-counted them on every call.
         self.stats = .{};
         // The tally is what decides which schemas are loaded next time, so it
-        // is written whatever happens to this run — including the runs that
+        // is written whatever happens to this run, including the runs that
         // fail, which are exactly the ones that reached for something unusual.
         defer self.usage.save(self.ctx.io, self.arena, std.Io.Dir.cwd());
         // Rebuild the system prompt so new skills/learnings from prior turns
@@ -501,8 +501,8 @@ pub const Agent = struct {
                 return .{ .message = .{ .role = .assistant, .content = "[stopped]" } };
             }
             // Mid-run steering: messages posted while the run works (POST
-            // /api/steer) join the conversation here, between iterations —
-            // the one seam where a user message is always legal, because the
+            // /api/steer) join the conversation here, between iterations.
+            // The one seam where a user message is always legal, because the
             // previous batch's tool results are already appended. Drained
             // fully so two quick interjections both make this LLM call.
             if (self.steer_fn) |steer| {
@@ -615,7 +615,7 @@ pub const Agent = struct {
             // blow the context window even when the session total is still
             // under budget (session cap is cfg.agent.max_total_tokens). The
             // final-answer path above already returned, so this only guards
-            // turns that still want tool calls — a final answer is never
+            // turns that still want tool calls, a final answer is never
             // sacrificed to the per-turn cap (the answer_format eval requires
             // the exact value, mirroring the session-budget behavior below).
             if (self.cfg.modules.token_budget) {
@@ -800,9 +800,9 @@ pub const Agent = struct {
     /// trailing .tool results that only partially answer the tool_calls of
     /// their nearest preceding assistant message.
     ///
-    /// A tool call that already has a persisted result already ran — possibly
+    /// A tool call that already has a persisted result already ran, possibly
     /// with a real, non-idempotent side effect (a file write, a shell
-    /// command) — so its result is kept rather than discarded, which would
+    /// command), so its result is kept rather than discarded, which would
     /// otherwise leave the model no record that the call happened and free to
     /// blindly re-issue it. A call with no result yet is truly unknown (it
     /// may have run and lost its result, or never run at all), so it gets a
@@ -1356,7 +1356,7 @@ pub const Agent = struct {
             s = std.mem.trim(u8, s[1 .. s.len - 1], " \t\r\n");
         }
         // If the answer is still wrapped in prose (e.g. "here is your JSON:
-        // { ... }"), extract the first JSON object/array — the answer_format
+        // { ... }"), extract the first JSON object/array, the answer_format
         // eval expects an exact-match value, not prose.
         var js_start: ?usize = null;
         var json_extracted = false;
@@ -1558,7 +1558,7 @@ pub const Agent = struct {
     /// the llm capability, a provider to call.
     /// Sandbox for a module that will be cached: `ToolModule` keeps the
     /// pointer it is loaded with, and a cached module is used again from later
-    /// frames, so a stack local here dangles the moment this call returns —
+    /// frames, so a stack local here dangles the moment this call returns;
     /// the host functions then read a freed `Sandbox` and the process
     /// segfaults inside the allocator. Arena-allocated, it lives as long as
     /// the run that owns the cache.
@@ -1680,7 +1680,7 @@ pub const Agent = struct {
     /// and cached so repeated tool calls, worker spawns, and transform runs
     /// against the same module skip the filesystem.  Using gpa (not the
     /// per-run arena) lets the cache survive across turns in a multi-turn
-    /// session — the files are immutable during a session.
+    /// session, the files are immutable during a session.
     fn wasmBytes(self: *Agent, tool: *const registry.Tool) ![]const u8 {
         if (self.wasm_cache.get(tool.wasm)) |bytes| return bytes;
         const bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20));
@@ -1711,8 +1711,8 @@ pub const Agent = struct {
             };
             // Pre-compile the primary tool module so executeTool (sequential
             // path) finds it already in self.modules and skips recompilation.
-            // Parallel-eligible tools never read self.modules — their worker
-            // loads a fresh module from the cached wasm bytes — but when the
+            // Parallel-eligible tools never read self.modules, their worker
+            // loads a fresh module from the cached wasm bytes, but when the
             // same tool name appears more than once in a batch, the duplicate
             // hits the sequential fallback (executeTool / executeToolOnWorker)
             // which DOES read self.modules; pre-compiling here avoids a
@@ -1975,7 +1975,7 @@ pub const Agent = struct {
     /// stateful).
     fn executeCalls(self: *Agent, calls: []const types.ToolCall) ![]?[]const u8 {
         // Optional slots: null means "not yet executed", which has to be
-        // distinguishable from "executed and returned empty output" — a tool
+        // distinguishable from "executed and returned empty output", a tool
         // that legitimately returns zero bytes was re-run by the sequential
         // fallback (doubling its side effects) because "" was both the
         // initial value and a possible result.
@@ -2000,7 +2000,7 @@ pub const Agent = struct {
             // A model that names a catalogued tool without loading it first is
             // answered rather than refused. The tool array is what the provider
             // was offered, but dispatch resolves against the registry, so the
-            // call can simply run — and the schema is revealed so the next
+            // call can simply run, and the schema is revealed so the next
             // request carries it and the model can get the arguments right if
             // it guessed them wrong. Without this the catalog costs capability
             // rather than only tokens, which is not a trade worth making.
@@ -2014,7 +2014,7 @@ pub const Agent = struct {
                 }
             }
             // Plan mode: write-capable calls are refused outright, before
-            // any confirm channel gets a say — a plan run must not be able
+            // any confirm channel gets a say, a plan run must not be able
             // to change state even when the human would have allowed it,
             // because "apply" is a separate run they have not started yet.
             // Same predicate as the confirm gate, so what a viewer is asked
@@ -2032,7 +2032,7 @@ pub const Agent = struct {
             // to a write-capable tool waits here for their allow/deny.
             // Gated in this loop rather than in executeTool because it is
             // the one point the parallel pass, the worker fallback, and the
-            // sequential path all flow through — a denied call must reach
+            // sequential path all flow through, a denied call must reach
             // none of them, and a confirmed batch must be settled before
             // the first worker spawns.
             if (self.confirm_fn) |confirm| {
@@ -2178,7 +2178,7 @@ pub const Agent = struct {
             // Run it on a worker even though nothing here is parallel: the
             // wasm interpreter recurses on the native stack, and the main
             // thread's stack is whatever the OS handed the process (8 MiB),
-            // which a deep tool call blows outright — a segfault, not a
+            // which a deep tool call blows outright, a segfault, not a
             // catchable trap. A worker gets the explicit reservation. When
             // this agent is *already* inside such a worker (a sub-agent, with
             // no_parallel_tools set) the stack is big enough, so run inline
@@ -2248,7 +2248,7 @@ const parent_answer_max_msg_bytes = 400;
 
 /// Renders the one-shot prompt that answers a sub-agent's question on the
 /// parent's behalf: the parent's task, the tail of its transcript (the part
-/// the sub-agent cannot see — it started with an empty transcript on
+/// the sub-agent cannot see, it started with an empty transcript on
 /// purpose), and the question with its options, under the same
 /// answer-verbatim contract the ask_user peer path uses.
 fn parentAnswerPrompt(
@@ -2290,7 +2290,7 @@ fn parentAnswerPrompt(
 }
 
 /// Answers a sub-agent's question with one bounded completion on the parent's
-/// provider — the re-entrant path host.ParentAsk documents. Runs on the
+/// provider, the re-entrant path host.ParentAsk documents. Runs on the
 /// sub-agent's thread while the parent is parked in ck_subagent's join, so it
 /// builds a fresh client Ctx per call rather than sharing the parent's HTTP
 /// state across threads (the same discipline runNested applies). Returns the
@@ -2354,7 +2354,7 @@ fn parentAskTrampoline(
 /// DO NOT LOWER THIS. The interpreter's native call depth is not shallow: it
 /// recurses per WASM frame, and a host call at the bottom recurses again (the
 /// ck_exec JSON result is parsed there). A `search_code` call segfaulted the
-/// process outright at 2 MiB — a stack overflow, not a catchable trap — and
+/// process outright at 2 MiB, a stack overflow, not a catchable trap, and
 /// the reasoning that "the host-side call depth is shallow" was written into
 /// this comment once already and was wrong both times.
 pub const parallel_tool_stack_bytes: usize = 64 * 1024 * 1024;
@@ -2380,7 +2380,7 @@ const max_per_turn_tokens: u32 = 32768;
 
 /// Hard cap on a single tool result before it enters the conversation. A huge
 /// result (large file read, verbose search dump) can dominate the context
-/// window and inflate cost on the very next LLM call — before compaction has a
+/// window and inflate cost on the very next LLM call, before compaction has a
 /// chance to act (and compaction preserves the last 6 messages, so a recent
 /// giant result stays in context regardless). The model sees the first
 /// `max_tool_result_bytes` plus a truncation notice so it can ask for specific
@@ -2460,7 +2460,7 @@ const ToolWorker = struct {
             // `config`, the same injection host.sandboxFor applies on the
             // sequential path. Without it the git/gh guests read an empty
             // config on the parallel path and reported "no exec_pattern_allow
-            // patterns are configured" even though the config had them — the
+            // patterns are configured" even though the config had them, the
             // two execution paths disagreed about the same tool's settings.
             .config_json = if (self.tool.exec_allow.len > 0)
                 try host.execPolicyConfig(arena_state.allocator(), self.tool.config_json, self.cfg)
@@ -2491,7 +2491,7 @@ const ToolWorker = struct {
 /// the remainder is a number or boolean, so "42." becomes "42" while a string
 /// like "hello." keeps its period (the user asked for the exact value).
 /// What the human is shown when asked to allow a tool call: enough of the
-/// arguments to judge it, never all of them — a whole file write would drown
+/// arguments to judge it, never all of them, a whole file write would drown
 /// the question. Truncation backs up to a UTF-8 boundary because the preview
 /// is re-encoded as JSON for the stream event, and a split code point there
 /// is not a smaller preview but a malformed one.
@@ -2514,7 +2514,7 @@ test argsPreview {
 
 /// The error message out of a failed tool result ({"ok":false,"error":"..."}),
 /// for the autolearn log's tool_error events. Without it the aggregated
-/// roadmap item reads "Fix 'git' tool errors (1 failure(s), last: )" — a
+/// roadmap item reads "Fix 'git' tool errors (1 failure(s), last: )", a
 /// count with no clue what actually failed. Truncation backs up to a UTF-8
 /// boundary for the same reason as [[argsPreview]].
 fn errorDetail(arena: std.mem.Allocator, content: []const u8) []const u8 {
@@ -2617,7 +2617,7 @@ test "isNumericString rejects dot-only strings without digits" {
     // Pins the final `return saw_digit`: a bare "." or "-." passes every
     // per-character check but has no digit, so it is not a number. If the
     // saw_digit requirement were dropped, finalAnswer would happily reduce a
-    // prose answer to "." — this test fails on that regression.
+    // prose answer to ".", this test fails on that regression.
     try std.testing.expect(isNumericString(".") == false);
     try std.testing.expect(isNumericString("-.") == false);
     // The accepted edge forms: a dot may lead or trail the digits.
@@ -2680,8 +2680,8 @@ test "unwrapJsonAnswer returns null for multi-key object without answer" {
 }
 
 test "the transform chain type-checks before anything calls it" {
-    // Zig only analyzes referenced functions, so runChain/runTransform — which
-    // have no call site yet — could carry a type error indefinitely and then
+    // Zig only analyzes referenced functions, so runChain/runTransform, which
+    // have no call site yet, could carry a type error indefinitely and then
     // fail the build of whatever change finally wires them in, with the error
     // pointing at code that change never touched. Referencing them here forces
     // the analysis now.
@@ -2729,9 +2729,9 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
 
 test "the parallel-tool stack reservation stays above the observed crash floor" {
     // Regression: successive "reduce the stack size" changes took this
-    // reservation from 64 MiB down to 2 MiB, and a search_code call — the
+    // reservation from 64 MiB down to 2 MiB, and a search_code call, the
     // zwasm interpreter recursing, then ck_exec's JSON result parsing on top
-    // of it — overflowed the worker stack and segfaulted the whole run. The
+    // of it, overflowed the worker stack and segfaulted the whole run. The
     // reservation is lazily mapped, so a smaller number frees no real memory;
     // it only moves the crash closer. No other test spawns a worker with this
     // stack, so every shrink sailed through the gate.
@@ -2774,9 +2774,9 @@ test "maybeCompactMessages drops the middle, keeps the system prompt and the rec
     // from provider.activeModel().context_window and the compaction path
     // summarizes the dropped middle with an LLM call), so this test drives its
     // two extracted pieces: compactionKeepStart (the budget/window decision)
-    // and compactMiddle (the drop/preserve rewrite). A regression in either —
+    // and compactMiddle (the drop/preserve rewrite). A regression in either
     // an inverted budget check, the wrong messages dropped, compaction
-    // silently disabled, or the system prompt evicted — fails here.
+    // silently disabled, or the system prompt evicted, fails here.
     const filler = "x" ** 256;
     var messages: std.ArrayList(types.Message) = .empty;
     try messages.append(arena, .{ .role = .system, .content = "system prompt" });
@@ -2847,7 +2847,7 @@ test "capToolResult leaves small results untouched and truncates large ones" {
 test "compactionKeepStart never splits a tool-call exchange" {
     // If the kept window would begin with tool-result messages whose
     // assistant tool_calls message is being dropped, the window must extend
-    // backwards to include it — providers reject orphaned tool messages.
+    // backwards to include it, providers reject orphaned tool messages.
     var msgs: [9]types.Message = undefined;
     msgs[0] = .{ .role = .system, .content = "sys" };
     var i: usize = 1;
@@ -2917,9 +2917,9 @@ test "pruneOldToolResults shortens stale tool results outside the recent tail" {
     var msgs = [_]types.Message{
         .{ .role = .system, .content = "sys" }, // 0
         .{ .role = .user, .content = "u1" }, // 1
-        .{ .role = .tool, .content = big }, // 2 — large, stale
+        .{ .role = .tool, .content = big }, // 2, large, stale
         .{ .role = .user, .content = "u2" }, // 3
-        .{ .role = .tool, .content = big }, // 4 — inside tail (len - 6 = 4)
+        .{ .role = .tool, .content = big }, // 4, inside tail (len - 6 = 4)
         .{ .role = .user, .content = "u3" }, // 5
         .{ .role = .assistant, .content = "a1" }, // 6
         .{ .role = .user, .content = "u4" }, // 7
@@ -2944,7 +2944,7 @@ test "pruneOldToolResults leaves short results untouched" {
     // A short tool result (< prune_preview_bytes) outside the tail survives.
     var msgs = [_]types.Message{
         .{ .role = .system, .content = "sys" }, // 0
-        .{ .role = .tool, .content = "ok" }, // 1 — short, outside tail
+        .{ .role = .tool, .content = "ok" }, // 1, short, outside tail
         .{ .role = .user, .content = "u1" }, // 2
         .{ .role = .assistant, .content = "a1" }, // 3
         .{ .role = .user, .content = "u2" }, // 4
@@ -2955,7 +2955,7 @@ test "pruneOldToolResults leaves short results untouched" {
 
     Agent.pruneOldToolResults(&msgs, arena, 6);
 
-    // Still "ok" — untouched.
+    // Still "ok", untouched.
     try std.testing.expectEqualStrings("ok", msgs[1].content.?);
 }
 
@@ -2977,7 +2977,7 @@ test "pruneOldToolResults is a no-op when history is shorter than the tail" {
 
     Agent.pruneOldToolResults(&msgs, arena, 6);
 
-    // Everything untouched — the history is too short to prune.
+    // Everything untouched, the history is too short to prune.
     try std.testing.expectEqual(big.len, msgs[1].content.?.len);
 }
 
@@ -3029,7 +3029,7 @@ test "resumed-session cleanup completes partial tool-call exchanges instead of d
     }
 
     // (2) A partial exchange (only 1 of 2 results persisted) keeps the real
-    // result — it already ran, possibly with a side effect — and gets a
+    // result, it already ran, possibly with a side effect, and gets a
     // synthetic "interrupted" result for the call that never got one,
     // instead of wiping the whole batch and leaving the model free to
     // blindly re-issue an already-executed call.
@@ -3110,7 +3110,7 @@ test "finalAnswer keeps code that happens to balance its braces" {
     agent.arena = arena;
 
     // A fenced function is brace-balanced, so the JSON extractor used to take
-    // everything from the first `{` and hand back `{ return a + b; }` — the
+    // everything from the first `{` and hand back `{ return a + b; }`, the
     // signature was deleted from every code answer that reached it.
     const resp = types.ChatResponse{ .message = .{
         .role = .assistant,

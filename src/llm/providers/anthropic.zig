@@ -188,7 +188,7 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                 // either as a bare string or as an array of content blocks,
                 // but some Claude-compatible gateways normalize each block
                 // into `{ "tool_result": { content: [...] } }` and only
-                // accept the array form — a bare string fails with
+                // accept the array form, a bare string fails with
                 // "content.0: Input should be a valid dictionary or object
                 // to extract fields from". The array form satisfies both.
                 try s.beginArray();
@@ -202,7 +202,7 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
                 try s.endObject();
             },
             .assistant => {
-                // Text first, then tool_use — the order the model produced
+                // Text first, then tool_use, the order the model produced
                 // them. An assistant turn whose last block is text reads as a
                 // prefill to continue, which Anthropic rejects outright
                 // ("does not support assistant message prefill"); that fires
@@ -475,7 +475,7 @@ fn parseStreamEvent(chunk_arena: std.mem.Allocator, payload: []const u8) api.Str
 
     const ev = json.parseFromSliceLeaky(Event, chunk_arena, payload, .{ .ignore_unknown_fields = true }) catch {
         // Dropping a frame silently hides truncated or re-framed streams as
-        // "the model said nothing". Log the byte count only — the payload is
+        // "the model said nothing". Log the byte count only, the payload is
         // raw provider output that may contain generated content or echoed
         // user data.
         log.log(.debug, "unparseable stream frame ({d} bytes)", .{payload.len});

@@ -21,7 +21,7 @@ const zwasm = @import("zwasm");
 const default_fuel = @import("../tools/manifest.zig").default_fuel;
 
 /// The effective budget for one call: a descriptor's `fuel` (0 = unset) may
-/// tighten the default but never exceed it — a fat-fingered manifest stays
+/// tighten the default but never exceed it, a fat-fingered manifest stays
 /// a setting, not an unmetered run (the same clamp philosophy as rlm's
 /// max_depth ceiling).
 fn fuelBudget(requested: u64) u64 {
@@ -31,7 +31,7 @@ fn fuelBudget(requested: u64) u64 {
 const max_memory_pages = 256;
 
 /// AssemblyScript runtime import; a no-op (the guest's abort handling is not
-/// needed inside the sandbox — traps surface as ToolTrap).
+/// needed inside the sandbox, traps surface as ToolTrap).
 fn asAbort(caller: *zwasm.Caller, msg: u32, file: u32, line: u32, col: u32) void {
     _ = caller;
     _ = msg;
@@ -50,8 +50,8 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_fs_read_range", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsReadRange);
     // Implemented in host.zig and never reachable: no registration meant no
     // guest could call them, so the file operations an agent needs to do more
-    // than read — create a directory, rename, copy, delete, append, stat, find
-    // by name, grep — did not exist as far as any tool was concerned.
+    // than read, create a directory, rename, copy, delete, append, stat, find
+    // by name, grep, did not exist as far as any tool was concerned.
     try lk.defineFuncCtx("env", "ck_fs_write_range", h, fn (*zwasm.Caller, u32, u32, u32, u32, u32) u32, &host.ckFsWriteRange);
     try lk.defineFuncCtx("env", "ck_fs_append", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsAppend);
     try lk.defineFuncCtx("env", "ck_fs_copy", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsCopy);
@@ -176,7 +176,7 @@ pub const ToolModule = struct {
         if (scratch_ptr == 0) return error.ToolScratchTooSmall;
         // Re-read memory after every call into the guest, not once up front: a
         // guest allocator can grow linear memory to satisfy an allocation
-        // (AssemblyScript's does, readily — a JSON-heavy tool like csv_json
+        // (AssemblyScript's does, readily, a JSON-heavy tool like csv_json
         // triggers it on input too small to look like a memory concern), and
         // a slice captured before that call points at a size that no longer
         // matches the instance's actual memory. This surfaced as a spurious
@@ -421,7 +421,7 @@ test "web_search wasm tool returns results from a live backend (skips when offli
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/web_search.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
-    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return; // tools not built — nothing to check
+    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return; // tools not built, nothing to check
     defer mod.deinit();
 
     const out = mod.executeTool("{\"query\":\"zig programming language\",\"max_results\":4}") catch return; // offline
@@ -498,7 +498,7 @@ test "board wasm tool folds a room log longer than one history page completely" 
     };
 
     // 25 cards: five more than one history page (host page size 20). All the
-    // adds land within a second or two, so they share a timestamp — exactly
+    // adds land within a second or two, so they share a timestamp, exactly
     // the shape that used to fold to its newest page only: the host answered
     // history newest-first, the fold's `ts > after` cursor jumped to the top,
     // and the oldest cards silently vanished from every kanban_list.
@@ -956,7 +956,7 @@ test "cmd_sessions and cmd_graph report empty when the state dir does not exist"
     var env_map = std.process.Environ.Map.init(std.testing.allocator);
     defer env_map.deinit();
 
-    // A sandbox root with no state/ at all — what a fresh clone looks like,
+    // A sandbox root with no state/ at all, what a fresh clone looks like,
     // since state/ is gitignored and every subdirectory under it is created
     // lazily on first write.
     var tmp = std.testing.tmpDir(.{});
@@ -1008,11 +1008,11 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
         \\
         \\## Done
         \\
-        \\- **Shipped thing** — landed last week.
+        \\- **Shipped thing**, landed last week.
         \\
         \\## Planned
         \\
-        \\- **Plugin SDK** — manifest format for third-party tools.
+        \\- **Plugin SDK**, manifest format for third-party tools.
         \\  - a sub-bullet that must not surface as its own item
         \\- [x] checked item, done wherever it sits
         \\
@@ -1044,7 +1044,7 @@ test "roadmap wasm tool lists planned items from the real bullet format" {
     defer std.testing.allocator.free(planned);
     try std.testing.expect(std.mem.find(u8, planned, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, planned, "Plugin SDK") != null);
-    // Autolearn bullets are open work too — only "## Done" is excluded.
+    // Autolearn bullets are open work too, only "## Done" is excluded.
     try std.testing.expect(std.mem.find(u8, planned, "Optimize the most-used tools") != null);
     try std.testing.expect(std.mem.find(u8, planned, "Shipped thing") == null);
     try std.testing.expect(std.mem.find(u8, planned, "checked item") == null);
@@ -1475,8 +1475,8 @@ test "a tool with a tiny fuel budget runs out of fuel; the default budget answer
 
     // 15k is measured to cover this module's instantiation and arena
     // discovery (~10.3k) but not a run (~18.8k more), so the trap lands in
-    // executeTool — deterministically, since fuel accounting is
-    // instruction-exact — and surfaces as ToolTrap, the error callers know,
+    // executeTool, deterministically, since fuel accounting is
+    // instruction-exact, and surfaces as ToolTrap, the error callers know,
     // not a raw zwasm OutOfFuel.
     var sb = host.Sandbox{
         .gpa = std.testing.allocator,
@@ -1508,7 +1508,7 @@ test "a tool with a tiny fuel budget runs out of fuel; the default budget answer
 }
 
 /// One `arena` call against an isolated sandbox root. `llm` is left unset, so
-/// every `ck_llm` is denied — which is exactly how these tests reach the
+/// every `ck_llm` is denied, which is exactly how these tests reach the
 /// forfeit path without a provider account.
 fn arenaCall(io: std.Io, root: []const u8, wasm: []const u8, env: *std.process.Environ.Map, input: []const u8) ![]u8 {
     var sb = host.Sandbox{
@@ -1542,7 +1542,7 @@ test "arena wasm tool refuses a match without two distinct sides" {
 
     // A debate needs at least two distinct sides, and 3-4 way matches are not
     // implemented. Every one of these is refused at the tool boundary rather
-    // than started and abandoned partway through — which for this tool means
+    // than started and abandoned partway through, which for this tool means
     // refused before it has spent a single model call.
     const cases = [_]struct { input: []const u8, want: []const u8 }{
         .{ .input = "{\"question\":\"q\",\"for\":\"a\"}", .want = "two distinct positions" },
@@ -1644,7 +1644,7 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
     try std.testing.expect(std.mem.find(u8, raw, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, raw, "\"status\":\"finished\"") != null);
     try std.testing.expect(std.mem.find(u8, raw, "\"forfeit\":true") != null);
-    // Nobody landed anything, so nobody won — and the verdict says so rather
+    // Nobody landed anything, so nobody won, and the verdict says so rather
     // than picking one of two untouched combatants.
     try std.testing.expect(std.mem.find(u8, raw, "\"reason\":\"draw\"") != null);
     try std.testing.expect(std.mem.find(u8, raw, "SandboxDenied") != null);
@@ -1695,7 +1695,7 @@ test "arena wasm tool finishes a match as forfeits when no provider answers" {
 }
 
 /// One `compare` call against an isolated sandbox root. `llm` is left unset, so
-/// every `ck_llm_many` is denied — which is how these tests reach the tool's
+/// every `ck_llm_many` is denied, which is how these tests reach the tool's
 /// refusal paths without a provider account.
 fn compareCall(io: std.Io, root: []const u8, wasm: []const u8, env: *std.process.Environ.Map, input: []const u8) ![]u8 {
     var sb = host.Sandbox{
@@ -1827,7 +1827,7 @@ fn expectNoCompareIdentity(where: []const u8, out: []const u8) !void {
 test "compare wasm tool keeps a stored comparison blind for a reader who asked to be" {
     // The web UI's read path, end to end against a real stored document: this
     // is the property the Compare view is built on, and the only way to hold it
-    // is for the payload itself to carry no provider and no model — a page can
+    // is for the payload itself to carry no provider and no model, a page can
     // decline to paint a field, but it cannot decline to have received it.
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
