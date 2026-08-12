@@ -53,7 +53,7 @@ alongside the modular-provider vtable in [docs/adrs/0004](adrs/0004-providers-ar
 
 Streaming is the Anthropic event vocabulary, not OpenAI's: `content_block_delta` carries `text_delta` for prose and `input_json_delta` fragments for tool arguments, and usage arrives split across `message_start` (input, cache reads) and `message_delta` (output, cumulative). Unknown event types, including `thinking_delta` and `signature_delta`, are ignored rather than treated as errors.
 
-Providers are configured in `config.toml` / `config.local.toml` (see below).
+Providers and models are configured in `config.toml` / `config.local.toml`; the complete field-by-field reference, with per-kind examples and a minimal working config, is [docs/configuration.md](configuration.md).
 
 ### Sandbox (`src/sandbox/`)
 
