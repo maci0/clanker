@@ -63,6 +63,10 @@ So, when adding a capability:
 
 - Write it as a guest module with a descriptor in `tools/manifests/`. Native
   code in `src/` needs a reason that survives the questions above.
+  `clanker plugins new <name>` scaffolds both halves; `clanker plugins validate`
+  checks them and names the offending key. The descriptor is the whole sandbox
+  policy, and every field it honors is in `docs/manifest.md` — the loader
+  ignores an unknown key, so a typo'd grant is silent until the tool fails.
 - Either language compiles to a guest, and the host cannot tell them apart:
   `tools/zig/<name>.zig`, built by `zig build tools` into `zig-out/tools/`
   (gitignored), or `tools/ts/<name>.ts` in AssemblyScript, built by
