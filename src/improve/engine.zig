@@ -46,7 +46,7 @@ pub const Options = struct {
 /// for `zig build` + `zig build test` + `zig build tools` to succeed. `vendor`
 /// is required because `build.zig` imports vendor/toml/src/root.zig as a
 /// local path module; without it the staged build can't find that module.
-const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "vendor", "README.md", "build.zig", "build.zig.zon", "config.json", "config.toml" };
+const staging_roots = [_][]const u8{ "src", "tools", "tests", "docs", "evals", "vendor", "README.md", "build.zig", "build.zig.zon", "config.toml" };
 
 /// Text that has to survive in a staged file for the patch to be considered.
 ///
