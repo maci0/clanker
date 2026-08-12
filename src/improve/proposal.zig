@@ -46,6 +46,7 @@ pub const allowed_prefixes = [_][]const u8{
     "build.zig",
     "build.zig.zon",
     "config.json",
+    "config.toml",
 };
 
 /// Paths that may be created but never modified or deleted. The eval suite is

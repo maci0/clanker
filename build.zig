@@ -46,6 +46,14 @@ pub fn build(b: *std.Build) void {
     const vaxis_dep = b.dependency("vaxis", .{ .target = exe_target, .optimize = optimize });
     const vaxis_mod = vaxis_dep.module("vaxis");
 
+    // toml: config.json/config.local.json are migrating to TOML. Vendored
+    // (vendor/toml), not fetched — see vendor/toml/README.md.
+    const toml_mod = b.createModule(.{
+        .root_source_file = b.path("vendor/toml/src/root.zig"),
+        .target = exe_target,
+        .optimize = optimize,
+    });
+
     // ---------------------------------------------------------------- harness
     const exe = b.addExecutable(.{
         .name = "clanker",
@@ -64,6 +72,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zwasm", .module = zwasm_mod },
                 .{ .name = "build_options", .module = build_options.createModule() },
                 .{ .name = "vaxis", .module = vaxis_mod },
+                .{ .name = "toml", .module = toml_mod },
             },
         }),
     });
@@ -82,6 +91,11 @@ pub fn build(b: *std.Build) void {
     // build runner cannot execute.
     const test_target = b.resolveTargetQuery(native_query);
     const vaxis_test_dep = b.dependency("vaxis", .{ .target = test_target, .optimize = optimize });
+    const toml_test_mod = b.createModule(.{
+        .root_source_file = b.path("vendor/toml/src/root.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = test_target,
@@ -90,6 +104,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zwasm", .module = zwasm_mod },
             .{ .name = "build_options", .module = build_options.createModule() },
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
+            .{ .name = "toml", .module = toml_test_mod },
         },
     });
     const exe_tests = b.addTest(.{ .root_module = test_mod });

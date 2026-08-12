@@ -26,7 +26,7 @@ zig build test     # run the test suite
 ./zig-out/bin/clanker gate   # run the full deterministic gate (build/test/tools/fmt/lint)
 ```
 
-Set the API key env var for your chosen provider (see [config.json](config.json)), then:
+Set the API key env var for your chosen provider (see [config.toml](config.toml)), then:
 
 ```sh
 ./zig-out/bin/clanker providers check
@@ -35,7 +35,7 @@ Set the API key env var for your chosen provider (see [config.json](config.json)
 
 ## Configuration
 
-clanker loads **[config.json](config.json)** (committed example) and merges **`config.local.json`** on top when present (gitignored, for machine-local overrides). API keys are never stored in config: each provider points at an env var via `api_key_env`. Copy **[.env.example](.env.example)** to `.env` and fill in the keys for the providers you use; it is loaded automatically when `modules.dotenv` is enabled.
+clanker loads **[config.toml](config.toml)** (committed example) and merges **`config.local.toml`** on top when present (gitignored, for machine-local overrides). A `.json` config is also accepted; a `.toml` sibling, when present, always takes precedence over its `.json` counterpart. API keys are never stored in config: each provider points at an env var via `api_key_env`. Copy **[.env.example](.env.example)** to `.env` and fill in the keys for the providers you use; it is loaded automatically when `modules.dotenv` is enabled.
 
 | Key | Purpose |
 |-----|---------|
