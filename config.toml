@@ -117,6 +117,10 @@ capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 
 [agent]
 max_iterations = 24
+# Ceiling on one provider's turn in `providers check`, so an endpoint that is
+# switched off costs the sweep this instead of the OS connect timeout. Override
+# per provider with `check_timeout_seconds` in its own section.
+provider_check_timeout_seconds = 10
 tools_dir = "tools/manifests"
 skills_dir = "skills"
 system_prompt_file = "skills/SYSTEM.md"
