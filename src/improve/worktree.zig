@@ -58,6 +58,13 @@ pub const Worktree = struct {
             };
             if (!ok) log.log(.warn, "git worktree remove {s} failed: {s}", .{ self.path, res.stderr });
         }
+        // git worktree remove cleans git metadata but may leave the empty
+        // directory entry behind; remove it so .clanker-worktrees/ does not
+        // accumulate stale subdirectories across runs.
+        std.Io.Dir.cwd().deleteDir(io, self.path) catch |err| switch (err) {
+            error.FileNotFound => {}, // already gone — fine
+            else => log.log(.debug, "could not remove leftover dir {s}: {s}", .{ self.path, @errorName(err) }),
+        };
         // The branch was successfully merged, so -d (which refuses to
         // delete unmerged branches) is safe and will succeed.
         {
