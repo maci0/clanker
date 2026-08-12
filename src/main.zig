@@ -54,6 +54,7 @@ comptime {
     _ = @import("improve/proposal.zig");
     _ = @import("improve/plan.zig");
     _ = @import("improve/history.zig");
+    _ = @import("improve/reverts.zig");
     _ = @import("improve/inert.zig");
     _ = @import("improve/engine.zig");
     _ = @import("gate/checks.zig");
