@@ -58,6 +58,9 @@ const Req = struct {
     depends_on: ?[]const u8 = null,
     off: ?bool = null,
     what: ?[]const u8 = null,
+    /// Id of the goal (state/goals.json) the card mirrors; "" unlinks on
+    /// update. Set at creation by the web UI's goal->board mirroring.
+    goal: ?[]const u8 = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
     cost: ?f64 = null,
@@ -222,6 +225,8 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []cons
         try s.write(c.ts);
         try s.objectField("deadline");
         try s.write(c.deadline);
+        try s.objectField("goal");
+        try s.write(c.goal);
         try s.objectField("subtasks");
         try s.write(c.subtasks);
         try s.objectField("depends_on");
@@ -309,6 +314,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .priority = req.priority,
             .deadline = req.deadline,
             .who = assignee,
+            .goal = req.goal,
         }) catch return lib.fail(out, "could not post the card to the room");
         return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
     }
@@ -348,6 +354,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // `who` is the manifest field; `assignee` is what the web UI sends.
             // Either reassigns, and "" clears.
             .who = req.who orelse req.assignee,
+            .goal = req.goal,
         };
     } else if (std.mem.eql(u8, op, "move")) blk: {
         const col = req.column orelse return lib.fail(out, "which column?");

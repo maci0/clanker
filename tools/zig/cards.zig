@@ -37,10 +37,11 @@
 //!
 //! Actions in message text:
 //!   @todo {"action":"add","title":"...","body":"...","column":"...",
-//!          "priority":"...","deadline":0,"who":"..."}   card id := message id;
+//!          "priority":"...","deadline":0,"who":"...","goal":"..."}
+//!                                               card id := message id;
 //!                                               "who" assigns at creation
 //!   @todo {"action":"update","todo":"<id>","title":"...","body":"...",
-//!          "priority":"...","deadline":0}
+//!          "priority":"...","deadline":0,"goal":"..."}
 //!   @todo {"action":"move","todo":"<id>","column":"doing"}
 //!   @todo {"action":"claim","todo":"<id>"}      assignee := message from
 //!   @todo {"action":"assign","todo":"<id>","who":"..."}   "" clears it
@@ -137,6 +138,10 @@ pub const Card = struct {
     /// twice, which is the honest answer: nobody handed them the work.
     assigned_by: []const u8 = "",
     deadline: i64 = 0,
+    /// Id of the goal (state/goals.json) this card mirrors, or "" when the
+    /// card is nobody's mirror. The web UI keeps a goal and its board card in
+    /// step by this link; it folds like any other edit (last writer wins).
+    goal: []const u8 = "",
     subtasks: []const Subtask = &.{},
     depends_on: []const []const u8 = &.{},
     log: []const LogEntry = &.{},
@@ -170,6 +175,7 @@ pub const Action = struct {
     on: ?[]const u8 = null,
     off: ?bool = null,
     what: ?[]const u8 = null,
+    goal: ?[]const u8 = null,
     prompt_tokens: ?u64 = null,
     completion_tokens: ?u64 = null,
     cost: ?f64 = null,
@@ -237,12 +243,14 @@ const State = struct {
     assignee: []const u8 = "",
     assigned_by: []const u8 = "",
     deadline: i64 = 0,
+    goal: []const u8 = "",
 
     title_at: Stamp = .{},
     body_at: Stamp = .{},
     column_at: Stamp = .{},
     priority_at: Stamp = .{},
     deadline_at: Stamp = .{},
+    goal_at: Stamp = .{},
     /// Claims use the lowest-(ts, id) rule, so this records the winner rather
     /// than the latest writer; an `assign` later than it overrides it.
     claim_at: Stamp = .{},
@@ -302,6 +310,14 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .priority = if (act.priority) |p| (if (validPriority(p)) p else "normal") else "normal",
             .deadline = act.deadline orelse 0,
         };
+        // A goal link at creation folds like an update stamped with the add
+        // itself, so a later update overrides it by the usual rule.
+        if (act.goal) |gid| {
+            if (gid.len > 0) {
+                gop.value_ptr.goal = gid;
+                gop.value_ptr.goal_at = .{ .ts = m.ts, .id = m.id };
+            }
+        }
         // Assignment at creation folds like an assign stamped with the add
         // itself, so a later assign or claim overrides it by the usual rule.
         if (act.who) |w| {
@@ -355,6 +371,13 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
                 if (validColumn(v) and c.column_at.beaten(m.ts, m.id)) {
                     c.column = v;
                     c.column_at = .{ .ts = m.ts, .id = m.id };
+                }
+            }
+            if (act.goal) |v| {
+                // "" unlinks; a non-empty value re-points the mirror.
+                if (c.goal_at.beaten(m.ts, m.id)) {
+                    c.goal = v;
+                    c.goal_at = .{ .ts = m.ts, .id = m.id };
                 }
             }
         } else if (std.mem.eql(u8, act.action, "move")) {
@@ -484,6 +507,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             .assignee = c.assignee,
             .assigned_by = c.assigned_by,
             .deadline = c.deadline,
+            .goal = c.goal,
             .subtasks = subs.items,
             .depends_on = deps.items,
             .log = c.log.items,
@@ -679,6 +703,30 @@ test "edits converge on the latest writer whatever the arrival order" {
     try std.testing.expectEqualStrings("third", cb[0].title);
     // The older edit still owns the field the newer one said nothing about.
     try std.testing.expectEqualStrings("low", cb[0].priority);
+}
+
+test "goal link folds like an edit, in either order" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const add = try encode(arena, .{ .action = "add", .title = "task", .goal = "g1" });
+    const relink = try encode(arena, .{ .action = "update", .todo = "m1", .goal = "g2" });
+    const order_a = [_]Message{ msg("m1", "x", 100, add), msg("m2", "y", 200, relink) };
+    const order_b = [_]Message{ msg("m2", "y", 200, relink), msg("m1", "x", 100, add) };
+    const ca = try derive(arena, &order_a);
+    const cb = try derive(arena, &order_b);
+    try std.testing.expectEqualStrings("g2", ca[0].goal);
+    try std.testing.expectEqualStrings("g2", cb[0].goal);
+
+    // "" unlinks, and a card born without a goal has none.
+    const unlink = try encode(arena, .{ .action = "update", .todo = "m1", .goal = "" });
+    const order_c = [_]Message{ msg("m1", "x", 100, add), msg("m2", "y", 200, relink), msg("m3", "z", 300, unlink) };
+    const cc = try derive(arena, &order_c);
+    try std.testing.expectEqualStrings("", cc[0].goal);
+    const plain = [_]Message{msg("m1", "x", 100, try encodeAdd(arena, "task"))};
+    const cp = try derive(arena, &plain);
+    try std.testing.expectEqualStrings("", cp[0].goal);
 }
 
 test "subtasks, dependencies and cost fold" {

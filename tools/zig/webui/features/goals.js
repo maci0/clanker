@@ -2,13 +2,21 @@
 // Owns #view-goals: goal cards, per-goal streamed runs, and the goal<->board
 // mirroring glue (a goal's board card follows its run lifecycle). The board
 // side of that glue lives in ./board.js; the pure helpers (sorting, field
-// listing) stay in ../core/goals.js. bindGoals() wires the DOM and the
-// app-level callbacks (view switching, the active session id).
+// listing, the status->column mapping) stay in ../core/goals.js. bindGoals()
+// wires the DOM and the app-level callbacks (view switching, the active
+// session id).
+//
+// The goal->card link is durable: a mirror card carries its goal's id in its
+// own `goal` field (folded into the board like any other edit), so the link
+// survives reloads, other browsers and server restarts. This module only
+// derives from it — cardOfGoal below is the one place the link is read, and
+// the title fallback there is what adopts cards created before the field
+// existed.
 import { readJson } from "../core/utils.js";
 import { T, bind, UI, state } from "../core/ui.js";
-import { goalSortKey, goalFields } from "../core/goals.js";
+import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn } from "../core/goals.js";
 import { makeLineSplitter } from "../core/stream.js";
-import { board, postBoard } from "./board.js";
+import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
 
 var el = null;
 var _showView = null;
@@ -18,34 +26,97 @@ var _getSessionId = null;
 
 export var goalState = state([]);
 
-/* Goals whose board mirror has already been requested, so a goal created
-   from within a run (the agent's `goal` tool appends it to state/goals.json,
-   which the next loadGoals picks up) gets a board card once rather than on
-   every refresh. Form-created goals and board->goal cards set goalCardLinks
-   themselves, so this only ever adds the ones that arrived without a card. */
-var goalBoardMirrored = {};
+/* Goal ids the server reports as having a run in flight right now — any tab,
+   any client, not just this browser. Refreshed by every loadGoals; merged
+   with this browser's own goalRuns when deciding what "running" means. */
+var runningIds = {};
+
+/* Goals whose mirror card creation has been requested this session, so a
+   slow POST does not create a second card while the first is still in
+   flight. The durable link is the card's `goal` field; this only debounces
+   creation. */
+var goalMirrorRequested = {};
 
 /* Newest first: the goal most recently set is the one steering runs now. */
 export function renderGoals(goals) {
   goalState.val = (goals || []).slice().sort(goalSortKey);
 }
 
-/* Goals that reach the web UI from state/goals.json are mirrored onto the
-   board in the section matching their state (backlog for a fresh active goal),
-   so a goal created from within a goal run is not invisible on the board.
-   ensureGoalBoardCard is idempotent (it finds an existing card by title or
-   creates one) and the goalBoardMirrored guard keeps a goal from being
-   re-created across refreshes. */
+/* Whether anything is working this goal right now: a run streaming into this
+   page, or one the server registry attributes to another client. */
+function isGoalRunning(gid) {
+  if (runningIds[gid]) return true;
+  var run = goalRuns[gid];
+  return !!(run && run.status === "running");
+}
+
+/* The board card mirroring a goal, or null. The card's own `goal` field is
+   the link; the title fallback adopts cards from before the field existed
+   (and only unlinked ones, so a same-titled card of another goal is safe). */
+function cardOfGoal(g) {
+  var cardsArr = board.cards || [];
+  for (var i = 0; i < cardsArr.length; i++) {
+    if (cardsArr[i].goal === g.id) return cardsArr[i];
+  }
+  for (var j = 0; j < cardsArr.length; j++) {
+    if (!cardsArr[j].goal && cardsArr[j].title === g.objective) return cardsArr[j];
+  }
+  return null;
+}
+
+function findGoal(goals, gid) {
+  for (var i = 0; i < (goals || []).length; i++) {
+    if (goals[i].id === gid) return goals[i];
+  }
+  return null;
+}
+
+/* Mirrors goals onto the board so live work is visible there. Idempotent by
+   construction: a goal whose card exists is only reconciled (link persisted
+   if missing, column corrected when the status pins one), and a goal without
+   a card gets exactly one, in the column its status asks for. Done and
+   abandoned goals get no posthumous card — mirroring exists to make live
+   work visible, not to backfill history. Waits for the board to have loaded
+   first: mirroring against an unfetched (empty) card list is what used to
+   create a duplicate card on every visit. */
 function mirrorGoalsToBoard(goals) {
-  (goals || []).forEach(function (g) {
-    if (!g || !g.id || !g.objective || goalBoardMirrored[g.id]) return;
-    goalBoardMirrored[g.id] = true;
-    ensureGoalBoardCard(g.objective, g.completion_criterion);
-  });
+  var work = function () {
+    (goals || []).forEach(function (g) {
+      if (!g || !g.id || !g.objective) return;
+      var status = g.status || "active";
+      var card = cardOfGoal(g);
+      if (card) {
+        // Adopt a pre-goal-field card: persist the link on the card itself
+        // so it survives reloads and reaches other browsers.
+        if (!card.goal) postBoard({ op: "update", id: card.id, goal: g.id, goal_sync: false }, null);
+        var pinned = goalPinnedColumn(g, isGoalRunning(g.id));
+        if (pinned && card.column !== pinned) {
+          postBoard({ op: "move", id: card.id, column: pinned, goal_sync: false }, null);
+        }
+        return;
+      }
+      if (status === "done" || status === "abandoned") return;
+      if (goalMirrorRequested[g.id]) return;
+      goalMirrorRequested[g.id] = true;
+      postBoard({
+        op: "create",
+        title: g.objective,
+        body: g.completion_criterion || "",
+        column: goalPinnedColumn(g, isGoalRunning(g.id)) || "backlog",
+        goal: g.id
+      }, null);
+    });
+  };
+  if (boardIsLoaded()) {
+    work();
+    return Promise.resolve();
+  }
+  return loadBoard().then(work);
 }
 
 function goalCard(g) {
   var fields = goalFields(g);
+  var running = isGoalRunning(g.id);
 
   var actions = [];
   if (g.id) {
@@ -53,7 +124,7 @@ function goalCard(g) {
        wrote state/goals.json and never started a run. The per-run budget box
        sets this run's max iterations; left blank it falls back to the goal's
        stored default, then to the global agent.max_iterations. */
-    if ((g.status || "active") === "active") {
+    if ((g.status || "active") === "active" && !running) {
       actions.push(T.div({ class: "goal-run-controls" },
         T.input({
           type: "number", min: "1", max: "1000", step: "1",
@@ -78,10 +149,15 @@ function goalCard(g) {
     }, { kind: "danger", label: "Delete goal: " + (g.objective || g.id) }));
   }
 
-  return T.div({ class: "goal", "data-status": g.status || "" },
+  // The pill says what is actually happening, not just what is stored:
+  // "running" while a run is in flight, "waiting for review" after one
+  // finished. data-status carries the same word so the colours follow.
+  var shown = goalStatusLabel(g, running);
+  var shownKey = (g.status || "active") === "active" && running ? "running" : (g.status || "");
+  return T.div({ class: "goal", "data-status": shownKey },
     T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
     T.div({ class: "goal-meta" },
-      T.span({ class: "goal-status" }, g.status || "unknown"),
+      T.span({ class: "goal-status" }, shown),
       g.max_iterations ? T.span("budget ≤ " + g.max_iterations + " iters") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
@@ -93,7 +169,7 @@ function goalCard(g) {
       T.dl(fields.map(function (pair) {
         return [T.dt(pair[0]), T.dd(pair[1])];
       }))) : null,
-    g.id ? renderGoalRunPanel(g.id) : null,
+    g.id ? renderGoalRunPanel(g) : null,
     actions.length ? T.div({ class: "goal-actions" }, actions) : null);
 }
 
@@ -101,8 +177,10 @@ export function loadGoals() {
   return fetch("/api/goals")
     .then(readJson)
     .then(function (data) {
+      runningIds = {};
+      (data.running || []).forEach(function (id) { runningIds[id] = true; });
       renderGoals(data.goals || []);
-      mirrorGoalsToBoard(data.goals || []);
+      return mirrorGoalsToBoard(data.goals || []);
     })
     .catch(function (err) {
       el.goals.textContent = "";
@@ -120,10 +198,6 @@ export function loadGoals() {
    text and its own status. Starting a second goal while the first streams is
    therefore accepted; only a second run of the *same* goal is refused. */
 var goalRuns = {};  // goal id -> { controller, status, text }
-/* Board cards started as goals: goal id -> card id. Set when "Work as goal"
-   turns a card into a goal, so the goal card can move its board card through
-   the board columns as the goal progresses (done when marked done). */
-var goalCardLinks = {};
 
 function goalRunStatusLabel(status) {
   if (status === "running") return "running…";
@@ -158,26 +232,95 @@ function abortGoalRun(gid) {
   if (run && run.controller) run.controller.abort();
 }
 
+/* Sends a mid-run message to the agent working this goal (POST /api/steer).
+   The run picks it up between iterations — the same way Claude Code, Codex
+   and friends accept a correction without restarting the task. The echo into
+   the panel is local; the run's own stream shows a "steering message
+   applied" status line when the loop actually consumes it. */
+function sendSteer(gid) {
+  var box = el.goals.querySelector('input[data-goal-steer="' + gid + '"]');
+  if (!box) return;
+  var msg = box.value.trim();
+  if (!msg) return;
+  box.disabled = true;
+  fetch("/api/steer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ goal: gid, message: msg })
+  })
+    .then(readJson)
+    .then(function () {
+      box.value = "";
+      appendGoalText(gid, "[steering sent: " + msg + "]\n");
+      el.goalsStatus.textContent = "Steering message sent — the run picks it up between iterations.";
+    })
+    .catch(function (err) {
+      el.goalsStatus.textContent = "Steering failed: " + err.message;
+    })
+    .finally(function () {
+      box.disabled = false;
+      box.focus();
+    });
+}
+
 /* The run panel drawn inside a goal card. Rebuilt from stored state whenever
-   the goal list re-renders, so a live run survives a reload or a status
-   refresh. */
-function renderGoalRunPanel(gid) {
+   the goal list re-renders, so a live run survives a status refresh. Also
+   drawn — without output — for a run some other client is streaming (the
+   server said so), so that run can still be steered from here. */
+function renderGoalRunPanel(g) {
+  var gid = g.id;
   var run = goalRuns[gid];
-  if (!run) return null;
-  return T.div({ class: "goal-run", "data-status": run.status, "data-goal-run": gid },
+  var remote = !run && runningIds[gid];
+  if (!run && !remote) return null;
+  var status = run ? run.status : "running";
+  var steerable = status === "running";
+  return T.div({ class: "goal-run", "data-status": status, "data-goal-run": gid },
     T.div({ class: "goal-run-head" },
-      T.span({ class: "goal-run-status" }, goalRunStatusLabel(run.status)),
-      run.status === "running"
+      T.span({ class: "goal-run-status" }, remote ? "running (in another session)…" : goalRunStatusLabel(status)),
+      run && status === "running"
         ? UI.button("Stop", function () { abortGoalRun(gid); },
             { kind: "danger", icon: "strike", label: "Stop this goal run" })
         : null),
-    T.pre({ class: "goal-run-output", "data-goal-output": gid }, run.text || ""));
+    run ? T.pre({ class: "goal-run-output", "data-goal-output": gid }, run.text || "") : null,
+    steerable ? T.div({ class: "goal-steer" },
+      T.input({
+        type: "text",
+        "data-goal-steer": gid,
+        placeholder: "Steer this run — tell the agent something mid-flight…",
+        maxlength: "8000",
+        onkeydown: function (e) {
+          if (e.key === "Enter") { e.preventDefault(); sendSteer(gid); }
+        }
+      }),
+      UI.button("Send", function () { sendSteer(gid); },
+        { label: "Send steering message to this goal run" })) : null);
+}
+
+/* Moves the goal's mirror card (if any) into `column`; a no-op when there is
+   no card or it is already there. goal_sync: false because these moves come
+   *from* goal state — bouncing them back through the board->goal sync would
+   only re-post what is already true. */
+function moveGoalCard(g, column) {
+  var card = cardOfGoal(g);
+  if (!card || card.column === column) return;
+  postBoard({ op: "move", id: card.id, column: column, goal_sync: false }, null);
+}
+
+/* Records a run lifecycle note on the goal's mirror card, so a board reader
+   can tell a finished run from a stopped or failed one without opening the
+   goal panel. */
+function logGoalRun(g, what) {
+  var card = cardOfGoal(g);
+  if (!card) return;
+  postBoard({ op: "log", id: card.id, what: "goal run " + what, goal_sync: false }, null);
 }
 
 /* Starts a run that executes an active goal: switches to Goals and streams
    the run into that goal's own panel. Runs are independent — the chat
    composer's single busy guard does not apply, so several goals can be
-   worked at once. */
+   worked at once. The mirror card follows the run's lifecycle: doing while
+   it works, review when it finishes (the server flips the goal itself to
+   review at the same moment), back to ready when it is stopped or fails. */
 function runGoal(g, opts) {
   if (!g || !g.id) return;
   opts = opts || {};
@@ -193,14 +336,8 @@ function runGoal(g, opts) {
   _showView("goals", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
-  // A goal mirrored onto the board follows the run's lifecycle: its card moves
-  // to doing when the run starts, review when it finishes, and back to ready if
-  // it is stopped or fails. workCardAsGoal also moves its card explicitly, so
-  // this only applies where a goal->card link exists (form-created goals).
-  if (goalCardLinks[g.id]) {
-    moveGoalCardToColumn(g.id, "doing");
-    logGoalRunState(g.id, "running");
-  }
+  moveGoalCard(g, "doing");
+  logGoalRun(g, "started");
   if (opts.onStart) opts.onStart();
 
   var splitter = makeLineSplitter(function (line) {
@@ -209,9 +346,9 @@ function runGoal(g, opts) {
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
       if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
       // A status event is a run lifecycle note (contacting the provider,
-      // processing) rather than answer text: show it as a bracketed log line
-      // so a run that has just started is not an empty panel labelled
-      // "running…" while it waits for its first streamed output.
+      // processing, a steering message being applied) rather than answer
+      // text: show it as a bracketed log line so a run that has just started
+      // is not an empty panel labelled "running…".
       else if (evt.type === "status") appendGoalText(g.id, "[ " + evt.message + " ]\n");
       return;
     }
@@ -244,11 +381,12 @@ function runGoal(g, opts) {
     splitter.flush();
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
-      el.goalsStatus.textContent = "Goal run finished.";
-      if (goalCardLinks[g.id]) {
-        moveGoalCardToColumn(g.id, "review");
-        logGoalRunState(g.id, "finished");
-      }
+      el.goalsStatus.textContent = "Goal run finished — waiting for review.";
+      moveGoalCard(g, "review");
+      logGoalRun(g, "finished");
+      // The server moved the goal to review when the run completed; re-fetch
+      // so the card and its status pill say so without a manual refresh.
+      loadGoals();
       if (opts.onDone) opts.onDone("finished");
     }
   }).catch(function (err) {
@@ -257,19 +395,17 @@ function runGoal(g, opts) {
     if (err && err.name === "AbortError") {
       setGoalStatus(g.id, "stopped");
       el.goalsStatus.textContent = "Goal run stopped.";
-      if (goalCardLinks[g.id]) {
-        moveGoalCardToColumn(g.id, "ready");
-        logGoalRunState(g.id, "stopped");
-      }
+      moveGoalCard(g, "ready");
+      logGoalRun(g, "stopped");
+      loadGoals();
       if (opts.onDone) opts.onDone("stopped");
     } else {
       appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
       setGoalStatus(g.id, "failed");
       el.goalsStatus.textContent = "Goal run failed: " + err.message;
-      if (goalCardLinks[g.id]) {
-        moveGoalCardToColumn(g.id, "ready");
-        logGoalRunState(g.id, "failed");
-      }
+      moveGoalCard(g, "ready");
+      logGoalRun(g, "failed");
+      loadGoals();
       if (opts.onDone) opts.onDone("failed");
     }
   });
@@ -287,8 +423,8 @@ function workOnGoal(g) {
 /* Re-evaluates whether the goal is already done: runs the agent against the
    completion criterion and asks it to inspect the current state and give a
    verdict, rather than doing the work. Streams into the goal's own panel like
-   any other run, and if the agent concludes it is met the user can mark it
-   done from the same card. */
+   any other run, and lands the goal in review like any other run — the
+   verdict is exactly what a reviewer wants on screen when they decide. */
 function reEvaluateGoal(g) {
   if (!g || !g.id) return;
   runGoal(g, {
@@ -300,17 +436,31 @@ function reEvaluateGoal(g) {
   });
 }
 
-/* Turns a board card into a goal and starts a run on it, moving the card
-   through the board with the run's lifecycle: into Doing when the run starts,
-   into Review when it finishes, and back to Ready if it is stopped or fails
-   (so it never sits in Doing half-finished). The card id lives in the browser
-   and the run streams back its own end, so the movement is a front-end
-   concern here. */
+/* Runs a board card as a goal. If the card already mirrors a goal (its
+   `goal` field, or an unlinked card whose title matches one), that goal is
+   reused — clicking "Work as goal" twice must not mint a twin goal. Only a
+   card with no goal at all creates one, and the mirror created by postGoal
+   adopts this card by title, so the link is persisted without a second
+   write. */
 export function workCardAsGoal(c) {
   if (!c || !c.id) return;
   var objective = (c.title || "").trim();
   if (!objective) {
     el.boardStatus.textContent = "That card has no title to turn into a goal.";
+    return;
+  }
+  var existingId = c.goal || bestGoalIdFor(objective);
+  var existing = findGoal(goalState.val, existingId);
+  if (existing) {
+    if ((existing.status || "active") !== "active") {
+      postGoal({ id: existing.id, status: "active" }, "Goal reactivated from the board.")
+        .then(function (d) {
+          if (!d) return;
+          runGoal(findGoal(d.goals, existing.id) || existing, {});
+        });
+    } else {
+      runGoal(existing, {});
+    }
     return;
   }
   var criterion = (c.body || "").trim() ||
@@ -330,14 +480,7 @@ export function workCardAsGoal(c) {
         }
       }
       if (!created) return;
-      goalCardLinks[created.id] = c.id;
-      postBoard({ op: "move", id: c.id, column: "doing" }, null);
-      runGoal(created, {
-        onDone: function (status) {
-          var col = status === "finished" ? "review" : "ready";
-          postBoard({ op: "move", id: c.id, column: col }, null);
-        }
-      });
+      runGoal(created, {});
     });
 }
 
@@ -351,24 +494,48 @@ export function postGoal(payload, status) {
     .then(function (d) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
-      // A goal marked done (and only that) carries its board card over to the
-      // board's done column: the card was moved to doing when the goal started
-      // and review when it finished, so closing the goal closes the loop. This
-      // is a front-end concern — the goal id -> card id link lives in this
-      // browser (see goalCardLinks), not in state/goals.json.
-      if (payload && payload.status === "done" && payload.id) {
-        moveGoalCardToColumn(payload.id, "done");
-        logGoalRunState(payload.id, "done");
+      // A status change carries the mirror card along: done -> the done
+      // column, review -> the review column, and a reactivation pulls the
+      // card back out of done/review so the board stops claiming finished
+      // work. Abandoning leaves the card where it lies.
+      if (payload && payload.id && payload.status) {
+        var changed = findGoal(d.goals, payload.id);
+        if (changed) {
+          if (payload.status === "done") {
+            moveGoalCard(changed, "done");
+          } else if (payload.status === "review") {
+            moveGoalCard(changed, "review");
+          } else if (payload.status === "active") {
+            var card = cardOfGoal(changed);
+            if (card && (card.column === "done" || card.column === "review")) {
+              postBoard({ op: "move", id: card.id, column: "ready", goal_sync: false }, null);
+            }
+          }
+        }
       }
-      // A goal created from the Goals view (objective present, no id) is also
-      // mirrored onto the board: it gets a card in the column that matches the
-      // goal's state (backlog for a fresh active goal). The card is the board's
-      // equivalent of the goal, so working on / finishing / closing the goal
-      // later moves it through doing -> review -> done (see runGoal and the
-      // mark-done branch above). Goals created from an existing board card are
-      // skipped here — workCardAsGoal already owns that card and links it.
-      if (payload && payload.objective && payload.id === undefined && payload.column === undefined) {
-        ensureGoalBoardCard(payload.objective, payload.completion_criterion);
+      // A deleted goal's card stays (it is still work someone wrote down),
+      // but stops claiming to mirror the goal.
+      if (payload && payload.remove && payload.id) {
+        for (var ci = 0; ci < (board.cards || []).length; ci++) {
+          if (board.cards[ci].goal === payload.id) {
+            postBoard({ op: "update", id: board.cards[ci].id, goal: "", goal_sync: false }, null);
+            break;
+          }
+        }
+      }
+      // A goal created here (objective present, no id) is mirrored onto the
+      // board: either an existing unlinked card with this title is adopted,
+      // or a card is created in the column the goal's state asks for.
+      if (payload && payload.objective && payload.id === undefined) {
+        var created = null, createdUp = -1;
+        var goals = d.goals || [];
+        for (var i = 0; i < goals.length; i++) {
+          if (goals[i].objective === payload.objective && (goals[i].updated || 0) > createdUp) {
+            created = goals[i];
+            createdUp = goals[i].updated || 0;
+          }
+        }
+        if (created) mirrorGoalsToBoard([created]);
       }
       return d;
     })
@@ -376,34 +543,6 @@ export function postGoal(payload, status) {
       el.goalsStatus.textContent = "Goal failed: " + err.message;
       return null;
     });
-}
-
-/* Mirrors a freshly-created goal onto the board: finds the card whose title is
-   the goal's objective (the board mirror created by workCardAsGoal, or an
-   earlier auto-add), or creates one in the backlog column if none exists, then
-   records the goal -> card link so the card follows the goal's lifecycle.
-   Idempotent: a goal whose objective already matches a card is only linked;
-   a goal with no matching card creates one. */
-function ensureGoalBoardCard(objective, criterion) {
-  if (!objective) return;
-  var existing = null;
-  for (var i = 0; i < board.cards.length; i++) {
-    if (board.cards[i].title === objective) { existing = board.cards[i]; break; }
-  }
-  var goalId = bestGoalIdFor(objective);
-  if (existing) {
-    if (goalId) goalCardLinks[goalId] = existing.id;
-    return;
-  }
-  var done = function (d) {
-    if (!d || !d.board) return;
-    var created = null;
-    for (var j = 0; j < d.board.cards.length; j++) {
-      if (d.board.cards[j].title === objective) { created = d.board.cards[j]; break; }
-    }
-    if (created && goalId) goalCardLinks[goalId] = created.id;
-  };
-  postBoard({ op: "create", title: objective, body: criterion, column: "backlog" }, null).then(done);
 }
 
 /* The id of the newest goal carrying `objective`, or null. */
@@ -419,64 +558,37 @@ function bestGoalIdFor(objective) {
   return goalId;
 }
 
-/* Moves the board card linked to a goal (if any) into `column`. The link is
-   recorded when the card is started as a goal; without one this is a no-op, so
-   marking a hand-typed goal done never disturbs the board. */
-function moveGoalCardToColumn(goalId, column) {
-  var cardId = goalCardLinks[goalId];
-  if (!cardId) return;
-  postBoard({ op: "move", id: cardId, column: column }, null);
-}
-
-/* Records a goal run's state on its board card so the card's activity log
-   reflects the run lifecycle, not just which column it sits in. The column
-   move already encodes where the work stands (doing / review / ready); the
-   log entry says what the run actually did, so a board reader can tell a run
-   that finished from one that was stopped or failed without opening the goal
-   panel. No-op when the goal has no linked card. */
-function logGoalRunState(goalId, state) {
-  var cardId = goalCardLinks[goalId];
-  if (!cardId) return;
-  postBoard({ op: "log", id: cardId, what: "goal run " + state }, null);
-}
-
-/* The goal a board card is the mirror of, or null. Reverse of goalCardLinks:
-   iterate the goal->card map and return the goal that points at this card. */
+/* The goal a board card mirrors, or null: the card's own `goal` field, with
+   a title match for cards that predate it. Used by board.js's board->goal
+   sync when a card is moved. */
 export function goalIdForCard(cardId) {
-  for (var gid in goalCardLinks) {
-    if (goalCardLinks[gid] === cardId) return gid;
+  var c = null;
+  for (var i = 0; i < (board.cards || []).length; i++) {
+    if (board.cards[i].id === cardId) { c = board.cards[i]; break; }
   }
-  return null;
+  if (!c) return null;
+  if (c.goal) return c.goal;
+  return bestGoalIdFor(c.title);
 }
 
-/* The board's "Re-sync from goals" action: a goal can be done while its mirror
-   card sits in an earlier column — a card auto-created in the backlog by
-   mirrorGoalsToBoard whose goal was later marked done, for instance. Walk the
-   goals and, for each done goal, move its card to the done column. Idempotent
-   and cheap: a card already in done is left alone, and the reverse-sync in
-   board.js's postBoard is a no-op for an already-done goal, so this never
-   loops. Returns how many cards were moved. */
+/* The board's "Re-sync from goals" action: enforce every goal's pinned
+   column, and additionally park the mirror of an idle active goal back in
+   ready when its card still claims doing/review/done. Idempotent: a card
+   already where its goal wants it is left alone, and the moves are posted
+   with goal_sync off so nothing bounces back. Returns how many cards moved. */
 export function syncCardsFromGoals() {
-  var done = board.columns.length ? board.columns[board.columns.length - 1].id : "done";
   var moved = 0;
-  var goals = goalState.val || [];
-  goals.forEach(function (g) {
-    if (!g || !g.id || (g.status || "active") !== "done") return;
-    var cardId = goalCardLinks[g.id];
-    if (!cardId) {
-      // No recorded link (e.g. a card auto-created by title after a reload):
-      // a done goal's mirror card is still findable by matching the objective.
-      for (var i = 0; i < board.cards.length; i++) {
-        if (board.cards[i].title === g.objective) { cardId = board.cards[i].id; break; }
-      }
+  (goalState.val || []).forEach(function (g) {
+    if (!g || !g.id) return;
+    var card = cardOfGoal(g);
+    if (!card) return;
+    var target = goalPinnedColumn(g, isGoalRunning(g.id));
+    if (!target && (g.status || "active") === "active" &&
+        (card.column === "doing" || card.column === "review" || card.column === "done")) {
+      target = "ready";
     }
-    if (!cardId) return;
-    var card = null;
-    for (var j = 0; j < board.cards.length; j++) {
-      if (board.cards[j].id === cardId) { card = board.cards[j]; break; }
-    }
-    if (card && card.column !== done) {
-      postBoard({ op: "move", id: cardId, column: done }, null);
+    if (target && card.column !== target) {
+      postBoard({ op: "move", id: card.id, column: target, goal_sync: false }, null);
       moved += 1;
     }
   });

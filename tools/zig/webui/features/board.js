@@ -9,7 +9,7 @@ import { T, bind, state, add } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState } from "../lib/board.js";
-import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals } from "./goals.js";
+import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals, loadGoals } from "./goals.js";
 
 var el = null;
 var _setTabCount = null;
@@ -19,6 +19,13 @@ var _getKnownPeers = null;
 
 export var board = { columns: [], cards: [] };
 var openCardId = null;
+
+/* Whether a board fetch has completed at least once. The goals module asks
+   before mirroring goals onto the board: matching against a card list that
+   was never fetched (always empty) is what used to create a duplicate card
+   on every visit to the Goals view. */
+var boardLoaded = false;
+export function boardIsLoaded() { return boardLoaded; }
 
 export function setOpenCardId(id) { openCardId = id; }
 
@@ -52,12 +59,24 @@ function boardRoom() {
 export function loadBoard() {
   return fetch("/api/board?room=" + encodeURIComponent(boardRoom()))
     .then(readJson)
-    .then(function (d) { renderBoard(d.board || { columns: [], cards: [] }); })
+    .then(function (d) {
+      boardLoaded = true;
+      renderBoard(d.board || { columns: [], cards: [] });
+    })
     .catch(function (err) { el.boardStatus.textContent = "Could not load the board: " + err.message; });
 }
 
+/* Posts one board operation. `payload.goal_sync: false` marks a write that
+   *came from* goal state (the goals module keeping a mirror card in step);
+   those must not bounce back into a goal-status write below, or a single
+   change would ping-pong between the two stores. The flag is stripped before
+   sending — the board tool has no business seeing it. Resolves with the
+   server's response (truthy) or false on failure, so callers can gate on it. */
 export function postBoard(payload, status) {
-  payload.room = boardRoom();
+  var skipGoalSync = payload.goal_sync === false;
+  delete payload.goal_sync;
+  if (!payload.room) payload.room = boardRoom();
+  var forCurrentRoom = payload.room === boardRoom();
   return fetch("/api/board", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,30 +84,40 @@ export function postBoard(payload, status) {
   })
     .then(readJson)
     .then(function (d) {
-      renderBoard(d.board || board);
-      // A card moved into the board's done column is the board saying the
-      // work is finished. When that card is the mirror of a goal, close the
-      // goal too so the two stay in step: the user dragged the card to done,
-      // and the Goals panel should agree rather than still show it active.
-      if (payload.op === "move" && payload.column === doneColumn()) {
+      // A response for another room's board must not clobber the one on
+      // screen; the write itself still happened.
+      if (forCurrentRoom) renderBoard(d.board || board);
+      // A card move is the board speaking about the work's state. When the
+      // card mirrors a goal, the goal follows: done -> the goal is done,
+      // review -> it waits for review, and pulling a card back out of
+      // done/review reopens the goal. Anywhere else changes nothing — an
+      // active goal's card may sit in backlog, ready or doing, and an
+      // abandoned goal stays abandoned until someone reactivates it
+      // deliberately.
+      if (!skipGoalSync && forCurrentRoom && payload.op === "move") {
         var gid = goalIdForCard(payload.id);
+        var goal = null;
         if (gid) {
-          var goal = null;
           var gl = goalState.val || [];
           for (var gi = 0; gi < gl.length; gi++) {
             if (gl[gi].id === gid) { goal = gl[gi]; break; }
           }
-          // Skip when the goal is already done (or gone): avoids re-posting
-          // when a goal->done card move bounces back through here.
-          if (goal && (goal.status || "active") !== "done") {
+        }
+        if (goal) {
+          var cur = goal.status || "active";
+          if (payload.column === doneColumn() && cur !== "done") {
             postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
+          } else if (payload.column === "review" && cur !== "review") {
+            postGoal({ id: gid, status: "review" }, "Goal moved to review from the board.");
+          } else if (payload.column !== doneColumn() && payload.column !== "review" &&
+                     (cur === "done" || cur === "review")) {
+            postGoal({ id: gid, status: "active" }, "Goal reactivated from the board.");
           }
         }
       }
       if (status) el.boardStatus.textContent = status;
       return d;
     })
-    .then(function () { return true; })
     .catch(function (err) {
       el.boardStatus.textContent = "Board: " + err.message;
       return false;
@@ -362,6 +391,14 @@ function cardNode(c) {
     bl.setAttribute("data-blocked", "true");
     bl.textContent = "blocked ×" + blocked.length;
     meta.appendChild(bl);
+  }
+  if (c.goal) {
+    var gf = document.createElement("span");
+    gf.className = "card-flag";
+    gf.setAttribute("data-goal", "true");
+    gf.textContent = "goal";
+    gf.title = "Mirrors a goal — kept in step with the Goals view";
+    meta.appendChild(gf);
   }
   if ((c.subtasks || []).length) {
     var doneN = c.subtasks.filter(function (s) { return s.done; }).length;
@@ -661,7 +698,7 @@ function showCardDetail(id) {
   asGoal.type = "button";
   asGoal.className = "secondary";
   asGoal.textContent = "Work as goal";
-  asGoal.title = "Create a goal from this card and run it. The card moves to Doing, then to Review when the goal finishes.";
+  asGoal.title = "Run this card as a goal — reuses the goal it already mirrors, or creates one. The card moves to Doing, then to Review when the run finishes.";
   asGoal.addEventListener("click", function () {
     delete cardDrafts[c.id];
     workCardAsGoal(c);
@@ -924,16 +961,24 @@ export function bindBoard(deps) {
 
   wireRefresh(el.boardRefresh, loadBoard);
   el.boardRoom.addEventListener("change", function () { loadBoard(); });
-  // Re-sync from goals: move every done goal's board card to the done column.
-  // The handler is the goals module's, which owns the goal->card links.
+  // Re-sync from goals: put every goal's mirror card in the column its
+  // status asks for (done -> done, waiting for review -> review, running ->
+  // doing, idle active goals out of the in-flight columns). Goals are
+  // re-fetched first so the sync reads current statuses even when the Goals
+  // view was never opened; the handler is the goals module's, which owns the
+  // goal->card mapping.
   el.boardResyncGoals.addEventListener("click", function () {
     el.boardResyncGoals.disabled = true;
-    var moved = syncCardsFromGoals();
-    el.boardStatus.textContent = moved
-      ? ("Moved " + moved + " card" + (moved === 1 ? "" : "s") + " to done from their goals.")
-      : "No done goals needed moving.";
-    // Let the moves' renderBoard calls flush, then re-enable.
-    loadBoard().finally(function () { el.boardResyncGoals.disabled = false; });
+    loadGoals()
+      .then(function () {
+        var moved = syncCardsFromGoals();
+        el.boardStatus.textContent = moved
+          ? ("Moved " + moved + " card" + (moved === 1 ? "" : "s") + " to match their goals.")
+          : "Every card already matches its goal.";
+        // Let the moves' renderBoard calls flush, then re-enable.
+        return loadBoard();
+      })
+      .finally(function () { el.boardResyncGoals.disabled = false; });
   });
   ["board-filter-input","board-filter-mine","board-filter-blocked","board-filter-priority","board-filter-assignee"].forEach(function(id){
     var n=document.getElementById(id);

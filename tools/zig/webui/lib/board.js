@@ -19,6 +19,7 @@ export function boardActionLine(raw) {
       if (a.column) parts.push("column to " + col(a.column));
       if (a.who !== undefined) parts.push(a.who ? "owner to " + a.who : "nobody as owner");
       if (a.deadline !== undefined) parts.push("the deadline");
+      if (a.goal !== undefined) parts.push(a.goal ? "its goal link" : "no goal link");
       if (a.body !== undefined && !parts.length) parts.push("the notes");
       return "changed " + (parts.length ? parts.join(", ") : "a card");
     }

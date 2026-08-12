@@ -3139,6 +3139,8 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/ask")) {
             handleAsk(gpa, stream, body);
+        } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/steer")) {
+            handleSteer(gpa, cfg, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
         } else {
@@ -4079,6 +4081,258 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     }
 }
 
+// ---- goal run registry + steering ------------------------------------------
+//
+// A goal run is a streaming /api/run connection; the browser owns its
+// lifecycle and the server holds no per-run state beyond the connection
+// thread itself. This registry is the small exception that makes two things
+// possible: GET /api/goals reports which goals have a run in flight (so the
+// board can show them in Doing without trusting a persisted flag a crash
+// would leave stale), and POST /api/steer hands a message to a run mid-flight,
+// which the agent loop drains between iterations (Agent.steer_fn). A slot
+// lives exactly as long as its run's connection thread, so a table of
+// max_connection_threads slots can never be too small.
+
+/// Queued-but-unpolled steering messages one run will tolerate before new
+/// ones are refused; a user talking faster than the model iterates should
+/// hear that rather than fill memory.
+const steer_message_cap = 16;
+const goal_id_cap = 64;
+
+const GoalRunSlot = struct {
+    /// 0 marks a free slot.
+    goal_len: usize = 0,
+    goal_buf: [goal_id_cap]u8 = @splat(0),
+    /// Queued steering messages, serve_gpa-owned, drained oldest-first by
+    /// steerPoll and freed by goalRunRelease when the run ends unpolled.
+    queue: std.ArrayListUnmanaged([]u8) = .empty,
+
+    fn goalId(self: *const GoalRunSlot) []const u8 {
+        return self.goal_buf[0..self.goal_len];
+    }
+};
+
+var goal_run_mutex: std.c.pthread_mutex_t = .{};
+var goal_run_slots: [max_connection_threads]GoalRunSlot = @splat(.{});
+
+/// The slot this connection thread's run registered. SteerFn is a bare
+/// function pointer (like AskFn), so the threadlocal is its context.
+threadlocal var current_goal_run_slot: ?usize = null;
+
+/// Claims a slot for a goal run starting on this thread. Returns false (and
+/// registers nothing) when the id does not fit or every slot is taken; the
+/// run proceeds unsteerable rather than failing.
+fn goalRunRegister(goal_id: []const u8) bool {
+    if (goal_id.len == 0 or goal_id.len > goal_id_cap) return false;
+    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
+    for (&goal_run_slots, 0..) |*slot, i| {
+        if (slot.goal_len != 0) continue;
+        @memcpy(slot.goal_buf[0..goal_id.len], goal_id);
+        slot.goal_len = goal_id.len;
+        current_goal_run_slot = i;
+        return true;
+    }
+    return false;
+}
+
+/// Frees this thread's slot and whatever steering messages were never polled.
+/// Safe to call unconditionally: a thread that never registered has no slot.
+fn goalRunRelease() void {
+    const idx = current_goal_run_slot orelse return;
+    current_goal_run_slot = null;
+    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
+    const slot = &goal_run_slots[idx];
+    if (serve_gpa) |gpa| {
+        for (slot.queue.items) |m| gpa.free(m);
+        slot.queue.deinit(gpa);
+    }
+    slot.* = .{};
+}
+
+/// Writes the ids of every goal with a run in flight as a JSON array, for
+/// GET /api/goals' `running` field.
+fn appendRunningGoalIds(w: *std.Io.Writer) void {
+    var s = std.json.Stringify{ .writer = w };
+    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
+    s.beginArray() catch return;
+    for (&goal_run_slots) |*slot| {
+        if (slot.goal_len == 0) continue;
+        s.write(slot.goalId()) catch return;
+    }
+    s.endArray() catch return;
+}
+
+const SteerEnqueue = enum { ok, no_run, full, out_of_memory };
+
+/// Queues a steering message for the goal's in-flight run. The copy is made
+/// with `gpa` (the serve allocator, the same one goalRunRelease and steerPoll
+/// free with). Returns no_run when nothing currently works that goal.
+fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, message: []const u8) SteerEnqueue {
+    _ = std.c.pthread_mutex_lock(&goal_run_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
+    for (&goal_run_slots) |*slot| {
+        if (slot.goal_len == 0 or !std.mem.eql(u8, slot.goalId(), goal_id)) continue;
+        if (slot.queue.items.len >= steer_message_cap) return .full;
+        const copy = gpa.dupe(u8, message) catch return .out_of_memory;
+        slot.queue.append(gpa, copy) catch {
+            gpa.free(copy);
+            return .out_of_memory;
+        };
+        return .ok;
+    }
+    return .no_run;
+}
+
+/// Agent.steer_fn for streaming web runs: pops the next queued message for
+/// this thread's registered goal run and hands back an arena copy. Also puts
+/// a status line on the run's own stream, so the panel shows the run picked
+/// the message up rather than leaving the sender to wonder.
+fn steerPoll(arena: std.mem.Allocator) ?[]const u8 {
+    const idx = current_goal_run_slot orelse return null;
+    const copy = blk: {
+        _ = std.c.pthread_mutex_lock(&goal_run_mutex);
+        defer _ = std.c.pthread_mutex_unlock(&goal_run_mutex);
+        const slot = &goal_run_slots[idx];
+        if (slot.queue.items.len == 0) break :blk null;
+        const msg = slot.queue.orderedRemove(0);
+        defer if (serve_gpa) |gpa| gpa.free(msg);
+        break :blk arena.dupe(u8, msg) catch null;
+    };
+    if (copy != null) {
+        if (run_stream_socket) |fd| writeStreamEvent(fd, "status", .{ .message = "steering message applied" });
+    }
+    return copy;
+}
+
+const SteerBody = struct { goal: []const u8 = "", message: []const u8 = "" };
+
+/// `POST /api/steer` queues a mid-run message for a goal's in-flight run
+/// (see Agent.steer_fn). Body: {"goal":"<id>","message":"..."}. 404 when no
+/// streaming run currently carries that goal — steering has nowhere to land.
+fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream, body: []const u8) void {
+    if (!cfg.modules.goal) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"goal module disabled\"}");
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const req = std.json.parseFromSliceLeaky(SteerBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        return;
+    };
+    const msg = std.mem.trim(u8, req.message, " \t\r\n");
+    if (req.goal.len == 0 or msg.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing goal or message\"}");
+        return;
+    }
+    if (msg.len > 8192) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"message is too long (8 KB cap)\"}");
+        return;
+    }
+    // Framed so the model reads it as a mid-run course correction from the
+    // user, not as a fresh task replacing the one it is working.
+    const framed = std.fmt.allocPrint(arena, "[The user interjected while this run was in progress — take the message into account and adjust course.]\n\n{s}", .{msg}) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    switch (steerEnqueue(gpa, req.goal, framed)) {
+        .ok => respond(stream, 200, "OK", "{\"ok\":true}"),
+        .no_run => respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no run is currently working that goal\"}"),
+        .full => respond(stream, 429, "Too Many Requests", "{\"ok\":false,\"error\":\"too many queued messages for this run; wait for it to catch up\"}"),
+        .out_of_memory => respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}"),
+    }
+}
+
+/// Flips a goal's status in state/goals.json, but only when it currently
+/// holds `from`. Used when a run carrying a goal completes: the goal moves
+/// active -> review on the server, so a closed tab or a crashed browser
+/// cannot leave finished work marked active. Best-effort — a goal already
+/// moved by hand (or deleted) is left alone, and failures only log.
+fn setGoalStatusIf(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, goal_id: []const u8, from: []const u8, to: []const u8) void {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const raw = dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20)) catch return;
+    const list = std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    var hit = false;
+    for (list) |*g| {
+        if (!std.mem.eql(u8, g.id, goal_id)) continue;
+        if (!std.mem.eql(u8, g.status, from)) return;
+        g.status = to;
+        g.updated = now;
+        hit = true;
+    }
+    if (!hit) return;
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(list, .{ .emit_null_optional_fields = false }, &enc.writer) catch return;
+    atomic_write.writeFile(io, dir, goals_path, enc.written()) catch |err| {
+        log.log(.warn, "goal '{s}' finished its run but could not be moved to {s}: {s}", .{ goal_id, to, @errorName(err) });
+        return;
+    };
+    log.log(.info, "goal '{s}' moved {s} -> {s} (run completed)", .{ goal_id, from, to });
+}
+
+test "a finished run moves its goal to review, and only from active" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = goals_path, .data =
+        \\[{"id":"g1","objective":"a","completion_criterion":"b","status":"active","created":1,"updated":1},
+        \\ {"id":"g2","objective":"c","completion_criterion":"d","status":"done","created":1,"updated":1}]
+    });
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Active flips to review; the done goal is left exactly as it was, and a
+    // goal nobody has ever heard of writes nothing.
+    setGoalStatusIf(io, std.testing.allocator, tmp.dir, "g1", "active", "review");
+    setGoalStatusIf(io, std.testing.allocator, tmp.dir, "g2", "active", "review");
+    setGoalStatusIf(io, std.testing.allocator, tmp.dir, "missing", "active", "review");
+
+    const raw = try tmp.dir.readFileAlloc(io, goals_path, arena, .limited(1 << 20));
+    const goals = try std.json.parseFromSliceLeaky([]StoredGoal, arena, raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 2), goals.len);
+    try std.testing.expectEqualStrings("review", goals[0].status);
+    try std.testing.expect(goals[0].updated > 1);
+    try std.testing.expectEqualStrings("done", goals[1].status);
+}
+
+test "goal run registry: register, steer, poll, release" {
+    serve_gpa = std.testing.allocator;
+    defer serve_gpa = null;
+    try std.testing.expect(!goalRunRegister(""));
+    try std.testing.expect(goalRunRegister("g-123"));
+    defer goalRunRelease();
+
+    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "hi"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "go left"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "then right"));
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const first = steerPoll(arena) orelse return error.TestExpectedSteer;
+    try std.testing.expectEqualStrings("go left", first);
+
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    appendRunningGoalIds(&w);
+    try std.testing.expectEqualStrings("[\"g-123\"]", buf[0..w.end]);
+    // goalRunRelease (deferred) frees "then right", which was never polled;
+    // the testing allocator's leak check is the assertion.
+}
+
 /// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
 /// from the tools registry (wrong/empty `tools_dir`, zero manifests).
 /// Distinct from a missing guest `.wasm`, which still wants `zig build tools`.
@@ -4889,7 +5143,7 @@ fn handleGoalWrite(io: std.Io, arena: std.mem.Allocator, body: []const u8, strea
             var updated = g;
             if (req.status) |s| {
                 if (!validGoalStatus(s)) {
-                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, done or abandoned\"}");
+                    respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"status must be active, review, done or abandoned\"}");
                     return;
                 }
                 updated.status = s;
@@ -5860,16 +6114,20 @@ const StoredGoal = struct {
     updated: i64 = 0,
 };
 
-/// A goal's status is one of three words. Anything else is refused rather
+/// A goal's status is one of four words. Anything else is refused rather
 /// than written, so the file cannot grow states nothing knows how to read.
+/// `review` is a run's parting gift: the work is believed done and waits for
+/// a human verdict — mark it done or send it back to active.
 fn validGoalStatus(s: []const u8) bool {
-    return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or std.mem.eql(u8, s, "abandoned");
+    return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or
+        std.mem.eql(u8, s, "abandoned") or std.mem.eql(u8, s, "review");
 }
 
 test validGoalStatus {
     try std.testing.expect(validGoalStatus("active"));
     try std.testing.expect(validGoalStatus("done"));
     try std.testing.expect(validGoalStatus("abandoned"));
+    try std.testing.expect(validGoalStatus("review"));
     try std.testing.expect(!validGoalStatus("Active"));
     try std.testing.expect(!validGoalStatus(""));
     try std.testing.expect(!validGoalStatus("deleted; drop table"));
@@ -6093,6 +6351,14 @@ fn handleGoals(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, me
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
+    // Which of these goals have a run in flight right now. Transient truth
+    // from the run registry rather than a persisted status, so a crashed
+    // server never leaves a goal stuck "running" in state/goals.json.
+    out.writer.writeAll(",\"running\":") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    appendRunningGoalIds(&out.writer);
     out.writer.writeAll("}") catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
@@ -6453,6 +6719,14 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         rawhttp.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
+        // A goal run in flight is visible (GET /api/goals reports it under
+        // `running`) and steerable (POST /api/steer) for exactly as long as
+        // this connection works it. Registration failing (full table, oversize
+        // id) just means this run cannot be steered — not that it cannot run.
+        if (goal_id) |gid| {
+            if (goalRunRegister(gid)) a.steer_fn = &steerPoll;
+        }
+        defer goalRunRelease();
         // With a browser on the other end of this stream, ask_user has
         // somebody to ask: the question goes down as an `ask` control event
         // and the answer comes back through POST /api/ask. Streaming runs
@@ -6486,6 +6760,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         if (!cfg.modules.streaming) {
             if (resp.message.content) |c| rawhttp.writeAllFd(stream.socket.handle, c);
         }
+        // The run this goal carried completed: the goal moves to review and
+        // waits for a human verdict. Server-side, so the flip happens even
+        // when the tab that started the run is long gone.
+        if (goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
         if (has_session) {
             const title_src = if (req.task.len > 0) req.task else final_task;
             const title = title_src[0..@min(title_src.len, 60)];
@@ -6531,6 +6809,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
         return;
     };
+
+    // Same as the streaming path: a completed goal run parks its goal in
+    // review rather than leaving it active.
+    if (goal_id) |gid| setGoalStatusIf(io, gpa, std.Io.Dir.cwd(), gid, "active", "review");
 
     if (has_session) {
         const title_src = if (req.task.len > 0) req.task else task_text;
