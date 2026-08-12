@@ -846,6 +846,14 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         try s.endObject();
     }
 
+    // config_view's section mode promises the merged `modules` table. Keep
+    // this on the full view only: no other guest consumer needs feature
+    // flags, and narrower views should not grow unrelated config fields.
+    if (access == .full) {
+        try s.objectField("modules");
+        try s.write(cfg.modules);
+    }
+
     try s.endObject();
     return w.toOwnedSlice();
 }
@@ -3861,10 +3869,13 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.indexOf(u8, providers_json, "agent") == null);
 
     const peers = try harnessConfigJSON(arena, &cfg, .peers);
-    try std.testing.expect(std.mem.indexOf(u8, peers, "peers") != null);
-    try std.testing.expect(std.mem.indexOf(u8, peers, "instance") != null);
-    try std.testing.expect(std.mem.indexOf(u8, peers, "providers") == null);
-    try std.testing.expect(std.mem.indexOf(u8, peers, "agent") == null);
+    try std.testing.expect(std.mem.find(u8, peers, "peers") != null);
+    try std.testing.expect(std.mem.find(u8, peers, "instance") != null);
+    try std.testing.expect(std.mem.find(u8, peers, "providers") == null);
+    try std.testing.expect(std.mem.find(u8, peers, "agent") == null);
+
+    const full = try harnessConfigJSON(arena, &cfg, .full);
+    try std.testing.expect(std.mem.find(u8, full, "\"modules\"") != null);
 }
 
 test "ck_chat access covers every shipped caller, one op at a time" {

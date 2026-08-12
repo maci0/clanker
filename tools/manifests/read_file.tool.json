@@ -21,7 +21,7 @@
       "limit": {
         "type": "integer",
         "description": "Maximum bytes to return, snapped down to a line boundary (default 768 KiB).",
-        "default": 65536
+        "default": 786432
       },
       "start_line": {
         "type": "integer",

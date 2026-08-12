@@ -316,7 +316,7 @@ fn doFetch(
         .extra_headers = extra[0..extra_len],
         .response_writer = &w,
     }) catch |err| {
-        log.log(.error_, "request to '{s}' failed: {s}", .{ url, @errorName(err) });
+        log.log(.debug, "request to '{s}' failed: {s}", .{ url, @errorName(err) });
         // Unlike an HTTP error status, this never reaches `err_detail` below,
         // so every caller that reports `err_detail orelse @errorName(err)`
         // would otherwise show the user a bare Zig error name (e.g.
@@ -333,7 +333,7 @@ fn doFetch(
         } else {
             err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(result.status)});
         }
-        log.log(.error_, "provider '{s}' returned {s}", .{ provider.name, err_detail.*.? });
+        log.log(.debug, "provider '{s}' returned {s}", .{ provider.name, err_detail.*.? });
     }
 
     return .{

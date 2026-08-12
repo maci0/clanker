@@ -561,7 +561,7 @@ fn parseAnthropic(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]c
             // into invalid JSON that the next request then replayed.
             var args: std.Io.Writer.Allocating = .init(arena);
             if (block.input) |inp| {
-                json.Stringify.value(inp, .{}, &args.writer) catch {};
+                try json.Stringify.value(inp, .{}, &args.writer);
             }
             const written = args.written();
             try calls.append(arena, .{
