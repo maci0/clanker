@@ -1301,7 +1301,7 @@ fn methodFromDockerInput(obj: std.json.ObjectMap) []const u8 {
 fn dockerRequestAllowed(method: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, method, "GET") and
         std.mem.startsWith(u8, path, "/v1.") and
-        std.mem.findAny(u8, path, "\r\n") == null;
+        std.mem.findAny(u8, path, "\r\n \t\x00") == null;
 }
 
 test "docker request policy is query only" {
@@ -1309,6 +1309,20 @@ test "docker request policy is query only" {
     try std.testing.expect(!dockerRequestAllowed("POST", "/v1.41/containers/prune"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/containers/json"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/containers/json\r\nX-Evil: yes"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/containers/json HTTP/1.0\nEvil: yes"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/exec/a start"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/exec/a\tstart"));
+    try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/x\x00y"));
+}
+
+test "custom headers with CRLF are rejected" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var hdrs: [max_custom_headers]std.http.Header = undefined;
+    const n = parseCustomHeaders(arena, "{\"X-Ok\":\"safe\",\"X-Bad\":\"val\\r\\nInjected: yes\"}", &hdrs);
+    try std.testing.expectEqual(@as(u32, 1), n);
+    try std.testing.expectEqualStrings("X-Ok", hdrs[0].name);
 }
 
 const ChatOp = struct {
@@ -1813,10 +1827,15 @@ fn parseCustomHeaders(
         if (count >= max_custom_headers) break;
         if (val != .string) continue;
         if (key.len == 0) continue;
+        if (headerHasCrlf(key) or headerHasCrlf(val.string)) continue;
         out[count] = .{ .name = key, .value = val.string };
         count += 1;
     }
     return count;
+}
+
+fn headerHasCrlf(s: []const u8) bool {
+    return std.mem.findAny(u8, s, "\r\n") != null;
 }
 
 /// Whether a tool may run `cmd`.

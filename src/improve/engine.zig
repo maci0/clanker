@@ -2879,7 +2879,7 @@ test "pruneStaging keeps the newest N and removes the rest" {
         for (names.items) |n| std.testing.allocator.free(n);
         names.deinit(std.testing.allocator);
     }
-    var staging_dir = tmp.dir.openDir(io, "state/staging", .{ .iterate = true }) catch unreachable;
+    var staging_dir = try tmp.dir.openDir(io, "state/staging", .{ .iterate = true });
     defer staging_dir.close(io);
     var it = staging_dir.iterate();
     while (it.next(io) catch null) |entry| {
