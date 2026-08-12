@@ -6,74 +6,33 @@ base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
 default_model = "deepseek-v4-flash"
 
-[providers.deepseek.models.deepseek-v4-flash]
-context_window = 1048576
-max_tokens = 8192
-temperature = 0.2
-reasoning_effort = "low"
-cost_per_1m_input = 0.14
-cost_per_1m_output = 0.28
-
-[providers.deepseek.models.deepseek-v4]
-context_window = 1048576
-max_tokens = 16384
-reasoning_effort = "medium"
-cost_per_1m_input = 0.44
-cost_per_1m_output = 0.87
-temperature = 0.2
-
 [providers.openai]
 kind = "openai_compat"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 
-[providers.openai.models.gpt-4o-mini]
-context_window = 128000
-temperature = 0.2
-
 [providers.vllm-local]
 kind = "openai_compat"
 base_url = "http://192.168.0.211:8000/v1"
 
-[providers.vllm-local.models.deepseek-v4-flash]
-context_window = 512000
-temperature = 0.2
-
 [providers.ollama]
 kind = "openai_compat"
 base_url = "http://127.0.0.1:11434/v1"
-
-[providers.ollama.models."qwen3.5"]
-context_window = 32768
-temperature = 0.2
 
 [providers.anthropic]
 kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 
-[providers.anthropic.models.claude-sonnet-5]
-context_window = 1000000
-
 [providers.muse-spark]
 kind = "openai_compat"
 base_url = "https://api.meta.ai/v1"
 api_key_env = "META_AI_API_KEY"
 
-[providers.muse-spark.models."muse-spark-1.2-contributor"]
-context_window = 1048576
-max_tokens = 16384
-temperature = 0.2
-
 [providers."muse-spark-1.1"]
 kind = "openai_compat"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
-
-[providers."muse-spark-1.1".models."meta/muse-spark-1.1"]
-context_window = 163840
-max_tokens = 8192
-temperature = 0.2
 
 [providers.kimi-k3]
 kind = "openai_compat"
@@ -81,7 +40,63 @@ base_url = "https://api.moonshot.ai/v1"
 api_key_env = "KIMI_API_KEY"
 default_model = "kimi-k3"
 
-[providers.kimi-k3.models.kimi-k3]
+[models."deepseek/deepseek-v4-flash"]
+provider = "deepseek"
+context_window = 1048576
+max_tokens = 8192
+temperature = 0.2
+reasoning_effort = "low"
+cost_per_1m_input = 0.14
+cost_per_1m_output = 0.28
+capabilities = ["thinking", "tool_use"]
+
+[models."deepseek/deepseek-v4"]
+provider = "deepseek"
+context_window = 1048576
+max_tokens = 16384
+reasoning_effort = "medium"
+cost_per_1m_input = 0.44
+cost_per_1m_output = 0.87
+temperature = 0.2
+capabilities = ["thinking", "tool_use"]
+
+[models."openai/gpt-4o-mini"]
+provider = "openai"
+context_window = 128000
+temperature = 0.2
+capabilities = ["tool_use", "image_in"]
+
+[models."vllm-local/deepseek-v4-flash"]
+provider = "vllm-local"
+context_window = 512000
+temperature = 0.2
+
+[models."ollama/qwen3.5"]
+provider = "ollama"
+context_window = 32768
+temperature = 0.2
+
+[models."anthropic/claude-sonnet-5"]
+provider = "anthropic"
+context_window = 1000000
+capabilities = ["thinking", "tool_use", "image_in"]
+
+[models."muse-spark/muse-spark-1.2-contributor"]
+provider = "muse-spark"
+context_window = 1048576
+max_tokens = 16384
+temperature = 0.2
+capabilities = ["thinking", "tool_use", "image_in", "video_in", "audio_in"]
+
+[models."muse-spark-1.1/meta/muse-spark-1.1"]
+provider = "muse-spark-1.1"
+context_window = 163840
+max_tokens = 8192
+temperature = 0.2
+capabilities = ["thinking", "tool_use", "image_in", "video_in", "audio_in"]
+
+[models."kimi-k3/kimi-k3"]
+provider = "kimi-k3"
 context_window = 1048576
 max_tokens = 16384
 reasoning_effort = "high"
@@ -89,13 +104,16 @@ cost_per_1m_input = 3.0
 cost_per_1m_output = 15.0
 temperature = 0.2
 display = "moonshotai/kimi-k3"
+capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 
-[providers.kimi-k3.models."kimi-k2.7-code"]
+[models."kimi-k3/kimi-k2.7-code"]
+provider = "kimi-k3"
 context_window = 262144
 max_tokens = 16384
 cost_per_1m_input = 0.7
 cost_per_1m_output = 3.5
 temperature = 0.2
+capabilities = ["thinking", "tool_use", "image_in", "video_in"]
 
 [agent]
 max_iterations = 24

@@ -1,6 +1,6 @@
-//! cmd_status: show the instance identity and configured peers by reading
-//! config.toml/config.json (and config.local.toml/config.local.json, which
-//! overrides it).
+//! cmd_status: show the instance identity and configured peers from the
+//! harness's own effective config (config.toml merged with
+//! config.local.toml).
 //! Input:  {"args": "..."}
 //! Output: {"ok": true, "text": "<instance + peers>"}
 
@@ -30,17 +30,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     _ = parsed;
 
-    var base = StatusInfo{};
-    var local = StatusInfo{};
-    if (lib.readConfigFile("config")) |f| {
-        base = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, f.text, .{ .ignore_unknown_fields = true }) catch base;
-    }
-    if (lib.readConfigFile("config.local")) |f| {
-        local = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, f.text, .{ .ignore_unknown_fields = true }) catch local;
-    }
-
-    const inst = if (local.instance) |i| i else if (base.instance) |i| i else InstanceInfo{};
-    const peers = if (local.peers.len > 0) local.peers else base.peers;
+    const cfg = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch StatusInfo{};
+    const inst = cfg.instance orelse InstanceInfo{};
+    const peers = cfg.peers;
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(lib.alloc);

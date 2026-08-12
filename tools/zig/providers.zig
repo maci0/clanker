@@ -43,19 +43,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch Request{};
 
-    // Merged the way the harness merges: config.local overrides individual
-    // providers, it does not replace the whole set.
-    var providers: std.StringArrayHashMapUnmanaged(Provider) = .empty;
-    var default_provider: []const u8 = "";
-    inline for (.{ "config", "config.local" }) |stem| {
-        if (lib.readConfigFile(stem)) |f| {
-            if (std.json.parseFromSliceLeaky(ConfigFile, alloc, f.text, .{ .ignore_unknown_fields = true }) catch null) |parsed| {
-                if (parsed.default_provider.len > 0) default_provider = parsed.default_provider;
-                var pit = parsed.providers.map.iterator();
-                while (pit.next()) |kv| try providers.put(alloc, kv.key_ptr.*, kv.value_ptr.*);
-            }
-        }
-    }
+    // The harness already merges config.toml with config.local.toml before
+    // handing this back, so there is exactly one source to read here.
+    const parsed = std.json.parseFromSliceLeaky(ConfigFile, alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch ConfigFile{};
+    const providers = parsed.providers.map;
+    const default_provider = parsed.default_provider;
     if (providers.count() == 0) return lib.fail(out, "no providers configured");
 
     const check = std.mem.eql(u8, req.action, "check");

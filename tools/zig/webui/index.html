@@ -173,6 +173,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
+          <button type="button" class="chip model-pill" id="composer-model" title="Model — click to change">…</button>
           <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
@@ -206,6 +207,15 @@ lamps carry further). The seven named palettes ride the same tokens.
                message when it succeeds, and a failed load writes its error into
                #run-graph, which is a plain group rather than a live region. -->
           <p class="sr-only" id="run-status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="run-compare" id="run-compare" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem;" hidden>
+          <label for="run-compare-a">Compare</label>
+          <select id="run-compare-a"></select>
+          <span class="meta">vs</span>
+          <select id="run-compare-b"></select>
+          <button type="button" class="secondary" id="run-compare-go">Diff</button>
+          <button type="button" class="secondary" id="run-compare-clear" hidden>Clear diff</button>
+          <span class="meta" id="run-compare-status"></span>
         </div>
         <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
         <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
@@ -321,6 +331,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <select id="board-filter-assignee"><option value="">All</option></select>
         <label for="board-filter-priority">Priority</label>
         <select id="board-filter-priority"><option value="">All</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select>
+        <label for="board-filter-label">Label</label>
+        <select id="board-filter-label"><option value="">All</option><option value="green">green</option><option value="yellow">yellow</option><option value="orange">orange</option><option value="red">red</option><option value="purple">purple</option><option value="blue">blue</option></select>
       </div>
       <div class="board" id="board"></div>
       <div class="toolbar-actions" style="margin-top: var(--space-3);">

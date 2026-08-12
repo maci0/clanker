@@ -20,12 +20,7 @@
       "action"
     ]
   },
-  "fs_prefixes": [
-    "config.json",
-    "config.local.json",
-    "config.toml",
-    "config.local.toml"
-  ],
+  "fs_prefixes": [],
   "llm": true,
   "network_from_config": "providers",
   "category": "peers"

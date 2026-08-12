@@ -76,16 +76,15 @@ fn runChecks(
     rep: *Report,
 ) !void {
     rep.section("config");
-    const has_config = fileExists(io, "config.toml") or fileExists(io, "config.json");
-    if (!has_config) {
+    if (!fileExists(io, "config.toml")) {
         rep.line(.fail, "config.toml", "missing; run `clanker setup`");
         return;
     }
-    rep.line(.ok, if (fileExists(io, "config.toml")) "config.toml" else "config.json", "");
-    const has_local = fileExists(io, "config.local.toml") or fileExists(io, "config.local.json");
-    rep.line(if (has_local) .ok else .warn, if (fileExists(io, "config.local.toml")) "config.local.toml" else "config.local.json", if (has_local) "" else "absent; defaults from config.toml only");
+    rep.line(.ok, "config.toml", "");
+    const has_local = fileExists(io, "config.local.toml");
+    rep.line(if (has_local) .ok else .warn, "config.local.toml", if (has_local) "" else "absent; defaults from config.toml only");
 
-    const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.json", "config.local.json") catch |err| {
+    const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch |err| {
         rep.line(.fail, "config parses", @errorName(err));
         return;
     };
@@ -223,8 +222,8 @@ pub fn cmdSetup(init: std.process.Init) !void {
     // the user to run a second command first.
     // cli.zig scaffolds before calling this, so a missing file here means the
     // write itself failed rather than that it was never attempted.
-    if (!fileExists(io, "config.local.json")) {
-        w.writeAll("  config.local.json could not be written. Check the directory is writable.\n") catch {};
+    if (!fileExists(io, "config.local.toml")) {
+        w.writeAll("  config.local.toml could not be written. Check the directory is writable.\n") catch {};
         out.interface.flush() catch {};
         std.process.exit(1);
     }
@@ -233,7 +232,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
         w.print("  state/ could not be created: {s}. Check the directory is writable.\n", .{@errorName(err)}) catch {};
     };
 
-    const cfg = config.Config.load(io, arena, dir, "config.json", "config.local.json") catch |err| {
+    const cfg = config.Config.load(io, arena, dir, "config.toml", "config.local.toml") catch |err| {
         w.print("  config does not load: {s}\n", .{@errorName(err)}) catch {};
         out.interface.flush() catch {};
         std.process.exit(1);
@@ -253,7 +252,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
     } else {
         w.print("  Default provider '{s}' has no credential in this environment.\n", .{active}) catch {};
         if (try wouldWork(init.environ_map, &cfg, arena)) |other| {
-            w.print("  '{s}' does. Set \"default_provider\": \"{s}\" in config.local.json to use it.\n", .{ other, other }) catch {};
+            w.print("  '{s}' does. Set default_provider = \"{s}\" in config.local.toml to use it.\n", .{ other, other }) catch {};
         } else {
             const p = cfg.provider(active) catch null;
             if (p) |prov| {

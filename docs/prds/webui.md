@@ -15,6 +15,9 @@ Surface: `clanker serve`, served at `GET /`. Co-equal product surface with
 the CLI (`PRODUCT.md`). Turn-by-turn audit trail of the module-split and
 accessibility work lives separately in `docs/WEBUI_REVIEW.md` — that
 document is a working log, this one is the spec.
+Phase 6 — Chat UX parity against the Kimi Code web UI — also live: per-turn
+Branch (server `branchSession` + per-turn Branch button), run-ref citation
+chips → `openRun`, the composer model pill, and the collapsed icon rail.
 
 ## Problem
 
@@ -233,6 +236,13 @@ Phase 4 — `webui_pixelagents`:
 Phase 5 — remaining CLI parity:
 
 - [x] Progress streaming under System — `Run gate` / `Run eval` / `Check providers` streaming over `/api/run` `\x01` events (`tool_call`/`tool_result`/`error`/`done`) with Abort stop
+
+Phase 6 — Chat UX parity (Kimi Code web UI):
+
+- [x] 6.1 Per-turn Branch — a Branch button on each turn cuts the conversation at that turn (`POST /api/sessions/<id>/branch/<n>`, `session.branchSession`/`turnCutoff`) and continues in a copy
+- [x] 6.2 Citation chips → openRun — run references in answers (`run-…`/`sub-…`, `[subagent run: …]`) render as chips that open the run graph (`RUN_RE`/`appendRunRefs` in `lib/markdown.js`, `window.clankerOpenRun` bridge)
+- [x] 6.3 Model pill inside composer — the active model as a pill button beside the run controls, opening the same picker the header chip opens
+- [x] 6.4 Collapsed icon rail — rail collapses to a 3.5rem icon strip (`data-collapsed`, `data-short`, persisted); collapse toggle hidden under 60rem where the rail is a drawer
 
 Infrastructure:
 

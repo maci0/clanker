@@ -7,7 +7,7 @@
 //!
 //! The peer hosts are not in this descriptor: it sets
 //! `"network_from_config": "peers"` and the harness adds whatever is configured
-//! to the ck_http allowlist, so adding a peer to config.json is enough.
+//! to the ck_http allowlist, so adding a peer to config is enough.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -62,29 +62,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return lib.fail(out, "action must be \"phonebook\" or \"notify\"");
 }
 
-/// config.local wins over config, matching the harness's own merge.
 fn loadPeers(alloc: std.mem.Allocator) ![]const Peer {
-    var peers: []const Peer = &.{};
-    inline for (.{ "config", "config.local" }) |stem| {
-        if (lib.readConfigFile(stem)) |f| {
-            if (std.json.parseFromSliceLeaky(ConfigFile, alloc, f.text, .{ .ignore_unknown_fields = true }) catch null) |cfg| {
-                if (cfg.peers.len > 0) peers = cfg.peers;
-            }
-        }
-    }
-    return peers;
+    const cfg = std.json.parseFromSliceLeaky(ConfigFile, alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch return &.{};
+    return cfg.peers;
 }
 
 fn instanceName(alloc: std.mem.Allocator) []const u8 {
-    inline for (.{ "config.local", "config" }) |stem| {
-        if (lib.readConfigFile(stem)) |f| {
-            if (std.json.parseFromSliceLeaky(ConfigFile, alloc, f.text, .{ .ignore_unknown_fields = true }) catch null) |cfg| {
-                if (cfg.instance) |i| {
-                    if (i.name.len > 0) return i.name;
-                }
-            }
-        }
-    }
+    const cfg = std.json.parseFromSliceLeaky(ConfigFile, alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch return "clanker";
+    if (cfg.instance) |i| if (i.name.len > 0) return i.name;
     return "clanker";
 }
 

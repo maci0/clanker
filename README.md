@@ -22,7 +22,7 @@ policy.
 zig build          # build the clanker binary
 zig build tools    # build the WASM tools
 zig build test     # run the test suite
-./zig-out/bin/clanker init   # create config.local.json + state/
+./zig-out/bin/clanker init   # create config.local.toml + state/
 ./zig-out/bin/clanker gate   # run the full deterministic gate (build/test/tools/fmt/lint)
 ```
 
@@ -96,7 +96,7 @@ task; `clanker --help` prints usage.
 |---------|-------------|
 | `help` / `--help` | Print usage |
 | `version` / `--version` | Print the version |
-| `init` | Create `config.local.json` + `state/` |
+| `init` | Create `config.local.toml` + `state/` |
 | `providers <check\|models\|catalog\|fill> [name]` | Verify connectivity, list models, or query the models.dev catalog |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |

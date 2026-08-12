@@ -171,6 +171,67 @@ pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     return new_id;
 }
 
+/// The message index just past turn `n`'s answer: the Nth user message plus
+/// everything up to and including the assistant message that completes the
+/// turn (tool-call steps and tool results in between included). A turn
+/// whose reply is still pending — a stopped run with no final assistant
+/// content — cuts before its user message, so a branch never strands half a
+/// turn. `n` is 1-based; past the last turn is `error.TurnOutOfRange`.
+fn turnCutoff(messages: []const types.Message, n: usize) !usize {
+    var users: usize = 0;
+    for (messages, 0..) |m, i| {
+        if (m.role != .user) continue;
+        users += 1;
+        if (users != n) continue;
+        // End of the turn: the next user message, or the end of the list.
+        var j = i + 1;
+        while (j < messages.len and messages[j].role != .user) j += 1;
+        // The turn's last word is its final assistant message; a pending
+        // turn (user with no answer) or a dangling tool round must not leak
+        // into the branch, so cut before the user message in those cases.
+        var last_assistant: ?usize = null;
+        var k = i + 1;
+        while (k < j) : (k += 1) {
+            if (messages[k].role == .assistant) last_assistant = k;
+        }
+        if (last_assistant) |p| return p + 1;
+        return i;
+    }
+    return error.TurnOutOfRange;
+}
+
+/// Branches a conversation at a turn: the messages through the end of turn
+/// `turn_no` copied under a new id, titled "branch of <old title>". Turns
+/// before the branch point stay shared context; nothing after it exists in
+/// the branch yet, so continuing it explores a different direction without
+/// touching the original — the per-turn branch a chat UI offers, as opposed
+/// to `forkSession`'s whole-conversation copy. Returns the new id
+/// (arena-owned).
+pub fn branchSession(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    base: std.Io.Dir,
+    id: []const u8,
+    turn_no: usize,
+) ![]const u8 {
+    const s = try loadSession(io, gpa, arena, base, id);
+    const cutoff = try turnCutoff(s.messages, turn_no);
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    // Nanosecond suffix keeps two branches of the same session distinct and
+    // stays within the alphanumeric/dash alphabet validSessionId accepts.
+    const new_id = try std.fmt.allocPrint(arena, "{s}-branch-{d}", .{ id, std.Io.Timestamp.now(io, .real).nanoseconds });
+    try saveSession(io, gpa, arena, base, .{
+        .id = new_id,
+        .title = try std.fmt.allocPrint(arena, "branch of {s}", .{s.title}),
+        .workspace = s.workspace,
+        .messages = s.messages[0..cutoff],
+        .created = now,
+        .updated = now,
+    });
+    return new_id;
+}
+
 /// Retitles a conversation in place, leaving its messages untouched.
 ///
 /// Titles are otherwise derived from the first 60 characters of the opening
@@ -525,6 +586,91 @@ test "forkSession copies a conversation under a new id and leaves the original a
 
     // Forking a session that does not exist fails rather than inventing one.
     try std.testing.expectError(error.FileNotFound, forkSession(io, gpa, arena, tmp.dir, "nope"));
+}
+
+test "branchSession cuts the conversation at a turn and leaves the original alone" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "s1",
+        .title = "Original",
+        .messages = &.{
+            .{ .role = .system, .content = "shared context" },
+            .{ .role = .user, .content = "u1" },
+            .{ .role = .assistant, .tool_calls = &.{.{
+                .id = "c1",
+                .name = "read",
+                .arguments = "{}",
+            }} },
+            .{ .role = .tool, .tool_call_id = "c1", .content = "result" },
+            .{ .role = .assistant, .content = "a1" },
+            .{ .role = .user, .content = "u2" },
+            .{ .role = .assistant, .content = "a2" },
+            .{ .role = .user, .content = "u3" },
+            .{ .role = .assistant, .content = "a3" },
+        },
+        .created = 100,
+        .updated = 200,
+    });
+
+    // Branch at turn 2: the tool round of turn 1 is fully included, and
+    // nothing after turn 2 is.
+    const new_id = try branchSession(io, gpa, arena, tmp.dir, "s1", 2);
+    const branched = try loadSession(io, gpa, arena, tmp.dir, new_id);
+    try std.testing.expectEqualStrings("branch of Original", branched.title);
+    try std.testing.expectEqual(@as(usize, 7), branched.messages.len);
+    try std.testing.expectEqualStrings("a2", branched.messages[branched.messages.len - 1].content.?);
+    try std.testing.expectEqualStrings("shared context", branched.messages[0].content.?);
+
+    // The source conversation is untouched, all nine messages.
+    const original = try loadSession(io, gpa, arena, tmp.dir, "s1");
+    try std.testing.expectEqualStrings("Original", original.title);
+    try std.testing.expectEqual(@as(usize, 9), original.messages.len);
+
+    // Branching at the last turn copies the whole conversation.
+    const whole = try branchSession(io, gpa, arena, tmp.dir, "s1", 3);
+    const whole_session = try loadSession(io, gpa, arena, tmp.dir, whole);
+    try std.testing.expectEqual(@as(usize, 9), whole_session.messages.len);
+
+    // Two branches of the same session get distinct ids.
+    const second_id = try branchSession(io, gpa, arena, tmp.dir, "s1", 1);
+    try std.testing.expect(!std.mem.eql(u8, new_id, second_id));
+
+    // Turn 0 and past-the-end are refused, not silently clamped.
+    try std.testing.expectError(error.TurnOutOfRange, branchSession(io, gpa, arena, tmp.dir, "s1", 0));
+    try std.testing.expectError(error.TurnOutOfRange, branchSession(io, gpa, arena, tmp.dir, "s1", 4));
+    // A pending turn (user message with no answer) cuts before it instead.
+    try saveSession(io, gpa, arena, tmp.dir, .{
+        .id = "s2",
+        .title = "Pending",
+        .messages = &.{
+            .{ .role = .user, .content = "done turn" },
+            .{ .role = .assistant, .content = "answered" },
+            .{ .role = .user, .content = "in flight" },
+        },
+        .created = 100,
+        .updated = 200,
+    });
+    const pending = try branchSession(io, gpa, arena, tmp.dir, "s2", 2);
+    const pending_session = try loadSession(io, gpa, arena, tmp.dir, pending);
+    try std.testing.expectEqual(@as(usize, 2), pending_session.messages.len);
+    try std.testing.expectEqualStrings("answered", pending_session.messages[1].content.?);
+
+    // Branching a session that does not exist fails rather than inventing one.
+    try std.testing.expectError(error.FileNotFound, branchSession(io, gpa, arena, tmp.dir, "nope", 1));
 }
 
 test "listSessions reports the byte weight of each conversation" {

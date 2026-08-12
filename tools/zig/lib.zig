@@ -35,6 +35,7 @@ extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
 extern fn ck_stats() u32;
 extern fn ck_config() u32;
+extern fn ck_harness_config() u32;
 extern fn ck_result() u64;
 extern fn ck_std_api(sym_ptr: u32, sym_len: u32) u32;
 extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
@@ -476,6 +477,17 @@ pub fn llmWith(prompt: []const u8, provider: ?[]const u8, max_tokens: u32) HostE
 /// ("{}" when the descriptor has none).
 pub fn config() []const u8 {
     if (ck_config() != 0) return "{}";
+    return readResult() orelse "{}";
+}
+
+/// The harness's own effective config (default_provider, providers, models,
+/// instance, peers), as a JSON string ("{}" if denied or on error). Distinct
+/// from `config()`, which returns this plugin's own descriptor settings.
+/// This is the merged config.toml/config.local.toml as the host parsed it —
+/// use it instead of reading "config.toml" directly: a wasm32-freestanding
+/// guest carries no TOML parser.
+pub fn harnessConfig() []const u8 {
+    if (ck_harness_config() != 0) return "{}";
     return readResult() orelse "{}";
 }
 

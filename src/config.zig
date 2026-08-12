@@ -1,6 +1,16 @@
-//! Configuration loading: `config.json` (committed example) merged with
-//! `config.local.json` (gitignored, user-specific). API keys are never stored
+//! Configuration loading: `config.toml` (committed example) merged with
+//! `config.local.toml` (gitignored, user-specific). API keys are never stored
 //! here — providers reference an environment variable by name instead.
+//!
+//! Providers and their models are declared separately: `[providers.<name>]`
+//! holds connection settings (kind, base_url, api_key_env), and a top-level
+//! `[models."<provider>/<model>"]` table (keyed by that composite id, each
+//! entry naming its own `provider`) holds the model settings, inspired by
+//! Kimi Code's config.toml shape. `distributeModels` files each entry into
+//! its provider's `Provider.models` map at load time, so everything below
+//! that point (`Provider.activeModel()`, `resolveProvider`, `merge`, and
+//! every caller across the LLM client/agent loop) still sees the same
+//! per-provider model map it always has — only the on-disk shape changed.
 
 const std = @import("std");
 const json = std.json;
@@ -46,6 +56,12 @@ pub const Model = struct {
     cost_per_1m_input: ?f64 = null,
     /// Estimated USD per 1M output tokens (for run cost accounting).
     cost_per_1m_output: ?f64 = null,
+    /// What the model supports, e.g. "tool_use", "image_in", "video_in",
+    /// "audio_in", "thinking", "always_thinking" (models.dev's own
+    /// modalities/reasoning/tool_call fields, `clanker providers fill`
+    /// derives these; see cmdProvidersFill in cli.zig). Informational: lets a
+    /// model entry self-document what it supports without a second lookup.
+    capabilities: []const []const u8 = &.{},
 };
 
 pub const Provider = struct {
@@ -358,7 +374,7 @@ pub const Config = struct {
         return p;
     }
 
-    /// Loads `config.json` plus `config.local.json` (if present) from `dir`.
+    /// Loads `file_name` (TOML) plus `local_file_name` (if present) from `dir`.
     /// All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
         var cfg = (try loadFile(io, arena, dir, file_name, .required)).?;
@@ -384,20 +400,6 @@ pub const Config = struct {
     /// TOML takes precedence: `config.json` -> tries `config.toml` first, falls
     /// back to the `.json` file if no `.toml` sibling exists.
     fn loadFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, mode: LoadMode) !?Config {
-        if (std.mem.endsWith(u8, file_name, ".json")) {
-            const toml_name = try std.fmt.allocPrint(arena, "{s}.toml", .{file_name[0 .. file_name.len - ".json".len]});
-            const raw = dir.readFileAlloc(io, toml_name, arena, .limited(1 << 20)) catch |err| switch (err) {
-                error.FileNotFound => null,
-                else => return err,
-            };
-            if (raw) |r| {
-                const root = toml_bridge.parseToJsonValue(arena, r) catch |err| {
-                    log.log(.error_, "config {s}: invalid TOML: {s}", .{ toml_name, @errorName(err) });
-                    return err;
-                };
-                return try parseConfig(arena, root);
-            }
-        }
         const raw = dir.readFileAlloc(io, file_name, arena, .limited(1 << 20)) catch |err| switch (err) {
             error.FileNotFound => switch (mode) {
                 .required => return error.MissingConfig,
@@ -405,7 +407,10 @@ pub const Config = struct {
             },
             else => return err,
         };
-        const root = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+        const root = toml_bridge.parseToJsonValue(arena, raw) catch |err| {
+            log.log(.error_, "config {s}: invalid TOML: {s}", .{ file_name, @errorName(err) });
+            return err;
+        };
         return try parseConfig(arena, root);
     }
 
@@ -416,9 +421,9 @@ pub const Config = struct {
             else => return error.ConfigNotObject,
         };
         warnUnknownKeys(obj, &.{
-            "default_provider", "agent", "improve", "providers",
-            "instance",         "peers", "notify",  "chatrooms",
-            "modules",          "web",
+            "default_provider", "agent",    "improve", "providers",
+            "models",           "instance", "peers",   "notify",
+            "chatrooms",        "modules",  "web",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -442,10 +447,14 @@ pub const Config = struct {
             };
             var it = pobj.iterator();
             while (it.next()) |kv| {
-                const p = try parseProvider(arena, kv.key_ptr.*, kv.value_ptr.*);
+                const p = try parseProvider(kv.key_ptr.*, kv.value_ptr.*);
                 try cfg.providers.put(arena, kv.key_ptr.*, p);
             }
         }
+        if (obj.get("models")) |v| {
+            try distributeModels(arena, &cfg, v);
+        }
+        if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
         if (obj.get("instance")) |v| {
             cfg.instance = try parseInstance(arena, v);
             cfg.instance_present = true;
@@ -478,7 +487,7 @@ pub const Config = struct {
         return cfg;
     }
 
-    fn parseProvider(arena: std.mem.Allocator, name: []const u8, v: json.Value) !Provider {
+    fn parseProvider(name: []const u8, v: json.Value) !Provider {
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ProviderNotObject,
@@ -490,21 +499,24 @@ pub const Config = struct {
         warnUnknownKeys(obj, &.{
             "base_url",    "kind",                 "project",          "location",
             "api_key_env", "service_account_file", "path",             "default_model",
-            "models",
             // Legacy names: flagged with a dedicated error below, not a warning.
-                 "model",                "max_tokens",       "context_window",
+            "model",       "models",               "max_tokens",       "context_window",
             "temperature", "top_p",                "reasoning_effort",
         }, name);
         // Settings that belong to a model are rejected on the provider: they
         // differ per model on the same endpoint, and silently accepting them
         // here is how a config ends up meaning something other than it reads.
         if (obj.get("model") != null) {
-            log.log(.error_, "provider '{s}': \"model\" was replaced by \"models\". Use \"models\": {{\"<name>\": {{...}}}} and, with more than one, \"default_model\": \"<name>\"", .{name});
+            log.log(.error_, "provider '{s}': \"model\" was replaced by the top-level \"models\" table. Add [models.\"{s}/<name>\"] with \"provider\": \"{s}\", and set \"default_model\": \"<name>\" if there is more than one", .{ name, name, name });
+            return error.ProviderLegacyModelFields;
+        }
+        if (obj.get("models") != null) {
+            log.log(.error_, "provider '{s}': \"models\" moved out of the provider. Use the top-level [models.\"{s}/<name>\"] table with \"provider\": \"{s}\"", .{ name, name, name });
             return error.ProviderLegacyModelFields;
         }
         for ([_][]const u8{ "max_tokens", "context_window", "temperature", "top_p", "reasoning_effort" }) |legacy| {
             if (obj.get(legacy) != null) {
-                log.log(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into \"models\": {{\"<name>\": {{\"{s}\": ...}}}}", .{ name, legacy, legacy });
+                log.log(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into the top-level [models.\"{s}/<name>\"] table", .{ name, legacy, name });
                 return error.ProviderLegacyModelFields;
             }
         }
@@ -529,23 +541,12 @@ pub const Config = struct {
         if (obj.get("default_model")) |k| {
             p.default_model = try jsonStr(k, "default_model");
         }
-        if (obj.get("models")) |models_v| {
-            const models_obj = switch (models_v) {
-                .object => |o| o,
-                else => return error.ModelsNotObject,
-            };
-            var it = models_obj.iterator();
-            while (it.next()) |kv| {
-                const m = try parseModel(kv.key_ptr.*, kv.value_ptr.*);
-                try p.models.put(arena, kv.key_ptr.*, m);
-            }
-        }
 
         // vertex_anthropic addresses the model by project/location in the URL
         // and authenticates from one of two credential sources; missing either
         // currently only surfaces as error.VertexProjectMissing (or a bare
         // MissingApiKey) on the first request, far from the config that caused
-        // it. Same "checked at startup" reasoning as the models check below.
+        // it.
         if (p.kind == .vertex_anthropic) {
             if (p.project.len == 0 or p.location.len == 0) {
                 log.log(.error_, "provider '{s}': kind \"vertex_anthropic\" requires \"project\" and \"location\"", .{name});
@@ -557,33 +558,89 @@ pub const Config = struct {
             }
         }
 
-        // One shape, checked at startup: a provider names its models and picks
-        // one. Both failures below would otherwise surface as a confusing error
-        // on the first request instead of at load.
-        if (p.models.count() == 0) {
-            log.log(.error_, "provider '{s}': no \"models\" declared", .{name});
-            return error.ProviderMissingModel;
-        }
-        if (p.default_model.len == 0) {
-            // One model is unambiguous, so naming it twice is noise.
-            p.default_model = p.models.keys()[0];
-        }
-        if (p.models.get(p.default_model) == null) {
-            log.log(.error_, "provider '{s}': default_model '{s}' is not in \"models\"", .{ name, p.default_model });
-            return error.ProviderDefaultModelUnknown;
-        }
+        // Models are validated after the top-level "models" table is
+        // distributed into each provider (distributeModels /
+        // validateProviderModels below): at this point `p.models` is always
+        // empty.
         return p;
     }
 
-    fn parseModel(name: []const u8, v: json.Value) !Model {
+    /// Reads the top-level "models" table (keyed `"<provider>/<model>"`, each
+    /// entry naming its own `"provider"`) and distributes each entry into
+    /// that provider's `Provider.models` map. Kept separate from
+    /// `parseProvider` because a model's home provider must already exist in
+    /// `cfg.providers` before it can be filed there.
+    fn distributeModels(arena: std.mem.Allocator, cfg: *Config, v: json.Value) !void {
+        const models_obj = switch (v) {
+            .object => |o| o,
+            else => return error.ModelsNotObject,
+        };
+        var it = models_obj.iterator();
+        while (it.next()) |kv| {
+            const key = kv.key_ptr.*;
+            const entry_obj = switch (kv.value_ptr.*) {
+                .object => |o| o,
+                else => return error.ModelNotObject,
+            };
+            const provider_name = try jsonStr(try required(entry_obj, "provider"), "provider");
+            const p = cfg.providers.getPtr(provider_name) orelse {
+                log.log(.error_, "models[\"{s}\"]: provider '{s}' is not declared under \"providers\"", .{ key, provider_name });
+                return error.ModelUnknownProvider;
+            };
+            const prefix_len = provider_name.len + 1; // "<provider>/"
+            if (key.len <= prefix_len or !std.mem.startsWith(u8, key, provider_name) or key[provider_name.len] != '/') {
+                log.log(.error_, "models[\"{s}\"]: key must be \"{s}/<model-name>\" to match \"provider\": \"{s}\"", .{ key, provider_name, provider_name });
+                return error.ModelKeyProviderMismatch;
+            }
+            const model_name = key[prefix_len..];
+            const m = try parseModel(arena, model_name, kv.value_ptr.*);
+            try p.models.put(arena, model_name, m);
+        }
+    }
+
+    /// One shape, checked at startup: a provider names its models and picks
+    /// one. Both failures below would otherwise surface as a confusing error
+    /// on the first request instead of at load.
+    fn validateProviderModels(cfg: *Config) !void {
+        var it = cfg.providers.iterator();
+        while (it.next()) |kv| {
+            const name = kv.key_ptr.*;
+            const p = kv.value_ptr;
+            if (p.models.count() == 0) {
+                log.log(.error_, "provider '{s}': no models declared (add a [models.\"{s}/<name>\"] entry)", .{ name, name });
+                return error.ProviderMissingModel;
+            }
+            if (p.default_model.len == 0) {
+                // One model is unambiguous, so naming it twice is noise.
+                p.default_model = p.models.keys()[0];
+            }
+            if (p.models.get(p.default_model) == null) {
+                log.log(.error_, "provider '{s}': default_model '{s}' is not in its models", .{ name, p.default_model });
+                return error.ProviderDefaultModelUnknown;
+            }
+        }
+    }
+
+    fn parseModel(arena: std.mem.Allocator, name: []const u8, v: json.Value) !Model {
         const obj = switch (v) {
             .object => |o| o,
             else => return error.ModelNotObject,
         };
         var m = Model{};
         warnUnknownKeys(obj, &.{
-            "context_window",   "max_tokens", "temperature",       "top_p",
-            "reasoning_effort", "display",    "cost_per_1m_input", "cost_per_1m_output",
+            // "provider" is consumed by distributeModels (which provider this
+            // entry belongs to, before the table-key prefix is stripped down
+            // to the bare model name passed in here) — accepted, not unknown.
+            "provider",
+            "context_window",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "reasoning_effort",
+            "display",
+            "cost_per_1m_input",
+            "cost_per_1m_output",
+            "capabilities",
         }, name);
         if (obj.get("context_window")) |k| m.context_window = @intCast(try jsonInt(k, "context_window"));
         if (obj.get("max_tokens")) |k| m.max_tokens = @intCast(try jsonInt(k, "max_tokens"));
@@ -593,6 +650,15 @@ pub const Config = struct {
         if (obj.get("display")) |k| m.display = try jsonStr(k, "display");
         if (obj.get("cost_per_1m_input")) |k| m.cost_per_1m_input = try jsonFloat(k, "cost_per_1m_input");
         if (obj.get("cost_per_1m_output")) |k| m.cost_per_1m_output = try jsonFloat(k, "cost_per_1m_output");
+        if (obj.get("capabilities")) |k| {
+            const arr = switch (k) {
+                .array => |a| a,
+                else => return error.CapabilitiesNotArray,
+            };
+            var caps: std.ArrayList([]const u8) = .empty;
+            for (arr.items) |item| try caps.append(arena, try jsonStr(item, "capabilities[]"));
+            m.capabilities = try caps.toOwnedSlice(arena);
+        }
         return m;
     }
 
@@ -714,9 +780,12 @@ pub const Config = struct {
         seed ^= std.hash.Wyhash.hash(0, @as([*]const u8, @ptrCast(&seed))[0..8]);
         var prng = std.Random.DefaultPrng.init(seed);
         const n = prng.random().intRangeAtMost(u16, 100, 999);
-        const adjectives = [_][]const u8{ "amber", "cobalt", "crimson", "ember", "harbor", "indigo", "juniper", "lark", "moss", "nova", "obsidian", "quill", "river", "sable", "topaz", "willow" };
-        const adj = adjectives[prng.random().intRangeAtMost(usize, 0, adjectives.len - 1)];
-        return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ adj, n });
+        // Futurama-robot flavored, matching friendlyInstanceName's word list
+        // in cli.zig (cmdInit) so a fresh instance and a bare fallback name
+        // both read as the same kind of thing.
+        const bots = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
+        const bot = bots[prng.random().intRangeAtMost(usize, 0, bots.len - 1)];
+        return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ bot, n });
     }
 
     const ParsedAgent = struct {
@@ -1038,16 +1107,22 @@ test "agent.global_instructions_file parses and defaults empty" {
     const io = threaded.io();
 
     try dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{
-        \\  "default_provider": "ollama",
-        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
-        \\  "agent": { "global_instructions_file": "/home/op/.agents/AGENTS.md" }
-        \\}
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\global_instructions_file = "/home/op/.agents/AGENTS.md"
+        \\
         ,
     });
-    const cfg = try Config.load(io, arena, dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("/home/op/.agents/AGENTS.md", cfg.agent.global_instructions_file);
     try std.testing.expectEqualStrings("", (Agent{}).global_instructions_file);
 }
@@ -1066,25 +1141,37 @@ test "config load and merge" {
     const io = threaded.io();
 
     try dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{
-        \\  "default_provider": "deepseek",
-        \\  "providers": {
-        \\    "deepseek": { "kind": "openai_compat", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "models": { "deepseek-chat": { "max_tokens": 2048 } } },
-        \\    "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } }
-        \\  },
-        \\  "agent": { "max_iterations": 5 }
-        \\}
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\kind = "openai_compat"
+        \\base_url = "https://api.deepseek.com"
+        \\api_key_env = "DEEPSEEK_API_KEY"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\max_tokens = 2048
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\max_iterations = 5
+        \\
         ,
     });
-    const cfg = try Config.load(io, arena, dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("deepseek", cfg.default_provider);
     const ds = cfg.providers.getPtr("deepseek").?;
     try std.testing.expectEqual(ProviderKind.openai_compat, ds.kind);
     try std.testing.expectEqualStrings("https://api.deepseek.com", ds.base_url);
     try std.testing.expectEqualStrings("DEEPSEEK_API_KEY", ds.api_key_env.?);
-    // The legacy flat shape is normalized into a one-entry models map.
+    // A single flat models entry is normalized into a one-entry models map.
     try std.testing.expectEqualStrings("deepseek-chat", ds.activeModelName());
     try std.testing.expectEqual(@as(u32, 2048), ds.activeModel().max_tokens);
     try std.testing.expectEqual(@as(usize, 1), ds.models.count());
@@ -1110,7 +1197,7 @@ test "web.allow parses hostname entries onto Config" {
     try std.testing.expectEqualStrings("docs.example", cfg.web.allow[1]);
 }
 
-test "config.local.json web.allow replaces the global web allowlist" {
+test "config.local.toml web.allow replaces the global web allowlist" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1121,13 +1208,13 @@ test "config.local.json web.allow replaces the global web allowlist" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.json", .data =
-        \\{"web":{"allow":["global.example","keep.example"]}}
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+        \\web.allow = ["global.example", "keep.example"]
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.json", .data =
-        \\{"web":{"allow":["local.example"]}}
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+        \\web.allow = ["local.example"]
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
     try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
 }
@@ -1146,16 +1233,22 @@ test "confirm_writes parses its three values and rejects anything else" {
     const io = threaded.io();
 
     try dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{
-        \\  "default_provider": "ollama",
-        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
-        \\  "agent": { "confirm_writes": "browser" }
-        \\}
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\confirm_writes = "browser"
+        \\
         ,
     });
-    const cfg = try Config.load(io, arena, dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(ConfirmWrites.browser, cfg.agent.confirm_writes);
 
     // Left out, the default keeps headless runs and the improve loop ungated.
@@ -1164,16 +1257,22 @@ test "confirm_writes parses its three values and rejects anything else" {
     // A typo must fail the load, not silently run without the gate the
     // config asked for.
     try dir.writeFile(io, .{
-        .sub_path = "bad.json",
+        .sub_path = "bad.toml",
         .data =
-        \\{
-        \\  "default_provider": "ollama",
-        \\  "providers": { "ollama": { "base_url": "http://127.0.0.1:11434/v1", "models": { "llama3.1": {} } } },
-        \\  "agent": { "confirm_writes": "sometimes" }
-        \\}
+        \\default_provider = "ollama"
+        \\
+        \\[providers.ollama]
+        \\base_url = "http://127.0.0.1:11434/v1"
+        \\
+        \\[models."ollama/llama3.1"]
+        \\provider = "ollama"
+        \\
+        \\[agent]
+        \\confirm_writes = "sometimes"
+        \\
         ,
     });
-    try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.json", "config.local.json"));
+    try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
 /// Hosts a tool may reach when its descriptor sets `network_from_config`.
@@ -1243,14 +1342,15 @@ test "legacy flat provider fields are rejected with a pointer to the fix" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"flat","providers":{"flat":{"base_url":"https://example.test","model":"m1","context_window":4096}}}
+        \\default_provider = "flat"
+        \\providers = { flat = { base_url = "https://example.test", model = "m1", context_window = 4096 } }
         ,
     });
     try std.testing.expectError(
         error.ProviderLegacyModelFields,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
@@ -1265,12 +1365,14 @@ test "a single model needs no default_model" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"solo","providers":{"solo":{"base_url":"https://example.test","models":{"only":{"max_tokens":128}}}}}
+        \\default_provider = "solo"
+        \\providers = { solo = { base_url = "https://example.test" } }
+        \\models = { "solo/only" = { provider = "solo", max_tokens = 128 } }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
     const solo = cfg.providers.getPtr("solo").?;
     try std.testing.expectEqualStrings("only", solo.activeModelName());
     try std.testing.expectEqual(@as(u32, 128), solo.activeModel().max_tokens);
@@ -1287,18 +1389,20 @@ test "a local override with only default_provider keeps the base providers" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}},"b":{"base_url":"https://b.test","models":{"m":{}}}}}
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" }, b = { base_url = "https://b.test" } }
+        \\models = { "a/m" = { provider = "a" }, "b/m" = { provider = "b" } }
         ,
     });
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.local.json",
+        .sub_path = "config.local.toml",
         .data =
-        \\{"default_provider":"b"}
+        \\default_provider = "b"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     // The point of the test: switching the default provider from a local file
     // must not look like a config that defines no providers.
     try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
@@ -1317,18 +1421,21 @@ test "partial local agent keeps base tools_dir" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"tools_dir":"tools/manifests","max_iterations":30}}
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { tools_dir = "tools/manifests", max_iterations = 30 }
         ,
     });
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.local.json",
+        .sub_path = "config.local.toml",
         .data =
-        \\{"agent":{"sandbox_root":"."}}
+        \\agent = { sandbox_root = "." }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
@@ -1345,12 +1452,15 @@ test "agent.git_remote_ops and exec_pattern_allow parse from config" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"git_remote_ops":true,"exec_pattern_allow":["gh pr create*","gh pr merge*"]}}
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { git_remote_ops = true, exec_pattern_allow = ["gh pr create*", "gh pr merge*"] }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "config.local.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.agent.git_remote_ops);
     try std.testing.expectEqual(@as(usize, 2), cfg.agent.exec_pattern_allow.len);
     try std.testing.expectEqualStrings("gh pr create*", cfg.agent.exec_pattern_allow[0]);
@@ -1362,12 +1472,14 @@ test "agent.git_remote_ops and exec_pattern_allow parse from config" {
     var tmp2 = std.testing.tmpDir(.{});
     defer tmp2.cleanup();
     try tmp2.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}}}
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.json", "config.local.json");
+    const cfg2 = try Config.load(io, arena2.allocator(), tmp2.dir, "config.toml", "config.local.toml");
     try std.testing.expect(!cfg2.agent.git_remote_ops);
     try std.testing.expectEqual(@as(usize, 0), cfg2.agent.exec_pattern_allow.len);
 }
@@ -1382,14 +1494,17 @@ test "exec_pattern_allow rejects git patterns to protect the deny list" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"a","providers":{"a":{"base_url":"https://a.test","models":{"m":{}}}},"agent":{"exec_pattern_allow":["git checkout*"]}}
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { exec_pattern_allow = ["git checkout*"] }
         ,
     });
     try std.testing.expectError(
         error.ExecPatternAllowGitForbidden,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "config.local.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml"),
     );
 }
 
@@ -1403,16 +1518,18 @@ test "a vertex_anthropic provider missing project/location is rejected at load" 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"v","providers":{"v":{"kind":"vertex_anthropic","base_url":"https://x.test","api_key_env":"TOK","models":{"m":{}}}}}
+        \\default_provider = "v"
+        \\providers = { v = { kind = "vertex_anthropic", base_url = "https://x.test", api_key_env = "TOK" } }
+        \\models = { "v/m" = { provider = "v" } }
         ,
     });
     // Caught at startup rather than as error.VertexProjectMissing on the
     // first request, far from the config that caused it.
     try std.testing.expectError(
         error.VertexProjectMissing,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
@@ -1426,14 +1543,16 @@ test "a vertex_anthropic provider missing both credential sources is rejected at
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"v","providers":{"v":{"kind":"vertex_anthropic","base_url":"https://x.test","project":"p","location":"us-central1","models":{"m":{}}}}}
+        \\default_provider = "v"
+        \\providers = { v = { kind = "vertex_anthropic", base_url = "https://x.test", project = "p", location = "us-central1" } }
+        \\models = { "v/m" = { provider = "v" } }
         ,
     });
     try std.testing.expectError(
         error.VertexCredentialMissing,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
@@ -1447,14 +1566,15 @@ test "a provider with no models is rejected at load" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"empty","providers":{"empty":{"base_url":"https://example.test"}}}
+        \\default_provider = "empty"
+        \\providers = { empty = { base_url = "https://example.test" } }
         ,
     });
     try std.testing.expectError(
         error.ProviderMissingModel,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
@@ -1468,15 +1588,17 @@ test "a default_model with no matching entry is rejected at load" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","default_model":"absent","models":{"present":{}}}}}
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://x.test", default_model = "absent" } }
+        \\models = { "p/present" = { provider = "p" } }
         ,
     });
     // Caught at startup rather than at the first request.
     try std.testing.expectError(
         error.ProviderDefaultModelUnknown,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
@@ -1490,16 +1612,18 @@ test "a default_provider naming no provider is rejected at load" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"typo","providers":{"real":{"base_url":"https://x.test","models":{"m":{}}}}}
+        \\default_provider = "typo"
+        \\providers = { real = { base_url = "https://x.test" } }
+        \\models = { "real/m" = { provider = "real" } }
         ,
     });
     // A typo'd default_provider must fail at startup, not on the first chat
     // request from whichever caller happens to run first.
     try std.testing.expectError(
         error.DefaultProviderUnknown,
-        Config.load(io, arena_state.allocator(), tmp.dir, "config.json", "missing.json"),
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
@@ -1514,12 +1638,15 @@ test "agent.tool_catalog and hot_tools load from config" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","models":{"m":{}}}},"agent":{"tool_catalog":false,"hot_tools":3}}
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://x.test" } }
+        \\models = { "p/m" = { provider = "p" } }
+        \\agent = { tool_catalog = false, hot_tools = 3 }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqual(false, cfg.agent.tool_catalog);
     try std.testing.expectEqual(@as(u32, 3), cfg.agent.hot_tools);
 }
@@ -1535,14 +1662,17 @@ test "an unknown key in a known section does not fail the load" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(io, .{
-        .sub_path = "config.json",
+        .sub_path = "config.toml",
         .data =
-        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","models":{"m":{}}}},"agent":{"mx_iterations":5}}
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://x.test" } }
+        \\models = { "p/m" = { provider = "p" } }
+        \\agent = { mx_iterations = 5 }
         ,
     });
     // A misspelled key only warns (logged, not asserted here); the load must
     // still succeed with the real default rather than silently misbehaving.
-    const cfg = try Config.load(io, arena, tmp.dir, "config.json", "missing.json");
+    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqual(@as(u32, 24), cfg.agent.max_iterations);
 }
 

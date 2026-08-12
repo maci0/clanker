@@ -123,9 +123,9 @@ fn askPeer(name: []const u8, question: []const u8, options: []const []const u8) 
 
 /// The configured URL of a peer by name.
 ///
-/// The peers live in the harness config on disk, not in `lib.config()` — that
+/// The peers live in the harness config, not in `lib.config()` — that
 /// returns this plugin's own settings — so they are read the same way the
-/// peers tool reads them, with config.local winning.
+/// peers tool reads them, through the host's already-merged config.
 const ConfigFile = struct {
     peers: []const struct {
         name: []const u8 = "",
@@ -134,15 +134,9 @@ const ConfigFile = struct {
 };
 
 fn peerUrl(name: []const u8) ?[]const u8 {
-    var found: ?[]const u8 = null;
-    inline for (.{ "config", "config.local" }) |stem| {
-        if (lib.readConfigFile(stem)) |f| {
-            if (std.json.parseFromSliceLeaky(ConfigFile, lib.alloc, f.text, .{ .ignore_unknown_fields = true }) catch null) |cfg| {
-                for (cfg.peers) |peer| {
-                    if (std.mem.eql(u8, peer.name, name) and peer.url.len > 0) found = peer.url;
-                }
-            }
-        }
+    const cfg = std.json.parseFromSliceLeaky(ConfigFile, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch return null;
+    for (cfg.peers) |peer| {
+        if (std.mem.eql(u8, peer.name, name) and peer.url.len > 0) return peer.url;
     }
-    return found;
+    return null;
 }
