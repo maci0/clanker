@@ -179,10 +179,13 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       1.3); this REPL has no route for a task that needs one.
 - [ ] **Plan mode toggle.** `Agent.plan_mode` exists and the web UI toggles it
       (webui 2.2); nothing here sets it, so no propose-then-apply flow.
-- [ ] **Inline `!shell` escape.** grok/kimi/opencode (and Pi) run a shell line
-      with a `!` prefix without leaving the loop; here a bare `!cmd` falls
-      through to the LLM as a task. Intercept it in `submit()` before
-      `parseCommand`, route through the sandboxed `exec` path.
+- [x] **Inline `!shell` escape.** grok/kimi/opencode (and Pi) run a shell line
+      with a `!` prefix without leaving the loop. Shipped: `submit()`
+      intercepts a leading `!` before `parseCommand` (`parseShellEscape`),
+      `splitShellArgs` builds one fixed argv, and `host.execUnderPolicy` runs
+      it past the same `ck_exec` gate a tool goes through — not a shell, so no
+      pipes, globs, redirections or `$VAR`. The allowlist is the union of the
+      registry's `exec_allow` plus `agent.repl_exec_allow`; bare `!` prints it.
 - [ ] **Theme without an env var.** Colour (the RGB palettes) only lights up
       when `CLANKER_THEME` is set; the default 16-colour theme is bold-only. A
       `/theme` command or truecolor autodetection would surface it.

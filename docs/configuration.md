@@ -176,6 +176,7 @@ Run-loop and path settings. The commonly-touched keys:
 | `git_remote_ops` | false | Whether the `git` tool may run `push`/`merge`/`checkout` (the rest of the deny list still applies). |
 | `git_commit` | true | Commit promoted self-improvements with git. |
 | `exec_pattern_allow` | `[]` | Extra `ck_exec` command patterns to permit. |
+| `repl_exec_allow` | `[]` | Extra commands the REPL's `!cmd` escape may run, on top of the union of every tool's `exec_allow`. Widens the escape only, never a tool; the deny tokens and git's verb allowlist still apply. |
 | `seed` | 0 | RNG seed for reproducibility (`0` = time-seeded). |
 
 ## `[modules]`
