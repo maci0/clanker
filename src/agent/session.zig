@@ -537,6 +537,40 @@ test "listSessions reports the byte weight of each conversation" {
     try std.testing.expectEqual(@as(usize, 0), empty.len);
 }
 
+test "listSessions counts tool-call argument bytes toward the session weight" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try saveSession(io, allocator, arena, tmp.dir, .{
+        .id = "tool-weight",
+        .title = "tool calls",
+        .messages = &.{
+            .{ .role = .user, .content = "hello" },
+            .{ .role = .assistant, .tool_calls = &.{.{
+                .id = "c1",
+                .name = "read_file",
+                .arguments = "{\"path\":\"build.zig\"}",
+            }} },
+        },
+        .created = 1,
+        .updated = 2,
+    });
+
+    const list = try listSessions(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    // "hello" (5) + the tool-call arguments (20) = 25 bytes of transcript weight.
+    try std.testing.expectEqual(@as(usize, 25), list[0].bytes);
+    try std.testing.expectEqual(@as(usize, 2), list[0].messages);
+}
+
 test "rename and delete change only the selected saved session" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
