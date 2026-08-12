@@ -64,7 +64,7 @@ pair named by the runner or user.
   contract gap even if the code is otherwise correct.
 - **One tool, one implementation.** A capability expressed as two tools with
   overlapping purpose (not the deliberate one-op-per-tool-vs-one-multiplexed-
-  entry-point pattern documented for `board`/`board_*`) is a structural
+  entry-point pattern documented for `board`/`kanban_*`) is a structural
   finding, not a style nit — flag it, but do not merge tools yourself.
 - **Do not change a tool's response shape** to fix a mismatch without
   checking every caller (`toolText`/`toolJson` in `cli.zig`, the web UI, MCP)
@@ -179,7 +179,7 @@ every `tools/manifests/*.tool.json` alongside its `tools/zig/*.zig` or
 
 ### F. Multi-descriptor tools (one wasm, several entry points)
 
-- [ ] The `board`/`board_*` pattern (one `board.wasm`, several
+- [ ] The `board`/`kanban_*` pattern (one `board.wasm`, several
       single-op descriptors plus one `internal: true` multiplexed entry
       point for the HTTP API) is the sanctioned shape for "the web UI needs
       one endpoint, the model needs several focused tools" — a new

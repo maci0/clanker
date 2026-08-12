@@ -191,15 +191,15 @@ peer keeps the message only when it subscribes to that room.
   marked `sequential` so concurrent tool calls never race on the log file.
 - Shared board: room-scoped `todo_*` (a `room` param on the shared list) was
   removed once the board covered the same need (see
-  `docs/adrs/0002-private-todos-vs-shared-board.md`). `board_add`, `board_move`,
-  `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`,
-  `board_cost`, `board_list`, `board_delete` (`tools/zig/board.zig`, one
+  `docs/adrs/0002-private-todos-vs-shared-board.md`). `kanban_add`, `kanban_move`,
+  `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`,
+  `kanban_cost`, `kanban_list`, `kanban_delete` (`tools/zig/board.zig`, one
   `board.wasm` module, one op each) work a shared Kanban board folded from
   the board room's chat log (see
   `docs/adrs/0001-board-is-a-chatroom.md`), with subtasks, dependencies, a
   work log and accrued cost per card. A move or claim is announced in the
   board's chatroom, so
-  `todo_*` with a `room` set now fails with a pointer to the `board_*`
+  `todo_*` with a `room` set now fails with a pointer to the `kanban_*`
   replacement.
 - Private sub-agent todos: `todo_*` tools called without a `room`
   operate on a per-nested-run in-memory list (`src/agent/private_todos.zig`),
@@ -323,7 +323,7 @@ changes as tools are added.
 | `arena` | `state/arena/` | Run a bounded, judged debate between two positions, or a 3-8 way Battle Royale, and return a verdict traceable to the move transcript. Rules live in `tools/zig/arena_match.zig` (host-tested); turns go through `ck_llm`, one bounded completion per move |
 | `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_blind.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
-| `board_add`, `board_move`, `board_claim`, `board_update`, `board_log`, `board_subtask`, `board_depend`, `board_cost`, `board_list`, `board_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
+| `kanban_add`, `kanban_move`, `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_list`, `kanban_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
 
 Internal tools, never offered to the model:
 
@@ -338,7 +338,7 @@ Internal tools, never offered to the model:
 | `cmd_autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`) |
 | `webui` | none | Serve the self-contained web UI (no external scripts or fonts) at `GET /` |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
-| `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `board_*` tools instead (same wasm, one op each) |
+| `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
 
 `tools/manifests/examples/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
 

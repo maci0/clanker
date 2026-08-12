@@ -1332,7 +1332,7 @@ const chat_history_page_size = 20;
 ///   subscribe: {"ok":true,"rooms":["dev",...]}
 /// Room-scoped todo_* ops were removed once the board covered that need
 /// (ADR 0002, docs/adrs/0002-private-todos-vs-shared-board.md); a todo_* op
-/// naming a "room" now fails with a pointer to the board_* tools below.
+/// naming a "room" now fails with a pointer to the kanban_* tools below.
 /// The only surviving todo_* path is a run's private list (sub-agent runs
 /// only; src/agent/private_todos.zig): same op names and response shapes,
 /// but in-memory, single-owner, and never fanned out.
@@ -1503,19 +1503,24 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         // append, the fan-out and the subscription filter. The branch near the
         // top of this function still handles a todo_* op with no room, which is
         // the run's own private list and genuinely a different thing.
-        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"room todo lists are board cards now: use board_add, board_move, board_claim or board_list. They fold the same room log, so nothing was lost, and a card also carries subtasks, dependencies, a work log and a cost.\"}");
+        return h.writeResult(bytes, "{\"ok\":false,\"error\":\"room todo lists are board cards now: use kanban_add, kanban_move, kanban_claim or kanban_list. They fold the same room log, so nothing was lost, and a card also carries subtasks, dependencies, a work log and a cost.\"}");
     }
     log.log(.warn, "[chat] unknown op '{s}'", .{op});
     return Err.invalid;
 }
 
 fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
-    // The board is one guest (board.wasm) behind eleven manifest names, and it
-    // needs two ops rather than one: it replicates each card into its room with
-    // "send" and folds that room's log back with "history" on every read.
-    // Matched exactly, or on the "board_" prefix — a bare startsWith("board")
-    // also grants any future tool whose name merely begins that way.
-    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "board_"))
+    // The board is one guest (board.wasm) behind eleven manifest names — the
+    // bare "board" entry point plus the ten kanban_* tools — and it needs two
+    // ops rather than one: it replicates each card into its room with "send"
+    // and folds that room's log back with "history" on every read.
+    // Matched exactly, or on the "kanban_" prefix — a bare
+    // startsWith("kanban") also grants any future tool whose name merely
+    // begins that way. Only the names that actually ship are listed: the
+    // board_* family was renamed to kanban_*, and the grant moved with it
+    // rather than accumulating both. The test below reads the names back out
+    // of the manifests, so the next rename cannot leave this behind again.
+    if (std.mem.eql(u8, tool_name, "board") or std.mem.startsWith(u8, tool_name, "kanban_"))
         return std.mem.eql(u8, op, "send") or std.mem.eql(u8, op, "history");
     // The janitor announces what it pruned into the room. Like the board it
     // ignores a failed chat call, so being denied here cost it its
@@ -4406,31 +4411,62 @@ test "ck_chat access covers every shipped caller, one op at a time" {
         try std.testing.expect(!chatAccessAllowed(c.tool, "rooms") or std.mem.eql(u8, c.op, "rooms"));
     }
 
-    // board.wasm is registered under eleven manifest names and needs two ops:
+    // board.wasm is registered under many manifest names and needs two ops:
     // "send" replicates a card into the room, "history" folds that log back on
     // read. Granting one op per tool broke replication silently, because the
     // board ignores a failed chat call — so this is pinned per name, not just
     // for the bare "board".
-    for ([_][]const u8{
-        "board",        "board_add",     "board_claim",  "board_cost",
-        "board_delete", "board_depend",  "board_list",   "board_log",
-        "board_move",   "board_subtask", "board_update",
-    }) |tool| {
-        try std.testing.expect(chatAccessAllowed(tool, "send"));
-        try std.testing.expect(chatAccessAllowed(tool, "history"));
+    //
+    // The names are read back out of the shipped manifests rather than written
+    // out here. A hardcoded list is exactly what failed: renaming the ten
+    // board_* manifests to kanban_* left this test green while every shipped
+    // board tool was denied both ops. Keying off the guest binary instead means
+    // a manifest rename lands in this loop automatically, and the gate below
+    // has to be taught the new name or this goes red.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_inst = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_inst.deinit();
+    const arena = arena_inst.allocator();
+
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), "tools/manifests");
+    // Same condition registry.zig's manifest tests skip on: no manifests in
+    // this checkout, so there is nothing to derive the names from.
+    if (reg.tools.count() == 0) return error.SkipZigTest;
+
+    // The bare entry point anchors the family: whatever wasm it names is the
+    // board guest, and every other manifest pointing at that wasm is one of its
+    // faces. If "board" itself is ever renamed this goes red rather than
+    // quietly testing nothing.
+    const anchor = reg.get("board") orelse {
+        std.debug.print("no 'board' manifest: this test keys the board guest's other names off it\n", .{});
+        return error.TestUnexpectedResult;
+    };
+    var board_names: usize = 0;
+    var reg_it = reg.tools.iterator();
+    while (reg_it.next()) |entry| {
+        const tool = entry.value_ptr.*;
+        if (!std.mem.eql(u8, tool.wasm, anchor.wasm)) continue;
+        board_names += 1;
+        try std.testing.expect(chatAccessAllowed(tool.name, "send"));
+        try std.testing.expect(chatAccessAllowed(tool.name, "history"));
         // Not a blanket grant: the board has no business subscribing or
         // enumerating rooms.
-        try std.testing.expect(!chatAccessAllowed(tool, "rooms"));
-        try std.testing.expect(!chatAccessAllowed(tool, "subscribe"));
-        try std.testing.expect(!chatAccessAllowed(tool, "todo_add"));
+        try std.testing.expect(!chatAccessAllowed(tool.name, "rooms"));
+        try std.testing.expect(!chatAccessAllowed(tool.name, "subscribe"));
+        try std.testing.expect(!chatAccessAllowed(tool.name, "todo_add"));
     }
+    // The entry point plus its per-op faces. Zero would mean the loop above
+    // asserted nothing at all.
+    try std.testing.expect(board_names > 1);
 
     // The janitor announces what it pruned, and only that.
     try std.testing.expect(chatAccessAllowed("cmd_janitor", "send"));
     try std.testing.expect(!chatAccessAllowed("cmd_janitor", "history"));
 
     // Fail closed for anything else, including a name that merely looks close.
-    for ([_][]const u8{ "", "chat", "boardroom", "unrelated", "arena" }) |tool| {
+    for ([_][]const u8{ "", "chat", "boardroom", "kanbanboard", "unrelated", "arena" }) |tool| {
         for ([_][]const u8{ "send", "history", "rooms", "subscribe", "todo_add" }) |op| {
             try std.testing.expect(!chatAccessAllowed(tool, op));
         }
