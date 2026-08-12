@@ -20,7 +20,7 @@
       "positions": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "The two stances as an array, instead of for/against. Exactly 2; 3-4 way matches are not implemented."
+        "description": "The two stances as an array, instead of for/against. Exactly 2; Battle Royale mode (3-8 combatants) is not implemented yet."
       },
       "provider_for": { "type": "string" },
       "provider_against": { "type": "string" },
@@ -47,7 +47,7 @@
   "config": {
     "max_rounds": 4,
     "judge": "self",
-    "max_tokens": 900
+    "max_tokens": 1400
   },
   "category": "agent",
   "config_editable": ["max_rounds", "judge", "max_tokens"],

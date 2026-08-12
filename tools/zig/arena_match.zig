@@ -38,6 +38,14 @@ pub const base_damage: u16 = 20;
 /// protocol — "never dropped silently").
 pub const weak_confidence: f64 = 0.15;
 
+/// Force ceiling for a move recovered from a reply that was cut off mid-JSON.
+/// A half-finished argument lands at most halfway: crediting it in full would
+/// make truncation free, and scoring it at `weak_confidence` would be a
+/// scoring artifact rather than a judgment — a truncated `counter` demoted to
+/// `attack` silently loses its block, which is the difference between taking a
+/// clean hit and negating it.
+pub const truncated_confidence: f64 = 0.5;
+
 /// Self-damage for conceding. Deliberately worse than taking a clean attack:
 /// conceding is giving up ground, and a combatant that concedes its way to a
 /// draw would make the move a tactic rather than an admission.
@@ -52,10 +60,13 @@ pub const default_max_rounds: u32 = 4;
 /// tool. Clamped rather than trusted, mirroring `rlm`'s `max_depth`.
 pub const round_ceiling: u32 = 12;
 
-/// Strict pairwise is the shipped shape; the protocol below is written for it.
-/// The ceiling is here so a 3-4 combatant request is refused at the boundary
-/// with a reason instead of silently doing something the rules don't define.
-pub const max_combatants: usize = 4;
+/// Battle Royale mode's ceiling (PRD phase 8, "with cheese"): 3-8 combatants
+/// in a free-for-all, layered on the pairwise core rather than replacing it.
+pub const max_combatants: usize = 8;
+
+/// Strict pairwise is the shipped shape and the protocol below is written for
+/// it. A request between the two counts is refused at the boundary with a
+/// reason, rather than silently doing something the rules don't define yet.
 pub const shipped_combatants: usize = 2;
 
 pub fn clampRounds(configured: u32) u32 {
@@ -77,6 +88,9 @@ pub const Reply = struct {
     /// the gameable half of self-judging — the third-party judge replaces it.
     confidence: f64 = 1.0,
     weak: bool = false,
+    /// The reply was cut off mid-JSON and repaired; the move is genuine, the
+    /// argument is only partly there.
+    truncated: bool = false,
 };
 
 /// Strips a fenced code block, if the reply is wrapped in one. Models asked
@@ -153,6 +167,83 @@ pub fn weakAttack(raw: []const u8) Reply {
     };
 }
 
+/// Closes a reply that was cut off mid-JSON, which is the shape a `max_tokens`
+/// truncation produces. Rather than hand-rolling a partial-JSON reader (and a
+/// second, subtly different unescaper), this re-closes the open string and the
+/// open braces and hands the result back to `std.json` — so `\n`, `\"` and
+/// `\uXXXX` inside a salvaged argument are decoded by the same code that
+/// decodes a complete one.
+///
+/// Returns null when the input was already balanced (nothing to repair) or is
+/// too mangled to close.
+fn repairTruncated(alloc: std.mem.Allocator, s: []const u8) ?[]const u8 {
+    const start = std.mem.indexOfScalar(u8, s, '{') orelse return null;
+    var depth: usize = 0;
+    var in_string = false;
+    var escaped = false;
+    for (s[start..]) |c| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (in_string) {
+            switch (c) {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                else => {},
+            }
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => depth -|= 1,
+            else => {},
+        }
+    }
+    // Balanced already: `objectSpan` handles that case, and repairing it here
+    // would only mask a genuine parse failure as a truncation.
+    if (depth == 0 and !in_string) return null;
+
+    var body = s[start..];
+    // A trailing lone backslash would escape the quote about to be appended.
+    if (escaped) body = body[0 .. body.len - 1];
+
+    var buf: std.ArrayList(u8) = .empty;
+    buf.appendSlice(alloc, body) catch return null;
+    if (in_string) buf.append(alloc, '"') catch return null;
+    for (0..depth) |_| buf.append(alloc, '}') catch return null;
+    return buf.items;
+}
+
+/// Reads a move object that has already been isolated. Returns null when it is
+/// not one, leaving the weak-attack fallback to the caller.
+fn parseMoveObject(alloc: std.mem.Allocator, span: []const u8, truncated: bool) ?Reply {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, span, .{}) catch return null;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return null,
+    };
+    const move_name = switch (obj.get("move") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+    const move = Move.parse(std.mem.trim(u8, move_name, " \t\r\n")) orelse return null;
+    const text = switch (obj.get("text") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+    // A move with no argument said nothing, so there is nothing for the
+    // transcript to keep and the raw reply is the more informative record.
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) return null;
+
+    var reply = Reply{ .move = move, .text = text, .truncated = truncated };
+    if (optFloat(obj, "confidence")) |c| reply.confidence = std.math.clamp(c, 0.0, 1.0);
+    if (optFloat(obj, "opponent_landed")) |c| reply.opponent_landed = std.math.clamp(c, 0.0, 1.0);
+    if (truncated) reply.confidence = @min(reply.confidence, truncated_confidence);
+    return reply;
+}
+
 /// Parses one combatant reply. Never fails: anything that is not a valid move
 /// object comes back as a weak `attack` carrying the raw text.
 ///
@@ -160,29 +251,16 @@ pub fn weakAttack(raw: []const u8) Reply {
 /// points into `raw` or into allocator memory that outlives the call, so the
 /// caller must keep both alive.
 pub fn parseReply(alloc: std.mem.Allocator, raw: []const u8) Reply {
-    const span = objectSpan(stripFence(raw)) orelse return weakAttack(raw);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, span, .{}) catch return weakAttack(raw);
-    const obj = switch (parsed) {
-        .object => |o| o,
-        else => return weakAttack(raw),
-    };
-    const move_name = switch (obj.get("move") orelse return weakAttack(raw)) {
-        .string => |s| s,
-        else => return weakAttack(raw),
-    };
-    const move = Move.parse(std.mem.trim(u8, move_name, " \t\r\n")) orelse return weakAttack(raw);
-    const text = switch (obj.get("text") orelse return weakAttack(raw)) {
-        .string => |s| s,
-        else => return weakAttack(raw),
-    };
-    // A move with no argument said nothing; the raw reply is more informative
-    // than an empty string, so it takes the weak path too.
-    if (std.mem.trim(u8, text, " \t\r\n").len == 0) return weakAttack(raw);
-
-    var reply = Reply{ .move = move, .text = text };
-    if (optFloat(obj, "confidence")) |c| reply.confidence = std.math.clamp(c, 0.0, 1.0);
-    if (optFloat(obj, "opponent_landed")) |c| reply.opponent_landed = std.math.clamp(c, 0.0, 1.0);
-    return reply;
+    const body = stripFence(raw);
+    if (objectSpan(body)) |span| {
+        if (parseMoveObject(alloc, span, false)) |reply| return reply;
+    } else if (repairTruncated(alloc, body)) |repaired| {
+        // A reply cut off mid-argument still chose a move, and that choice is
+        // load-bearing: scoring a truncated `block` as an `attack` would hand
+        // its opponent damage the combatant did try to negate.
+        if (parseMoveObject(alloc, repaired, true)) |reply| return reply;
+    }
+    return weakAttack(raw);
 }
 
 /// A third-party judge's score for one move. `landed` replaces the mover's
@@ -485,7 +563,8 @@ test "parseReply falls back to a weak attack, never dropping the reply" {
         "{\"move\":\"attack\",\"text\":\"   \"}", // empty text
         "{\"text\":\"no move field\"}",
         "{\"move\":42,\"text\":\"wrong type\"}",
-        "{\"move\":\"attack\",\"text\":\"unbalanced",
+        "{\"move\":\"headbutt\",\"text\":\"truncated, and not a move",
+        "{\"move\":\"attack\",\"text\":",
         "",
     };
     for (cases) |raw| {
@@ -514,6 +593,53 @@ test "parseReply digs the move object out of a wrapper" {
         try std.testing.expectEqualStrings("wrapped in an array", r.text);
         try std.testing.expect(!r.weak);
     }
+}
+
+test "parseReply salvages the move from a reply truncated mid-argument" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Exactly what a max_tokens cutoff looks like: a real move, a real
+    // argument, no closing quote or brace. The move must survive — a truncated
+    // counter scored as a plain attack loses its block, which is the
+    // difference between negating a hit and eating it.
+    const raw = "{\"move\":\"counter\",\"text\":\"Sequential append beats random small writes; we batch and fsync once";
+    const r = parseReply(arena.allocator(), raw);
+    try std.testing.expectEqual(Move.counter, r.move);
+    try std.testing.expect(r.truncated);
+    try std.testing.expect(!r.weak);
+    try std.testing.expectEqual(truncated_confidence, r.confidence);
+    try std.testing.expectEqualStrings("Sequential append beats random small writes; we batch and fsync once", r.text);
+}
+
+test "parseReply decodes escapes in a salvaged reply the same way as a whole one" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // The repair hands the closed text back to std.json rather than unescaping
+    // by hand, so \n and \" decode in a truncated reply too.
+    const r = parseReply(arena.allocator(), "{\"move\":\"block\",\"text\":\"line one\\nsaid \\\"this\\\" and");
+    try std.testing.expectEqual(Move.block, r.move);
+    try std.testing.expect(r.truncated);
+    try std.testing.expectEqualStrings("line one\nsaid \"this\" and", r.text);
+}
+
+test "parseReply caps a truncated reply's self-reported force" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Claiming full force in the part that survived must not pay: truncation
+    // would otherwise be a way to make a cheap move look like a strong one.
+    const r = parseReply(arena.allocator(), "{\"confidence\":1.0,\"move\":\"attack\",\"text\":\"cut off here");
+    try std.testing.expectEqual(truncated_confidence, r.confidence);
+    // A lower self-report is still honoured; the cap is a ceiling, not a value.
+    const low = parseReply(arena.allocator(), "{\"confidence\":0.2,\"move\":\"attack\",\"text\":\"cut off here");
+    try std.testing.expectEqual(@as(f64, 0.2), low.confidence);
+}
+
+test "parseReply prefers a balanced object over the repair path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const r = parseReply(arena.allocator(), "{\"move\":\"attack\",\"text\":\"complete\"}");
+    try std.testing.expect(!r.truncated);
+    try std.testing.expectEqual(@as(f64, 1.0), r.confidence);
 }
 
 test "parseReply clamps out-of-range confidences" {
@@ -721,8 +847,11 @@ test "validatePositions refuses one side, duplicates, blanks and unshipped count
     try std.testing.expectError(error.TooFewPositions, validatePositions(&.{}));
     try std.testing.expectError(error.DuplicatePosition, validatePositions(&.{ "a", " a " }));
     try std.testing.expectError(error.EmptyPosition, validatePositions(&.{ "a", "  " }));
+    // Between shipped (2) and Battle Royale's ceiling (8): a real mode that is
+    // not built yet, told apart from a count no mode will ever support.
     try std.testing.expectError(error.UnsupportedCount, validatePositions(&.{ "a", "b", "c" }));
-    try std.testing.expectError(error.TooManyPositions, validatePositions(&.{ "a", "b", "c", "d", "e" }));
+    try std.testing.expectError(error.UnsupportedCount, validatePositions(&.{ "a", "b", "c", "d", "e", "f", "g", "h" }));
+    try std.testing.expectError(error.TooManyPositions, validatePositions(&.{ "a", "b", "c", "d", "e", "f", "g", "h", "i" }));
 }
 
 test "isSafeId rejects anything that could leave state/arena/" {

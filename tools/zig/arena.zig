@@ -41,7 +41,7 @@ const Settings = struct {
     /// 120-word move on purpose — a reasoning model spends tokens before it
     /// writes anything, and a turn truncated to nothing is scored as a
     /// forfeited round, which is a worse outcome than a slightly dearer call.
-    max_tokens: u32 = 900,
+    max_tokens: u32 = 1400,
 };
 
 /// Cap for one judge call. A judgment is two numbers and a sentence.
@@ -77,6 +77,7 @@ const MoveRecord = struct {
     text: []const u8,
     confidence: f64,
     weak: bool,
+    truncated: bool,
     forfeit: bool,
     err: []const u8,
     blocked: u16,
@@ -462,6 +463,7 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
                     .text = "(no reply)",
                     .confidence = 0,
                     .weak = false,
+                    .truncated = false,
                     .forfeit = true,
                     .err = no_reply,
                     .blocked = 0,
@@ -514,6 +516,7 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
                 .text = reply.text,
                 .confidence = confidence,
                 .weak = reply.weak,
+                .truncated = reply.truncated,
                 .forfeit = false,
                 .err = "",
                 .blocked = o.blocked,
@@ -564,8 +567,8 @@ fn validate(out: *lib.Out, positions: []const []const u8) !?void {
             error.TooFewPositions => "a debate needs two distinct positions: pass \"for\" and \"against\"",
             error.DuplicatePosition => "the two positions are identical — there is nothing to argue",
             error.EmptyPosition => "a position cannot be blank",
-            error.UnsupportedCount => "only 2 combatants are supported; 3-4 way matches are not implemented",
-            error.TooManyPositions => "at most 2 positions (3-4 way matches are not implemented)",
+            error.UnsupportedCount => "only 2 combatants are supported so far; Battle Royale mode (3-8) is not implemented yet",
+            error.TooManyPositions => "at most 8 positions, and only 2 are supported so far",
         });
         return null;
     };
@@ -692,6 +695,10 @@ fn writeMatchJson(
             try s.write(mv.confidence);
             try s.objectField("weak");
             try s.write(mv.weak);
+            if (mv.truncated) {
+                try s.objectField("truncated");
+                try s.write(true);
+            }
             try s.objectField("blocked");
             try s.write(mv.blocked);
             try s.objectField("damage_taken");
@@ -833,6 +840,7 @@ fn renderText(
             if (mv.round != round) continue;
             try o.print("  {s} — {s}", .{ setup.labels[mv.combatant], mv.move });
             if (mv.weak) try o.writeAll(" (unparsed, scored weak)");
+            if (mv.truncated) try o.writeAll(" (cut off, force capped)");
             try o.print("  {d} HP", .{mv.hp_after});
             if (mv.taken > 0) try o.print(" (-{d})", .{mv.taken});
             if (mv.blocked > 0) try o.print(" (blocked {d})", .{mv.blocked});

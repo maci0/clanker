@@ -1425,7 +1425,7 @@ test "arena wasm tool refuses a match without two distinct sides" {
         .{ .input = "{\"question\":\"q\",\"against\":\"b\"}", .want = "two distinct positions" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\" a \"}", .want = "identical" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"  \"}", .want = "cannot be blank" },
-        .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"c\"]}", .want = "not implemented" },
+        .{ .input = "{\"question\":\"q\",\"positions\":[\"a\",\"b\",\"c\"]}", .want = "Battle Royale" },
         .{ .input = "{\"question\":\"q\",\"for\":\"a\",\"against\":\"b\",\"judge\":\"jury\"}", .want = "judge must be" },
     };
     for (cases) |c| {
