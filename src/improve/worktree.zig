@@ -164,6 +164,14 @@ pub const Worktree = struct {
             else => false,
         };
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+
+        // Re-copy untracked shared state files so subsequent iterations of
+        // the improve loop see fresh cross-run memory (learnings, autolearn
+        // usage, plugin config, token stats, reasoning traces). These are
+        // gitignored, so `git reset --hard` above does not touch them; they
+        // go stale the moment the main tree accumulates anything after the
+        // worktree was created.
+        refreshSharedStateCopies(gpa, io, self.path);
     }
 };
 
@@ -330,6 +338,21 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
         defer gpa.free(dst);
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err|
             log.log(.warn, "improve-self: could not copy {s} into the worktree: {s}", .{ name, @errorName(err) });
+    }
+}
+
+/// Re-copies the untracked state files that `linkSharedState` originally
+/// populated. Called after a successful `resyncLocalBranch` so the next
+/// improve iteration works with current cross-run memory rather than the
+/// snapshot taken when the worktree was first created.
+fn refreshSharedStateCopies(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) void {
+    for ([_][]const u8{ "state/learnings.md", "state/autolearn.jsonl", "state/plugin_config.json", "state/token_stats.jsonl", "state/reasoning.jsonl" }) |name| {
+        const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
+        defer gpa.free(data);
+        const dst = std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name }) catch continue;
+        defer gpa.free(dst);
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err|
+            log.log(.warn, "improve-self: could not refresh {s} in worktree after merge-back: {s}", .{ name, @errorName(err) });
     }
 }
 
