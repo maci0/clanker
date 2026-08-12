@@ -1208,14 +1208,24 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
 fn reportGate(label: []const u8, result: gate_checks.GateResult) bool {
     log.log(.info, "{s}: {s}", .{ label, if (result.ok) "PASS" else "FAIL" });
     if (result.ok or result.detail.len == 0) return result.ok;
-    // Tail, not head: a build or test failure's useful lines are the last
-    // ones, and the captured output can be the whole compile log.
-    const max_reported = 8 * 1024;
-    const detail = if (result.detail.len > max_reported)
-        result.detail[result.detail.len - max_reported ..]
-    else
-        result.detail;
-    log.log(.error_, "{s} failed:\n{s}", .{ label, detail });
+    // Head and tail, not one or the other: `zig build test --summary all`
+    // prints the failing test's diagnostics first and then a step tree of
+    // every target, which on this repo is tens of kilobytes on its own. A
+    // tail alone is all tree and no reason; a head alone misses a failure
+    // reported late.
+    const head_len = 32 * 1024;
+    const tail_len = 64 * 1024;
+    const d = result.detail;
+    if (d.len <= head_len + tail_len) {
+        log.log(.error_, "{s} failed:\n{s}", .{ label, d });
+    } else {
+        log.log(.error_, "{s} failed:\n{s}\n... [{d} bytes elided] ...\n{s}", .{
+            label,
+            d[0..head_len],
+            d.len - head_len - tail_len,
+            d[d.len - tail_len ..],
+        });
+    }
     return false;
 }
 
