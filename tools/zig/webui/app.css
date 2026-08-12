@@ -674,6 +674,63 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-width: var(--measure);
 }
+/* The run's own private checklist (features/todos.js), streamed as `todos`
+   events while the run works. Only palette variables here, so it inherits
+   every flavour the sheet defines rather than pinning colours of its own. */
+.turn-todos {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  max-width: var(--measure);
+}
+.turn-todos:empty { display: none; margin: 0; padding: 0; border: 0; }
+.turn-todos .todos-head {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  font-family: var(--sans); font-size: var(--step-0);
+}
+.turn-todos .todos-label { font-weight: 600; }
+.turn-todos .todo-list {
+  list-style: none; margin: var(--space-1) 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.turn-todos .todo-item {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  font-family: var(--sans); font-size: var(--step-0);
+  overflow-wrap: anywhere;
+}
+/* Drawn, not a glyph: a bordered box that fills in and gains a tick as the
+   item closes. The word beside it carries the same state for anyone the
+   stylesheet or the colour never reaches. */
+.turn-todos .todo-box {
+  flex: none; position: relative;
+  width: 0.75em; height: 0.75em; border-radius: var(--radius-sm);
+  border: 1px solid var(--fg-muted);
+  align-self: center;
+}
+.turn-todos .todo-item[data-status="claimed"] .todo-box {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.turn-todos .todo-item[data-status="closed"] .todo-box {
+  border-color: var(--ok-fill); background: var(--ok-fill);
+}
+.turn-todos .todo-item[data-status="closed"] .todo-box::after {
+  content: ""; position: absolute; inset: 0;
+  margin: auto; width: 0.2em; height: 0.4em;
+  border: solid var(--surface); border-width: 0 2px 2px 0;
+  transform: translateY(-0.08em) rotate(45deg);
+}
+.turn-todos .todo-title { flex: 1 1 auto; }
+.turn-todos .todo-item[data-status="closed"] .todo-title {
+  color: var(--fg-muted); text-decoration: line-through;
+}
+.turn-todos .todo-state {
+  flex: none; font-family: var(--mono); font-size: var(--step--1);
+  color: var(--fg-muted);
+}
+.turn-todos .todo-item[data-status="closed"] .todo-state { color: var(--ok); }
 .turn-answer {
   font-family: var(--sans); font-size: 15px; line-height: 1.65;
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;

@@ -655,6 +655,117 @@ test "chat wasm tool routes roomless todo ops to the private list" {
     try std.testing.expect(std.mem.find(u8, out, "host wiring error") != null);
 }
 
+test "todo_* through the real wasm tool moves List.rev and yields the browser's payload" {
+    // The other half of the checklist-in-the-browser path (webui PRD 0006
+    // phase 3.3): the agent loop decides whether to push a `todos` event by
+    // watching `List.rev`, and serializes with `listJson`. Both are driven
+    // here from real guest tool calls rather than from applyTodoOp directly,
+    // so a change in the guest's argument handling cannot silently stop the
+    // browser from ever seeing an update.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var cfg = config_mod.Config{};
+    var todos = private_todos_mod.List{ .alloc = std.testing.allocator };
+    defer todos.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const Step = struct { op: []const u8, args: []const u8, moves: bool };
+    const steps = [_]Step{
+        .{ .op = "todo_add", .args = "{\"title\":\"read build.zig\"}", .moves = true },
+        .{ .op = "todo_add", .args = "{\"title\":\"<b>patch</b> it\"}", .moves = true },
+        // Reading the list is not a change, so a run that polls todo_list in
+        // a loop must not push an event per poll.
+        .{ .op = "todo_list", .args = "{}", .moves = false },
+        .{ .op = "todo_close", .args = "{\"todo\":\"p1\"}", .moves = true },
+        .{ .op = "todo_close", .args = "{\"todo\":\"p1\"}", .moves = false },
+    };
+    for (steps) |step| {
+        const before = todos.rev;
+        var sb = host.Sandbox{
+            .gpa = std.testing.allocator,
+            .io = io,
+            .root_dir = "/tmp/ck-sandbox-test",
+            .network_allow = &.{},
+            .environ_map = &env_map,
+            .cfg = &cfg,
+            .private_todos = &todos,
+            .config_json = try std.fmt.allocPrint(std.testing.allocator, "{{\"op\":\"{s}\"}}", .{step.op}),
+            .tool_self_name = step.op,
+        };
+        defer std.testing.allocator.free(@constCast(sb.config_json));
+        const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+        defer mod.deinit();
+        const out = try mod.executeTool(step.args);
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+        try std.testing.expectEqual(step.moves, todos.rev != before);
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const json = try private_todos_mod.listJson(&todos, arena_state.allocator());
+    try std.testing.expectEqualStrings(
+        "[{\"todo\":\"p1\",\"title\":\"read build.zig\",\"status\":\"closed\"}," ++
+            "{\"todo\":\"p2\",\"title\":\"<b>patch</b> it\",\"status\":\"open\"}]",
+        json,
+    );
+}
+
+test "webui wasm tool serves every module the asset route names" {
+    // `clanker serve` cannot be driven in every environment, so this is the
+    // asset half of the routing proof: the route list in src/cli.zig decides
+    // whether a request is answered at all, and this decides what comes back.
+    // A module wired into one and not the other is the 404 that hid
+    // features/arena.js.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var cfg = config_mod.Config{};
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/webui.wasm", std.testing.allocator, .limited(8 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .tool_self_name = "webui",
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const Case = struct { path: []const u8, marker: []const u8 };
+    for ([_]Case{
+        .{ .path = "/webui/features/todos.js", .marker = "renderTurnTodos" },
+        .{ .path = "/webui/features/arena.js", .marker = "export" },
+        .{ .path = "/webui/features/prompts.js", .marker = "export" },
+    }) |case| {
+        const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"path\":\"{s}\"}}", .{case.path});
+        defer std.testing.allocator.free(args);
+        const out = try mod.executeTool(args);
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.find(u8, out, "text/javascript") != null);
+        try std.testing.expect(std.mem.find(u8, out, case.marker) != null);
+        // The page is the catch-all, so a module that fell out of assetFor
+        // comes back as index.html with a 200 rather than an error.
+        try std.testing.expect(std.mem.find(u8, out, "<!doctype html>") == null);
+    }
+}
+
 fn stubParentAnswer(ctx: *anyopaque, gpa: std.mem.Allocator, question: []const u8, options: []const []const u8) anyerror![]const u8 {
     _ = ctx;
     _ = question;

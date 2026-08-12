@@ -11,7 +11,7 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run.
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
 
 ### Interactive UX (REPL, `clanker run`)
 
@@ -701,6 +701,8 @@ With `"stream": true`, the response body is `text/plain` and framed line-by-line
 With `"stream": true` the run can also ask: when the agent calls `ask_user`, an `{"type":"ask","id":n,"question":"...","options":[...]}` event goes down the stream and the run blocks until `POST /api/ask` with `{"id": n, "answer": "<one of the options>"}` resolves it — any other answer is refused with 400. An unanswered question times out after `agent.ask_timeout_seconds` (default 120) and the tool gets the same "nobody attached" answer a headless run gets, so a closed tab degrades to the model deciding for itself.
 
 With `agent.confirm_writes` set to `"browser"` or `"always"`, a streaming run also confirms: before a write-capable tool call runs, a `{"type":"confirm","id":n,"tool":"git","args_preview":"...","options":["allow","deny"]}` event goes down the stream and the run blocks until `POST /api/ask` answers `"allow"` or `"deny"` (the same endpoint and the same byte-for-byte option check as `ask`). The preview is the call's arguments truncated to 400 bytes. Anything short of an explicit `"allow"` — a deny, a timeout, a closed tab — refuses the call, and the model is told the user declined rather than left hanging.
+
+A streaming run also reports its own checklist. Whenever a `todo_*` call changes the run's private todo list, a `{"type":"todos","todos":[{"todo":"p1","title":"...","status":"open|claimed|closed"}]}` event goes down the stream and the web UI renders it as a checklist in the turn card. It is the whole list every time, not a delta, so a client that missed an event is never out of step. Nothing is persisted and there is no endpoint to fetch it from: the list lives in memory for the duration of the run (see [prds/0003-run-todos.md](prds/0003-run-todos.md)), and reading it with `todo_list` is not a change, so a run that polls its own list does not emit an event per poll. Shared, durable work is the board (`/api/board`), not this.
 
 `error` events (`{"type":"error","message":"..."}`) can appear instead of `done` if the run fails mid-stream. A client must buffer on `\n` and only treat a *complete* line starting with `0x01` as an event — a naive per-chunk check can split an event across two reads. The web UI's line splitter (`tools/zig/webui/index.html`) is the reference implementation.
 

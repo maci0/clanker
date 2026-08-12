@@ -78,6 +78,9 @@ For full documentation, see [docs/README.md](docs/README.md).
 The Web UI is a browser interface to the agent: a real multi-turn chat backed
 by the same sessions, providers, tools and execution graphs as the CLI. It is
 served by the internal `webui` WASM tool when `modules.webui` is on (default).
+A run's private checklist shows up live in its turn card as the agent adds,
+claims and closes items, so a multi-step plan is visible while it is worked
+rather than only in the answer.
 
 Start it with `clanker serve` (default port `17921`, `--port` to change it),
 then open the URL it prints (`http://127.0.0.1:17921/webui`):

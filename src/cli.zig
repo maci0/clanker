@@ -17,6 +17,7 @@ const mcp = @import("mcp/server.zig");
 const session = @import("agent/session.zig");
 const autolearn = @import("agent/autolearn.zig");
 const subagent = @import("agent/subagent.zig");
+const private_todos = @import("agent/private_todos.zig");
 const graph = @import("agent/graph.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
@@ -3009,7 +3010,8 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     defer server.socket.close(io);
 
     // Parked for serveConfirm, which frees answers that connection threads
-    // duped with this same allocator (see handleAsk).
+    // duped with this same allocator (see handleAsk), and for runStreamTodos,
+    // whose event line is too large for a stack buffer.
     serve_gpa = gpa;
     // Config is immutable for the server lifetime. Publish the callback's
     // timeout before accepting connections instead of having every streaming
@@ -3202,10 +3204,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             return;
         }
         const is_webui = std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/webui") or
-            std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-            std.mem.eql(u8, path, "/webui/preact-boot.js") or
-            std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/tools.js") or std.mem.eql(u8, path, "/webui/core/overlay.js") or std.mem.eql(u8, path, "/webui/core/search.js") or std.mem.eql(u8, path, "/webui/core/composer.js") or std.mem.eql(u8, path, "/webui/core/scroll.js") or
-            std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or std.mem.eql(u8, path, "/webui/features/knowledge.js") or std.mem.eql(u8, path, "/webui/features/prompts.js") or
+            isWebuiAssetPath(path) or
             std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
@@ -3260,15 +3259,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_htm, &gzip_htm, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js")) {
             respondJs(gpa, stream, webui_vendor_signals, &gzip_signals, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and
-            (std.mem.eql(u8, path, "/webui/app.css") or std.mem.eql(u8, path, "/webui/app.js") or
-                std.mem.eql(u8, path, "/webui/preact-boot.js") or std.mem.eql(u8, path, "/webui/core/utils.js") or std.mem.eql(u8, path, "/webui/core/ui.js") or
-                std.mem.eql(u8, path, "/webui/core/icons.js") or std.mem.eql(u8, path, "/webui/core/dialog.js") or std.mem.eql(u8, path, "/webui/core/usage.js") or std.mem.eql(u8, path, "/webui/core/status.js") or std.mem.eql(u8, path, "/webui/core/attachments.js") or std.mem.eql(u8, path, "/webui/core/logs.js") or std.mem.eql(u8, path, "/webui/core/plugins.js") or std.mem.eql(u8, path, "/webui/core/palette.js") or std.mem.eql(u8, path, "/webui/core/modelpicker.js") or std.mem.eql(u8, path, "/webui/core/tools.js") or std.mem.eql(u8, path, "/webui/core/overlay.js") or std.mem.eql(u8, path, "/webui/core/search.js") or std.mem.eql(u8, path, "/webui/core/composer.js") or std.mem.eql(u8, path, "/webui/core/scroll.js") or std.mem.eql(u8, path, "/webui/core/vendor.js") or std.mem.eql(u8, path, "/webui/core/chat.js") or std.mem.eql(u8, path, "/webui/core/labels.js") or std.mem.eql(u8, path, "/webui/core/goals.js") or std.mem.eql(u8, path, "/webui/core/stream.js") or std.mem.eql(u8, path, "/webui/core/theme.js") or
-                std.mem.eql(u8, path, "/webui/lib/markdown.js") or std.mem.eql(u8, path, "/webui/lib/graph.js") or
-                std.mem.eql(u8, path, "/webui/lib/board.js") or std.mem.eql(u8, path, "/webui/features/fleet.js") or
-                std.mem.eql(u8, path, "/webui/features/board.js") or std.mem.eql(u8, path, "/webui/features/goals.js") or
-                std.mem.eql(u8, path, "/webui/features/knowledge.js") or std.mem.eql(u8, path, "/webui/features/prompts.js")))
-        {
+        } else if (std.mem.eql(u8, method, "GET") and isWebuiAssetPath(path)) {
             // Same tool, same comptime size guard, one file per language.
             handleWebuiAsset(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), headers_raw, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js")) {
@@ -4112,6 +4103,21 @@ fn runStreamToolResult(ms: u64) void {
     writeStreamEvent(fd, "tool_result", .{ .ms = ms });
 }
 
+/// The run's private todo list, pushed down its own stream whenever a `todo_*`
+/// call moves it (webui PRD 0006 phase 3.3). `todos_json` is already a JSON
+/// array from `private_todos.listJson`, so it is spliced in rather than
+/// re-encoded — `writeStreamEvent` would escape it into a string, and its
+/// 4 KiB stack buffer cannot hold a full list anyway (100 items x 512-char
+/// titles). Nothing is stored: the browser is watching an in-memory list that
+/// still dies with the run.
+fn runStreamTodos(todos_json: []const u8) void {
+    const fd = run_stream_socket orelse return;
+    const gpa = serve_gpa orelse return;
+    const line = std.fmt.allocPrint(gpa, "{s}{{\"type\":\"todos\",\"todos\":{s}}}\n", .{ stream_event_prefix, todos_json }) catch return;
+    defer gpa.free(line);
+    rawhttp.writeAllFd(fd, line);
+}
+
 // ---- ask bridge: ask_user over the /api/run stream ------------------------
 //
 // The REPL answers ask_user at the terminal; a streaming web run answers it
@@ -4682,6 +4688,64 @@ fn renderWebuiCached(
     return body;
 }
 
+/// Every asset of the comptime-embedded page bundle, by request path. Vendored
+/// files (`/webui/vendor/*`) and plugin assets (`/webui/plugins/*`) are served
+/// by their own routes and are deliberately not here.
+///
+/// One list, because there used to be two: the module gate (`is_webui`, which
+/// decides whether a disabled `modules.webui` should 404) and the asset route
+/// itself were hand-maintained copies of the same set, and
+/// `features/arena.js` — embedded and routed in `tools/zig/webui.zig` — was
+/// missing from both, so the Arena view's dynamic `import()` 404'd. Keeping
+/// the set in one place is what stops the next module from doing the same.
+/// `tools/zig/webui.zig`'s `assetFor` still has to learn each new path too;
+/// the test below walks the source tree and fails if a file exists that this
+/// list has never heard of.
+const webui_asset_paths = [_][]const u8{
+    "/webui/app.css",
+    "/webui/app.js",
+    "/webui/preact-boot.js",
+    "/webui/core/attachments.js",
+    "/webui/core/chat.js",
+    "/webui/core/composer.js",
+    "/webui/core/dialog.js",
+    "/webui/core/goals.js",
+    "/webui/core/icons.js",
+    "/webui/core/labels.js",
+    "/webui/core/logs.js",
+    "/webui/core/modelpicker.js",
+    "/webui/core/overlay.js",
+    "/webui/core/palette.js",
+    "/webui/core/plugins.js",
+    "/webui/core/scroll.js",
+    "/webui/core/search.js",
+    "/webui/core/status.js",
+    "/webui/core/stream.js",
+    "/webui/core/theme.js",
+    "/webui/core/tools.js",
+    "/webui/core/ui.js",
+    "/webui/core/usage.js",
+    "/webui/core/utils.js",
+    "/webui/core/vendor.js",
+    "/webui/lib/board.js",
+    "/webui/lib/graph.js",
+    "/webui/lib/markdown.js",
+    "/webui/features/arena.js",
+    "/webui/features/board.js",
+    "/webui/features/fleet.js",
+    "/webui/features/goals.js",
+    "/webui/features/knowledge.js",
+    "/webui/features/prompts.js",
+    "/webui/features/todos.js",
+};
+
+fn isWebuiAssetPath(path: []const u8) bool {
+    for (webui_asset_paths) |p| {
+        if (std.mem.eql(u8, p, path)) return true;
+    }
+    return false;
+}
+
 /// The page's stylesheet and script. Same tool, same sandbox, same size guard
 /// as the markup; only the content type and the caching differ.
 fn handleWebuiAsset(
@@ -4709,6 +4773,13 @@ fn handleWebuiAsset(
     const is_goals_view = std.mem.endsWith(u8, target, "features/goals.js");
     const is_knowledge_view = std.mem.endsWith(u8, target, "features/knowledge.js");
     const is_prompts_view = std.mem.endsWith(u8, target, "features/prompts.js");
+    // Both carry the directory for the same reason board/goals do: a bare
+    // endsWith is one same-named future module away from the aliasing bug, and
+    // features/arena.js in particular was embedded and routed in webui.zig but
+    // reachable from neither list here, so the Arena view's dynamic import
+    // 404'd until this line existed.
+    const is_arena_view = std.mem.endsWith(u8, target, "features/arena.js");
+    const is_todos_view = std.mem.endsWith(u8, target, "features/todos.js");
     const is_vendor = std.mem.endsWith(u8, target, "vendor.js");
     const is_chat = std.mem.endsWith(u8, target, "chat.js");
     const is_labels = std.mem.endsWith(u8, target, "labels.js");
@@ -4735,8 +4806,8 @@ fn handleWebuiAsset(
     const is_modelpicker = std.mem.endsWith(u8, target, "modelpicker.js");
     const is_tools = std.mem.endsWith(u8, target, "tools.js");
     const is_ui = std.mem.endsWith(u8, target, "ui.js");
-    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
-    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
+    const cache = if (is_css) &render_css else if (is_boot) &render_preact_boot else if (is_board_view) &render_board_view else if (is_goals_view) &render_goals_view else if (is_knowledge_view) &render_knowledge_view else if (is_prompts_view) &render_prompts_view else if (is_arena_view) &render_arena_view else if (is_todos_view) &render_todos_view else if (is_vendor) &render_vendor else if (is_chat) &render_chat else if (is_labels) &render_labels else if (is_goals) &render_goals else if (is_stream) &render_stream else if (is_theme) &render_theme else if (is_overlay) &render_overlay else if (is_search) &render_search else if (is_composer) &render_composer else if (is_scroll) &render_scroll else if (is_markdown) &render_markdown else if (is_graph) &render_graph else if (is_board) &render_board else if (is_fleet) &render_fleet else if (is_utils) &render_utils else if (is_icons) &render_icons else if (is_ui) &render_ui else if (is_dialog) &render_dialog else if (is_usage) &render_usage else if (is_status) &render_status else if (is_attachments) &render_attachments else if (is_logs_asset) &render_logs else if (is_plugins) &render_plugins else if (is_palette) &render_palette else if (is_modelpicker) &render_modelpicker else if (is_tools) &render_tools else &render_js;
+    const gz = if (is_css) &gzip_css else if (is_boot) &gzip_preact_boot else if (is_board_view) &gzip_board_view else if (is_goals_view) &gzip_goals_view else if (is_knowledge_view) &gzip_knowledge_view else if (is_prompts_view) &gzip_prompts_view else if (is_arena_view) &gzip_arena_view else if (is_todos_view) &gzip_todos_view else if (is_vendor) &gzip_vendor else if (is_chat) &gzip_chat else if (is_labels) &gzip_labels else if (is_goals) &gzip_goals else if (is_stream) &gzip_stream else if (is_theme) &gzip_theme else if (is_overlay) &gzip_overlay else if (is_search) &gzip_search else if (is_composer) &gzip_composer else if (is_scroll) &gzip_scroll else if (is_markdown) &gzip_markdown else if (is_graph) &gzip_graph else if (is_board) &gzip_board else if (is_fleet) &gzip_fleet else if (is_utils) &gzip_utils else if (is_icons) &gzip_icons else if (is_ui) &gzip_ui else if (is_dialog) &gzip_dialog else if (is_usage) &gzip_usage else if (is_status) &gzip_status else if (is_attachments) &gzip_attachments else if (is_logs_asset) &gzip_logs else if (is_plugins) &gzip_plugins else if (is_palette) &gzip_palette else if (is_modelpicker) &gzip_modelpicker else if (is_tools) &gzip_tools else &gzip_js;
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
     const content_type: []const u8 = if (is_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
@@ -6923,6 +6994,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         a.on_token = &runStreamDelta;
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
+        a.on_todos = &runStreamTodos;
         // The client would otherwise see nothing until the first token or tool
         // call arrives, which can be tens of seconds of "running…" while the
         // run reaches the provider and works its first turn. Emit a status
@@ -7146,6 +7218,8 @@ var render_board_view: RenderCache = .{};
 var render_goals_view: RenderCache = .{};
 var render_knowledge_view: RenderCache = .{};
 var render_prompts_view: RenderCache = .{};
+var render_arena_view: RenderCache = .{};
+var render_todos_view: RenderCache = .{};
 var render_fleet: RenderCache = .{};
 var render_chat: RenderCache = .{};
 var render_labels: RenderCache = .{};
@@ -7181,6 +7255,8 @@ var gzip_board_view: GzipCache = .{};
 var gzip_goals_view: GzipCache = .{};
 var gzip_knowledge_view: GzipCache = .{};
 var gzip_prompts_view: GzipCache = .{};
+var gzip_arena_view: GzipCache = .{};
+var gzip_todos_view: GzipCache = .{};
 var gzip_fleet: GzipCache = .{};
 var gzip_chat: GzipCache = .{};
 var gzip_labels: GzipCache = .{};
@@ -8335,4 +8411,110 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
     }
     log.log(.error_, "unknown workflow subcommand '{s}' (expected list, show, or run)", .{sub});
     return error.BadSubcommand;
+}
+
+test "the webui asset route covers every embedded module, arena.js included" {
+    // The regression this pins: features/arena.js was @embedFile'd and routed
+    // in tools/zig/webui.zig but named in neither list here, so the Arena
+    // view's dynamic import() 404'd against a server that had the bytes.
+    try std.testing.expect(isWebuiAssetPath("/webui/features/arena.js"));
+    try std.testing.expect(isWebuiAssetPath("/webui/features/todos.js"));
+    try std.testing.expect(isWebuiAssetPath("/webui/app.js"));
+    try std.testing.expect(isWebuiAssetPath("/webui/core/ui.js"));
+    try std.testing.expect(!isWebuiAssetPath("/webui/features/no-such.js"));
+    // Vendored files and plugin assets have their own routes; listing them
+    // here would send them through the wrong handler.
+    try std.testing.expect(!isWebuiAssetPath("/webui/vendor/hljs.min.js"));
+    try std.testing.expect(!isWebuiAssetPath("/webui/plugins/x/app.js"));
+    // A duplicate entry would silently mean two names for one cache slot.
+    for (webui_asset_paths, 0..) |p, i| {
+        try std.testing.expect(std.mem.startsWith(u8, p, "/webui/"));
+        for (webui_asset_paths[i + 1 ..]) |q| try std.testing.expect(!std.mem.eql(u8, p, q));
+    }
+}
+
+test "no webui module file exists that the asset route has never heard of" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Source-tree test: skipped when run from anywhere but the repo root,
+    // the same way registry.zig skips without tools/manifests.
+    var root = std.Io.Dir.cwd().openDir(io, "tools/zig/webui", .{}) catch return error.SkipZigTest;
+    defer root.close(io);
+
+    for ([_][]const u8{ "core", "lib", "features" }) |sub| {
+        var d = root.openDir(io, sub, .{ .iterate = true }) catch continue;
+        defer d.close(io);
+        var it = d.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".js")) continue;
+            var buf: [128]u8 = undefined;
+            const path = try std.fmt.bufPrint(&buf, "/webui/{s}/{s}", .{ sub, entry.name });
+            if (!isWebuiAssetPath(path)) {
+                std.debug.print("webui module {s} is not in webui_asset_paths; it will 404\n", .{path});
+                return error.UnroutedWebuiModule;
+            }
+        }
+    }
+}
+
+test "runStreamTodos frames the private list as one \\x01 todos event" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // A file stands in for the stream socket: writeAllFd only ever writes to
+    // a raw fd, and a file is one that can be read back without a reader
+    // thread to keep a pipe from filling.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var sink = try tmp.dir.createFile(io, "stream.bin", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var list = private_todos.List{ .alloc = std.testing.allocator };
+    defer list.deinit();
+    _ = try private_todos.applyTodoOp(&list, arena, "todo_add", "check the gate", null);
+    // Todo titles are model-written, so the event has to survive markup and
+    // quotes without breaking out of the JSON line.
+    _ = try private_todos.applyTodoOp(&list, arena, "todo_add", "</script><img src=x onerror=alert(1)>", null);
+    _ = try private_todos.applyTodoOp(&list, arena, "todo_close", null, "p1");
+
+    serve_gpa = std.testing.allocator;
+    defer serve_gpa = null;
+    run_stream_socket = sink.handle;
+    runStreamTodos(try private_todos.listJson(&list, arena));
+    run_stream_socket = null;
+    sink.close(io);
+
+    const line = try tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
+
+    try std.testing.expect(line.len > 0);
+    try std.testing.expectEqual(@as(u8, 1), line[0]);
+    try std.testing.expectEqual(@as(u8, '\n'), line[line.len - 1]);
+    // Exactly one line: the client's splitter treats every \x01 line as one
+    // event, so a stray newline inside would drop half the list.
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, line, "\n"));
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, arena, line[1 .. line.len - 1], .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("todos", parsed.value.object.get("type").?.string);
+    const todos = parsed.value.object.get("todos").?.array;
+    try std.testing.expectEqual(@as(usize, 2), todos.items.len);
+    try std.testing.expectEqualStrings("p1", todos.items[0].object.get("todo").?.string);
+    try std.testing.expectEqualStrings("closed", todos.items[0].object.get("status").?.string);
+    try std.testing.expectEqualStrings("open", todos.items[1].object.get("status").?.string);
+    // The markup arrives as data, escaped by the JSON encoder and never as
+    // raw bytes in the stream.
+    try std.testing.expectEqualStrings("</script><img src=x onerror=alert(1)>", todos.items[1].object.get("title").?.string);
+}
+
+test "runStreamTodos with no stream and no allocator is a no-op, not a crash" {
+    run_stream_socket = null;
+    serve_gpa = null;
+    runStreamTodos("[]");
 }

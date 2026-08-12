@@ -42,6 +42,13 @@ pub const List = struct {
     alloc: std.mem.Allocator,
     items: std.ArrayList(Item) = .empty,
     next_id: u32 = 1,
+    /// Bumped by every op that actually changes an item, so a watcher can tell
+    /// "the list moved" from "the model called todo_list again" without
+    /// diffing the whole thing. The agent loop uses it to decide whether to
+    /// push a checklist event down a streaming run (src/cli.zig's
+    /// runStreamTodos); a claim of an already-claimed item does not bump,
+    /// because nothing changed.
+    rev: u32 = 0,
 
     /// Frees the items and their titles. Unnecessary when `alloc` is an
     /// arena (the runNested case); tests use the testing allocator.
@@ -91,6 +98,7 @@ pub fn applyTodoOp(
         const id = list.next_id;
         list.next_id += 1;
         try list.items.append(list.alloc, .{ .id = id, .title = try list.alloc.dupe(u8, t) });
+        list.rev += 1;
         try s.beginObject();
         try s.objectField("ok");
         try s.write(true);
@@ -104,9 +112,15 @@ pub fn applyTodoOp(
         const it = (try list.find(arena, id)) orelse
             return fail(arena, "unknown todo id in your private list; call todo_list first");
         if (std.mem.eql(u8, op, "todo_claim")) {
-            if (!it.closed) it.claimed = true;
+            if (!it.closed and !it.claimed) {
+                it.claimed = true;
+                list.rev += 1;
+            }
         } else {
-            it.closed = true;
+            if (!it.closed) {
+                it.closed = true;
+                list.rev += 1;
+            }
         }
         try s.beginObject();
         try s.objectField("ok");
@@ -127,22 +141,41 @@ pub fn applyTodoOp(
         try s.objectField("ok");
         try s.write(true);
         try s.objectField("todos");
-        try s.beginArray();
-        for (list.items.items) |*it| {
-            try s.beginObject();
-            try s.objectField("todo");
-            try s.print("\"p{d}\"", .{it.id});
-            try s.objectField("title");
-            try s.write(it.title);
-            try s.objectField("status");
-            try s.write(it.status());
-            try s.endObject();
-        }
-        try s.endArray();
+        try writeTodoArray(&s, list);
         try s.endObject();
         return arena.dupe(u8, out.written());
     }
     return fail(arena, "unknown private todo op");
+}
+
+/// The `todos` array as the model and the browser both see it. Factored out so
+/// `todo_list`'s reply and the streamed checklist event can never disagree
+/// about field names or status spellings — one writer, two callers.
+fn writeTodoArray(s: *std.json.Stringify, list: *List) !void {
+    try s.beginArray();
+    for (list.items.items) |*it| {
+        try s.beginObject();
+        try s.objectField("todo");
+        try s.print("\"p{d}\"", .{it.id});
+        try s.objectField("title");
+        try s.write(it.title);
+        try s.objectField("status");
+        try s.write(it.status());
+        try s.endObject();
+    }
+    try s.endArray();
+}
+
+/// The list as a bare JSON array, arena-owned, for a caller that frames it
+/// itself (the /api/run stream's `todos` control event). Allocating rather than
+/// fixed-buffer for the same reason `applyTodoOp` is: 100 items at 512 chars
+/// each overflows any stack buffer worth having.
+pub fn listJson(list: *List, arena: std.mem.Allocator) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try writeTodoArray(&s, list);
+    return arena.dupe(u8, out.written());
 }
 
 /// Renders the list's final state for the parent, or "" when the run never
@@ -253,4 +286,66 @@ test "todo_list reply for a full list of long escaped titles exceeds any fixed b
     // in a fixed buffer.
     try std.testing.expect(std.mem.find(u8, listed, "\\\"\\\"") != null);
     try std.testing.expect(std.mem.find(u8, listed, "\"p1\"") != null);
+}
+
+test "rev tracks real changes only, so a watcher is not woken by todo_list" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var list = List{ .alloc = t_alloc };
+    defer list.deinit();
+
+    try std.testing.expectEqual(@as(u32, 0), list.rev);
+    _ = try applyTodoOp(&list, arena, "todo_add", "read the file", null);
+    try std.testing.expectEqual(@as(u32, 1), list.rev);
+
+    // Reading the list is not a change.
+    _ = try applyTodoOp(&list, arena, "todo_list", null, null);
+    try std.testing.expectEqual(@as(u32, 1), list.rev);
+
+    _ = try applyTodoOp(&list, arena, "todo_claim", null, "p1");
+    try std.testing.expectEqual(@as(u32, 2), list.rev);
+    // Re-claiming an item this run already holds changes nothing.
+    _ = try applyTodoOp(&list, arena, "todo_claim", null, "p1");
+    try std.testing.expectEqual(@as(u32, 2), list.rev);
+
+    _ = try applyTodoOp(&list, arena, "todo_close", null, "p1");
+    try std.testing.expectEqual(@as(u32, 3), list.rev);
+    _ = try applyTodoOp(&list, arena, "todo_close", null, "p1");
+    try std.testing.expectEqual(@as(u32, 3), list.rev);
+
+    // A rejected op must not bump either: no title, no item, no change.
+    _ = try applyTodoOp(&list, arena, "todo_add", "", null);
+    try std.testing.expectEqual(@as(u32, 3), list.rev);
+}
+
+test "listJson is the bare array todo_list embeds, ready to splice into an event" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var list = List{ .alloc = t_alloc };
+    defer list.deinit();
+
+    try std.testing.expectEqualStrings("[]", try listJson(&list, arena));
+
+    _ = try applyTodoOp(&list, arena, "todo_add", "check the gate", null);
+    _ = try applyTodoOp(&list, arena, "todo_add", "patch \"it\"", null);
+    _ = try applyTodoOp(&list, arena, "todo_close", null, "p1");
+
+    const json = try listJson(&list, arena);
+    try std.testing.expect(json[0] == '[');
+    try std.testing.expect(json[json.len - 1] == ']');
+    try std.testing.expectEqualStrings(
+        "[{\"todo\":\"p1\",\"title\":\"check the gate\",\"status\":\"closed\"}," ++
+            "{\"todo\":\"p2\",\"title\":\"patch \\\"it\\\"\",\"status\":\"open\"}]",
+        json,
+    );
+
+    // The same array the model sees, so the browser and the model can never
+    // be shown different ids, titles or status spellings.
+    const listed = try applyTodoOp(&list, arena, "todo_list", null, null);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"todos\":" ++ "", listed[0.."{\"ok\":true,\"todos\":".len]);
+    try std.testing.expect(std.mem.find(u8, listed, json) != null);
 }
