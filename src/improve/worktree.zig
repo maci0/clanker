@@ -58,18 +58,6 @@ pub const Worktree = struct {
             };
             if (!ok) log.log(.warn, "git worktree remove {s} failed: {s}", .{ self.path, res.stderr });
         }
-        // git worktree remove cleans git metadata but may leave the empty
-        // directory entry behind; remove it so .clanker-worktrees/ does not
-        // accumulate stale subdirectories across runs.
-        std.Io.Dir.cwd().deleteDir(io, self.path) catch |err| switch (err) {
-            error.FileNotFound => {}, // already gone — fine
-            else => log.log(.debug, "could not remove leftover dir {s}: {s}", .{ self.path, @errorName(err) }),
-        };
-        // If .clanker-worktrees is now empty, remove it so the repo does
-        // not accumulate a stale empty directory across runs. deleteDir
-        // fails on a non-empty directory, which is the desired behaviour
-        // when other worktrees are still active.
-        std.Io.Dir.cwd().deleteDir(io, ".clanker-worktrees") catch {};
         // The branch was successfully merged, so -d (which refuses to
         // delete unmerged branches) is safe and will succeed.
         {
@@ -110,10 +98,9 @@ pub const Worktree = struct {
             if (std.mem.eql(u8, merge_base, base_sha)) {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
-                    log.log(.info, "improve-self: fast-forwarded {s} to {s} (merge-base: {s})", .{ self.base_branch, branch_sha, merge_base });
+                    log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
                     self.resyncLocalBranch(gpa, io, branch_sha);
                     self.merged = true;
-                    copyBackLearnings(gpa, io, self.path);
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -130,10 +117,9 @@ pub const Worktree = struct {
             };
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
-                log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s}, merge-base: {s})", .{ commit, self.base_branch, self.branch, merge_base });
+                log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
                 self.resyncLocalBranch(gpa, io, commit);
                 self.merged = true;
-                copyBackLearnings(gpa, io, self.path);
                 return;
             }
             // Someone else moved base_branch between the read and the write;
@@ -180,25 +166,6 @@ pub const Worktree = struct {
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
     }
 };
-
-/// After a successful merge-back, copies state/learnings.md from the
-/// worktree back to the main tree so learnings written during the isolated
-/// improve-self run survive promotion. The worktree's copy was seeded by
-/// linkSharedState at creation; any write_note calls during the run append
-/// to that copy, and without this step they vanish when the worktree is
-/// cleaned up. Best-effort: a missing or unreadable file is not an error.
-fn copyBackLearnings(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8) void {
-    const src = std.fmt.allocPrint(gpa, "{s}/state/learnings.md", .{worktree_path}) catch return;
-    defer gpa.free(src);
-    const data = std.Io.Dir.cwd().readFileAlloc(io, src, gpa, .limited(1 << 24)) catch |err| {
-        log.log(.debug, "improve-self: no learnings to copy back: {s}", .{@errorName(err)});
-        return;
-    };
-    defer gpa.free(data);
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "state/learnings.md", .data = data }) catch |err|
-        log.log(.warn, "improve-self: could not copy learnings back from the worktree: {s}", .{@errorName(err)});
-}
 
 /// Creates a worktree on a fresh branch cut from `base_branch`'s current
 /// tip. Must be called before any chdir into the result: `git worktree add`
@@ -316,31 +283,14 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     // fresh checkout state/history/ is absent and the symlink is silently
     // skipped, losing the cross-run dedup memory for the entire session.
     std.Io.Dir.cwd().createDirPath(io, "state/history") catch {};
-    // state/runs/ is where the execution graph tool writes run-<id>.json.
-    // It cannot be symlinked (sandboxed tools refuse symlinked components),
-    // so create it as a real directory so graph writes do not fail silently.
-    const runs_dir = try std.fmt.allocPrint(gpa, "{s}/state/runs", .{worktree_path});
-    defer gpa.free(runs_dir);
-    std.Io.Dir.cwd().createDirPath(io, runs_dir) catch {};
     for ([_][]const u8{ "state/improvements.jsonl", "state/history" }) |name| {
         std.Io.Dir.cwd().access(io, name, .{}) catch continue; // nothing to link
         const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ root, name });
         defer gpa.free(target);
         const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(link_path);
-        const is_dir = std.mem.endsWith(u8, name, "history");
-        std.Io.Dir.cwd().symLink(io, target, link_path, .{ .is_directory = is_dir }) catch |err| {
-            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}; falling back to copy", .{ name, @errorName(err) });
-            // Symlinks can fail on filesystems that don't support them.
-            // Fall back to copying so the worktree still has cross-run
-            // memory even when linking is impossible.
-            if (std.mem.eql(u8, name, "state/improvements.jsonl")) {
-                const data = std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(1 << 24)) catch continue;
-                defer gpa.free(data);
-                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = link_path, .data = data }) catch |werr|
-                    log.log(.warn, "improve-self: copy fallback for {s} also failed: {s}", .{ name, @errorName(werr) });
-            }
-        };
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{}) catch |err|
+            log.log(.warn, "improve-self: could not link {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
 
     // Sandbox-readable cross-run memory is COPIED instead: real files, so
