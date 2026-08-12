@@ -110,7 +110,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(lib.alloc);
     try buf.appendSlice(lib.alloc, g.run_id);
-    try buf.appendSlice(lib.alloc, " — ");
+    try buf.appendSlice(lib.alloc, ": ");
     try buf.appendSlice(lib.alloc, g.task);
     const hdr = try std.fmt.allocPrint(lib.alloc, "  ({s}, {d}ms, prompt={d} completion={d})\n", .{ g.provider, g.duration_ms, g.total_prompt_tokens, g.total_completion_tokens });
     defer lib.alloc.free(hdr);
@@ -182,13 +182,36 @@ fn listRuns(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) !voi
     }
     std.mem.sort([]const u8, files.items, {}, lessThanStr);
 
-    var buf: std.ArrayList(u8) = .empty;
+    var id_w: usize = 0;
+    var dur_w: usize = 0;
+    var node_w: usize = 0;
+    var graphs: std.ArrayList(GraphFile) = .empty;
     for (files.items) |fname| {
         const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
         const content = lib.fsRead(path) catch continue;
         const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch continue;
-        const line = try std.fmt.allocPrint(alloc, "{s}\t{d}ms\t{d} node(s)\t{s}\n", .{ g.run_id, g.duration_ms, g.nodes.len, g.task });
-        try buf.appendSlice(alloc, line);
+        id_w = @max(id_w, g.run_id.len);
+        var dbuf: [16]u8 = undefined;
+        if (std.fmt.bufPrint(&dbuf, "{d}ms", .{g.duration_ms})) |s| dur_w = @max(dur_w, s.len) else |_| {}
+        var nbuf: [16]u8 = undefined;
+        if (std.fmt.bufPrint(&nbuf, "{d} nodes", .{g.nodes.len})) |s| node_w = @max(node_w, s.len) else |_| {}
+        try graphs.append(alloc, g);
+    }
+    var buf: std.ArrayList(u8) = .empty;
+    for (graphs.items) |g| {
+        try buf.appendSlice(alloc, g.run_id);
+        var col: usize = g.run_id.len;
+        while (col < id_w + 2) : (col += 1) try buf.append(alloc, ' ');
+        const dur_str = try std.fmt.allocPrint(alloc, "{d}ms", .{g.duration_ms});
+        try buf.appendSlice(alloc, dur_str);
+        col = dur_str.len;
+        while (col < dur_w + 2) : (col += 1) try buf.append(alloc, ' ');
+        const node_str = try std.fmt.allocPrint(alloc, "{d} nodes", .{g.nodes.len});
+        try buf.appendSlice(alloc, node_str);
+        col = node_str.len;
+        while (col < node_w + 2) : (col += 1) try buf.append(alloc, ' ');
+        try buf.appendSlice(alloc, labelOf(g.task));
+        try buf.append(alloc, '\n');
     }
     try lib.okText(out, buf.items);
 }
