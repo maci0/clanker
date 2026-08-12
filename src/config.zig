@@ -277,6 +277,18 @@ pub const Chatrooms = struct {
     max_history: u32 = 500,
 };
 
+pub const Memory = struct {
+    backend: []const u8 = "hybrid",
+    chunk_strategy: []const u8 = "markdown",
+    chunk_size: u32 = 800,
+    chunk_overlap: u32 = 120,
+    embedding_provider: []const u8 = "",
+    embedding_model: []const u8 = "",
+    vector_backend: []const u8 = "builtin",
+    vector_top_k: u32 = 5,
+    vector_threshold: f32 = 0.35,
+};
+
 pub const Modules = struct {
     mcp: bool = true,
     peers: bool = true,
@@ -338,9 +350,11 @@ pub const Config = struct {
     instance: Instance = .{},
     notify: Notify = .{},
     chatrooms: Chatrooms = .{},
+    memory: Memory = .{},
     modules: Modules = .{},
     modules_present: bool = false,
     chatrooms_present: bool = false,
+    memory_present: bool = false,
     instance_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
@@ -431,7 +445,7 @@ pub const Config = struct {
         warnUnknownKeys(obj, &.{
             "default_provider", "agent",    "improve", "providers",
             "models",           "instance", "peers",   "notify",
-            "chatrooms",        "modules",  "web",
+            "chatrooms",        "modules",  "web",     "memory",
         }, "config");
 
         if (obj.get("default_provider")) |v| {
@@ -487,6 +501,10 @@ pub const Config = struct {
         if (obj.get("chatrooms")) |v| {
             cfg.chatrooms = try parseChatrooms(arena, v);
             cfg.chatrooms_present = true;
+        }
+        if (obj.get("memory")) |v| {
+            cfg.memory = try parseMemory(arena, v);
+            cfg.memory_present = true;
         }
         if (obj.get("modules")) |v| {
             cfg.modules = try parseModules(arena, v);
@@ -813,9 +831,10 @@ pub const Config = struct {
             "max_tokens_per_turn", "max_history_tokens",      "tool_catalog",
             "hot_tools",           "tools_dir",               "skills_dir",
             "system_prompt_file",  "learnings_file",          "global_instructions_file",
-            "state_dir",           "sandbox_root",            "workflows_dir",           "chains_dir",
-            "git_commit",          "git_remote_ops",          "exec_pattern_allow",
-            "seed",                "ask_timeout_seconds",     "confirm_writes",
+            "state_dir",           "sandbox_root",            "workflows_dir",
+            "chains_dir",          "git_commit",              "git_remote_ops",
+            "exec_pattern_allow",  "seed",                    "ask_timeout_seconds",
+            "confirm_writes",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = @intCast(try jsonInt(k, "max_iterations"));
@@ -1013,6 +1032,7 @@ pub const Config = struct {
         if (src.instance_present) dst.instance = src.instance;
         if (src.notify_present) dst.notify = src.notify;
         if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
+        if (src.memory_present) dst.memory = src.memory;
         if (src.modules_present) dst.modules = src.modules;
     }
 
@@ -1052,6 +1072,47 @@ pub const Config = struct {
             if (obj.get(f.key)) |val| {
                 if (val == .bool) f.ptr.* = val.bool;
             }
+        }
+        return m;
+    }
+
+    fn parseMemory(arena: std.mem.Allocator, v: json.Value) !Memory {
+        _ = arena;
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.MemoryNotObject,
+        };
+        var m = Memory{};
+        warnUnknownKeys(obj, &.{ "backend", "chunk", "embedding", "vector" }, "memory");
+        if (obj.get("backend")) |k| m.backend = try jsonStr(k, "backend");
+        if (obj.get("chunk")) |k| {
+            const co = switch (k) {
+                .object => |o| o,
+                else => return error.MemoryNotObject,
+            };
+            warnUnknownKeys(co, &.{ "size", "overlap", "strategy" }, "memory.chunk");
+            if (co.get("size")) |x| m.chunk_size = @intCast(try jsonInt(x, "chunk.size"));
+            if (co.get("overlap")) |x| m.chunk_overlap = @intCast(try jsonInt(x, "chunk.overlap"));
+            if (co.get("strategy")) |x| m.chunk_strategy = try jsonStr(x, "chunk.strategy");
+        }
+        if (obj.get("embedding")) |k| {
+            const eo = switch (k) {
+                .object => |o| o,
+                else => return error.MemoryNotObject,
+            };
+            warnUnknownKeys(eo, &.{ "provider", "model" }, "memory.embedding");
+            if (eo.get("provider")) |x| m.embedding_provider = try jsonStr(x, "embedding.provider");
+            if (eo.get("model")) |x| m.embedding_model = try jsonStr(x, "embedding.model");
+        }
+        if (obj.get("vector")) |k| {
+            const vo = switch (k) {
+                .object => |o| o,
+                else => return error.MemoryNotObject,
+            };
+            warnUnknownKeys(vo, &.{ "backend", "top_k", "threshold" }, "memory.vector");
+            if (vo.get("backend")) |x| m.vector_backend = try jsonStr(x, "vector.backend");
+            if (vo.get("top_k")) |x| m.vector_top_k = @intCast(try jsonInt(x, "vector.top_k"));
+            if (vo.get("threshold")) |x| m.vector_threshold = @floatCast(try jsonFloat(x, "vector.threshold"));
         }
         return m;
     }
@@ -1730,3 +1791,4 @@ test "resolveProvider splits provider/model and keeps opaque slash ids whole" {
     try std.testing.expectEqualStrings("kimi-k3", d.name);
     try std.testing.expectEqualStrings("zai/glm-5.2", d.default_model);
 }
+// --- memory helpers (appended via patch) ---

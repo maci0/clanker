@@ -1,0 +1,18 @@
+{
+  "name": "memory",
+  "description": "Configurable memory layer for RAG: chunk/search (embed planned). Actions: chunk {text,size,overlap,strategy}, search {query,top_k}. Vector backends: builtin (default) + muninndb/sqlite-vec swappable; embeddings: openai_compat (default) + local_onnx stub.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string", "enum": ["chunk", "search", "embed"] },
+      "text": { "type": "string" },
+      "size": { "type": "number" },
+      "overlap": { "type": "number" },
+      "strategy": { "type": "string" },
+      "query": { "type": "string" },
+      "top_k": { "type": "number" }
+    }
+  },
+  "fs_prefixes": ["state/knowledge"],
+  "wasm": "zig-out/tools/memory.wasm"
+}

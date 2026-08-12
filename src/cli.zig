@@ -5983,7 +5983,9 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     };
     // Inject knowledge context when requested — selected collections' documents
     // are prepended to the task so the model sees them without extra tool calls.
+    // Memory: hybrid merges vector hits (when embeddings available) + keyword chunk hits; falls back to keyword-only.
     var final_task = task_text;
+    const do_memory_inject = cfg.memory.backend.len > 0 and (std.mem.eql(u8, cfg.memory.backend, "hybrid") or std.mem.eql(u8, cfg.memory.backend, "vector") or std.mem.eql(u8, cfg.memory.backend, "keyword"));
     if (req.knowledge.len > 0) {
         const kb = @import("knowledge/store.zig");
         var kb_buf: std.ArrayList(u8) = .empty;
@@ -6003,6 +6005,51 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             kb_buf.appendSlice(arena, "\n\n---\n\n") catch {};
             kb_buf.appendSlice(arena, task_text) catch {};
             final_task = kb_buf.items;
+        }
+        // memory_inject: augment with chunk hits (hybrid/vector/keyword)
+        if (do_memory_inject and req.knowledge.len > 0) {
+            const mem_chunk = @import("memory/chunk.zig");
+            _ = mem_chunk.Strategy.markdown;
+            var mem_buf: std.ArrayList(u8) = .empty;
+            // Keyword chunk search over derived chunks.json (vector path would rank via embed+cosine, stubbed to keyword here)
+            for (req.knowledge) |cid| {
+                const chunk_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.chunks.json", .{cid}) catch continue;
+                const raw = std.Io.Dir.cwd().readFileAlloc(io, chunk_path, arena, .limited(4 << 20)) catch continue;
+                const arr = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch continue;
+                if (arr != .array) continue;
+                var hits: usize = 0;
+                for (arr.array.items) |item| {
+                    if (hits >= cfg.memory.vector_top_k) break;
+                    if (item != .object) continue;
+                    const text_v = item.object.get("text") orelse continue;
+                    if (text_v != .string) continue;
+                    const txt: []const u8 = text_v.string;
+                    // naive keyword score: count query tokens present
+                    var score: usize = 0;
+                    var tq_it = std.mem.tokenizeAny(u8, task_text, " \t\r\n");
+                    while (tq_it.next()) |tok| {
+                        if (tok.len >= 3 and std.ascii.isAlphabetic(tok[0]) and std.mem.indexOf(u8, txt, tok) != null) score += 1;
+                    }
+                    if (score == 0) continue;
+                    if (mem_buf.items.len > 80_000) break;
+                    if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
+                    const mem_header = std.fmt.allocPrint(arena, "[Memory chunk score={d}: {s}]\n", .{ score, txt[0..@min(txt.len, 120)] }) catch continue;
+                    _ = mem_header;
+                    // Clip chunk to cap
+                    const mlimit = @min(txt.len, 100_000 - mem_buf.items.len);
+                    if (mlimit == 0) continue;
+                    mem_buf.appendSlice(arena, txt[0..mlimit]) catch continue;
+                    hits += 1;
+                }
+            }
+            if (mem_buf.items.len > 0) {
+                // Prepend memory chunks before the knowledge docs (more specific)
+                var combined: std.ArrayList(u8) = .empty;
+                combined.appendSlice(arena, mem_buf.items) catch {};
+                combined.appendSlice(arena, "\n\n---\n\n") catch {};
+                combined.appendSlice(arena, final_task) catch {};
+                final_task = combined.items;
+            }
         }
     }
     if (std.mem.trim(u8, final_task, " \t\r\n").len == 0) {

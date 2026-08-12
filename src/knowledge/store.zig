@@ -167,6 +167,8 @@ pub fn addDoc(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base
     col.docs = docs.items;
     col.updated = nowSec(io);
     try saveCollection(io, gpa, arena, base, col);
+    // Derive chunk cache for memory layer (best-effort, stays under 2 MiB per doc via 800/120)
+    deriveChunksForDoc(arena, io, base, col.id, doc) catch {};
     return doc;
 }
 
@@ -181,6 +183,61 @@ pub fn deleteDoc(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, b
     col.docs = try docs.toOwnedSlice(arena);
     col.updated = nowSec(io);
     try saveCollection(io, gpa, arena, base, col);
+    // Best-effort: invalidate chunk cache for deleted doc (delete its chunk file slice)
+    invalidateChunksForDoc(arena, io, base, col.id, doc_id) catch {};
+}
+
+fn deriveChunksForDoc(arena: std.mem.Allocator, io: std.Io, base: std.Io.Dir, col_id: []const u8, doc: Doc) !void {
+    const mem_chunk = @import("../memory/chunk.zig");
+    const mem_store_path = try std.fmt.allocPrint(arena, "{s}/{s}.chunks.json", .{ store_dir, col_id });
+    // Read existing chunk file if any
+    const existing_raw = base.readFileAlloc(io, mem_store_path, arena, .limited(4 << 20)) catch null;
+    var all_chunks: std.ArrayList(json.Value) = .empty;
+    if (existing_raw) |raw| {
+        if (std.json.parseFromSliceLeaky(json.Value, arena, raw, .{}) catch null) |v| {
+            if (v == .array) for (v.array.items) |item| try all_chunks.append(arena, item);
+        }
+    }
+    // Remove stale chunks for this doc
+    var filtered: std.ArrayList(json.Value) = .empty;
+    for (all_chunks.items) |item| {
+        if (item != .object) continue;
+        const did = if (item.object.get("doc_id")) |vv| (if (vv == .string) vv.string else "") else "";
+        if (!std.mem.eql(u8, did, doc.id)) try filtered.append(arena, item);
+    }
+    const new_chunks = try mem_chunk.chunkText(arena, doc.id, doc.content, 800, 120, .markdown);
+    for (new_chunks) |ch| {
+        var obj: json.ObjectMap = .empty;
+        // Use stored doc id chunk hash as stable chunk_id
+        const cid = try std.fmt.allocPrint(arena, "{s}:{d}:{s}", .{ ch.doc_id, ch.idx, ch.hash[0..8] });
+        try obj.put(arena, "chunk_id", .{ .string = cid });
+        try obj.put(arena, "doc_id", .{ .string = ch.doc_id });
+        try obj.put(arena, "idx", .{ .integer = @as(i64, @intCast(ch.idx)) });
+        try obj.put(arena, "text", .{ .string = ch.text });
+        try obj.put(arena, "hash", .{ .string = ch.hash });
+        try filtered.append(arena, .{ .object = obj });
+    }
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    try std.json.Stringify.value(.{ .array = try filtered.toOwnedSlice(arena) }, .{}, &out.writer);
+    try atomic_write.writeFile(io, base, mem_store_path, out.written());
+}
+
+fn invalidateChunksForDoc(arena: std.mem.Allocator, io: std.Io, base: std.Io.Dir, col_id: []const u8, doc_id: []const u8) !void {
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}.chunks.json", .{ store_dir, col_id });
+    const raw = base.readFileAlloc(io, path, arena, .limited(4 << 20)) catch return;
+    const parsed = try std.json.parseFromSliceLeaky(json.Value, arena, raw, .{});
+    if (parsed != .array) return;
+    var kept: std.ArrayList(json.Value) = .empty;
+    for (parsed.array.items) |item| {
+        if (item != .object) continue;
+        const did = if (item.object.get("doc_id")) |vv| (if (vv == .string) vv.string else "") else "";
+        if (!std.mem.eql(u8, did, doc_id)) try kept.append(arena, item);
+    }
+    var out: std.Io.Writer.Allocating = .init(arena);
+    defer out.deinit();
+    try std.json.Stringify.value(.{ .array = try kept.toOwnedSlice(arena) }, .{}, &out.writer);
+    try atomic_write.writeFile(io, base, path, out.written());
 }
 
 pub const SearchHit = struct {
