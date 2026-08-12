@@ -698,12 +698,91 @@ clanker.registerView({
       agent.walk = { to: target, home: { x: agent.x, y: agent.y }, phase: "out", onArrive: onArrive };
     }
 
+    /* ---------- janitor navigation ----------
+       The floor as a walkability grid: walls, the wall-fixture strip, desks
+       with their chairs, the sofa, and the small fixtures are blocked. Small
+       (16 x ~14), rebuilt only when a layout is first seen. */
+    function blockedGrid(o) {
+      if (o._grid) return o._grid;
+      var L = o.layout;
+      var g = [];
+      for (var y = 0; y < L.h; y++) g.push(new Array(L.w).fill(false));
+      function block(x, yy) { if (yy >= 0 && yy < L.h && x >= 0 && x < L.w) g[yy][x] = true; }
+      for (var x0 = 0; x0 < L.w; x0++) { block(x0, 0); block(x0, L.h - 1); }
+      for (var y0 = 0; y0 < L.h; y0++) { block(0, y0); block(L.w - 1, y0); }
+      for (var ys = 1; ys <= 3; ys++) for (var xs = 1; xs < L.w - 1; xs++) block(xs, ys);
+      (L.plants || []).forEach(function (pl) { block(pl.x, pl.y); });
+      if (L.bin) block(L.bin.x, L.bin.y);
+      if (L.shelf) block(L.shelf.x, L.shelf.y);
+      if (L.cooler) block(L.cooler.x, L.cooler.y);
+      if (L.sofa) { block(L.sofa.x, L.sofa.y); block(L.sofa.x + 1, L.sofa.y); }
+      (L.desks || []).forEach(function (d) { block(d.x, d.y); block(d.x + 1, d.y); });
+      o._grid = g;
+      return g;
+    }
+
+    /* Plain A*, 4-neighbour, manhattan heuristic. The grid is tiny, so no
+       heap: a linear scan of the open list is faster to read and fast enough. */
+    function findPath(o, sx, sy, gx, gy) {
+      var g = blockedGrid(o);
+      var L = o.layout;
+      function free(x, y) { return y >= 0 && y < L.h && x >= 0 && x < L.w && !g[y][x]; }
+      // Snap endpoints to the nearest free tile so a pile beside a desk or a
+      // janitor mid-stride still resolves.
+      function snap(x, y) {
+        if (free(x, y)) return { x: x, y: y };
+        for (var r = 1; r <= 4; r++) {
+          for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
+            if (free(x + dx, y + dy)) return { x: x + dx, y: y + dy };
+          }
+        }
+        return null;
+      }
+      var start = snap(Math.round(sx), Math.round(sy));
+      var goal = snap(Math.round(gx), Math.round(gy));
+      if (!start || !goal) return null;
+      var open = [{ x: start.x, y: start.y, g: 0, f: 0, prev: null }];
+      var seen = {};
+      seen[start.x + "," + start.y] = true;
+      var guard = L.w * L.h * 4;
+      while (open.length > 0 && guard-- > 0) {
+        var best = 0;
+        for (var i = 1; i < open.length; i++) if (open[i].f < open[best].f) best = i;
+        var cur = open.splice(best, 1)[0];
+        if (cur.x === goal.x && cur.y === goal.y) {
+          var path = [];
+          for (var n = cur; n; n = n.prev) path.unshift({ x: n.x, y: n.y });
+          return path;
+        }
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+          var nx = cur.x + d[0];
+          var ny = cur.y + d[1];
+          var key = nx + "," + ny;
+          if (!free(nx, ny) || seen[key]) return;
+          seen[key] = true;
+          var gg = cur.g + 1;
+          open.push({ x: nx, y: ny, g: gg, f: gg + Math.abs(goal.x - nx) + Math.abs(goal.y - ny), prev: cur });
+        });
+      }
+      return null;
+    }
+
     function pickWaypoint(L) {
       // Anywhere on the open floor, not a corridor: rounds wander the whole
       // lower half of the room, x and y both random, so he reads as a person
       // pottering about rather than a platform sprite on rails.
-      janitor.tx = 1 + Math.random() * (L.w - 3);
-      janitor.ty = Math.min(L.h - 2, 4.5 + Math.random() * (L.h - 6.5));
+      var g = blockedGrid(offices[janitor.office]);
+      for (var tries = 0; tries < 10; tries++) {
+        var wx = 1 + Math.random() * (L.w - 3);
+        var wy = Math.min(L.h - 2, 4.5 + Math.random() * (L.h - 6.5));
+        if (!g[Math.round(wy)] || !g[Math.round(wy)][Math.round(wx)]) {
+          janitor.tx = wx;
+          janitor.ty = wy;
+          return;
+        }
+      }
+      janitor.tx = L.door.x;
+      janitor.ty = L.h - 2;
     }
 
     function stepJanitor(dt, now) {
@@ -717,6 +796,7 @@ clanker.registerView({
       }
       if (pile && janitor.pile !== pile) {
         janitor.pile = pile;
+        janitor.path = null;
         if (janitor.office !== target_office) {
           // He takes the corridor between rooms; drawing that adds nothing,
           // so he appears in the doorway of the room that needs him.
@@ -743,18 +823,36 @@ clanker.registerView({
           dirty = true;
           return true;
         }
-        var dx = janitor.pile.x - janitor.x;
-        var dy = janitor.pile.y - janitor.y;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-        if (reduced || dist < 0.3) {
+        if (!janitor.path) {
+          janitor.path = findPath(offices[janitor.office], janitor.x, janitor.y, janitor.pile.x, janitor.pile.y);
+          janitor.path_i = 0;
+        }
+        var arrived = false;
+        if (reduced || !janitor.path) {
+          // Reduced motion (or an unroutable corner case): appear at the mess.
           janitor.x = janitor.pile.x;
           janitor.y = janitor.pile.y;
-          janitor.cleaning_until = now + (reduced ? 1 : 1400);
+          arrived = true;
         } else {
+          var node = janitor.path[janitor.path_i];
+          var dx = node.x - janitor.x;
+          var dy = node.y - janitor.y;
+          var dist = Math.sqrt(dx * dx + dy * dy);
           var rush = 7 * dt; // garbage is urgent; rounds are not
-          janitor.x += (dx / dist) * rush;
-          janitor.y += (dy / dist) * rush;
-          janitor.dir = dx >= 0 ? 1 : -1;
+          if (dist <= rush) {
+            janitor.x = node.x;
+            janitor.y = node.y;
+            janitor.path_i += 1;
+            if (janitor.path_i >= janitor.path.length) arrived = true;
+          } else {
+            janitor.x += (dx / dist) * rush;
+            janitor.y += (dy / dist) * rush;
+            janitor.dir = dx >= 0 ? 1 : -1;
+          }
+        }
+        if (arrived) {
+          janitor.path = null;
+          janitor.cleaning_until = now + (reduced ? 1 : 1400);
         }
         return true;
       }
