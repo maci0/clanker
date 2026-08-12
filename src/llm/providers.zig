@@ -495,12 +495,46 @@ fn buildAnthropic(gpa: std.mem.Allocator, params: RequestParams) BuildError![]u8
                 }
             },
             else => {
-                try s.beginObject();
-                try s.objectField("type");
-                try jstr(&s, "text");
-                try s.objectField("text");
-                try jstr(&s, m.content orelse "");
-                try s.endObject();
+                // A user message may carry image attachments (the webui
+                // composer, the `image` tool's result). Anthropic takes them
+                // as base64 `image` blocks; before this branch existed the
+                // images were silently dropped and a Claude/Vertex user's
+                // upload never reached the model. An empty text block beside
+                // an image is rejected, so text is emitted only when present.
+                if (m.images) |imgs| {
+                    if (m.content) |c| {
+                        if (c.len > 0) {
+                            try s.beginObject();
+                            try s.objectField("type");
+                            try jstr(&s, "text");
+                            try s.objectField("text");
+                            try jstr(&s, c);
+                            try s.endObject();
+                        }
+                    }
+                    for (imgs) |img| {
+                        try s.beginObject();
+                        try s.objectField("type");
+                        try jstr(&s, "image");
+                        try s.objectField("source");
+                        try s.beginObject();
+                        try s.objectField("type");
+                        try jstr(&s, "base64");
+                        try s.objectField("media_type");
+                        try jstr(&s, img.mime);
+                        try s.objectField("data");
+                        try jstr(&s, img.b64);
+                        try s.endObject();
+                        try s.endObject();
+                    }
+                } else {
+                    try s.beginObject();
+                    try s.objectField("type");
+                    try jstr(&s, "text");
+                    try s.objectField("text");
+                    try jstr(&s, m.content orelse "");
+                    try s.endObject();
+                }
             },
         }
         try s.endArray();
@@ -695,6 +729,67 @@ test "anthropic request body has system field and content blocks" {
     const msgs = obj.get("messages").?.array.items;
     try std.testing.expectEqual(@as(usize, 1), msgs.len);
     try std.testing.expectEqualStrings("user", msgs[0].object.get("role").?.string);
+}
+
+test "anthropic request body carries image blocks for an attached image" {
+    // Regression: buildAnthropic dropped m.images entirely, so an image
+    // attached in the webui composer (or via the `image` tool) never reached
+    // a Claude/Vertex model. The user message must now emit a base64 `image`
+    // content block alongside the text.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const provider = try config.Provider.single(arena, "claude", "https://api.anthropic.com", .anthropic, "claude-sonnet", .{ .max_tokens = 256 });
+    const imgs = try arena.alloc(types.ImagePart, 2);
+    imgs[0] = .{ .mime = "image/png", .b64 = "aGVsbG8gaW1hZ2U=" };
+    imgs[1] = .{ .mime = "image/jpeg", .b64 = "c2Vjb25k" };
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "what is this?", .images = imgs },
+    };
+    const body = try buildRequest(arena, .{ .provider = &provider, .messages = &messages });
+    defer arena.free(body);
+
+    const parsed = try json.parseFromSliceLeaky(json.Value, arena, body, .{});
+    const obj = parsed.object;
+    const msgs = obj.get("messages").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), msgs.len);
+    const blocks = msgs[0].object.get("content").?.array.items;
+    // Text block first, then one image block per attachment, in order.
+    try std.testing.expectEqualStrings("text", blocks[0].object.get("type").?.string);
+    try std.testing.expectEqualStrings("what is this?", blocks[0].object.get("text").?.string);
+    try std.testing.expectEqualStrings("image", blocks[1].object.get("type").?.string);
+    const src = blocks[1].object.get("source").?.object;
+    try std.testing.expectEqualStrings("base64", src.get("type").?.string);
+    try std.testing.expectEqualStrings("image/png", src.get("media_type").?.string);
+    try std.testing.expectEqualStrings("aGVsbG8gaW1hZ2U=", src.get("data").?.string);
+    try std.testing.expectEqualStrings("image", blocks[2].object.get("type").?.string);
+    const src2 = blocks[2].object.get("source").?.object;
+    try std.testing.expectEqualStrings("image/jpeg", src2.get("media_type").?.string);
+    try std.testing.expectEqualStrings("c2Vjb25k", src2.get("data").?.string);
+}
+
+test "anthropic request body with only an image omits the empty text block" {
+    // Anthropic rejects an empty text block; an image-only message must emit
+    // just the image content block.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const provider = try config.Provider.single(arena, "claude", "https://api.anthropic.com", .anthropic, "claude-sonnet", .{ .max_tokens = 256 });
+    const imgs = try arena.alloc(types.ImagePart, 1);
+    imgs[0] = .{ .mime = "image/webp", .b64 = "aW1n" };
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "", .images = imgs },
+    };
+    const body = try buildRequest(arena, .{ .provider = &provider, .messages = &messages });
+    defer arena.free(body);
+
+    const parsed = try json.parseFromSliceLeaky(json.Value, arena, body, .{});
+    const obj = parsed.object;
+    const blocks = obj.get("messages").?.array.items[0].object.get("content").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), blocks.len);
+    try std.testing.expectEqualStrings("image", blocks[0].object.get("type").?.string);
 }
 
 test "vertex request body replays tool calls without leaking the parsed input" {
