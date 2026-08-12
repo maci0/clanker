@@ -1921,10 +1921,73 @@ const Model = struct {
     /// matches complete to their longest shared prefix, or, once that stops
     /// advancing the line, get listed in the transcript instead of eating
     /// the keystroke silently.
+    /// Completes a command argument (the text after "<command> ") against a
+    /// known set: one match completes it (with a trailing space), several
+    /// complete to their shared prefix or, once that stops advancing, get
+    /// listed. Returns whether it did anything.
+    fn completeArg(self: *Model, ctx: *vxfw.EventContext, cmd: []const u8, partial: []const u8, candidates: []const []const u8) bool {
+        var hits: [max_completions][]const u8 = undefined;
+        var n: usize = 0;
+        for (candidates) |c| {
+            if (n < hits.len and std.mem.startsWith(u8, c, partial)) {
+                hits[n] = c;
+                n += 1;
+            }
+        }
+        if (n == 0) return false;
+        if (n == 1) {
+            self.loadInputFrom(std.fmt.allocPrint(self.arena, "{s} {s} ", .{ cmd, hits[0] }) catch return true);
+            ctx.redraw = true;
+            return true;
+        }
+        // Longest common prefix of the hits.
+        var lcp = hits[0];
+        for (hits[1..n]) |h| {
+            var i: usize = 0;
+            while (i < lcp.len and i < h.len and lcp[i] == h[i]) : (i += 1) {}
+            lcp = lcp[0..i];
+        }
+        if (lcp.len > partial.len) {
+            self.loadInputFrom(std.fmt.allocPrint(self.arena, "{s} {s}", .{ cmd, lcp }) catch return true);
+            ctx.redraw = true;
+            return true;
+        }
+        var line: std.ArrayList(u8) = .empty;
+        line.appendSlice(self.arena, "completions:") catch return true;
+        for (hits[0..n]) |h| {
+            line.appendSlice(self.arena, "  ") catch break;
+            line.appendSlice(self.arena, h) catch break;
+        }
+        self.lines.append(self.arena, .{ .text = line.toOwnedSlice(self.arena) catch "completions:", .dim = true }) catch {};
+        ctx.redraw = true;
+        return true;
+    }
+
     fn completeSlashCommand(self: *Model, ctx: *vxfw.EventContext) !bool {
         const input = self.text_field.buf.dupe() catch return false;
         defer self.text_field.buf.allocator.free(input);
         if (!looksLikeSlashCommand(input)) return false;
+
+        // Argument completion: once a command name and a space are typed,
+        // complete the argument against the command's known value set (theme
+        // names, workflow names). Commands whose argument is free text (goal,
+        // arena, ...) have no set and fall through to nothing.
+        if (std.mem.indexOfScalar(u8, input, ' ')) |sp| {
+            const cmd = std.mem.trimEnd(u8, input[0..sp], " ");
+            const partial = std.mem.trimStart(u8, input[sp + 1 ..], " ");
+            const pc = parseCommand(cmd) orelse return false;
+            switch (pc.spec.action) {
+                .theme => return self.completeArg(ctx, cmd, partial, &theme_mod.names),
+                .workflow => {
+                    const workflows_mod = @import("../workflows.zig");
+                    const wfs = workflows_mod.loadAllMerged(self.arena, self.io, self.cfg.agent.workflows_dir) catch return false;
+                    var names: std.ArrayList([]const u8) = .empty;
+                    for (wfs) |w| names.append(self.arena, w.name) catch break;
+                    return self.completeArg(ctx, cmd, partial, names.items);
+                },
+                else => return false,
+            }
+        }
 
         var buf: [max_completions]SpellingMatch = undefined;
         const matches = matchingSpellings(input, &buf);
