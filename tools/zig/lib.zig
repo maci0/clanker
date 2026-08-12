@@ -42,6 +42,8 @@ extern fn ck_tool(ptr: u32, len: u32) u32;
 extern fn ck_subagent(json_ptr: u32, json_len: u32) u32;
 extern fn ck_swarm(json_ptr: u32, json_len: u32) u32;
 extern fn ck_ask(json_ptr: u32, json_len: u32) u32;
+extern fn ck_random() u64;
+extern fn ck_fs_write_range(path_ptr: u32, path_len: u32, offset: u32, data_ptr: u32, data_len: u32) u32;
 
 const scratch_cap = 64 * 1024;
 /// Every host result lands here, and the host bump-allocates through it for
@@ -816,4 +818,17 @@ pub fn toolCall(name: []const u8, args_json: []const u8) ToolCallError![]const u
         4 => error.NetworkError,
         else => error.InvalidArg,
     };
+}
+
+/// Host-provided random u64.
+pub fn random() u64 {
+    return ck_random();
+}
+
+/// Overwrites [offset, offset+data.len) of a file. The file must exist and
+/// the range must be within its current size (no implicit extend).
+pub fn fsWriteRange(path: []const u8, offset: usize, data: []const u8) FsError!void {
+    const p = sliceToMem(path);
+    const d = sliceToMem(data);
+    return fsPathOp(ck_fs_write_range(p.ptr, p.len, @intCast(offset), d.ptr, d.len));
 }

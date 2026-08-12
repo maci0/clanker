@@ -11,8 +11,6 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 
-extern fn ck_random() u64;
-
 const store_path = "state/prompts.json";
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -41,7 +39,7 @@ const StoredPrompt = struct {
 };
 
 fn newId() []const u8 {
-    const r = ck_random();
+    const r = lib.random();
     return std.fmt.allocPrint(lib.alloc, "pr-{x}", .{r & 0xffffffffffff}) catch "pr-0";
 }
 

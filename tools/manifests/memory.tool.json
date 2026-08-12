@@ -1,6 +1,6 @@
 {
   "name": "memory",
-  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap,strategy}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids}. Vector: builtin hash+cosine default, muninndb/sqlite-vec swappable; embeddings: builtin / openai_compat via providers base_url / local_onnx stub.",
+  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap}, embed {texts[],dim}, search {query,top_k,threshold,dim,collection_ids,mode}. Vector: builtin hash+cosine default, muninndb/sqlite-vec swappable; embeddings: builtin / openai_compat via providers base_url / local_onnx stub.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -9,8 +9,8 @@
       "texts": { "type": "array", "items": { "type": "string" } },
       "size": { "type": "number" },
       "overlap": { "type": "number" },
-      "strategy": { "type": "string" },
       "query": { "type": "string" },
+      "mode": { "type": "string", "description": "Search mode: vector (default) or keyword." },
       "top_k": { "type": "number" },
       "threshold": { "type": "number" },
       "dim": { "type": "number" },

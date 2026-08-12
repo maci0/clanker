@@ -9,12 +9,12 @@
         "description": "Search query"
       },
       "max_results": {
-        "type": "number",
+        "type": "integer",
         "description": "How many results to return (1-20, default 8)"
       },
       "region": {
         "type": "string",
-        "description": "Region/locale hint, e.g. \"en-US\" (default en-US); passed to Bing market and language settings"
+        "description": "Region/locale hint, e.g. \"en-US\"; passed to the Bing fallback as market and language (DuckDuckGo ignores it)"
       }
     },
     "required": [

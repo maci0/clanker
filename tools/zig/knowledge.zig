@@ -14,8 +14,6 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 
-extern fn ck_random() u64;
-
 const store_dir = "state/knowledge";
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -39,7 +37,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 // ----------------------------------------------------------------- helpers ---
 
 fn newId() []const u8 {
-    const r = ck_random();
+    const r = lib.random();
     return std.fmt.allocPrint(lib.alloc, "kb-{x}", .{r & 0xffffffffffff}) catch "kb-0";
 }
 

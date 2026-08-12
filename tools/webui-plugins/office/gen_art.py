@@ -324,6 +324,25 @@ DOOR = [
     "KKKKKKKKKKKKKKKK",
 ]
 
+GARBAGE = [
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "......K.........",
+    "....KKPKK..K....",
+    "...KPWPWPKKPK...",
+    "..KPWPKPWPWPPK..",
+    "..KWPKPPKPKWPK..",
+    ".KPPWPKWPPKPPPK.",
+    ".KKKKKKKKKKKKKK.",
+    "..SSSSSSSSSSSS..",
+    "................",
+    "................",
+    "................",
+]
+
 TILE_LEGEND = {
     "K": K, "S": SH,
     "G": GRN1, "g": GRN0, "H": GRN2,
@@ -359,6 +378,7 @@ def build_tiles():
         from_map(CHAIR, TILE_LEGEND),
         from_map(PICTURE, PICTURE_L),
         from_map(DOOR, DOOR_L),
+        from_map(GARBAGE, dict(TILE_LEGEND, P=PAPER, W=MET2)),
     ]
     cols = 7
     rows = (len(order) + cols - 1) // cols

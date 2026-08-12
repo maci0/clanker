@@ -2168,8 +2168,8 @@ pub const Agent = struct {
             return std.fmt.allocPrint(self.arena, "{{\"ok\":false,\"error\":\"tool execution failed: {s} ({s})\"}}", .{ tc.name, @errorName(e) });
         }
         const out = worker.out orelse return "{\"ok\":false,\"error\":\"tool produced no output\"}";
+        defer self.ctx.gpa.free(out);
         const owned = try self.arena.dupe(u8, out);
-        self.ctx.gpa.free(out);
         log.log(.info, "tool '{s}' -> {d} bytes", .{ tc.name, owned.len });
         // No check here: these bytes came from the worker, which already
         // checked them. Warning again reports one broken result twice.
