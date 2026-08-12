@@ -480,7 +480,7 @@ pub const Engine = struct {
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{
             .provider = self.provider,
-            .messages = messages,
+            .messages = &messages,
             .max_tokens = opts.response_tokens,
         }, &err_detail) catch |err| {
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), err_detail orelse "" });
@@ -1060,7 +1060,7 @@ pub const Engine = struct {
         var err_detail: ?[]const u8 = null;
         const resp = client.chat(self.ctx, self.arena, .{
             .provider = self.provider,
-            .messages = messages,
+            .messages = &messages,
             // An idea list is a few hundred tokens; the full patch budget
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
