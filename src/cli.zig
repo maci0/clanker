@@ -332,7 +332,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.research_budget = std.fmt.parseInt(u32, v, 10) catch {
                     setDiag(diag, v);
-                    return error.BadIters;
+                    return error.BadBudget;
                 };
                 used = .research_budget;
             } else if (std.mem.eql(u8, a, "--for")) {
@@ -351,7 +351,7 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.arena_rounds = std.fmt.parseInt(u32, v, 10) catch {
                     setDiag(diag, v);
-                    return error.BadIters;
+                    return error.BadRounds;
                 };
                 used = .arena_rounds;
             } else if (std.mem.eql(u8, a, "--judge")) {
