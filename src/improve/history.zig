@@ -91,6 +91,19 @@ pub const History = struct {
         return self.anyWithStatus(arena, "reverted", fingerprints);
     }
 
+    /// Ids of every improvement the log still records as accepted — the set
+    /// whose "already in the source" claim the revert sync has to verify
+    /// against the tree.
+    pub fn acceptedIds(self: *History, arena: std.mem.Allocator) ![]const []const u8 {
+        const entries = try self.loadAll(arena);
+        var out: std.ArrayList([]const u8) = .empty;
+        for (entries) |e| {
+            if (!std.mem.eql(u8, e.status, "accepted")) continue;
+            try out.append(arena, e.id);
+        }
+        return try out.toOwnedSlice(arena);
+    }
+
     fn anyWithStatus(self: *History, arena: std.mem.Allocator, status: []const u8, fingerprints: []const u64) !bool {
         if (fingerprints.len == 0) return false;
         const entries = try self.loadAll(arena);
@@ -886,6 +899,12 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
     const before = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
     defer gpa.free(before);
 
+    // Both accepted entries are visible to the revert sync's content check.
+    const accepted_before = try hist.acceptedIds(arena);
+    try std.testing.expectEqual(@as(usize, 2), accepted_before.len);
+    try std.testing.expectEqualStrings("imp-kept", accepted_before[0]);
+    try std.testing.expectEqualStrings("imp-gone", accepted_before[1]);
+
     try std.testing.expectEqual(@as(usize, 1), try hist.markReverted(&.{ "imp-gone", "imp-unknown" }));
 
     const after = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", gpa, .limited(1 << 20));
@@ -908,6 +927,9 @@ test "markReverted flips accepted to reverted surgically and idempotently" {
     // accepted, and now counts as human-reverted.
     try std.testing.expect(!try hist.alreadyAccepted(arena, &.{fp}));
     try std.testing.expect(try hist.revertedByHuman(arena, &.{fp}));
+    const accepted_after = try hist.acceptedIds(arena);
+    try std.testing.expectEqual(@as(usize, 1), accepted_after.len);
+    try std.testing.expectEqualStrings("imp-kept", accepted_after[0]);
 
     // A rejected entry for the id would not flip, and re-running changes
     // nothing: the matched line no longer says accepted.

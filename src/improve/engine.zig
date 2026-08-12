@@ -103,6 +103,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // re-land work a person already undid, with every other gate green.
     .{ .file = "src/improve/engine.zig", .needle = "self.syncReverts(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.hist.revertedByHuman(" },
+    .{ .file = "src/improve/engine.zig", .needle = "self.contentReverts(" },
     .{ .file = "src/improve/worktree.zig", .needle = "\".env\", \"config.local.toml\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/improvements.jsonl\", \"state/history\"" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"state/learnings.md\", \"state/autolearn.jsonl\"" },
@@ -1170,8 +1171,10 @@ pub const Engine = struct {
     /// keeps telling the model the work is "already in the source" while
     /// the source shows it undone — the mismatch that got one improvement
     /// merged, reverted, re-proposed near-verbatim, re-merged and reverted
-    /// again. Best-effort: no git, no repo, or an unresolvable revert
-    /// message leaves history exactly as it was.
+    /// again. Two passes: `reverts.scan` resolves recognisable revert
+    /// messages, then `contentReverts` convicts accepted work whose added
+    /// lines are gone from the tree however the revert was worded.
+    /// Best-effort: no git or no repo leaves history exactly as it was.
     fn syncReverts(self: *Engine) void {
         const argv = [_][]const u8{"git"} ++ reverts_mod.git_log_args;
         const res = std.process.run(self.ctx.gpa, self.ctx.io, .{
@@ -1200,7 +1203,6 @@ pub const Engine = struct {
             log.log(.warn, "revert sync skipped: {s}", .{@errorName(err)});
             return;
         };
-        if (found.len == 0) return;
 
         var ids: std.ArrayList([]const u8) = .empty;
         defer ids.deinit(self.ctx.gpa);
@@ -1208,6 +1210,9 @@ pub const Engine = struct {
             ids.append(self.ctx.gpa, r.id) catch return;
             log.log(.debug, "revert sync: {s} was reverted by \"{s}\"", .{ r.id, r.by });
         }
+        self.contentReverts(arena, res.stdout, &ids);
+        if (ids.items.len == 0) return;
+
         const flipped = self.hist.markReverted(ids.items) catch |err| {
             log.log(.warn, "revert sync could not update history: {s}", .{@errorName(err)});
             return;
@@ -1217,6 +1222,108 @@ pub const Engine = struct {
         if (flipped > 0) {
             log.log(.info, "revert sync: {d} accepted improvement(s) were reverted by a human; recorded as reverted", .{flipped});
         }
+    }
+
+    /// One `git show` per checked commit; enough for every accepted id in a
+    /// 400-commit window, small enough that a pathological history cannot
+    /// stall startup.
+    const max_content_checks = 64;
+
+    /// The message-blind half of revert detection: an accepted improvement
+    /// whose commits' added lines are all gone from the tree was undone, no
+    /// matter how the revert was worded. Both real reverts of promoted work
+    /// on this repository were prose ("Reverted in the working tree before
+    /// this commit, not by me") matching none of the shapes `reverts.scan`
+    /// knows, so history kept saying accepted and the loop re-proposed and
+    /// re-merged the same work a human had just deleted. Appends the ids it
+    /// convicts to `ids`; anything inconclusive, re-landed, over budget, or
+    /// failing a git spawn is left alone — the safe verdict is "still there".
+    fn contentReverts(self: *Engine, arena: std.mem.Allocator, raw_log: []const u8, ids: *std.ArrayList([]const u8)) void {
+        const imps = reverts_mod.improvementCommits(arena, raw_log) catch return;
+        if (imps.len == 0) return;
+        const accepted = self.hist.acceptedIds(arena) catch return;
+        var checks: usize = max_content_checks;
+        for (accepted) |id| {
+            if (containsId(ids.items, id)) continue;
+            var in_log = false;
+            var alive = false;
+            for (imps) |ic| {
+                if (!std.mem.eql(u8, ic.id, id)) continue;
+                in_log = true;
+                if (checks == 0) {
+                    alive = true;
+                    break;
+                }
+                checks -= 1;
+                // Every commit carrying the id must be gone: a reverted then
+                // re-landed improvement is alive through its newer commit.
+                if (self.commitContentPresence(arena, ic.sha) != .gone) {
+                    alive = true;
+                    break;
+                }
+            }
+            if (!in_log or alive) continue;
+            ids.append(self.ctx.gpa, id) catch return;
+            log.log(.debug, "revert sync: {s}'s added lines are gone from the tree (content check)", .{id});
+        }
+    }
+
+    /// Whether the lines one commit added still exist in the working tree.
+    /// Any failure — git missing, sha gone, unreadable diff — answers
+    /// `present`, never `gone`: a false revert brands live work as
+    /// human-refused.
+    fn commitContentPresence(self: *Engine, arena: std.mem.Allocator, sha: []const u8) reverts_mod.Presence {
+        var argv = [_][]const u8{"git"} ++ reverts_mod.git_show_args ++ [_][]const u8{""};
+        argv[argv.len - 1] = sha;
+        const res = std.process.run(self.ctx.gpa, self.ctx.io, .{
+            .argv = &argv,
+            .stdout_limit = .limited(1 << 22),
+            .stderr_limit = .limited(1 << 16),
+        }) catch return .present;
+        defer self.ctx.gpa.free(res.stdout);
+        defer self.ctx.gpa.free(res.stderr);
+        switch (res.term) {
+            .exited => |c| if (c != 0) return .present,
+            else => return .present,
+        }
+        const adds = reverts_mod.addedLines(arena, res.stdout) catch return .present;
+        // Lines the parent file already had are no evidence either way; on
+        // one fully reverted improvement every false "survivor" was
+        // boilerplate the file contained before the commit.
+        const Parents = struct {
+            io: std.Io,
+            arena: std.mem.Allocator,
+            sha: []const u8,
+            pub fn read(t: @This(), path: []const u8) ?[]const u8 {
+                const spec = std.fmt.allocPrint(t.arena, "{s}^:{s}", .{ t.sha, path }) catch return null;
+                const show = std.process.run(t.arena, t.io, .{
+                    .argv = &.{ "git", "show", spec },
+                    .stdout_limit = .limited(1 << 24),
+                    .stderr_limit = .limited(1 << 16),
+                }) catch return null;
+                switch (show.term) {
+                    .exited => |c| if (c != 0) return null,
+                    else => return null,
+                }
+                return show.stdout;
+            }
+        };
+        const distinct = reverts_mod.distinctiveAdds(arena, adds, Parents{ .io = self.ctx.io, .arena = arena, .sha = sha }) catch return .present;
+        const Tree = struct {
+            io: std.Io,
+            arena: std.mem.Allocator,
+            pub fn read(t: @This(), path: []const u8) ?[]const u8 {
+                return std.Io.Dir.cwd().readFileAlloc(t.io, path, t.arena, .limited(1 << 24)) catch null;
+            }
+        };
+        return reverts_mod.presence(distinct, Tree{ .io = self.ctx.io, .arena = arena });
+    }
+
+    fn containsId(haystack: []const []const u8, id: []const u8) bool {
+        for (haystack) |have| {
+            if (std.mem.eql(u8, have, id)) return true;
+        }
+        return false;
     }
 
     fn gitCommit(self: *Engine, id: []const u8, summary: []const u8, files: []const []const u8) void {
