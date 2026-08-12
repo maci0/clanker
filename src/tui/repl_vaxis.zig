@@ -1531,6 +1531,11 @@ const Model = struct {
         children[0] = .{ .origin = .{ .row = box_y + 1, .col = 2 }, .surface = input_surf };
 
         var row: u16 = top;
+        if (line_count == 0 and !streaming and row < bottom) {
+            writeWrapped(surface, &row, bottom, max.width, "Start with a task. clanker keeps the conversation and streams tool work here.", vaxis.Style{});
+            if (row < bottom) row += 1;
+            writeWrapped(surface, &row, bottom, max.width, "Try /model to switch models, /help for commands, or type anything to begin.", dim);
+        }
         const start = tailStart(self.lines.items[0..view_end], avail_rows);
         // Lines carry fence_lang when they came out of a code fence; the
         // highlighter state is rebuilt per draw from the tagged lines.

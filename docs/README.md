@@ -76,7 +76,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_stats` | Token usage recorded so far |
 | `ck_std_api` | Look up a symbol in the Zig standard library source |
 | `ck_config` | Return this tool's `config` object from its descriptor |
-| `ck_harness_config` | Return clanker's own effective config (providers, models, instance, peers) as JSON, merged the way the host loaded it regardless of TOML/JSON source |
+| `ck_harness_config` | Return the calling tool's allowlisted slice of clanker's effective config as JSON. Unknown tools are denied; shipped callers receive only providers, peers, or their configured workflow/chain directory as needed |
 | `ck_result` | Write the tool result into the host arena |
 
 Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools/manifests/*.tool.json` control network and filesystem access.

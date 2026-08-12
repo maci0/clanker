@@ -16,7 +16,7 @@
     "required": []
   },
   "fs_prefixes": [
-    "docs/"
+    "docs/ROADMAP.md"
   ],
   "network_allow": [],
   "category": "agent",

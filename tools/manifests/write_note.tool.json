@@ -14,7 +14,7 @@
     ]
   },
   "fs_prefixes": [
-    "state/"
+    "state/learnings.md"
   ],
   "category": "agent"
 }

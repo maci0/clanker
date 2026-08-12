@@ -12,7 +12,7 @@
     "required": []
   },
   "fs_prefixes": [
-    "state/"
+    "state/improvements.jsonl"
   ],
   "network_allow": [],
   "category": "agent",

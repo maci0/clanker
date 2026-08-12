@@ -130,7 +130,10 @@ pub fn main(init: std.process.Init) !void {
         }
         switch (err) {
             error.MissingTask => log.log(.error_, "`clanker run` needs a task text argument", .{}),
-            error.UnknownCommand => log.log(.error_, "unknown command '{s}' (see the command list below)", .{diag}),
+            error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
+                log.log(.error_, "unknown command '{s}'; did you mean `clanker {s}`?", .{ diag, suggestion })
+            else
+                log.log(.error_, "unknown command '{s}' (see the command list below)", .{diag}),
             error.UnknownArg => log.log(.error_, "unrecognized argument '{s}'", .{diag}),
             error.MissingArg => log.log(.error_, "'{s}' needs a value", .{diag}),
             error.BadIters => log.log(.error_, "--iters wants a non-negative integer, got '{s}'", .{diag}),

@@ -27,7 +27,7 @@
     ]
   },
   "fs_prefixes": [
-    "state/"
+    "state/goals.json"
   ],
   "category": "agent"
 }

@@ -330,7 +330,9 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
         // at all the default (the REPL) stands.
         if (!cmd_seen) {
             cmd_seen = true;
-            if (std.mem.eql(u8, a, "init")) {
+            if (std.mem.eql(u8, a, "help")) {
+                opts.command = .help;
+            } else if (std.mem.eql(u8, a, "init")) {
                 opts.command = .init;
             } else if (std.mem.eql(u8, a, "doctor")) {
                 opts.command = .doctor;
@@ -402,6 +404,11 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 setDiag(diag, a);
                 return error.UnknownCommand;
             }
+        } else if (opts.command == .help and opts.help_for == null) {
+            opts.help_for = commandForHelp(a) orelse {
+                setDiag(diag, a);
+                return error.UnknownCommand;
+            };
         } else if (pending_sub) |sub| {
             if (std.mem.eql(u8, a, sub)) {
                 pending_sub = null;
@@ -528,6 +535,17 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     return opts;
 }
 
+fn commandForHelp(name: []const u8) ?Command {
+    for (&specs) |*s| {
+        const end = std.mem.indexOfAny(u8, s.usage, " [") orelse s.usage.len;
+        if (std.mem.eql(u8, name, s.usage[0..end])) return s.command;
+    }
+    if (std.mem.eql(u8, name, "prune")) return .prune;
+    if (std.mem.eql(u8, name, "provide")) return .providers_check;
+    if (std.mem.eql(u8, name, "workflows")) return .workflow;
+    return null;
+}
+
 /// The whole command list, grouped. Rendered from `specs` so a new command
 /// cannot be added without appearing here.
 pub fn printUsage(io: std.Io) void {
@@ -537,6 +555,40 @@ pub fn printUsage(io: std.Io) void {
 
 pub fn printUsageHint(io: std.Io) void {
     writeStdErr(io, "Run `clanker --help` for the command list.\n") catch {};
+}
+
+/// Returns the closest public command spelling for a short mistyped token.
+/// Keeping this beside the generated help table means suggestions cannot
+/// drift toward internal enum names or compatibility aliases.
+pub fn suggestCommand(input: []const u8) ?[]const u8 {
+    if (input.len == 0 or input.len > 32) return null;
+    var best: ?[]const u8 = null;
+    var best_distance: usize = 3;
+    for (&specs) |*s| {
+        const end = std.mem.indexOfAny(u8, s.usage, " [") orelse s.usage.len;
+        const spelling = s.usage[0..end];
+        const distance = editDistance(input, spelling);
+        if (distance < best_distance) {
+            best = spelling;
+            best_distance = distance;
+        }
+    }
+    return best;
+}
+
+fn editDistance(a: []const u8, b: []const u8) usize {
+    var previous: [33]usize = undefined;
+    var current: [33]usize = undefined;
+    for (0..b.len + 1) |i| previous[i] = i;
+    for (a, 0..) |ac, ai| {
+        current[0] = ai + 1;
+        for (b, 0..) |bc, bi| {
+            const substitution = previous[bi] + @intFromBool(ac != bc);
+            current[bi + 1] = @min(@min(previous[bi + 1] + 1, current[bi] + 1), substitution);
+        }
+        @memcpy(previous[0 .. b.len + 1], current[0 .. b.len + 1]);
+    }
+    return previous[b.len];
 }
 
 fn renderUsage(buf: []u8) []const u8 {
@@ -7140,6 +7192,16 @@ test "--help after a command asks about that command" {
     const all = try parse(&.{ "clanker", "--help" }, null);
     try std.testing.expectEqual(Command.help, all.command);
     try std.testing.expect(all.help_for == null);
+
+    const conventional = try parse(&.{ "clanker", "help", "run" }, null);
+    try std.testing.expectEqual(Command.help, conventional.command);
+    try std.testing.expectEqual(Command.run, conventional.help_for.?);
+}
+
+test "mistyped commands get conservative suggestions" {
+    try std.testing.expectEqualStrings("repl", suggestCommand("relp").?);
+    try std.testing.expectEqualStrings("doctor", suggestCommand("docter").?);
+    try std.testing.expect(suggestCommand("completely-different") == null);
 }
 
 test "a bare prompt runs, a mistyped command does not" {

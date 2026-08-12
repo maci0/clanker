@@ -977,6 +977,10 @@ export function bindBoard(deps) {
       var rows=boardListRows();
       listView.textContent="";
       if(!rows.length){
+        // The board-level first-use message already explains how cards get
+        // here. Reserve this list message for the genuinely different case
+        // where cards exist but the active filters hide all of them.
+        if(!(boardState.val.cards||[]).length) return;
         var empty=document.createElement("p");
         empty.className="run-empty";
         empty.textContent="No cards match the current filters.";

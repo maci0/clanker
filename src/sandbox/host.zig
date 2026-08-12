@@ -716,12 +716,29 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const cfg = h.sandbox.cfg orelse return Err.denied;
+    const access = harnessConfigAccess(h.sandbox.tool_self_name) orelse {
+        log.log(.warn, "[sandbox] ck_harness_config denied for tool '{s}'", .{h.sandbox.tool_self_name});
+        return Err.denied;
+    };
 
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const json_out = harnessConfigJSON(arena, cfg) catch return Err.too_large;
+    const json_out = harnessConfigJSON(arena, cfg, access) catch return Err.too_large;
     return h.writeResult(bytes, json_out);
+}
+
+const HarnessConfigAccess = enum { full, peers, workflows, chains };
+
+/// ck_harness_config is a privileged structured view, independent of
+/// fs_prefixes. Grant each shipped caller only the section it consumes and
+/// fail closed for any other guest, including newly added tools.
+fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
+    if (std.mem.eql(u8, tool_name, "config_view") or std.mem.eql(u8, tool_name, "providers")) return .full;
+    if (std.mem.eql(u8, tool_name, "peers") or std.mem.eql(u8, tool_name, "cmd_status") or std.mem.eql(u8, tool_name, "ask_user")) return .peers;
+    if (std.mem.eql(u8, tool_name, "workflows")) return .workflows;
+    if (std.mem.eql(u8, tool_name, "chain")) return .chains;
+    return null;
 }
 
 /// Serializes the fields of `Config` that guests actually consume. Providers
@@ -729,88 +746,98 @@ pub fn ckHarnessConfig(caller: *zwasm.Caller) u32 {
 /// though the harness itself now stores it distributed that way in memory
 /// from a flat `[models."provider/model"]` table on disk — see
 /// distributeModels in config.zig.
-fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config) ![]const u8 {
+fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, access: HarnessConfigAccess) ![]const u8 {
     var w: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
 
     try s.beginObject();
-    try s.objectField("default_provider");
-    try s.write(cfg.default_provider);
+    if (access == .full) {
+        try s.objectField("default_provider");
+        try s.write(cfg.default_provider);
 
-    try s.objectField("providers");
-    try s.beginObject();
-    var pit = cfg.providers.iterator();
-    while (pit.next()) |pkv| {
-        const p = pkv.value_ptr;
-        try s.objectField(pkv.key_ptr.*);
+        try s.objectField("providers");
         try s.beginObject();
-        try s.objectField("kind");
-        try s.write(@tagName(p.kind));
-        try s.objectField("base_url");
-        try s.write(p.base_url);
-        if (p.api_key_env) |e| {
-            try s.objectField("api_key_env");
-            try s.write(e);
-        }
-        try s.objectField("default_model");
-        try s.write(p.default_model);
-        try s.objectField("models");
-        try s.beginObject();
-        var mit = p.models.iterator();
-        while (mit.next()) |mkv| {
-            const m = mkv.value_ptr;
-            try s.objectField(mkv.key_ptr.*);
+        var pit = cfg.providers.iterator();
+        while (pit.next()) |pkv| {
+            const p = pkv.value_ptr;
+            try s.objectField(pkv.key_ptr.*);
             try s.beginObject();
-            try s.objectField("context_window");
-            try s.write(m.context_window);
-            try s.objectField("max_tokens");
-            try s.write(m.max_tokens);
-            if (m.display) |d| {
-                try s.objectField("display");
-                try s.write(d);
+            try s.objectField("kind");
+            try s.write(@tagName(p.kind));
+            try s.objectField("base_url");
+            try s.write(p.base_url);
+            if (p.api_key_env) |e| {
+                try s.objectField("api_key_env");
+                try s.write(e);
             }
-            if (m.cost_per_1m_input) |c| {
-                try s.objectField("cost_per_1m_input");
-                try s.write(c);
+            try s.objectField("default_model");
+            try s.write(p.default_model);
+            try s.objectField("models");
+            try s.beginObject();
+            var mit = p.models.iterator();
+            while (mit.next()) |mkv| {
+                const m = mkv.value_ptr;
+                try s.objectField(mkv.key_ptr.*);
+                try s.beginObject();
+                try s.objectField("context_window");
+                try s.write(m.context_window);
+                try s.objectField("max_tokens");
+                try s.write(m.max_tokens);
+                if (m.display) |d| {
+                    try s.objectField("display");
+                    try s.write(d);
+                }
+                if (m.cost_per_1m_input) |c| {
+                    try s.objectField("cost_per_1m_input");
+                    try s.write(c);
+                }
+                if (m.cost_per_1m_output) |c| {
+                    try s.objectField("cost_per_1m_output");
+                    try s.write(c);
+                }
+                try s.endObject();
             }
-            if (m.cost_per_1m_output) |c| {
-                try s.objectField("cost_per_1m_output");
-                try s.write(c);
-            }
+            try s.endObject();
             try s.endObject();
         }
         try s.endObject();
-        try s.endObject();
     }
-    try s.endObject();
 
-    try s.objectField("instance");
-    try s.beginObject();
-    try s.objectField("name");
-    try s.write(cfg.instance.name);
-    try s.objectField("id");
-    try s.write(cfg.instance.id);
-    try s.endObject();
-
-    try s.objectField("peers");
-    try s.beginArray();
-    for (cfg.peers) |p| {
+    if (access == .full or access == .peers) {
+        try s.objectField("instance");
         try s.beginObject();
         try s.objectField("name");
-        try s.write(p.name);
-        try s.objectField("url");
-        try s.write(p.url);
+        try s.write(cfg.instance.name);
+        try s.objectField("id");
+        try s.write(cfg.instance.id);
+        try s.endObject();
+
+        try s.objectField("peers");
+        try s.beginArray();
+        for (cfg.peers) |p| {
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write(p.name);
+            try s.objectField("url");
+            try s.write(p.url);
+            try s.endObject();
+        }
+        try s.endArray();
+    }
+
+    if (access == .full or access == .workflows or access == .chains) {
+        try s.objectField("agent");
+        try s.beginObject();
+        if (access == .full or access == .workflows) {
+            try s.objectField("workflows_dir");
+            try s.write(cfg.agent.workflows_dir);
+        }
+        if (access == .full or access == .chains) {
+            try s.objectField("chains_dir");
+            try s.write(cfg.agent.chains_dir);
+        }
         try s.endObject();
     }
-    try s.endArray();
-
-    try s.objectField("agent");
-    try s.beginObject();
-    try s.objectField("workflows_dir");
-    try s.write(cfg.agent.workflows_dir);
-    try s.objectField("chains_dir");
-    try s.write(cfg.agent.chains_dir);
-    try s.endObject();
 
     try s.endObject();
     return w.toOwnedSlice();
@@ -2053,6 +2080,24 @@ fn isGitRemoteOpToken(t: []const u8) bool {
     return std.mem.eql(u8, t, "push") or std.mem.eql(u8, t, "merge") or std.mem.eql(u8, t, "checkout");
 }
 
+/// Git has network-capable plumbing verbs such as ls-remote and archive that
+/// are not recognizable as generic network programs. Keep the host boundary
+/// on an allowlist so a replaced or malicious guest cannot bypass
+/// network_allow merely by invoking an unlisted git subcommand.
+fn gitVerbAllowed(argv: []const []const u8, remote_ops: bool) bool {
+    if (argv.len < 2) return false;
+    var verb: ?[]const u8 = null;
+    for (argv[1..]) |arg| {
+        if (arg.len == 0 or arg[0] == '-') continue;
+        verb = arg;
+        break;
+    }
+    const v = verb orelse return false;
+    const local = [_][]const u8{ "status", "diff", "log", "show", "add", "commit", "ls-files", "rev-parse", "branch", "worktree" };
+    for (local) |allowed| if (std.mem.eql(u8, v, allowed)) return true;
+    return remote_ops and (std.mem.eql(u8, v, "push") or std.mem.eql(u8, v, "merge") or std.mem.eql(u8, v, "checkout"));
+}
+
 /// Whether `pattern` names `cmd` — i.e. its first whitespace-delimited token
 /// is exactly `cmd`. A pattern whose command token carries a `*` cannot name a
 /// specific command, so it does not make the command strict (it can still
@@ -2689,6 +2734,10 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     // command with no pattern stays under the deny-list check below.
     var join_buf: [4096]u8 = undefined;
     const policy = execPolicyFor(h.sandbox, argv.items, &join_buf);
+    if (std.mem.eql(u8, cmd, "git") and !gitVerbAllowed(argv.items, h.sandbox.git_remote_ops)) {
+        log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{});
+        return Err.denied;
+    }
     if (policy.governed) {
         if (!policy.allowed) {
             log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd});
@@ -3099,6 +3148,15 @@ test "isGitRemoteOpToken lifts exactly the PR lifecycle verbs" {
     try std.testing.expect(!isGitRemoteOpToken("rebase"));
     try std.testing.expect(!isGitRemoteOpToken("fetch"));
     try std.testing.expect(!isGitRemoteOpToken("-f"));
+}
+
+test "git exec permits named local verbs and blocks network plumbing" {
+    try std.testing.expect(gitVerbAllowed(&.{ "/usr/bin/git", "status", "--porcelain" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "--no-pager", "log", "-1" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "ls-remote", "https://example.com/repo" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "archive", "--remote=https://example.com/repo" }, false));
+    try std.testing.expect(!gitVerbAllowed(&.{ "git", "push" }, false));
+    try std.testing.expect(gitVerbAllowed(&.{ "git", "push" }, true));
 }
 
 test "patternNamesCmd matches only the first command token" {
@@ -3634,6 +3692,31 @@ test "a tool cannot read an environment variable it was not allowed" {
     try std.testing.expect(envAllowed(&sb, "MY_TOKEN"));
     try std.testing.expect(!envAllowed(&sb, "PWD"));
     try std.testing.expect(!envAllowed(&sb, "DEEPSEEK_API_KEY"));
+}
+
+test "harness config access is scoped to each tool's consumed fields" {
+    try std.testing.expectEqual(HarnessConfigAccess.full, harnessConfigAccess("providers").?);
+    try std.testing.expectEqual(HarnessConfigAccess.peers, harnessConfigAccess("peers").?);
+    try std.testing.expectEqual(HarnessConfigAccess.workflows, harnessConfigAccess("workflows").?);
+    try std.testing.expectEqual(HarnessConfigAccess.chains, harnessConfigAccess("chain").?);
+    try std.testing.expect(harnessConfigAccess("unrelated") == null);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cfg = config_mod.Config{};
+
+    const workflows = try harnessConfigJSON(arena, &cfg, .workflows);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "workflows_dir") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "chains_dir") == null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "providers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, workflows, "peers") == null);
+
+    const peers = try harnessConfigJSON(arena, &cfg, .peers);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "peers") != null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "instance") != null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "providers") == null);
+    try std.testing.expect(std.mem.indexOf(u8, peers, "agent") == null);
 }
 
 test "parallel appends to one file all land" {
