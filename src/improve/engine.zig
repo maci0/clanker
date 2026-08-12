@@ -72,6 +72,16 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
+    // src/gate/checks.zig is deliberately outside the protected surface (so
+    // clanker can keep strengthening the gates), which means a patch could
+    // also gut buildGate/testGate/toolsGate's actual implementation there
+    // and pass every check today by construction. These needles catch that:
+    // the delegation call sites and the one exit-code check every gate
+    // ultimately shares.
+    .{ .file = "src/gate/checks.zig", .needle = ".exited => |c| c == 0," },
+    .{ .file = "src/gate/checks.zig", .needle = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")" },
+    .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")" },
+    .{ .file = "src/gate/checks.zig", .needle = "return runZig(gpa, io, dir, &.{ \"build\", \"tools\", \"--summary\", \"all\" }, \"zig build tools\")" },
 };
 
 /// The next symbol worth looking up in `text`, reduced to its most specific
@@ -2142,6 +2152,52 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     // rest of the tree is a verbatim copy where these already hold.
     const elsewhere = [_]proposal_mod.Change{.{ .file = "src/cli.zig", .old = "", .new = "" }};
     try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
+}
+
+test "a patch that guts a gate implementation in checks.zig is rejected too" {
+    // checks.zig is deliberately outside the protected surface, so a
+    // proposal can legitimately touch it -- but not by deleting the exit
+    // code check every gate shares.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, "src/gate");
+
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        if (!std.mem.eql(u8, inv.file, "src/gate/checks.zig")) continue;
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = "src/gate/checks.zig", .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    // Drop the exit-code check -- the shared piece that decides pass/fail
+    // for build, test, and tools gates alike -- and it is caught.
+    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, ".exited => |c| c == 0,", "");
+    try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = gutted });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings(".exited => |c| c == 0,", bad.needle);
 }
 
 test "the staging remover refuses any path that is not a staging directory" {
