@@ -926,10 +926,14 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
 
-    // Which provider a bare `clanker chat` would actually use. Printed up front
-    // so it is visible even when that provider is skipped or fails below.
-    if (opts.provider == null)
-        log.log(.info, "default provider: {s}", .{cfg.default_provider});
+    // Which provider a bare `clanker run` would actually use, and which file
+    // decided that. Printed up front so it is visible even when that provider
+    // is skipped or fails below, and printed for a single-provider check too:
+    // "default=false" invites the question of which one is, so answer it.
+    if (cfg.default_provider_from) |from|
+        log.log(.info, "default provider: {s} (from {s})", .{ cfg.default_provider, from })
+    else
+        log.log(.info, "default provider: {s} (built-in fallback, no config sets default_provider)", .{cfg.default_provider});
 
     var it = cfg.providers.iterator();
     var found_any = false;
@@ -944,8 +948,17 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         const is_default = std.mem.eql(u8, name, cfg.default_provider);
 
         if (p.api_key_env) |env_name| {
+            // Nothing is sent for these — no key, no request. Say "not
+            // configured" rather than "skipped": a provider you never set up
+            // is not a failure, it is absent, and the old wording read as a
+            // check that had been attempted and abandoned. It is only a
+            // problem when it is the default, where it means the provider
+            // every unqualified command reaches for cannot answer at all.
             if (init.environ_map.get(env_name) == null) {
-                log.log(.warn, "{s}: skipped — env var {s} not set — default={}", .{ name, env_name, is_default });
+                if (is_default)
+                    log.log(.warn, "{s}: not configured — {s} not set, nothing sent — default=true, so no provider is usable unqualified", .{ name, env_name })
+                else
+                    log.log(.info, "{s}: not configured — {s} not set, nothing sent — default=false", .{ name, env_name });
                 continue;
             }
         }

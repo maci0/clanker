@@ -81,8 +81,14 @@ fn runChecks(
         return;
     }
     rep.line(.ok, "config.toml", "");
-    const has_local = fileExists(io, "config.local.toml");
-    rep.line(if (has_local) .ok else .warn, "config.local.toml", if (has_local) "" else "absent; defaults from config.toml only");
+    // The loader falls back to the .json sibling, so reporting only on the
+    // .toml called a local override absent while it was being applied.
+    if (fileExists(io, "config.local.toml"))
+        rep.line(.ok, "config.local.toml", "")
+    else if (fileExists(io, "config.local.json"))
+        rep.line(.ok, "config.local.json", "no .toml sibling, so the .json applies")
+    else
+        rep.line(.warn, "config.local.toml", "absent; defaults from config.toml only");
 
     const cfg = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch |err| {
         rep.line(.fail, "config parses", @errorName(err));
@@ -91,8 +97,12 @@ fn runChecks(
     rep.line(.ok, "config parses", "");
 
     // A default_provider naming nothing is refused at load, so reaching here
-    // means it resolves; the useful thing left to say is which one it is.
-    rep.line(.ok, "default_provider", cfg.default_provider);
+    // means it resolves; the useful thing left to say is which one it is, and
+    // which of the two files won it.
+    rep.line(.ok, "default_provider", if (cfg.default_provider_from) |from|
+        try std.fmt.allocPrint(arena, "{s} (from {s})", .{ cfg.default_provider, from })
+    else
+        cfg.default_provider);
 
     rep.section("providers and keys");
     var it = cfg.providers.iterator();
