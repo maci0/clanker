@@ -64,10 +64,10 @@ pub const round_ceiling: u32 = 12;
 /// in a free-for-all, layered on the pairwise core rather than replacing it.
 pub const max_combatants: usize = 8;
 
-/// Strict pairwise is the shipped shape and the protocol below is written for
-/// it. A request between the two counts is refused at the boundary with a
-/// reason, rather than silently doing something the rules don't define yet.
-pub const shipped_combatants: usize = 2;
+/// Pairwise (2 combatants) stays the default shape; anything above it is
+/// Battle Royale mode, which is the same protocol plus a `target` on every
+/// offensive move.
+pub const pairwise_combatants: usize = 2;
 
 pub fn clampRounds(configured: u32) u32 {
     if (configured == 0) return default_max_rounds;
@@ -91,6 +91,11 @@ pub const Reply = struct {
     /// The reply was cut off mid-JSON and repaired; the move is genuine, the
     /// argument is only partly there.
     truncated: bool = false,
+    /// Who the move is aimed at, as the combatant wrote it — a number as shown
+    /// in its prompt, or a label/position. Unused in a pairwise match (there is
+    /// only one possible opponent); required above that, and resolved by
+    /// `resolveTarget` rather than trusted.
+    target: ?[]const u8 = null,
 };
 
 /// Strips a fenced code block, if the reply is wrapped in one. Models asked
@@ -241,6 +246,16 @@ fn parseMoveObject(alloc: std.mem.Allocator, span: []const u8, truncated: bool) 
     if (optFloat(obj, "confidence")) |c| reply.confidence = std.math.clamp(c, 0.0, 1.0);
     if (optFloat(obj, "opponent_landed")) |c| reply.opponent_landed = std.math.clamp(c, 0.0, 1.0);
     if (truncated) reply.confidence = @min(reply.confidence, truncated_confidence);
+    // A number is as valid a target as a name, so it is kept as written and
+    // resolved later against the live roster.
+    if (obj.get("target")) |t| switch (t) {
+        .string => |s| {
+            const trimmed = std.mem.trim(u8, s, " \t\r\n");
+            if (trimmed.len > 0) reply.target = trimmed;
+        },
+        .integer => |n| reply.target = std.fmt.allocPrint(alloc, "{d}", .{n}) catch null,
+        else => {},
+    };
     return reply;
 }
 
@@ -336,37 +351,40 @@ pub const Outcome = struct {
     conceded: bool = false,
 };
 
-/// Resolves one move against the damage currently in flight at the mover.
+/// The damage rules, in one place.
 ///
-/// `incoming` is what the opponent's last attack put in flight; `credit` is
-/// how much of it the judge agrees this move actually answered, in [0,1].
-/// Self-judging supplies `credit` from the mover's own `opponent_landed`
-/// (inverted), third-party judging from the judge call.
-pub fn resolve(move: Move, confidence: f64, incoming: u16, credit: f64) Outcome {
+/// `incoming_total` is everything in flight at the mover; `from_target` is the
+/// part of it put there by the combatant this move is aimed at. A block only
+/// ever negates the attack it names, so those two numbers are what separate
+/// "what I answered" from "what still hits me". `credit` is how much of the
+/// named attack the judge agrees the move actually answered, in [0,1].
+fn score(move: Move, confidence: f64, incoming_total: u16, from_target: u16, credit: f64) Outcome {
     var out = Outcome{};
     switch (move) {
-        .attack => {
-            out.taken = incoming;
-            out.dealt = scaled(base_damage, confidence);
-        },
-        .block => {
-            out.blocked = scaled(incoming, credit);
-            out.taken = incoming - out.blocked;
-        },
+        .attack => out.dealt = scaled(base_damage, confidence),
+        .block => out.blocked = scaled(from_target, credit),
         .counter => {
-            out.blocked = scaled(incoming, credit);
-            out.taken = incoming - out.blocked;
+            out.blocked = scaled(from_target, credit);
             out.dealt = scaled(base_damage, confidence);
         },
-        .concede => {
-            out.taken = incoming + concede_self_damage;
-            out.conceded = true;
-        },
+        .concede => out.conceded = true,
         // A closing argument feeds the verdict, not the HP bars — but it does
         // not dodge what is already in flight.
-        .final_stand => out.taken = incoming,
+        .final_stand => {},
     }
+    out.taken = incoming_total - out.blocked;
+    if (move == .concede) out.taken +|= concede_self_damage;
     return out;
+}
+
+/// Resolves one pairwise move against the damage in flight at the mover.
+///
+/// With two combatants the only possible attacker *is* the target, so both of
+/// `score`'s in-flight numbers are the same one. Self-judging supplies `credit`
+/// from the mover's own `opponent_landed` (inverted), third-party judging from
+/// the judge call.
+pub fn resolve(move: Move, confidence: f64, incoming: u16, credit: f64) Outcome {
+    return score(move, confidence, incoming, incoming, credit);
 }
 
 /// A combatant that never answered (its call errored or timed out) forfeits
@@ -384,10 +402,127 @@ pub const Combatant = struct {
     conceded: bool = false,
     forfeits: u16 = 0,
 
+    /// Out of HP. In Battle Royale mode this ends the combatant's match, not
+    /// the match itself: it stops taking turns and stops being a legal target,
+    /// so the fight plays out instead of collapsing at the first knockout.
+    pub fn eliminated(self: Combatant) bool {
+        return self.hp <= 0;
+    }
+
+    /// Still in the fight — neither eliminated nor conceded. What "last
+    /// position standing" counts, and what a target has to be.
     pub fn alive(self: Combatant) bool {
-        return self.hp > 0 and !self.conceded;
+        return !self.eliminated() and !self.conceded;
     }
 };
+
+/// Damage in flight, per attacker-target pair rather than per target.
+///
+/// The distinction is what makes a block precise once more than two combatants
+/// are in the match: a combatant takes one turn, so it can only rebut the one
+/// attack it names, and everything else aimed at it that round lands in full.
+/// Focus-firing is therefore strong — the honest consequence of "a block
+/// answers that attack, point by point", and the reason this is a matrix and
+/// not a per-combatant total.
+///
+/// With two combatants there is only one possible attacker, so this degenerates
+/// exactly to the pairwise behaviour.
+pub const Board = struct {
+    pending: [max_combatants][max_combatants]u16 = @splat(@splat(0)),
+
+    pub fn incomingFrom(self: *const Board, from: usize, to: usize) u16 {
+        return self.pending[from][to];
+    }
+
+    pub fn incomingTotal(self: *const Board, to: usize) u16 {
+        var sum: u16 = 0;
+        for (0..max_combatants) |from| sum +|= self.pending[from][to];
+        return sum;
+    }
+
+    pub fn add(self: *Board, from: usize, to: usize, amount: u16) void {
+        self.pending[from][to] +|= amount;
+    }
+
+    /// Everything aimed at `to` has now been answered (or not), so none of it
+    /// is in flight any more.
+    pub fn clearIncoming(self: *Board, to: usize) void {
+        for (0..max_combatants) |from| self.pending[from][to] = 0;
+    }
+
+    /// Whoever most recently put damage in flight at `to`, which is the default
+    /// a combatant that named no target retaliates against.
+    pub fn anyIncoming(self: *const Board, to: usize) ?usize {
+        for (0..max_combatants) |from| {
+            if (self.pending[from][to] > 0) return from;
+        }
+        return null;
+    }
+};
+
+/// Resolves one turn against the board, applying it to `combatants` and moving
+/// this move's own damage into flight. The generalisation of `resolve` to any
+/// number of combatants: `resolve` scores the exchange, this places it.
+///
+/// `target` is where an offensive move is aimed (ignored by `concede` and
+/// `final_stand`). `credit` is how much of the *target's* attack on the mover
+/// the judge agrees this move answered.
+pub fn resolveTurn(
+    board: *Board,
+    combatants: []Combatant,
+    mover: usize,
+    target: usize,
+    move: Move,
+    confidence: f64,
+    credit: f64,
+) Outcome {
+    const out = score(move, confidence, board.incomingTotal(mover), board.incomingFrom(target, mover), credit);
+    board.clearIncoming(mover);
+    applyOutcome(&combatants[mover], out);
+    if (out.dealt > 0) board.add(mover, target, out.dealt);
+    return out;
+}
+
+/// The opening round, where every combatant moves blind: nobody has seen
+/// anybody, so nothing already in flight resolves and nothing is taken. Only
+/// the move's own damage goes into flight, to be answered from round 2 on.
+///
+/// Separate from `resolveTurn` because that one clears what is aimed at the
+/// mover — correct once a combatant has had a chance to answer it, wrong in a
+/// round where it never saw it.
+pub fn openingTurn(
+    board: *Board,
+    combatants: []Combatant,
+    mover: usize,
+    target: usize,
+    move: Move,
+    confidence: f64,
+) Outcome {
+    var out = Outcome{};
+    switch (move) {
+        .attack, .counter => out.dealt = scaled(base_damage, confidence),
+        .concede => {
+            out.conceded = true;
+            out.taken = concede_self_damage;
+        },
+        // A block in the opening round has nothing to answer; `legalize`
+        // normally demotes it before it gets here.
+        .block, .final_stand => {},
+    }
+    applyOutcome(&combatants[mover], out);
+    if (out.dealt > 0) board.add(mover, target, out.dealt);
+    return out;
+}
+
+/// A combatant that never answered forfeits the turn: it deals nothing and
+/// blocks nothing, so everything aimed at it lands.
+pub fn forfeitTurn(board: *Board, combatants: []Combatant, mover: usize) Outcome {
+    const out = Outcome{ .taken = board.incomingTotal(mover) };
+    board.clearIncoming(mover);
+    applyOutcome(&combatants[mover], out);
+    combatants[mover].forfeits +|= 1;
+    return out;
+}
 
 pub fn applyOutcome(c: *Combatant, out: Outcome) void {
     c.hp -= @intCast(out.taken);
@@ -412,16 +547,96 @@ pub const Verdict = struct {
     reason: Reason,
 };
 
-/// True once the match cannot usefully continue: someone is down, everyone but
-/// one has conceded, or the round cap is spent.
+/// True once the match cannot usefully continue: at most one combatant is still
+/// in the fight, or the round cap is spent.
+///
+/// One rule covers both modes. With two combatants, "at most one still
+/// standing" happens exactly at the first knockout or concession, which is the
+/// pairwise rule. With more, the match keeps going until one is left — the
+/// Battle Royale requirement that elimination end a combatant's match rather
+/// than the match.
 pub fn isOver(combatants: []const Combatant, rounds_done: u32, max_rounds: u32) bool {
     if (rounds_done >= max_rounds) return true;
-    var alive: usize = 0;
+    var standing: usize = 0;
     for (combatants) |c| {
-        if (c.hp <= 0) return true;
-        if (!c.conceded) alive += 1;
+        if (c.alive()) standing += 1;
     }
-    return alive <= 1;
+    return standing <= 1;
+}
+
+/// Resolves a combatant's declared target against the live roster.
+///
+/// Accepts what a model actually writes: the 1-based number its prompt listed,
+/// an exact or case-insensitive label or position, or a prefix of either. An
+/// eliminated or conceded combatant is not a legal target, and neither is the
+/// mover itself.
+pub fn resolveTarget(
+    spec: ?[]const u8,
+    combatants: []const Combatant,
+    labels: []const []const u8,
+    mover: usize,
+) ?usize {
+    const raw = spec orelse return null;
+    const want = std.mem.trim(u8, raw, " \t\r\n.:#");
+    if (want.len == 0) return null;
+
+    const legal = struct {
+        fn ok(cs: []const Combatant, self_idx: usize, i: usize) bool {
+            return i != self_idx and i < cs.len and cs[i].alive();
+        }
+    }.ok;
+
+    // The number the prompt showed, 1-based: the cheapest thing to get right
+    // and the least ambiguous when two positions share wording.
+    if (std.fmt.parseInt(usize, want, 10)) |n| {
+        if (n >= 1 and n <= combatants.len and legal(combatants, mover, n - 1)) return n - 1;
+        return null;
+    } else |_| {}
+
+    // Exact, then case-insensitive, then prefix — narrowest match first, so a
+    // position that is a prefix of another cannot shadow an exact hit.
+    for (combatants, 0..) |c, i| {
+        if (!legal(combatants, mover, i)) continue;
+        if (std.mem.eql(u8, want, c.position)) return i;
+        if (i < labels.len and std.mem.eql(u8, want, labels[i])) return i;
+    }
+    for (combatants, 0..) |c, i| {
+        if (!legal(combatants, mover, i)) continue;
+        if (std.ascii.eqlIgnoreCase(want, c.position)) return i;
+        if (i < labels.len and std.ascii.eqlIgnoreCase(want, labels[i])) return i;
+    }
+    for (combatants, 0..) |c, i| {
+        if (!legal(combatants, mover, i)) continue;
+        if (want.len >= 3 and c.position.len >= want.len and
+            std.ascii.eqlIgnoreCase(want, c.position[0..want.len])) return i;
+        if (i < labels.len and want.len >= 3 and labels[i].len >= want.len and
+            std.ascii.eqlIgnoreCase(want, labels[i][0..want.len])) return i;
+    }
+    return null;
+}
+
+/// The target a move gets when it named none, or named one that is gone.
+///
+/// The PRD asks for an untargeted move above two combatants to be refused, but
+/// a mid-match move has no tool boundary left to be refused at, and dropping it
+/// would contradict "never dropped silently". So it retaliates against whoever
+/// has damage in flight at the mover, and otherwise aims at the strongest
+/// opponent left — deterministic, and not a reward for omitting the field,
+/// since the caller pairs this with the weak-attack confidence floor.
+pub fn defaultTarget(board: *const Board, combatants: []const Combatant, mover: usize) ?usize {
+    if (board.anyIncoming(mover)) |from| {
+        if (from != mover and from < combatants.len and combatants[from].alive()) return from;
+    }
+    var best: ?usize = null;
+    for (combatants, 0..) |c, i| {
+        if (i == mover or !c.alive()) continue;
+        const b = best orelse {
+            best = i;
+            continue;
+        };
+        if (c.hp > combatants[b].hp) best = i;
+    }
+    return best;
 }
 
 /// Picks the winner. A knockout and a concession are read off the fight's
@@ -451,49 +666,87 @@ pub fn decide(combatants: []const Combatant) Verdict {
         }
     }
 
+    var standing: usize = 0;
+    for (combatants) |c| {
+        if (c.alive()) standing += 1;
+    }
+
     const reason: Reason = blk: {
         if (best == null) break :blk .draw;
         if (tied) break :blk .draw;
-        if (conceded + 1 == combatants.len and conceded > 0) break :blk .concession;
-        if (knocked_out) break :blk .knockout;
+        // One left in the fight is a win by elimination, whatever removed the
+        // others: a knockout if anyone was, otherwise everyone else conceded.
+        // Above two combatants this is Battle Royale's "last position
+        // standing"; at two it is the pairwise knockout it always was.
+        if (standing == 1 and combatants.len > 1) break :blk if (knocked_out) .knockout else .concession;
         break :blk .points;
     };
     return .{ .winner = if (reason == .draw) null else best, .reason = reason };
+}
+
+/// The runner-up: the highest-HP combatant that is not the winner, counting
+/// eliminated ones, so a headline always has something to compare against.
+fn runnerUp(combatants: []const Combatant, winner: usize) ?usize {
+    var best: ?usize = null;
+    for (combatants, 0..) |c, i| {
+        if (i == winner) continue;
+        const b = best orelse {
+            best = i;
+            continue;
+        };
+        if (c.hp > combatants[b].hp) best = i;
+    }
+    return best;
 }
 
 /// One line of real text stating the outcome — the canvas-free authority the
 /// PRD's `aria-live` caption and the CLI's verdict block both need, and the
 /// fallback when the synthesis call itself fails.
 pub fn headline(buf: []u8, combatants: []const Combatant, labels: []const []const u8, v: Verdict) []const u8 {
-    const w = v.winner orelse return std.fmt.bufPrint(buf, "Draw — no position outargued the other.", .{}) catch "Draw.";
-    const loser: usize = if (w == 0) 1 else 0;
+    const w = v.winner orelse return std.fmt.bufPrint(buf, "Draw: no position outargued the rest.", .{}) catch "Draw.";
     const win_label = if (w < labels.len) labels[w] else "combatant";
-    const lose_label = if (loser < labels.len) labels[loser] else "combatant";
     const detail = switch (v.reason) {
-        .knockout => "by knockout",
+        .knockout => if (combatants.len > pairwise_combatants) "last standing" else "by knockout",
         .concession => "by concession",
         .points => "on points",
         .draw => unreachable,
     };
-    return std.fmt.bufPrint(buf, "{s} wins {s}, {d} HP to {s}'s {d} — \"{s}\" over \"{s}\".", .{
+    const second = runnerUp(combatants, w) orelse
+        return std.fmt.bufPrint(buf, "{s} wins {s}, {d} HP: \"{s}\".", .{ win_label, detail, combatants[w].hp, combatants[w].position }) catch "Match decided.";
+    const lose_label = if (second < labels.len) labels[second] else "combatant";
+
+    // Above pairwise the count matters: "beat 3 others" is the outcome, and
+    // naming only the runner-up would read as though it were the only rival.
+    if (combatants.len > pairwise_combatants) {
+        return std.fmt.bufPrint(buf, "{s} wins {s} among {d}, {d} HP: \"{s}\" over {d} others, nearest {s} at {d}.", .{
+            win_label,
+            detail,
+            combatants.len,
+            combatants[w].hp,
+            combatants[w].position,
+            combatants.len - 1,
+            lose_label,
+            combatants[second].hp,
+        }) catch "Match decided.";
+    }
+    return std.fmt.bufPrint(buf, "{s} wins {s}, {d} HP to {s}'s {d}: \"{s}\" over \"{s}\".", .{
         win_label,
         detail,
         combatants[w].hp,
         lose_label,
-        if (loser < combatants.len) combatants[loser].hp else 0,
+        combatants[second].hp,
         combatants[w].position,
-        if (loser < combatants.len) combatants[loser].position else "",
+        combatants[second].position,
     }) catch "Match decided.";
 }
 
-pub const PositionError = error{ TooFewPositions, TooManyPositions, DuplicatePosition, EmptyPosition, UnsupportedCount };
+pub const PositionError = error{ TooFewPositions, TooManyPositions, DuplicatePosition, EmptyPosition };
 
 /// A debate needs at least two distinct sides. Refused at the tool boundary
 /// rather than started and abandoned, per the PRD's failure-mode table.
 pub fn validatePositions(positions: []const []const u8) PositionError!void {
     if (positions.len < 2) return error.TooFewPositions;
     if (positions.len > max_combatants) return error.TooManyPositions;
-    if (positions.len > shipped_combatants) return error.UnsupportedCount;
     for (positions, 0..) |p, i| {
         const a = std.mem.trim(u8, p, " \t\r\n");
         if (a.len == 0) return error.EmptyPosition;
@@ -828,7 +1081,7 @@ test "headline states the outcome in words" {
     var buf: [512]u8 = undefined;
     const line = headline(&buf, &cs, &labels, decide(&cs));
     try std.testing.expectEqualStrings(
-        "kimi-k3 wins on points, 64 HP to deepseek's 41 — \"use a message queue\" over \"use direct calls\".",
+        "kimi-k3 wins on points, 64 HP to deepseek's 41: \"use a message queue\" over \"use direct calls\".",
         line,
     );
 }
@@ -847,11 +1100,229 @@ test "validatePositions refuses one side, duplicates, blanks and unshipped count
     try std.testing.expectError(error.TooFewPositions, validatePositions(&.{}));
     try std.testing.expectError(error.DuplicatePosition, validatePositions(&.{ "a", " a " }));
     try std.testing.expectError(error.EmptyPosition, validatePositions(&.{ "a", "  " }));
-    // Between shipped (2) and Battle Royale's ceiling (8): a real mode that is
-    // not built yet, told apart from a count no mode will ever support.
-    try std.testing.expectError(error.UnsupportedCount, validatePositions(&.{ "a", "b", "c" }));
-    try std.testing.expectError(error.UnsupportedCount, validatePositions(&.{ "a", "b", "c", "d", "e", "f", "g", "h" }));
+    // Battle Royale's whole range is legal now; only past its ceiling is not.
+    try validatePositions(&.{ "a", "b", "c" });
+    try validatePositions(&.{ "a", "b", "c", "d", "e", "f", "g", "h" });
     try std.testing.expectError(error.TooManyPositions, validatePositions(&.{ "a", "b", "c", "d", "e", "f", "g", "h", "i" }));
+}
+
+// ------------------------------------------- Battle Royale mode (phase 8)
+
+fn royale(n: usize, buf: []Combatant) []Combatant {
+    const names = [_][]const u8{ "a", "b", "c", "d", "e", "f", "g", "h" };
+    for (0..n) |i| buf[i] = .{ .position = names[i] };
+    return buf[0..n];
+}
+
+test "resolveTarget accepts the number the prompt showed" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(4, &buf);
+    const labels = [_][]const u8{ "one", "two", "three", "four" };
+    try std.testing.expectEqual(@as(?usize, 1), resolveTarget("2", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, 3), resolveTarget("4", cs, &labels, 0));
+    // Trailing punctuation is what a model actually writes.
+    try std.testing.expectEqual(@as(?usize, 2), resolveTarget("#3", cs, &labels, 0));
+    // Out of range, and the mover itself, are not targets.
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("5", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("0", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("1", cs, &labels, 0));
+}
+
+test "resolveTarget matches a label or position, exactly then loosely" {
+    var buf: [max_combatants]Combatant = undefined;
+    var cs = royale(3, &buf);
+    cs[1].position = "use a message queue";
+    cs[2].position = "use direct calls";
+    const labels = [_][]const u8{ "kimi (1)", "deepseek (2)", "opus (3)" };
+
+    try std.testing.expectEqual(@as(?usize, 1), resolveTarget("use a message queue", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, 2), resolveTarget("opus (3)", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, 1), resolveTarget("USE A MESSAGE QUEUE", cs, &labels, 0));
+    // A prefix is enough, but not a one- or two-character one: too easy to
+    // match the wrong combatant by accident.
+    try std.testing.expectEqual(@as(?usize, 1), resolveTarget("use a message", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("us", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("nobody named this", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget(null, cs, &labels, 0));
+}
+
+test "resolveTarget refuses an eliminated or conceded combatant" {
+    var buf: [max_combatants]Combatant = undefined;
+    var cs = royale(3, &buf);
+    const labels = [_][]const u8{ "a", "b", "c" };
+    cs[1].hp = 0;
+    cs[2].conceded = true;
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("2", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("3", cs, &labels, 0));
+    try std.testing.expectEqual(@as(?usize, null), resolveTarget("b", cs, &labels, 0));
+}
+
+test "parseReply carries a target, as a name or a number" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const named = parseReply(arena.allocator(), "{\"move\":\"attack\",\"text\":\"x\",\"target\":\"use direct calls\"}");
+    try std.testing.expectEqualStrings("use direct calls", named.target.?);
+    const numbered = parseReply(arena.allocator(), "{\"move\":\"attack\",\"text\":\"x\",\"target\":3}");
+    try std.testing.expectEqualStrings("3", numbered.target.?);
+    const none = parseReply(arena.allocator(), "{\"move\":\"attack\",\"text\":\"x\"}");
+    try std.testing.expectEqual(@as(?[]const u8, null), none.target);
+}
+
+test "defaultTarget retaliates first, then aims at the strongest left" {
+    var buf: [max_combatants]Combatant = undefined;
+    var cs = royale(4, &buf);
+    var board = Board{};
+
+    // Nothing in flight: the strongest opponent, not the mover, not itself.
+    cs[1].hp = 40;
+    cs[2].hp = 90;
+    cs[3].hp = 70;
+    try std.testing.expectEqual(@as(?usize, 2), defaultTarget(&board, cs, 0));
+
+    // Someone is attacking the mover: retaliation wins over strength.
+    board.add(3, 0, 12);
+    try std.testing.expectEqual(@as(?usize, 3), defaultTarget(&board, cs, 0));
+
+    // An attacker that has since been eliminated is not a target either.
+    cs[3].hp = 0;
+    try std.testing.expectEqual(@as(?usize, 2), defaultTarget(&board, cs, 0));
+}
+
+test "defaultTarget has nobody to aim at once the mover is alone" {
+    var buf: [max_combatants]Combatant = undefined;
+    var cs = royale(3, &buf);
+    const board = Board{};
+    cs[1].hp = 0;
+    cs[2].hp = 0;
+    try std.testing.expectEqual(@as(?usize, null), defaultTarget(&board, cs, 0));
+}
+
+test "royale: a block only negates the attack it named" {
+    // The resolved open question, as a test: two attackers focus one target,
+    // and its single turn can only answer one of them. The other lands in full.
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(3, &buf);
+    var board = Board{};
+
+    // a and b both attack c at full force.
+    _ = resolveTurn(&board, cs, 0, 2, .attack, 1.0, 0.0);
+    _ = resolveTurn(&board, cs, 1, 2, .attack, 1.0, 0.0);
+    try std.testing.expectEqual(@as(u16, 40), board.incomingTotal(2));
+
+    // c blocks a's attack completely. b's still hits.
+    const out = resolveTurn(&board, cs, 2, 0, .block, 1.0, 1.0);
+    try std.testing.expectEqual(@as(u16, 20), out.blocked);
+    try std.testing.expectEqual(@as(u16, 20), out.taken);
+    try std.testing.expectEqual(@as(i32, 80), cs[2].hp);
+    // Nothing is left in flight at c: answered or not, it resolved.
+    try std.testing.expectEqual(@as(u16, 0), board.incomingTotal(2));
+}
+
+test "royale: cumulative focus fire eliminates without ending the match" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(4, &buf);
+    var board = Board{};
+    cs[3].hp = 35;
+
+    // Three combatants focus d over two exchanges; it never gets to block more
+    // than one of them.
+    for (0..2) |_| {
+        _ = resolveTurn(&board, cs, 0, 3, .attack, 1.0, 0.0);
+        _ = resolveTurn(&board, cs, 1, 3, .attack, 1.0, 0.0);
+        _ = resolveTurn(&board, cs, 2, 3, .attack, 1.0, 0.0);
+        _ = resolveTurn(&board, cs, 3, 0, .block, 1.0, 1.0);
+    }
+    try std.testing.expect(cs[3].eliminated());
+    try std.testing.expect(!cs[3].alive());
+    // An elimination does not end a four-way match: three are still standing.
+    try std.testing.expect(!isOver(cs, 2, 4));
+}
+
+test "royale: the match ends when one is left standing" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(4, &buf);
+    cs[1].hp = 0;
+    cs[2].hp = 0;
+    try std.testing.expect(!isOver(cs, 1, 6));
+    cs[3].conceded = true;
+    try std.testing.expect(isOver(cs, 1, 6));
+
+    const v = decide(cs);
+    try std.testing.expectEqual(@as(?usize, 0), v.winner);
+    try std.testing.expectEqual(Reason.knockout, v.reason);
+}
+
+test "royale: highest HP wins at the cap when several survive" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(5, &buf);
+    cs[0].hp = 30;
+    cs[1].hp = 0;
+    cs[2].hp = 72;
+    cs[3].hp = 51;
+    cs[4].hp = 0;
+    const v = decide(cs);
+    try std.testing.expectEqual(@as(?usize, 2), v.winner);
+    try std.testing.expectEqual(Reason.points, v.reason);
+}
+
+test "royale: a tie at the cap is still a draw" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(3, &buf);
+    cs[0].hp = 44;
+    cs[1].hp = 44;
+    cs[2].hp = 0;
+    const v = decide(cs);
+    try std.testing.expectEqual(@as(?usize, null), v.winner);
+    try std.testing.expectEqual(Reason.draw, v.reason);
+}
+
+test "royale headline names the field, not just the runner-up" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(4, &buf);
+    cs[0].position = "use an allowlist";
+    cs[0].hp = 61;
+    cs[1].hp = 0;
+    cs[2].hp = 0;
+    cs[3].hp = 0;
+    const labels = [_][]const u8{ "kimi", "deepseek", "opus", "glm" };
+    var line: [512]u8 = undefined;
+    const out = headline(&line, cs, &labels, decide(cs));
+    try std.testing.expectEqualStrings(
+        "kimi wins last standing among 4, 61 HP: \"use an allowlist\" over 3 others, nearest deepseek at 0.",
+        out,
+    );
+}
+
+test "forfeitTurn eats everything aimed at the mover and counts the forfeit" {
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(3, &buf);
+    var board = Board{};
+    board.add(1, 0, 14);
+    board.add(2, 0, 9);
+    const out = forfeitTurn(&board, cs, 0);
+    try std.testing.expectEqual(@as(u16, 23), out.taken);
+    try std.testing.expectEqual(@as(i32, 77), cs[0].hp);
+    try std.testing.expectEqual(@as(u16, 1), cs[0].forfeits);
+    try std.testing.expectEqual(@as(u16, 0), board.incomingTotal(0));
+}
+
+test "resolveTurn on a pairwise board matches the pairwise resolver exactly" {
+    // The generalisation must not change the two-combatant game: with one
+    // possible attacker, incomingTotal and incomingFrom are the same number.
+    for ([_]Move{ .attack, .block, .counter, .concede, .final_stand }) |mv| {
+        for ([_]f64{ 0.0, 0.5, 1.0 }) |credit| {
+            var buf: [max_combatants]Combatant = undefined;
+            const cs = royale(2, &buf);
+            var board = Board{};
+            board.add(1, 0, 20);
+            const via_turn = resolveTurn(&board, cs, 0, 1, mv, 0.75, credit);
+            const via_pairwise = resolve(mv, 0.75, 20, credit);
+            try std.testing.expectEqual(via_pairwise.blocked, via_turn.blocked);
+            try std.testing.expectEqual(via_pairwise.taken, via_turn.taken);
+            try std.testing.expectEqual(via_pairwise.dealt, via_turn.dealt);
+            try std.testing.expectEqual(via_pairwise.conceded, via_turn.conceded);
+        }
+    }
 }
 
 test "isSafeId rejects anything that could leave state/arena/" {

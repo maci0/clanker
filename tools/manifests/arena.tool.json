@@ -1,6 +1,6 @@
 {
   "name": "arena",
-  "description": "Run a bounded, judged debate between two positions and return a verdict traceable to the transcript that produced it. WHEN TO USE: a question where two defensible answers exist and the risk is a confidently wrong one going unchallenged — comparing two designs before either is built (allowlist vs denylist, two wordings of a prompt, move-to-WASM or stay), or pressure-testing a claim you are about to act on. Each side sees every prior move and has to answer the other's specific rebuttal, which is exactly what 'swarm' cannot do (its members cannot see each other). WHEN NOT TO USE: (1) measuring which implementation is faster or more correct — that is an eval or a benchmark, not a debate; (2) any task where the sides would not disagree, since 'swarm' fans that out cheaper and in parallel; (3) questions of fact you can look up. Each round costs one model call per side (plus one judge call per move with judge='third'), so keep max_rounds small. INPUT to start a match: {'question': required string under debate, 'for': required one-line stance, 'against': required one-line opposing stance, 'provider_for'/'provider_against': optional provider names (different providers genuinely disagreeing is the interesting case; the same provider on both sides is allowed and cheaper), 'persona_for'/'persona_against': optional framing layered onto each side's system prompt, 'max_rounds': optional integer (default 4, clamped to 12), 'judge': optional 'self' (default, cheap, each side reports how much the other landed) or 'third' (a provider that is not fighting scores every move — recommended when the verdict matters), 'judge_provider': optional provider to judge with, must not be a combatant}. INPUT to read a finished match: {'match': '<id>'}. INPUT with no fields: lists past matches.",
+  "description": "Run a bounded, judged debate between two positions, or a Battle Royale between up to eight, and return a verdict traceable to the transcript that produced it. WHEN TO USE: a question where several defensible answers exist and the risk is a confidently wrong one going unchallenged: comparing designs before any is built (allowlist vs denylist, competing wordings of a prompt, move-to-WASM or stay), or pressure-testing a claim you are about to act on. Every combatant sees every prior move and has to answer specific rebuttals, which is exactly what 'swarm' cannot do (its members cannot see each other). WHEN NOT TO USE: (1) measuring which implementation is faster or more correct, which is an eval or a benchmark, not a debate; (2) any task where the sides would not disagree, since 'swarm' fans that out cheaper and in parallel; (3) questions of fact you can look up. Each round costs one model call per surviving combatant (plus one judge call per move with judge='third'), so an 8-way match is 8x a pairwise one per round: keep max_rounds small. INPUT to start a pairwise match: {'question': required string under debate, 'for': required one-line stance, 'against': required one-line opposing stance, 'provider_for'/'provider_against': optional provider names (different providers genuinely disagreeing is the interesting case; the same provider on both sides is allowed and cheaper), 'persona_for'/'persona_against': optional framing layered onto each side's system prompt, 'max_rounds': optional integer (default 4, clamped to 12), 'judge': optional 'self' (default, cheap, each side reports how much the other landed) or 'third' (a provider that is not fighting scores every move, recommended when the verdict matters), 'judge_provider': optional provider to judge with, must not be a combatant}. INPUT to start a Battle Royale: same, but pass 'positions': array of 3-8 distinct stances instead of for/against, with optional parallel 'providers' and 'personas' arrays. In a royale every attack/block/counter names a 'target', a combatant can only block the one attack it names (so being focused by several at once hurts), and running out of HP eliminates that combatant without ending the match: last position standing wins, or highest HP at the round cap. INPUT to read a finished match: {'match': '<id>'}. INPUT with no fields: lists past matches.",
   "wasm": "zig-out/tools/arena.wasm",
   "input_schema": {
     "type": "object",
@@ -20,7 +20,17 @@
       "positions": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "The two stances as an array, instead of for/against. Exactly 2; Battle Royale mode (3-8 combatants) is not implemented yet."
+        "description": "The stances as an array, instead of for/against. 2 for a pairwise match, 3-8 for a Battle Royale. Must all be distinct."
+      },
+      "providers": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Provider per position, same order as 'positions'. Shorter than 'positions' is fine; the rest use the configured default."
+      },
+      "personas": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Persona per position, same order as 'positions'."
       },
       "provider_for": { "type": "string" },
       "provider_against": { "type": "string" },

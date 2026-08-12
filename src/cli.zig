@@ -147,6 +147,9 @@ pub const Options = struct {
     arena_rounds: u32 = 0,
     arena_judge: ?[]const u8 = null,
     arena_judge_provider: ?[]const u8 = null,
+    /// `arena --position` repeated: a Battle Royale's 3-8 stances, used instead
+    /// of the --for/--against pair.
+    arena_positions: []const []const u8 = &.{},
     /// `arena --match <id>`: print a stored match instead of running one.
     arena_match: ?[]const u8 = null,
 };
@@ -363,6 +366,18 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             } else if (std.mem.eql(u8, a, "--match")) {
                 opts.arena_match = try takeValue(args, &idx, inline_value, a, diag);
                 used = .arena_match;
+            } else if (std.mem.eql(u8, a, "--position")) {
+                // Repeatable, and not comma-split the way --target is: a stance
+                // is prose, and "use a queue, not direct calls" is one position
+                // rather than two.
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                const gpa = std.heap.page_allocator;
+                var list: std.ArrayList([]const u8) = .empty;
+                for (opts.arena_positions) |x| try list.append(gpa, x);
+                const trimmed = std.mem.trim(u8, v, " \t");
+                if (trimmed.len > 0) try list.append(gpa, trimmed);
+                opts.arena_positions = try list.toOwnedSlice(gpa);
+                used = .arena_position;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -584,13 +599,28 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             setDiag(diag, "<question>");
             return error.MissingArg;
         }
-        if (opts.arena_for == null) {
-            setDiag(diag, "--for");
-            return error.MissingArg;
-        }
-        if (opts.arena_against == null) {
-            setDiag(diag, "--against");
-            return error.MissingArg;
+        // Two ways to name the field: the --for/--against pair for a pairwise
+        // match, or repeated --position for a Battle Royale. Mixing them would
+        // leave it ambiguous which stance is which seat.
+        const royale = opts.arena_positions.len > 0;
+        if (royale) {
+            if (opts.arena_for != null or opts.arena_against != null) {
+                setDiag(diag, "--position");
+                return error.ArenaMixedPositions;
+            }
+            // Distinct from MissingArg: the flag did get a value, there just
+            // was not another one, and "'--position' needs a value" sends the
+            // reader looking for the wrong mistake.
+            if (opts.arena_positions.len < 2) return error.ArenaTooFewPositions;
+        } else {
+            if (opts.arena_for == null) {
+                setDiag(diag, "--for");
+                return error.MissingArg;
+            }
+            if (opts.arena_against == null) {
+                setDiag(diag, "--against");
+                return error.MissingArg;
+            }
         }
     }
     if (opts.command == .chat) {
@@ -744,6 +774,7 @@ const Flag = enum {
     arena_judge,
     arena_judge_provider,
     arena_match,
+    arena_position,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -770,6 +801,7 @@ const Flag = enum {
             .arena_judge => "--judge",
             .arena_judge_provider => "--judge-provider",
             .arena_match => "--match",
+            .arena_position => "--position",
         };
     }
 };
@@ -812,7 +844,7 @@ const specs = [_]Spec{
     .{ .command = .goal, .usage = "goal \"<intent>\"", .blurb = "design and persist a structured goal", .group = .work, .flags = &.{ .provider, .model } },
     .{ .command = .improve_self, .usage = "improve-self \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "--dry-run proposes patches without applying them; --iters caps the attempts (default 3)." },
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
-    .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Two combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare two designs before either is built; use `eval` when\nthe question has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per side, so a match costs real money. Matches\nland in state/arena/<id>.json; `arena` with no arguments is not a listing;\nuse the arena tool from a run, or read state/arena/log.jsonl." },
+    .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .serve, .usage = "serve", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{.port}, .detail = "Binds 127.0.0.1 only. --port sets the listen port (default 17921)." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
 
@@ -8007,19 +8039,36 @@ fn cmdArena(init: std.process.Init, opts: Options) !void {
     } else {
         try s.objectField("question");
         try s.write(opts.task.?);
-        try s.objectField("for");
-        try s.write(opts.arena_for.?);
-        try s.objectField("against");
-        try s.write(opts.arena_against.?);
-        // A side with no provider of its own inherits --provider, so
-        // `--provider x` alone is the same model arguing both sides.
-        if (opts.arena_for_provider orelse opts.provider) |p| {
-            try s.objectField("provider_for");
-            try s.write(p);
-        }
-        if (opts.arena_against_provider orelse opts.provider) |p| {
-            try s.objectField("provider_against");
-            try s.write(p);
+        if (opts.arena_positions.len > 0) {
+            // Battle royale: the stances are a list, and --provider (if given)
+            // applies to all of them. Per-combatant providers above two are a
+            // tool-input feature, not a flag: eight parallel flags would be
+            // worse than the JSON they would build.
+            try s.objectField("positions");
+            try s.beginArray();
+            for (opts.arena_positions) |p| try s.write(p);
+            try s.endArray();
+            if (opts.provider) |p| {
+                try s.objectField("providers");
+                try s.beginArray();
+                for (opts.arena_positions) |_| try s.write(p);
+                try s.endArray();
+            }
+        } else {
+            try s.objectField("for");
+            try s.write(opts.arena_for.?);
+            try s.objectField("against");
+            try s.write(opts.arena_against.?);
+            // A side with no provider of its own inherits --provider, so
+            // `--provider x` alone is the same model arguing both sides.
+            if (opts.arena_for_provider orelse opts.provider) |p| {
+                try s.objectField("provider_for");
+                try s.write(p);
+            }
+            if (opts.arena_against_provider orelse opts.provider) |p| {
+                try s.objectField("provider_against");
+                try s.write(p);
+            }
         }
         if (opts.arena_rounds > 0) {
             try s.objectField("max_rounds");
