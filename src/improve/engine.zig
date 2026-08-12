@@ -234,7 +234,7 @@ pub const Engine = struct {
     /// case — see cmdImproveSelf). Each promotion merges back into the base
     /// branch through this at the ref level; null runs promote straight
     /// into whatever tree the process is already in, unisolated.
-    worktree: ?*const worktree_mod.Worktree = null,
+    worktree: ?*worktree_mod.Worktree = null,
     /// Feedback text from the previous failed attempt, fed to the next one so
     /// the model sees what went wrong. Per-instance: this must not be a
     /// container-level `var`, or concurrent Engine instances would share and

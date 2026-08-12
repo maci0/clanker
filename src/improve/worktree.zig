@@ -73,7 +73,7 @@ pub const Worktree = struct {
     /// conflict, or losing the CAS race twice) — the commit stays reachable
     /// from the branch either way, so a failed merge-back never loses work,
     /// only delays it.
-    pub fn mergeBack(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, message: []const u8) void {
+    pub fn mergeBack(self: *Worktree, gpa: std.mem.Allocator, io: std.Io, message: []const u8) void {
         var attempt: u32 = 0;
         while (attempt < 3) : (attempt += 1) {
             const base_sha = revParse(gpa, io, self.base_branch) catch {
@@ -100,7 +100,7 @@ pub const Worktree = struct {
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
                     log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
                     self.resyncLocalBranch(gpa, io, branch_sha);
-                    @as(*bool, @constCast(&self.merged)).* = true;
+                    self.merged = true;
                     return;
                 }
                 continue; // lost the CAS race; retry against the new tip
@@ -119,7 +119,7 @@ pub const Worktree = struct {
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
                 log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
                 self.resyncLocalBranch(gpa, io, commit);
-                @as(*bool, @constCast(&self.merged)).* = true;
+                self.merged = true;
                 return;
             }
             // Someone else moved base_branch between the read and the write;
