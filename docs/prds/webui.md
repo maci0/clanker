@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped — Board (Trello) and Rooms (Slack) polished: inline `+` quick-add per lane,
+Shipped — Board (Trello) and Rooms (Slack) polished + callgraph navigation (Codex/Kimi/Qwen): search/kind filters with dim, `↗` sub-run jump + `↑ Parent`, deep-link `#runs/<id>?node=<label>` with pinned selection, minimap with dots+edges+viewport drag, path highlight on hover/focus, `/`→search/`n`/`F`/`j`/`k`/arrows/`+/-` keyboard, breadcrumb sync, `Copy link` pins node, inline `+` quick-add per lane,
 Archive toggle for done, `Drop here — or Add card` empty slots, card cover strip +
 member avatar + `✔ 50%` progress bar, priority `filled` due labels, Slack grouped
 messages / day `— YYYY-MM-DD —` / hover gutter + `#` composer / `/me` `/shrug`

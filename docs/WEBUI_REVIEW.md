@@ -93,6 +93,8 @@ Scope: tighten layout density and bring composer + transcript in line with ChatG
 - **Transcript chrome:** user bubble `12px` `surface-2` card vs `turn-events` inset card, `turn-thinking` `<details>` collapsible disclosure + `.turn-foot-actions` hover-reveal action grouping (touch → always visible, reduced-motion → always visible, no opacity transition).
 - **Constraints honored:** `braces 600/600`, `node --check` on `core/composer.js` + `app.js` (28 modules), `zig build` green, `zig build test --summary all` `375/376` pass (`1` skipped).
 
+- **Callgraph navigation (2026-08-12):** `lib/graph.js` search/kind filters (dim `0.28`/`0.35`, status count), `data-jump` violet `↗`, `data-label` deep-link pin, ancestor/descendant path highlight on hover/focus/click, minimap canvas dots+edges with drag viewport + zoom/pan + arrow-key walk, `?node=` in `#runs/<id>?node=` deep links (showView + loadRuns + copyLink + click pin), hint row `flexBasis 100%`, `Expand/Collapse all` on JSON tree.
+
 Verification for this entry: `zig build` green; `zig build test --summary all` `375/376` pass (`1` skipped) — run before pushing this review + PRD update.
 
 ## Left / next

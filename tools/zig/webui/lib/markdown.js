@@ -4,6 +4,40 @@
 import { loadHljs, copyText } from "../core/vendor.js";
 
 export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
+export var CITATION_RE = /[a-zA-Z0-9_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/g;
+export function appendCitedText(parent, text) {
+  var re = CITATION_RE;
+  re.lastIndex = 0;
+  var last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    var ref = m[0];
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "citation-chip";
+    chip.textContent = ref;
+    chip.setAttribute("data-ref", ref);
+    chip.title = "Open in callgraph — " + ref;
+    chip.setAttribute("aria-label", "Citation " + ref + " — open in callgraph");
+    (function(r, el){
+      el.addEventListener("click", function(e){
+        e.preventDefault();
+        try{
+          if (typeof window !== "undefined" && typeof window.clankerOpenCitation === "function") { window.clankerOpenCitation(r); return; }
+          var inp = document.querySelector(".run-graph-search input");
+          if (inp) { inp.value = r.split(":")[0].split("/").pop().split(".")[0]; inp.dispatchEvent(new Event("input", {bubbles:true})); }
+          var rf = document.getElementById("run-filter");
+          if (rf) { rf.value = r.split(":")[0]; rf.dispatchEvent(new Event("input", {bubbles:true})); }
+          var runsTab = document.getElementById("tab-runs");
+          if (runsTab) runsTab.click();
+        }catch(_){}
+      });
+    })(ref, chip);
+    parent.appendChild(chip);
+    last = re.lastIndex;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
 
 export function isSafeLinkUrl(url) {
   return /^(https?:|mailto:)/i.test(url);
@@ -12,8 +46,8 @@ export function isSafeLinkUrl(url) {
 export function inlineInto(parent, text) {
   while (text.length) {
     var m = INLINE_RE.exec(text);
-    if (!m) { parent.appendChild(document.createTextNode(text)); return; }
-    if (m.index > 0) parent.appendChild(document.createTextNode(text.slice(0, m.index)));
+    if (!m) { appendCitedText(parent, text); return; }
+    if (m.index > 0) appendCitedText(parent, text.slice(0, m.index));
     var tok = m[0], node;
     if (tok.charAt(0) === "`") {
       node = document.createElement("code");
