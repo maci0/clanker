@@ -11,6 +11,7 @@
 //! group (plus a totals row), newest usage counted exactly once.
 
 const std = @import("std");
+const filelock = @import("../util/filelock.zig");
 const log = @import("../util/log.zig");
 
 pub const stat_path = "token_stats.jsonl";
@@ -75,9 +76,16 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
         return;
     };
 
+    // Keep trimming and appending in one critical section. Locking the data
+    // file itself is insufficient because trimLog replaces its inode: a
+    // waiter that already opened the old inode could append to an unlinked
+    // file after the replacement and silently lose the record.
+    const lock_dir = if (state_dir.len == 0) "." else state_dir;
+    var guard = filelock.acquire(io, base, lock_dir, "token_stats", arena);
+    defer guard.release();
+
     // Trim the log when it outgrows the cap. Done before the file is opened
-    // below, because trimming rewrites the file and would otherwise contend
-    // with the lock this function is about to take.
+    // below because trimming atomically replaces it.
     if (base.statFile(io, path, .{})) |st| {
         if (st.size > max_log_bytes) trimLog(base, io, gpa, arena, path) catch {};
     } else |_| {}

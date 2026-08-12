@@ -31,18 +31,15 @@ pub const RunEvent = struct {
     cache_hit: u64 = 0,
     cache_miss: u64 = 0,
     duration_ms: u64 = 0,
-    /// The task text (truncated), used to detect recurring task patterns.
-    task: []const u8 = "",
     tools: []const []const u8 = &.{},
 };
 
 /// Byte caps for event fields written to state/autolearn.jsonl: a runaway
-/// tool label, error detail, or task text must cost a bounded number of log
+/// tool label, error detail, or configured name must cost a bounded number of log
 /// bytes rather than grow the line or overflow a fixed buffer and silently
 /// drop the observation it belongs to.
 const cap_tool_bytes: usize = 128;
 const cap_detail_bytes: usize = 512;
-const cap_task_bytes: usize = 2048;
 const cap_name_bytes: usize = 128;
 
 /// Truncates `s` to at most `max_bytes` bytes without splitting a UTF-8
@@ -159,11 +156,11 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
         return;
     };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    // Same reasoning as recordTo: task text and names are capped UTF-8-safe
-    // so a long prompt cannot overflow into a dropped event.
+    // Names are capped UTF-8-safe so malformed configuration cannot overflow
+    // into a dropped event. User task text is deliberately not collected:
+    // operational usage analytics need counts and tool names, not prompts.
     const provider_capped = capUtf8(e.provider, cap_name_bytes);
     const model_capped = capUtf8(e.model, cap_name_bytes);
-    const task_capped = capUtf8(e.task, cap_task_bytes);
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
@@ -187,8 +184,6 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     s.print("{d}", .{e.cache_miss}) catch return;
     s.objectField("duration_ms") catch return;
     s.print("{d}", .{e.duration_ms}) catch return;
-    s.objectField("task") catch return;
-    s.write(task_capped) catch return;
     s.objectField("tools") catch return;
     s.beginArray() catch return;
     for (e.tools) |t| s.write(capUtf8(t, cap_name_bytes)) catch return;
@@ -319,7 +314,6 @@ test "recordRunTo writes a run event with all fields" {
         .cache_hit = 10,
         .cache_miss = 90,
         .duration_ms = 1234,
-        .task = "summarize this repo",
         .tools = &tools,
     });
 
@@ -334,7 +328,7 @@ test "recordRunTo writes a run event with all fields" {
     try std.testing.expectEqual(@as(i64, 10), parsed.object.get("cache_hit").?.integer);
     try std.testing.expectEqual(@as(i64, 90), parsed.object.get("cache_miss").?.integer);
     try std.testing.expectEqual(@as(i64, 1234), parsed.object.get("duration_ms").?.integer);
-    try std.testing.expectEqualStrings("summarize this repo", parsed.object.get("task").?.string);
+    try std.testing.expect(parsed.object.get("task") == null);
     const arr = parsed.object.get("tools").?.array;
     try std.testing.expectEqual(@as(usize, 2), arr.items.len);
     try std.testing.expectEqualStrings("read_file", arr.items[0].string);

@@ -13,37 +13,32 @@
 :root {
   color-scheme: light dark;
 
-  /* --- day shift (default): light-grey cabinet interior --- */
-  --paper: #e4e7e0;
-  --bg: #c6cac2;
-  --surface: var(--paper);
-  --surface-2: #d3d7cf;
-  /* A control's own boundary needs 3:1 (WCAG 1.4.11); the hairline rules a
-     row inside a panel and carries no meaning alone. */
-  --border: #6b756e;
-  --rule: #b0b6ab;
-  --fg: #181d1a;
-  --fg-muted: #4c5750;
+  /* ChatGPT / Claude-inspired light — warm paper, soft hairlines, like
+     chat.openai.com (#ffffff / #f7f7f8) and claude.ai (#faf9f5). Keeps the
+     cabinet's token names but softens the values so the page reads as a
+     modern chat surface, not sheet metal. */
+  --paper: #ffffff;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --surface-2: #f4f4f5;
+  --border: #e5e5e5;
+  --rule: #ececec;
+  --fg: #0d0d0d;
+  --fg-muted: #6b7280;
 
-  /* IEC 60073: blue is "operator action", so it is the action colour.
-     Text cuts clear 4.5:1 on every panel ground here. */
-  --accent: #135e9e;
-  --accent-dim: #135e9e1f;
-  --accent-text: #0f5490;
-  --on-accent: #f2f5f4;
-  /* Signal green: the lamp that says a gate held. */
-  --ok: #1e6f31;
-  --ok-fill: #2fae4d;
-  /* Instrument violet: the odd reading worth a second look. */
-  --violet: #7b4fc0;
-  --violet-text: #633aa4;
-  /* Signal red: a fault, never decoration. */
-  --danger: #a8271f;
-  --on-danger: #f7f5f2;
-  --scrim: rgba(24, 29, 26, 0.5);
-  /* Signal amber: abnormal but running. */
-  --warn: #8a5f00;
-  --warn-text: #755100;
+  --accent: #0b57d0;
+  --accent-dim: #0b57d014;
+  --accent-text: #0b57d0;
+  --on-accent: #ffffff;
+  --ok: #117a3a;
+  --ok-fill: #16a34a;
+  --violet: #7c3aed;
+  --violet-text: #6d28d9;
+  --danger: #dc2626;
+  --on-danger: #ffffff;
+  --scrim: rgba(13, 13, 13, 0.32);
+  --warn: #b45309;
+  --warn-text: #92400e;
 
   /* Prose in the text face; every measurement and every legend plate in
      mono, because a panel's engraving is fixed-pitch and its readings align. */
@@ -65,11 +60,9 @@
 
   --measure: 70ch;
 
-  /* Routed metal: corners are eased, not round. The only truly round things
-     are the ones that are physically round — lamps, pills, a status dot. */
-  --radius-sm: 2px;
-  --radius: 3px;
-  --radius-lg: 5px;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
   --radius-pill: 999px;
 
   /* The margin column the transcript's job numbers are stamped into. */
@@ -80,83 +73,84 @@
   --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
 }
 
-/* --- night shift: the same cabinet with the hall lights off --- */
+/* Dark — Cursor / claude.ai dark: #212121 / #171717. Slightly lighter than
+   the old graphite so chat bubbles have room to breathe. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #1d2225;
-    --bg: #12161a;
-    --surface: var(--paper);
-    --surface-2: #272d31;
-    --border: #77827b;
-    --rule: #343b3f;
-    --fg: #dfe5df;
-    --fg-muted: #99a49d;
-    --accent: #3f97dd;
-    --accent-dim: #3f97dd26;
-    --accent-text: #6cb2ea;
-    --on-accent: #0e1720;
-    --ok: #4cc468;
-    --ok-fill: #38b356;
-    --violet: #a98fe0;
-    --violet-text: #b9a2ec;
-    --danger: #ee6a5f;
-    --on-danger: #150f0e;
-    --scrim: rgba(0, 0, 0, 0.64);
-    --warn: #e5b54a;
-    --warn-text: #e5b54a;
-    --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-    --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+    --paper: #212121;
+    --bg: #171717;
+    --surface: #212121;
+    --surface-2: #2f2f2f;
+    --border: #3a3a3a;
+    --rule: #333333;
+    --fg: #ececec;
+    --fg-muted: #9ca3af;
+    --accent: #7aa7ff;
+    --accent-dim: #7aa7ff1f;
+    --accent-text: #8fb5ff;
+    --on-accent: #0d0d0d;
+    --ok: #4ade80;
+    --ok-fill: #22c55e;
+    --violet: #c4b5fd;
+    --violet-text: #ddd6fe;
+    --danger: #f87171;
+    --on-danger: #171717;
+    --scrim: rgba(0, 0, 0, 0.56);
+    --warn: #fbbf24;
+    --warn-text: #fcd34d;
+    --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+    --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
   }
 }
 :root[data-theme="light"] {
-  --paper: #e4e7e0;
-  --bg: #c6cac2;
-  --surface: var(--paper);
-  --surface-2: #d3d7cf;
-  --border: #6b756e;
-  --rule: #b0b6ab;
-  --fg: #181d1a;
-  --fg-muted: #4c5750;
-  --accent: #135e9e;
-  --accent-dim: #135e9e1f;
-  --accent-text: #0f5490;
-  --on-accent: #f2f5f4;
-  --ok: #1e6f31;
-  --ok-fill: #2fae4d;
-  --violet: #7b4fc0;
-  --violet-text: #633aa4;
-  --danger: #a8271f;
-  --on-danger: #f7f5f2;
-  --scrim: rgba(24, 29, 26, 0.5);
-  --warn: #8a5f00;
-  --warn-text: #755100;
-  --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
-  --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
+  --paper: #ffffff;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --surface-2: #f4f4f5;
+  --border: #e5e5e5;
+  --rule: #ececec;
+  --fg: #0d0d0d;
+  --fg-muted: #6b7280;
+  --accent: #0b57d0;
+  --accent-dim: #0b57d014;
+  --accent-text: #0b57d0;
+  --on-accent: #ffffff;
+  --ok: #117a3a;
+  --ok-fill: #16a34a;
+  --violet: #7c3aed;
+  --violet-text: #6d28d9;
+  --danger: #dc2626;
+  --on-danger: #ffffff;
+  --scrim: rgba(13, 13, 13, 0.32);
+  --warn: #b45309;
+  --warn-text: #92400e;
+  --lift: 0 1px 3px rgba(0,0,0,0.06), 0 8px 24px -12px rgba(0,0,0,0.08);
+  --lift-high: 0 2px 8px rgba(0,0,0,0.08), 0 16px 40px -16px rgba(0,0,0,0.12);
 }
 :root[data-theme="dark"] {
-  --paper: #1d2225;
-  --bg: #12161a;
-  --surface: var(--paper);
-  --surface-2: #272d31;
-  --border: #77827b;
-  --rule: #343b3f;
-  --fg: #dfe5df;
-  --fg-muted: #99a49d;
-  --accent: #3f97dd;
-  --accent-dim: #3f97dd26;
-  --accent-text: #6cb2ea;
-  --on-accent: #0e1720;
-  --ok: #4cc468;
-  --ok-fill: #38b356;
-  --violet: #a98fe0;
-  --violet-text: #b9a2ec;
-  --danger: #ee6a5f;
-  --on-danger: #150f0e;
-  --scrim: rgba(0, 0, 0, 0.64);
-  --warn: #e5b54a;
-  --warn-text: #e5b54a;
-  --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
-  --lift-high: 0 2px 4px rgba(0, 0, 0, 0.55), 0 20px 44px -16px rgba(0, 0, 0, 0.8);
+  --paper: #212121;
+  --bg: #171717;
+  --surface: #212121;
+  --surface-2: #2f2f2f;
+  --border: #3a3a3a;
+  --rule: #333333;
+  --fg: #ececec;
+  --fg-muted: #9ca3af;
+  --accent: #7aa7ff;
+  --accent-dim: #7aa7ff1f;
+  --accent-text: #8fb5ff;
+  --on-accent: #0d0d0d;
+  --ok: #4ade80;
+  --ok-fill: #22c55e;
+  --violet: #c4b5fd;
+  --violet-text: #ddd6fe;
+  --danger: #f87171;
+  --on-danger: #171717;
+  --scrim: rgba(0, 0, 0, 0.56);
+  --warn: #fbbf24;
+  --warn-text: #fcd34d;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
 }
 
 /* Catppuccin Mocha (https://github.com/catppuccin/catppuccin), mapped onto
@@ -371,15 +365,11 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: var(--step-1);
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
   display: flex;
   flex-direction: column;
-  /* The backplane behind the panels: a faint vertical brush, so the ground
-     reads as sheet metal rather than a flat fill. Derived from --fg so every
-     theme keeps its own metal. */
-  background-image:
-    repeating-linear-gradient(90deg, color-mix(in srgb, var(--fg) 3%, transparent) 0 1px, transparent 1px 3px);
+  -webkit-font-smoothing: antialiased;
 }
 
 .skip-link {
@@ -395,13 +385,12 @@ body {
 }
 @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
 
-/* The cabinet's top rail: nameplate, gauges, controls. Its own panel strip,
-   seamed off from the backplane below. */
 header {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem;
-  padding: 0.55rem 1rem; border-bottom: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
+  padding: 0.6rem 1rem; border-bottom: 1px solid var(--rule);
   background: var(--surface);
-  box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+  position: sticky; top: 0; z-index: 5;
+  backdrop-filter: saturate(1.1) blur(8px);
 }
 @media (max-width: 34rem) {
   header { padding: 0.7rem 1rem; gap: 0.4rem 0.5rem; }
@@ -464,9 +453,9 @@ button.chip-btn {
 }
 button.chip-btn:hover { color: var(--fg); border-color: var(--accent); }
 
-main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: var(--space-4) clamp(0.75rem, 2vw, 1.75rem) var(--space-5); }
-.view > section { max-width: 48rem; margin-left: auto; margin-right: auto; }
-#view-chat > section { max-width: 48rem; }
+main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5); }
+.view > section { max-width: 46rem; margin-left: auto; margin-right: auto; }
+#view-chat > section { max-width: 46rem; }
 #view-board > section, #view-runs > section, #view-fleet > section { max-width: 62rem; }
 
 /* ---- tabs: one view at a time ----
@@ -539,12 +528,10 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    32-inch shop monitor. */
 .turn {
   position: relative;
-  border-top: 1px solid var(--rule);
-  padding-left: var(--gutter);
-  padding-top: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 0;
 }
-.turn:last-child { border-bottom: 1px solid var(--rule); padding-bottom: var(--space-4); }
-.turn::before { content: none; }
+.turn + .turn { border-top: 1px solid var(--rule); }
 /* The job in progress: its strip is powered. */
 .turn[data-live="true"]::before {
   content: "";
@@ -552,37 +539,26 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   background: var(--accent);
   box-shadow: 0 0 8px 0 color-mix(in srgb, var(--accent) 55%, transparent);
 }
-/* The job number: a stamped tag in the margin. */
-.turn-depth {
-  position: absolute;
-  left: 0;
-  top: var(--space-4);
-  width: calc(var(--gutter) - 1.75rem);
-  text-align: right;
-  font-family: var(--mono);
-  font-size: var(--step-1);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-muted);
-  letter-spacing: -0.02em;
-  line-height: 1;
-}
+.turn-depth { display: none; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
 .turn-you {
-  font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--rule); border-radius: 12px;
-  background: var(--surface-2);
+  font-family: var(--sans); font-size: 14px; color: var(--fg);
+  padding: 0.75rem 1rem;
+  border: 0; border-radius: 20px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
   margin: 0 0 var(--space-3);
+  margin-left: auto;
   white-space: pre-wrap; overflow-wrap: anywhere;
-  max-width: var(--measure);
+  max-width: min(40rem, 72%);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 .turn-author { color: var(--fg); font-weight: 700; letter-spacing: -0.015em; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
 .turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
-.turn-body { padding: 0 0 var(--space-3); }
+.turn-body { padding: 0; }
+.turn-body .turn-answer { padding-top: var(--space-2); }
 .turn-thinking {
   margin: 0 0 var(--space-3);
   border: 1px solid var(--rule); border-radius: var(--radius);
@@ -666,7 +642,7 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
   max-width: var(--measure);
 }
 .turn-answer {
-  font-family: var(--sans); font-size: var(--step-1);
+  font-family: var(--sans); font-size: 15px; line-height: 1.65;
   white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
   max-width: var(--measure);
 }
@@ -687,8 +663,9 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
    than floating over the code: as overlays they covered the first line and
    inherited the 44px control height onto a block that can be shorter. */
 .code-block {
-  margin: 0.6rem 0; border: 1px solid var(--rule);
-  border-radius: var(--radius); overflow: hidden;
+  margin: 0.75rem 0; border: 1px solid var(--rule);
+  border-radius: var(--radius-lg); overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 .code-head {
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
@@ -729,8 +706,8 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 .turn-foot {
   font-variant-numeric: tabular-nums;
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
-  margin-top: var(--space-5); padding-top: var(--space-3); border-top: 1px dashed var(--rule);
-  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+  font-family: var(--sans); font-size: 12px; color: var(--fg-muted);
 }
 .turn-foot:empty { display: none; margin: 0; padding: 0; border: 0; }
 .turn-foot button {
@@ -746,20 +723,20 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 @keyframes caret { 50% { opacity: 0.15; } }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
 
-/* ---- composer: floating card, sticky bottom, lifts on focus ---- */
+/* ---- composer: floating card, sticky bottom — Cursor/Claude style ---- */
 .composer {
-  position: sticky; bottom: var(--space-3); z-index: 2;
+  position: sticky; bottom: var(--space-4); z-index: 2;
   margin-top: var(--space-6);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 20px;
   padding: var(--space-3) var(--space-4);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 8px 24px -12px rgba(0,0,0,0.20);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06), 0 12px 32px -16px rgba(0,0,0,0.12);
   transition: box-shadow 160ms ease, border-color 160ms ease;
 }
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.10), 0 12px 32px -12px rgba(0,0,0,0.28), 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 16px 40px -16px rgba(0,0,0,0.16);
 }
 .composer > label[for="task"] {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -782,13 +759,12 @@ main { flex: 1 1 auto; min-width: 0; max-width: 88rem; margin: 0 auto; padding: 
 }
 .attachment button:hover { color: var(--danger); border-color: var(--danger); }
 .composer.dragging textarea { border-color: var(--accent); }
-/* Every label is a legend plate: engraved caps in mono, fixed to its control. */
 label {
-  display: block; font-family: var(--mono);
-  font-size: var(--step--1); font-weight: 700;
-  letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--fg-muted); margin-bottom: 0.4rem;
+  display: block; font-family: var(--sans);
+  font-size: 12px; font-weight: 500; letter-spacing: 0.01em;
+  color: var(--fg-muted); margin-bottom: 0.35rem;
 }
+.composer label, .detail-row label, .tool-field label { font-family: var(--sans); letter-spacing: 0.01em; text-transform: none; font-weight: 500; }
 
 textarea {
   width: 100%; min-height: 5rem; padding: 0.75rem;
@@ -819,22 +795,18 @@ textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--a
 /* The actuator: a real pressable button, bevelled, blue because blue is the
    colour the standard gives operator action. Pressing it moves it. */
 button {
-  min-height: 44px; padding: 0.5rem 1.25rem;
-  font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
+  min-height: 40px; padding: 0.5rem 1.05rem;
+  font-family: var(--sans); font-size: 14px; font-weight: 600;
   color: var(--on-accent); background: var(--accent);
-  border: 0; border-radius: var(--radius); cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
-    0 1px 2px rgba(0, 0, 0, 0.25);
+  border: 0; border-radius: 999px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
 button.secondary {
-  font-size: var(--step-0); padding: 0.45rem 0.85rem;
+  font-size: 13px; padding: 0.4rem 0.8rem;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border);
   font-family: var(--sans);
-  letter-spacing: 0.02em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  border-radius: 999px;
 }
 button.secondary:hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
 button.danger { background: var(--danger); color: var(--on-danger); }
@@ -855,14 +827,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5;
 }
 
-section { margin-top: var(--space-4); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
+section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
+.view > section + section { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
 .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); min-width: 0; }
-/* Section names are legend plates too: the panel is engraved, not typeset. */
 h2 {
-  font-family: var(--mono);
-  font-size: var(--step-1); font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--fg); margin: 0;
-  line-height: 1.2;
+  font-family: var(--sans);
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--fg); margin: 0; line-height: 1.3;
 }
 /* ---- runs: the execution graph of a recorded run ---- */
 .runs { margin-top: var(--space-5); }
@@ -1405,22 +1376,15 @@ mark {
 .scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
-/* Transcript empty — compact hero */
+/* Transcript empty — compact hero, ChatGPT/Cursor style: no boxed card, centered */
 #transcript-empty {
-  padding: var(--space-5) var(--space-4);
-  border: 1px solid var(--rule);
-  border-radius: 16px;
-  background: var(--surface-2);
-  text-align: center;
+  padding: var(--space-6) 0 var(--space-4);
+  border: 0; background: transparent; text-align: center;
 }
 #transcript-empty p:first-child {
   font-family: var(--sans);
-  font-size: var(--step-1);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--fg);
-  margin: 0 0 var(--space-2);
-  max-width: none;
+  font-size: 22px; font-weight: 600; letter-spacing: -0.02em;
+  color: var(--fg); margin: 0 0 var(--space-3); max-width: none;
 }
 #transcript-empty p:first-child + p {
   font-size: var(--step-0);
@@ -1429,11 +1393,10 @@ mark {
 }
 .suggestions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); justify-content: center; }
 .suggestion {
-  min-height: 32px; padding: 0 var(--space-4); text-align: left;
-  border: 1px solid var(--border); border-radius: var(--radius-pill);
-  background: var(--surface-2); color: var(--fg);
-  font-family: var(--sans); font-size: var(--step-0); cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  min-height: 36px; padding: 0 1rem; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--fg);
+  font-family: var(--sans); font-size: 13px; cursor: pointer;
 }
 .suggestion:hover { border-color: var(--accent); color: var(--accent-text); }
 /* Staggered entrance for suggestion pills — motion gated */
@@ -1509,33 +1472,30 @@ mark {
 
 .shell { display: flex; align-items: flex-start; gap: 0; min-height: calc(100vh - 3.2rem); }
 
-/* The main panel: centered reading column; the shell's side gutters absorb chrome. */
 main {
-  background: var(--paper);
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  box-shadow: var(--lift);
+  background: var(--bg);
+  border: 0;
+  box-shadow: none;
   min-height: calc(100vh - 3.2rem);
   flex: 1;
 }
 .rail {
-  flex: none; width: 16rem; align-self: stretch;
+  flex: none; width: 14rem; align-self: stretch;
   position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  background: transparent;
-  padding: var(--space-4) var(--space-3);
+  background: var(--surface);
+  padding: var(--space-3) var(--space-2);
   border-right: 1px solid var(--rule);
 }
 .rail-head { display: flex; flex-direction: column; gap: var(--space-3); }
 .rail-new {
-  min-height: 32px; padding: 0 var(--space-4);
+  min-height: 36px; padding: 0 1rem; width: 100%;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); color: var(--fg);
-  font-family: var(--sans); font-size: var(--step-0); cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer;
 }
-.rail-new:hover { background: var(--accent); color: var(--on-accent); }
+.rail-new:hover { background: var(--surface-2); border-color: var(--border); }
 .rail input[type="search"] { width: 100%; box-sizing: border-box; }
 .rail-list {
   margin-top: var(--space-4); padding: 0; list-style: none;
@@ -1555,16 +1515,16 @@ main {
 
 .rail-group {
   margin: var(--space-3) 0 var(--space-1);
-  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700;
+  font-family: var(--sans); font-size: 11px; color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
 }
 .rail-group:first-child { margin-top: 0; }
 .rail-item {
   display: block; width: 100%; text-align: left; cursor: pointer;
-  min-height: 30px; padding: 0.3rem var(--space-3);
-  border: 1px solid transparent; border-radius: var(--radius-sm);
+  min-height: 32px; padding: 0.4rem 0.6rem;
+  border: 1px solid transparent; border-radius: var(--radius);
   background: transparent; color: var(--fg);
-  font-family: var(--sans); font-size: var(--step-0);
+  font-family: var(--sans); font-size: 13px;
   box-shadow: none;
 }
 .rail-item:hover { background: var(--surface-2); }

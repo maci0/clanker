@@ -1859,7 +1859,8 @@ const HotReload = struct {
         // and reads this until the process is replaced or exits.
         const owned_path = arena.dupeZ(u8, exe_path) catch return null;
         self.* = .{ .io = io, .gpa = gpa, .exe_path = owned_path, .start_mtime = st.mtime.nanoseconds, .argv_tail = argv_tail };
-        _ = std.Thread.spawn(.{}, HotReload.watch, .{self}) catch return null;
+        const thread = std.Thread.spawn(.{}, HotReload.watch, .{self}) catch return null;
+        thread.detach();
         return self;
     }
 };
@@ -2880,6 +2881,37 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
     var buf: [64]u8 = undefined;
     const body_out = std.fmt.bufPrint(&buf, "{{\"ok\":true,\"subscribed\":{}}}", .{accepted}) catch return;
     respond(stream, 200, "OK", body_out);
+}
+
+test "fuzz: chat message body never crashes the parse/validate path" {
+    // The body here is attacker-controlled the same way headers_raw is above:
+    // any peer, unauthenticated, can POST arbitrary bytes to /api/chat/message.
+    // This exercises the same parse-then-validate steps handleChatMessage runs
+    // before it ever touches the filesystem via chatrooms.receive.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const body = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const parsed = std.json.parseFromSliceLeaky(ChatMessageBody, arena, body, .{ .ignore_unknown_fields = true }) catch return;
+            const room = parsed.room orelse return;
+            const text = parsed.text orelse "";
+            if (text.len > chatrooms.max_text_len) return;
+            _ = chatrooms.Message{
+                .room = room,
+                .from = parsed.from orelse "unknown",
+                .text = text,
+                .ts = parsed.ts orelse 0,
+                .id = parsed.id orelse "",
+            };
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
 }
 
 /// GET /api/chat/messages?room=dev&after=123 — room history (newest first).

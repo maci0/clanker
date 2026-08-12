@@ -389,8 +389,11 @@ pub fn chatStream(
     defer req.deinit();
 
     req.transfer_encoding = .{ .content_length = body.len };
+    // Request bodies contain the complete conversation, tool output, and
+    // attachments. Debugging must never copy that user data into terminal or
+    // CI logs; the byte count is enough to diagnose framing problems.
     if (ctx.environ_map.get("CLANKER_DEBUG_BODY") != null) {
-        std.debug.print("---STREAM REQ---\n{s}\n---END---\n", .{body});
+        std.debug.print("LLM streaming request provider={s} bytes={d}\n", .{ provider.name, body.len });
     }
     var body_writer = try req.sendBodyUnflushed(&.{});
     try body_writer.writer.writeAll(body);
@@ -420,7 +423,14 @@ pub fn chatStream(
                 else => break,
             };
         }
-        err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(response.head.status), err_body.items });
+        // Provider error bodies can echo prompts or upstream credentials.
+        // Extract only the provider's documented error message, matching the
+        // non-streaming path, and never surface the complete raw body.
+        if (providers.parseErrorDetail(arena, provider.kind, err_body.items)) |msg| {
+            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(response.head.status), msg });
+        } else {
+            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(response.head.status)});
+        }
         return error.ApiError;
     }
 

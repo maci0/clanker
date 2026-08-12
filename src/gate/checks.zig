@@ -668,17 +668,46 @@ test "gitDenyGuardGate allows non-git patterns and non-config files" {
     try std.testing.expect(!result3.ok);
 }
 
+fn resolveZigBin(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
+    const known_first = [_][]const u8{ "/home/maci/.local/bin/zig", "/home/maci/.zvm/0.16.0/zig" };
+    for (known_first) |k| {
+        std.Io.Dir.accessAbsolute(io, k, .{ .execute = true }) catch continue;
+        return gpa.dupe(u8, k) catch null;
+    }
+    return null;
+}
+
 fn runZig(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, args: []const []const u8, label: []const u8) !GateResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
-    try argv.append(gpa, "zig");
+    const zig_bin = resolveZigBin(gpa, io);
+    defer if (zig_bin) |p| gpa.free(p);
+    try argv.append(gpa, zig_bin orelse "zig");
     for (args) |a| try argv.append(gpa, a);
     return runZigArgs(gpa, io, dir, argv.items, label);
 }
 
 fn runZigArgs(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []const u8, label: []const u8) !GateResult {
+    var owned_argv: ?[]const []const u8 = null;
+    var owned_zig: ?[]u8 = null;
+    defer if (owned_zig) |p| gpa.free(p);
+    defer if (owned_argv) |a| gpa.free(a);
+    var effective_argv = argv;
+    if (argv.len > 0 and std.mem.eql(u8, argv[0], "zig")) {
+        if (resolveZigBin(gpa, io)) |abs| {
+            owned_zig = abs;
+            const copy = gpa.dupe([]const u8, argv) catch null;
+            if (copy) |c| {
+                c[0] = owned_zig.?;
+                owned_argv = c;
+                effective_argv = c;
+            } else {
+                effective_argv = argv;
+            }
+        }
+    }
     const result = try std.process.run(gpa, io, .{
-        .argv = argv,
+        .argv = effective_argv,
         .cwd = .{ .dir = dir },
         .stdout_limit = .limited(max_captured_gate_output),
         .stderr_limit = .limited(max_captured_gate_output),

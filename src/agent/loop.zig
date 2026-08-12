@@ -338,7 +338,6 @@ pub const Agent = struct {
                 autolearn.recordRun(self.ctx.io, self.ctx.gpa, self.arena, .{
                     .provider = self.provider.name,
                     .model = self.provider.activeModelName(),
-                    .task = if (task.len > 120) task[0..120] else task,
                     .prompt_tokens = self.stats.total_prompt_tokens,
                     .completion_tokens = self.stats.total_completion_tokens,
                     .cache_hit = self.stats.total_cache_hit_tokens,

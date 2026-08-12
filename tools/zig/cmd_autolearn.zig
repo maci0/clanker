@@ -25,7 +25,6 @@ const Event = struct {
     cache_hit: u64 = 0,
     cache_miss: u64 = 0,
     model: []const u8 = "",
-    task: []const u8 = "",
     tools: []const []const u8 = &.{},
 };
 
@@ -44,7 +43,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var cache_hit: u64 = 0;
     var cache_miss: u64 = 0;
     var model_uses: std.StringArrayHashMapUnmanaged(u64) = .empty;
-    var task_repeats: std.StringArrayHashMapUnmanaged(u64) = .empty;
 
     const data = lib.fsRead(event_path) catch null;
     if (data) |d| {
@@ -75,10 +73,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 }
                 for (ev.tools) |t| {
                     const g = try tool_uses.getOrPut(alloc, t);
-                    if (g.found_existing) g.value_ptr.* += 1 else g.value_ptr.* = 1;
-                }
-                if (ev.task.len > 0) {
-                    const g = try task_repeats.getOrPut(alloc, ev.task);
                     if (g.found_existing) g.value_ptr.* += 1 else g.value_ptr.* = 1;
                 }
             }
@@ -127,14 +121,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (rate < 70) {
             try items.append(alloc, try std.fmt.allocPrint(alloc, "Improve prompt-cache hit rate ({d:.0}% across {d} run(s)): keep the system prompt and skill context byte-stable so providers cache more of the prefix.", .{ rate, run_count }));
         }
-    }
-
-    // Recurring tasks: the same task run more than once suggests a dedicated
-    // tool or skill to automate it.
-    var rit = task_repeats.iterator();
-    while (rit.next()) |kv| {
-        if (kv.value_ptr.* < 2) continue;
-        try items.append(alloc, try std.fmt.allocPrint(alloc, "Build a dedicated tool or skill for the recurring task '{s}' (seen {d} time(s)) — automate it so future runs are one tool call instead of a full agent loop.", .{ kv.key_ptr.*, kv.value_ptr.* }));
     }
 
     // Model usage.

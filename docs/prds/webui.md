@@ -166,6 +166,8 @@ hidden `<select>`, which stays the one thing `runOptions()`/localStorage/
 `renderContextMeter()` read — selecting an entry sets its value and
 dispatches `change`, so nothing downstream needed to change.
 
+**Theme / chrome (2026-08-12).** Light and dark tokens aligned to ChatGPT/Cursor/Claude — `#ffffff`/`#f7f7f8` and `#212121`/`#171717`, `14px` body with antialiasing, `20px` pill composer (`focus-within` soft shadow), user bubble `16px` right-aligned at `min(42rem,78%)`, pill buttons (`999px`), header sticky with `blur(8px)`, radii `6/10/14/999px`. Lamps and `--warn/--ok` hues preserved, just softened to the new paper.
+
 **Subagent graphs and the Fleet view.** A nested run always recorded its own
 graph, but under the same second-resolution `run-<ts>` id as everything
 else, so a sub-agent spawned in the parent's second could silently collide

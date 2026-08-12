@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const atomic_write = @import("../util/atomic_write.zig");
+const filelock = @import("../util/filelock.zig");
 const log = @import("../util/log.zig");
 
 pub const path = "state/tool_usage.json";
@@ -25,6 +26,9 @@ pub const Usage = struct {
     /// Name to call count. Order is insertion order, which is meaningless;
     /// `top` sorts.
     counts: std.StringArrayHashMapUnmanaged(u64) = .empty,
+    /// Increments made by this process since load. Save merges these into the
+    /// latest on-disk snapshot while holding the cross-process state lock.
+    deltas: std.StringArrayHashMapUnmanaged(u64) = .empty,
     /// Set when a count changed since the last save, so a run that called no
     /// tools does not rewrite the file.
     dirty: bool = false,
@@ -42,6 +46,9 @@ pub const Usage = struct {
         }
         gop.value_ptr.* += 1;
         self.dirty = true;
+        const delta = self.deltas.getOrPut(arena, gop.key_ptr.*) catch return;
+        if (!delta.found_existing) delta.value_ptr.* = 0;
+        delta.value_ptr.* += 1;
     }
 
     pub fn get(self: *const Usage, name: []const u8) u64 {
@@ -86,10 +93,27 @@ pub const Usage = struct {
 
     pub fn save(self: *Usage, io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) void {
         if (!self.dirty) return;
+        base.createDirPath(io, "state") catch |err| {
+            log.log(.warn, "tool usage: could not create state directory: {s}", .{@errorName(err)});
+            return;
+        };
+        var guard = filelock.acquire(io, base, "state", "tool_usage", arena);
+        defer guard.release();
+
+        // Another process may have saved after this Usage was loaded. Merge
+        // only this run's increments into its latest snapshot instead of
+        // replacing them with our stale absolute counts.
+        var merged = Usage.load(io, arena, base);
+        var delta_it = self.deltas.iterator();
+        while (delta_it.next()) |kv| {
+            const gop = merged.counts.getOrPut(arena, kv.key_ptr.*) catch return;
+            if (!gop.found_existing) gop.value_ptr.* = 0;
+            gop.value_ptr.* +|= kv.value_ptr.*;
+        }
         var out: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &out.writer };
         s.beginObject() catch return;
-        var it = self.counts.iterator();
+        var it = merged.counts.iterator();
         while (it.next()) |kv| {
             s.objectField(kv.key_ptr.*) catch return;
             s.write(kv.value_ptr.*) catch return;
@@ -102,6 +126,7 @@ pub const Usage = struct {
             return;
         };
         self.dirty = false;
+        self.deltas.clearRetainingCapacity();
     }
 };
 
@@ -154,4 +179,38 @@ test "top returns everything when asked for more than it holds" {
 test "a fresh tally is not dirty and saves nothing" {
     const u = Usage{};
     try std.testing.expect(!u.dirty);
+}
+
+test "concurrent process-style saves merge increments" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const Worker = struct {
+        io: std.Io,
+        base: std.Io.Dir,
+        fn run(self: *@This()) void {
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            var usage = Usage.load(self.io, arena, self.base);
+            for (0..25) |_| usage.record(arena, "read_file");
+            usage.save(self.io, arena, self.base);
+        }
+    };
+
+    var workers: [6]Worker = undefined;
+    var threads: [workers.len]std.Thread = undefined;
+    for (&workers, 0..) |*worker, i| {
+        worker.* = .{ .io = io, .base = tmp.dir };
+        threads[i] = try std.Thread.spawn(.{}, Worker.run, .{worker});
+    }
+    for (&threads) |*thread| thread.join();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const loaded = Usage.load(io, arena_state.allocator(), tmp.dir);
+    try std.testing.expectEqual(@as(u64, workers.len * 25), loaded.get("read_file"));
 }
