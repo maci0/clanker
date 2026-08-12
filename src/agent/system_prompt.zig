@@ -47,6 +47,10 @@ pub const PromptParts = struct {
     home: []const u8 = "",
     /// Rendered workflow catalog (from workflows.catalogText). Empty omits the section.
     workflows_catalog: []const u8 = "",
+    /// Current improve-self iteration (1-based). 0 means not in an improve loop.
+    improve_iteration: u32 = 0,
+    /// Total improve-self iteration budget. 0 means not in an improve loop.
+    improve_max_iterations: u32 = 0,
 };
 
 /// Prefixed to the Skills and Learnings sections, both of which the agent
@@ -393,6 +397,32 @@ pub fn build(
                 try buf.appendSlice(arena, l);
             }
             try buf.appendSlice(arena, "\n\n");
+        }
+    }
+
+    // Improve-self iteration budget hint.
+    if (parts.improve_iteration > 0 and parts.improve_max_iterations > 0) {
+        try buf.appendSlice(arena, "## Improve-self budget\n\n");
+        try buf.appendSlice(arena, try std.fmt.allocPrint(
+            arena,
+            "You are in iteration {d} of {d} of the improve-self loop. ",
+            .{ parts.improve_iteration, parts.improve_max_iterations },
+        ));
+        const remaining = parts.improve_max_iterations - parts.improve_iteration;
+        if (remaining == 0) {
+            try buf.appendSlice(arena, "This is your LAST iteration. Propose only small, safe, high-confidence changes that are very likely to pass all gates on the first try. Avoid multi-file changes or ambitious refactors.\n\n");
+        } else if (remaining <= 2) {
+            try buf.appendSlice(arena, try std.fmt.allocPrint(
+                arena,
+                "Only {d} iteration(s) remain after this one. Prefer focused, single-file changes that are likely to pass gates.\n\n",
+                .{remaining},
+            ));
+        } else {
+            try buf.appendSlice(arena, try std.fmt.allocPrint(
+                arena,
+                "{d} iterations remain after this one.\n\n",
+                .{remaining},
+            ));
         }
     }
 
