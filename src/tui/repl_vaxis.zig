@@ -561,7 +561,14 @@ const Model = struct {
     fn finishTurn(self: *Model, final_text: []const u8) void {
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
-        for (bridge_tool_lines.items) |l| self.lines.append(self.arena, .{ .text = l, .dim = true }) catch {};
+        // Tool lines are allocated from bridge_gpa by the worker callbacks;
+        // the transcript owns arena copies so the originals can be freed
+        // here instead of living (and leaking) for the process lifetime.
+        for (bridge_tool_lines.items) |l| {
+            const copy = self.arena.dupe(u8, l) catch l;
+            self.lines.append(self.arena, .{ .text = copy, .dim = true }) catch {};
+            if (copy.ptr != l.ptr) bridge_gpa.free(l);
+        }
         bridge_tool_lines.clearRetainingCapacity();
         const answer = if (final_text.len > 0) final_text else bridge_stream_buf.items;
         const owned = self.arena.dupe(u8, answer) catch answer;
@@ -1986,5 +1993,13 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // conversation survive. Save even if the run loop errored out.
     const run_result = app.run(model.widget(), .{});
     model.saveConversation();
+    // Free the bridge buffers only when the worker is joined (idle exit):
+    // a still-running worker appends to them, and freeing under it would
+    // trade a shutdown leak report for a use-after-free.
+    if (model.thread == null) {
+        for (bridge_tool_lines.items) |l| bridge_gpa.free(l);
+        bridge_tool_lines.deinit(bridge_gpa);
+        bridge_stream_buf.deinit(bridge_gpa);
+    }
     try run_result;
 }
