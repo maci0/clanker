@@ -2197,6 +2197,27 @@ h2#session-title {
    transcript reuses the tool-call card style used everywhere else, so nothing
    here is a new visual language. */
 .arena-list { display: flex; flex-direction: column; gap: 4px; }
-.arena-pick { display: flex; justify-content: space-between; gap: 12px; text-align: left; width: 100%; }
+.arena-pick { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; }
 .arena-pick[aria-pressed="true"] { border-color: var(--accent, var(--ok)); }
-.arena-pick-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arena-pick-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.arena-pick-outcome { flex: none; }
+.arena-lamp { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted); }
+.arena-lamp[data-state="done"] { background: var(--ok, #2fae4d); }
+.arena-lamp[data-state="running"] { background: #e5b54a; }
+@media (prefers-reduced-motion: no-preference) {
+  .arena-lamp[data-state="running"] { animation: arena-lamp-pulse 1.4s ease-in-out infinite; }
+}
+@keyframes arena-lamp-pulse { 50% { opacity: 0.35; } }
+.arena-combatants { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0; }
+.arena-combatant { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.arena-combatant[data-out="true"] { opacity: 0.55; }
+.arena-combatant[data-winner="true"] .arena-combatant-name { color: var(--ok, #2fae4d); font-weight: 600; }
+.arena-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.arena-hp { width: 90px; height: 7px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; flex: none; }
+.arena-hp-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+@media (prefers-reduced-motion: reduce) { .arena-hp-fill { transition: none; } }
+.arena-graph > summary { cursor: pointer; font-size: 12px; color: var(--fg-muted); margin: 4px 0; }
+.arena-round { margin: 0.5rem 0; }
+.arena-round > summary { cursor: pointer; font-weight: 600; font-size: 13px; margin: 0.4rem 0; }
+.arena-round .tool-card { margin-left: 0.9rem; }
+.arena-verdict { border-color: var(--accent, var(--ok)); }

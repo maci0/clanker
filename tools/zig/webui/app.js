@@ -3207,6 +3207,7 @@ function showView(name, focusPanel) {
   }
   var pendingBoardCard = null;
   var pendingKnowledgeId = null;
+  if (name.indexOf("arena/") === 0) { window._pendingArenaId = decodeURIComponent(name.slice(6)); name = "arena"; }
   if (name.indexOf("board/") === 0) { pendingBoardCard = decodeURIComponent(name.slice(6)); name = "board"; }
   if (name.indexOf("knowledge/") === 0) { pendingKnowledgeId = decodeURIComponent(name.slice(10)); name = "knowledge"; }
   if (pendingBoardCard) window._pendingBoardCard = pendingBoardCard;
