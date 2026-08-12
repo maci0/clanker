@@ -28,6 +28,10 @@ const rawhttp = @import("util/rawhttp.zig");
 // exclusive to the REPL that's now src/tui/repl_vaxis.zig, and was
 // removed with it.
 const tui_transcript = @import("tui/transcript.zig");
+// The per-turn stats line and the byte/token weight of a conversation, shared
+// with the vaxis REPL so `clanker run`'s footer and the REPL's transcript
+// report a turn in one dialect rather than two.
+const tui_stats = @import("tui/stats.zig");
 const repl_vaxis = @import("tui/repl_vaxis.zig");
 const chatrooms = @import("peers/chatrooms.zig");
 const phonebook = @import("peers/phonebook.zig");
@@ -2291,6 +2295,7 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     // animation to clean up out of a captured log.
     run_answer_started = false;
     run_md = .{};
+    const turn_start = std.Io.Timestamp.now(io, .awake);
     const resp = a.run(&messages, task_text, &err_detail) catch |err| {
         // Running out of iterations or budget is an outcome, not a crash. The
         // run did real work — often minutes of it and a measurable amount of
@@ -2323,6 +2328,8 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
     try out_w.interface.writeAll("\n");
     try out_w.interface.flush();
 
+    printTurnStats(io, arena, &a, provider, turn_start, messages.items);
+
     if (opts.session) |sid| {
         const title = std.mem.trim(u8, opts.task.?[0..@min(opts.task.?.len, 60)], " \t\r\n");
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
@@ -2336,6 +2343,45 @@ fn cmdRun(init: std.process.Init, opts: Options) !void {
             .updated = updated,
         });
     }
+}
+
+/// The turn's receipt on stderr: prompt/completion tokens, wall time, tok/s,
+/// cache hit rate, cost, and how full the context now is. The vaxis REPL
+/// appends the identical string to its transcript, both through
+/// `tui/stats.zig`, so the two surfaces cannot drift into two dialects of the
+/// same numbers.
+///
+/// Two guards, both about not writing a line nobody wants: stderr must be a
+/// terminal (a piped or redirected run keeps the byte-for-byte output it had
+/// before this existed, which is what `clanker run` promises scripts), and
+/// the turn must have reported usage at all.
+fn printTurnStats(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    a: *const agent.Agent,
+    provider: *const config.Provider,
+    started: std.Io.Timestamp,
+    messages: []const types.Message,
+) void {
+    if (!(std.Io.File.stderr().isTty(io) catch false)) return;
+    const model = provider.activeModel();
+    // An unpriced model has an unknown price, not a free one: null drops the
+    // cost segment rather than printing $0.0000 (see tui/stats.zig).
+    const priced = model.cost_per_1m_input != null or model.cost_per_1m_output != null;
+    const elapsed = started.durationTo(std.Io.Timestamp.now(io, .awake));
+    const turn: tui_stats.TurnStats = .{
+        .prompt_tokens = a.stats.total_prompt_tokens,
+        .completion_tokens = a.stats.total_completion_tokens,
+        .cache_hit_tokens = a.stats.total_cache_hit_tokens,
+        .cache_miss_tokens = a.stats.total_cache_miss_tokens,
+        .wall_ms = @intCast(@max(0, @divTrunc(elapsed.nanoseconds, std.time.ns_per_ms))),
+        .cost_usd = if (priced) a.stats.cost else null,
+        .context_tokens = tui_stats.historyTokens(messages),
+        .context_window = model.context_window,
+    };
+    if (!turn.accounted()) return;
+    const line = tui_stats.formatTurn(arena, turn) catch return;
+    std.debug.print("{s}\n", .{line});
 }
 
 const ToolResult = struct { ok: bool = false, text: []const u8 = "", err: []const u8 = "" };
@@ -5138,16 +5184,11 @@ fn handleRuns(
 /// compact. Counting only `content` here meant Compact aimed at a smaller
 /// figure than the one on screen and reported a result in a different unit: a
 /// transcript full of tool calls could be "compacted" and barely move.
-fn transcriptBytes(msgs: []const types.Message) usize {
-    var n: usize = 0;
-    for (msgs) |m| {
-        if (m.content) |c| n += c.len;
-        if (m.tool_calls) |calls| {
-            for (calls) |tc| n += tc.arguments.len;
-        }
-    }
-    return n;
-}
+///
+/// One implementation, shared with the REPL's compaction notice
+/// (`tui/stats.zig`): the bytes this server reports and the bytes the REPL
+/// says a compaction freed have to be the same measure.
+const transcriptBytes = tui_stats.historyBytes;
 
 /// Drop the oldest messages until the transcript fits under half the configured
 /// threshold. Whole messages only, and the most recent exchange always stays:
