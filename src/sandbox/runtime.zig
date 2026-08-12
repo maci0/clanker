@@ -14,8 +14,11 @@ const registry = @import("../tools/registry.zig");
 const client = @import("../llm/client.zig");
 const zwasm = @import("zwasm");
 
-/// Deterministic instruction budget per tool call (OutOfFuel trap).
-const default_fuel = 10_000_000_000;
+/// Deterministic instruction budget per tool call (OutOfFuel trap). Shared
+/// with the manifest validator, which rejects a descriptor asking for more
+/// than this rather than letting the clamp below silently disagree with what
+/// the file says.
+const default_fuel = @import("../tools/manifest.zig").default_fuel;
 
 /// The effective budget for one call: a descriptor's `fuel` (0 = unset) may
 /// tighten the default but never exceed it — a fat-fingered manifest stays

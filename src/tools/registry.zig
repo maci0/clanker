@@ -7,8 +7,15 @@ const json = std.json;
 const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
 const strField = @import("../util/json.zig").strField;
+const manifest = @import("manifest.zig");
 
 pub const Tool = struct {
+    /// Schema version of the descriptor this was parsed from. Absent in the
+    /// file means 1: every manifest written before the key existed is a v1
+    /// manifest, so the default is what keeps them loading unchanged. A
+    /// version this build does not understand is refused at parse time rather
+    /// than read with v1 rules — see `manifest.zig`.
+    manifest_version: i64 = manifest.current_version,
     name: []const u8,
     /// The human-facing description: what a person reads in the webui Tools
     /// view or the REPL's tool detail. Free to be as long as it needs to be.
@@ -19,7 +26,11 @@ pub const Tool = struct {
     /// manifest omits `llm_description` (see `parseDescriptor`), so an
     /// unmigrated tool still works — just not as cheaply.
     llm_description: []const u8 = "",
-    /// Wasm file name relative to the tools directory.
+    /// Where the module is, as resolved by `resolveWasmPath` at load: a path
+    /// with a separator (`zig-out/tools/x.wasm`) is read from the process's
+    /// working directory, a bare name from the manifest's own directory. Not
+    /// "relative to the tools directory", which is what this comment used to
+    /// say and what no in-tree manifest has ever meant.
     wasm: []const u8,
     input_schema: json.Value,
     /// Hosts this tool may reach via ck_http (empty = no network).
@@ -76,9 +87,10 @@ pub const Tool = struct {
     /// `"peers"` or `"providers"`: the harness adds those configured hosts to
     /// `network_allow` at load, because a descriptor cannot know them.
     network_from_config: []const u8 = "",
-    /// Commands this tool may run through `ck_exec`. Empty means the harness
-    /// default set; a non-empty list replaces it, so a tool that needs one
-    /// binary does not also get git and zig.
+    /// Commands this tool may run through `ck_exec`, compared against argv[0]
+    /// exactly (`host.execAllowed`). Empty is not "the harness default set":
+    /// it is no exec at all, which is what every tool that does not name a
+    /// command gets.
     exec_allow: []const []const u8 = &.{},
     /// Environment variables this tool may read. Empty means the safe defaults
     /// in host.zig, never the whole process environment: that is where the API
@@ -174,10 +186,11 @@ pub const Registry = struct {
                 log.log(.warn, "cannot read tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
                 continue;
             };
-            const tool = parseDescriptor(arena, raw) catch |err| {
-                log.log(.warn, "invalid tool descriptor '{s}': {s}", .{ entry.name, @errorName(err) });
+            var tool = parseDescriptor(arena, raw) catch |err| {
+                log.log(.warn, "invalid tool descriptor '{s}': {s} (run `clanker plugins validate {s}` for the offending key)", .{ entry.name, @errorName(err), tools_dir });
                 continue;
             };
+            tool.wasm = try resolveWasmPath(arena, tools_dir, tool.wasm);
             try reg.tools.put(arena, tool.name, tool);
         }
         reg.applyToggles(io, arena, base);
@@ -187,6 +200,26 @@ pub const Registry = struct {
             entry.value_ptr.config_json = try std.fmt.allocPrint(arena, "{f}", .{json.fmt(entry.value_ptr.config, .{})});
         }
         return reg;
+    }
+
+    /// Where the module named by a descriptor's `wasm` key actually lives.
+    ///
+    /// Every path is read relative to the process's working directory, which
+    /// is what the in-tree manifests want (`zig-out/tools/x.wasm`,
+    /// `tools/bin/x.wasm`) and exactly what an out-of-tree plugin cannot use:
+    /// a directory someone unpacked somewhere has no idea what clanker's cwd
+    /// will be. So a `wasm` with no path separator is resolved beside its own
+    /// manifest instead, which makes `{name.tool.json, name.wasm}` in one
+    /// directory a self-contained package that `agent.tools_dir` can point at.
+    ///
+    /// Every shipped manifest names a path with a separator, so this is a
+    /// no-op for all of them: the bare form is new surface, not a change of
+    /// meaning for the existing one.
+    pub fn resolveWasmPath(arena: std.mem.Allocator, tools_dir: []const u8, wasm: []const u8) ![]const u8 {
+        if (wasm.len == 0) return wasm;
+        if (std.mem.findScalar(u8, wasm, '/') != null) return wasm;
+        if (tools_dir.len == 0) return wasm;
+        return std.fmt.allocPrint(arena, "{s}/{s}", .{ std.mem.trimEnd(u8, tools_dir, "/"), wasm });
     }
 
     /// Layers `state/plugin_config.json` over each descriptor's `config`.
@@ -438,14 +471,28 @@ pub const Registry = struct {
         return json.Value{ .object = out };
     }
 
-    fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8) !Tool {
+    pub fn parseDescriptor(arena: std.mem.Allocator, raw: []const u8) !Tool {
         const v = try json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true });
         const obj = switch (v) {
             .object => |o| o,
             else => return error.DescriptorNotObject,
         };
+        // Read before anything else: a descriptor written against a schema
+        // this build does not know may spell a familiar key differently, so
+        // parsing the rest of it under v1 rules would load a tool whose policy
+        // is not what its author wrote. Refusing is the safe half of the
+        // forward-compatibility deal the version key exists to make.
+        var version: i64 = manifest.current_version;
+        if (obj.get("manifest_version")) |mv| {
+            if (mv != .integer) return error.ManifestVersionNotInteger;
+            version = mv.integer;
+            if (version < manifest.min_version or version > manifest.current_version)
+                return error.UnsupportedManifestVersion;
+        }
+
         const description = try strField(obj, "description");
         var t = Tool{
+            .manifest_version = version,
             .name = try strField(obj, "name"),
             .description = description,
             // Falls back to the full description until the manifest carries
@@ -665,7 +712,9 @@ test "registry loads descriptors" {
     const reg = try Registry.load(io, arena, tmp.dir, "tools");
     const tool = reg.get("calculator").?;
     try std.testing.expectEqualStrings("calculator", tool.name);
-    try std.testing.expectEqualStrings("calculator.wasm", tool.wasm);
+    // Bare name: resolved beside the manifest, so a self-contained plugin
+    // directory works wherever clanker is run from (see resolveWasmPath).
+    try std.testing.expectEqualStrings("tools/calculator.wasm", tool.wasm);
     try std.testing.expectEqual(@as(usize, 1), tool.network_allow.len);
     try std.testing.expectEqualStrings("api.example.com", tool.network_allow[0]);
     try std.testing.expectEqual(@as(u64, 0), tool.fuel); // unset: sandbox default
@@ -899,34 +948,23 @@ test "a tool that calls the model says so in its descriptor" {
     // Every guest helper that reaches a model. `lib.llmSystem` and
     // `lib.llmMany` were missing, so `arena` (which only ever calls
     // llmSystem) and `compare` (llmMany) were both invisible to this check —
-    // the exact hole it exists to close. A helper added to lib.zig without a
-    // line here silently re-opens it.
-    const calls = [_][]const u8{
-        "lib.llm(",
-        "lib.llmWith(",
-        "lib.llmSystem(",
-        "lib.llmMany(",
-        "lib.subagent(",
-        "lib.subagentBriefed(",
-    };
-
+    // the exact hole it exists to close. The list lives in manifest.zig
+    // because `clanker plugins validate` applies the same rule to a
+    // third-party plugin directory; a helper added to lib.zig without a line
+    // there silently re-opens the hole in both places at once.
     var it = src_dir.iterate();
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
         const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
 
-        var calls_model = false;
-        for (calls) |c| {
-            if (std.mem.find(u8, body, c) != null) calls_model = true;
-        }
-        if (!calls_model) continue;
+        if (!manifest.sourceCallsModel(body)) continue;
 
         const stem = entry.name[0 .. entry.name.len - ".zig".len];
-        const manifest = try std.fmt.allocPrint(arena, "{s}.tool.json", .{stem});
-        const raw = man_dir.readFileAlloc(io, manifest, arena, .limited(1 << 20)) catch continue;
+        const manifest_name = try std.fmt.allocPrint(arena, "{s}.tool.json", .{stem});
+        const raw = man_dir.readFileAlloc(io, manifest_name, arena, .limited(1 << 20)) catch continue;
         const t = try Registry.parseDescriptor(arena, raw);
         if (!t.llm and !t.sequential) {
-            std.debug.print("{s} calls the model but its descriptor sets neither llm nor sequential\n", .{manifest});
+            std.debug.print("{s} calls the model but its descriptor sets neither llm nor sequential\n", .{manifest_name});
             return error.ModelCallerNotDeclared;
         }
     }
@@ -1005,6 +1043,105 @@ test "descriptor turn_hook flag parses and defaults off" {
     ;
     const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(!b.turn_hook);
+}
+
+test "a manifest with no version is v1, and an unknown version is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The ~90 manifests in this repo are all of this shape. Absence of the
+    // key has to keep meaning v1 forever, or adding the key breaks every one
+    // of them at once.
+    const implicit = try Registry.parseDescriptor(arena,
+        \\{ "name": "old", "description": "d", "wasm": "o.wasm" }
+    );
+    try std.testing.expectEqual(manifest.current_version, implicit.manifest_version);
+
+    const explicit = try Registry.parseDescriptor(arena,
+        \\{ "manifest_version": 1, "name": "new", "description": "d", "wasm": "n.wasm" }
+    );
+    try std.testing.expectEqual(@as(i64, 1), explicit.manifest_version);
+
+    // A descriptor from a newer clanker is not read under this build's rules:
+    // a key it spells differently would silently become a different policy.
+    try std.testing.expectError(error.UnsupportedManifestVersion, Registry.parseDescriptor(arena,
+        \\{ "manifest_version": 2, "name": "future", "description": "d", "wasm": "f.wasm" }
+    ));
+    try std.testing.expectError(error.ManifestVersionNotInteger, Registry.parseDescriptor(arena,
+        \\{ "manifest_version": "1", "name": "junk", "description": "d", "wasm": "j.wasm" }
+    ));
+}
+
+test "a bare wasm name resolves beside its manifest; a path never moves" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // What a third-party package looks like: one directory holding the
+    // manifest and the module, with no idea what clanker's cwd will be.
+    try tmp.dir.createDirPath(io, "vendor/hello");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "vendor/hello/hello.tool.json",
+        .data =
+        \\{ "name": "hello", "description": "d", "wasm": "hello.wasm", "input_schema": {"type":"object"} }
+        ,
+    });
+    // An in-tree manifest names a path from the repo root and must keep
+    // meaning exactly that.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "vendor/hello/rooted.tool.json",
+        .data =
+        \\{ "name": "rooted", "description": "d", "wasm": "zig-out/tools/rooted.wasm", "input_schema": {"type":"object"} }
+        ,
+    });
+
+    const reg = try Registry.load(io, arena, tmp.dir, "vendor/hello");
+    try std.testing.expectEqualStrings("vendor/hello/hello.wasm", reg.get("hello").?.wasm);
+    try std.testing.expectEqualStrings("zig-out/tools/rooted.wasm", reg.get("rooted").?.wasm);
+
+    // A trailing slash on tools_dir must not double up.
+    try std.testing.expectEqualStrings(
+        "vendor/hello/hello.wasm",
+        try Registry.resolveWasmPath(arena, "vendor/hello/", "hello.wasm"),
+    );
+}
+
+test "every shipped manifest validates clean, warnings included" {
+    // The loader is deliberately forgiving, so a typo'd key or a dead grant
+    // costs nothing at load and shows up as a tool that quietly does not work.
+    // This is the gate that keeps the repo's own manifests honest against the
+    // format `clanker plugins validate` holds third parties to.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer dir.close(io);
+
+    var bad: usize = 0;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+        const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const rep = try manifest.validate(arena, entry.name, raw);
+        if (rep.findings.len == 0) continue;
+        bad += 1;
+        std.debug.print("{s}", .{try rep.render(arena)});
+    }
+    if (bad > 0) return error.ManifestNotClean;
 }
 
 test "turnHookTools returns only enabled turn_hook tools, sorted by name" {

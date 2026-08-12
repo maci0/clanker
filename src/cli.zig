@@ -8,6 +8,7 @@ const providers = @import("llm/providers.zig");
 const types = @import("llm/types.zig");
 const agent = @import("agent/loop.zig");
 const registry = @import("tools/registry.zig");
+const manifest_mod = @import("tools/manifest.zig");
 const scorers = @import("evals/scorers.zig");
 const eval_runner = @import("evals/runner.zig");
 const improve = @import("improve/engine.zig");
@@ -95,6 +96,9 @@ pub const Command = enum {
     arena,
     compare,
     workflow,
+    /// `plugins list|validate|new`: the third-party side of the tool
+    /// registry. `src/tools/manifest.zig` is the schema it enforces.
+    plugins,
     schedule,
 };
 
@@ -165,6 +169,10 @@ pub const Options = struct {
     workflow_sub: ?[]const u8 = null,
     workflow_name: ?[]const u8 = null,
     workflow_args: ?[]const u8 = null,
+    /// `plugins`: "list" (default), "validate" or "new". `plugin_target` is
+    /// the manifest/directory for validate, and the new tool's name for new.
+    plugins_sub: ?[]const u8 = null,
+    plugin_target: ?[]const u8 = null,
     /// `arena`: the two stances, and who argues them. A side with no provider
     /// of its own falls back to `--provider`, then to the configured default —
     /// so the same model arguing both sides needs no flags at all.
@@ -580,6 +588,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
                 opts.command = .compare;
             } else if (std.mem.eql(u8, a, "gate")) {
                 opts.command = .gate;
+            } else if (std.mem.eql(u8, a, "plugins") or std.mem.eql(u8, a, "plugin")) {
+                opts.command = .plugins;
             } else if (std.mem.eql(u8, a, "workflow") or std.mem.eql(u8, a, "workflows")) {
                 opts.command = .workflow;
             } else if (std.mem.eql(u8, a, "schedule")) {
@@ -666,6 +676,15 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
             opts.room = a;
         } else if (opts.command == .chat and opts.message == null) {
             opts.message = a;
+        } else if (opts.command == .plugins) {
+            if (opts.plugins_sub == null) {
+                opts.plugins_sub = a;
+            } else if (opts.plugin_target == null) {
+                opts.plugin_target = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
         } else if (opts.command == .schedule) {
             // Positional-only: <sub> then up to two arguments whose meaning
             // depends on it (add takes a spec and a task, the rest an id).
@@ -1124,6 +1143,7 @@ const specs = [_]Spec{
     .{ .command = .graph, .usage = "graph [run-id]", .blurb = "list runs, or draw one as a timeline", .group = .inspect },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect },
     .{ .command = .tools_list, .usage = "tools list", .blurb = "list the registered WASM tools", .group = .inspect },
+    .{ .command = .plugins, .usage = "plugins [list|validate [path]|new <name>]", .blurb = "list plugins, check a manifest, or scaffold a new tool", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, caps it at\n                agent.provider_check_timeout_seconds, and ends with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the public models.dev directory by id/family\nfill <name>     print models.dev specs for a configured provider's models" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -1209,6 +1229,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .arena => try cmdArena(init, opts),
         .compare => try cmdCompare(init, opts),
         .workflow => try cmdWorkflow(init, opts),
+        .plugins => try cmdPlugins(init, opts),
         .schedule => try cmdSchedule(init, opts),
     }
 }
@@ -1301,7 +1322,23 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
         try writeStdErr(io, "--- ");
         try writeStdErr(io, result.label);
         try writeStdErr(io, " output ---\n");
-        try writeStdErr(io, result.detail);
+        // Head and tail, not one or the other: `zig build test --summary all`
+        // prints the failing test's diagnostics first and then a step tree of
+        // every target, which on this repo is tens of kilobytes on its own. A
+        // tail alone is all tree and no reason; a head alone misses a failure
+        // reported late. Raw stderr has no 4096-byte ceiling to work around,
+        // so this cap is only about keeping a CI log readable.
+        const head_len = 32 * 1024;
+        const tail_len = 64 * 1024;
+        const d = result.detail;
+        if (d.len <= head_len + tail_len) {
+            try writeStdErr(io, d);
+        } else {
+            var elided: [64]u8 = undefined;
+            try writeStdErr(io, d[0..head_len]);
+            try writeStdErr(io, std.fmt.bufPrint(&elided, "\n... [{d} bytes elided] ...\n", .{d.len - head_len - tail_len}) catch "\n... [elided] ...\n");
+            try writeStdErr(io, d[d.len - tail_len ..]);
+        }
         if (!std.mem.endsWith(u8, result.detail, "\n")) try writeStdErr(io, "\n");
     }
     return error.GateFailed;
@@ -3111,6 +3148,197 @@ fn cmdToolsList(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     try printInternalTool(init, &cfg, "cmd_tools", "");
+}
+
+/// `clanker plugins [list|validate [path]|new <name>]`.
+///
+/// The third-party half of the plugin surface: `list` is the same view
+/// `/plugins` gives in the REPL (the cmd_plugins guest owns it, so there is one
+/// implementation), while `validate` and `new` are what someone packaging a
+/// tool outside this repo needs and had no way to do.
+fn cmdPlugins(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const sub = opts.plugins_sub orelse "list";
+
+    if (std.mem.eql(u8, sub, "list")) {
+        if (opts.plugin_target != null) usageExit(io, "plugins list takes no arguments", .{});
+        return printInternalTool(init, &cfg, "cmd_plugins", "");
+    }
+    if (std.mem.eql(u8, sub, "validate")) {
+        return pluginsValidate(init, opts.plugin_target orelse cfg.agent.tools_dir);
+    }
+    if (std.mem.eql(u8, sub, "new")) {
+        const name = opts.plugin_target orelse
+            usageExit(io, "plugins new needs a tool name: clanker plugins new word_count", .{});
+        return pluginsNew(init, cfg.agent.tools_dir, name);
+    }
+    usageExit(io, "unknown plugins subcommand '{s}' (list, validate, new)", .{sub});
+}
+
+/// A usage mistake caught after parsing: same message shape and same exit code
+/// (2) `cli.parse`'s own diagnostics use, so a script can still tell "typed it
+/// wrong" from "the machine could not do it".
+fn usageExit(io: std.Io, comptime fmt: []const u8, args: anytype) noreturn {
+    printUsageError(io, fmt, args);
+    printUsageHint(io);
+    std.process.exit(2);
+}
+
+/// Validate one manifest or a whole directory of them, and exit non-zero if
+/// any of them is wrong, so this can guard a release script the way `doctor`
+/// does. Warnings are printed but do not fail: a key that loads and does
+/// nothing is worth saying out loud without blocking a build over it.
+fn pluginsValidate(init: std.process.Init, path: []const u8) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    var files: std.ArrayList([]const u8) = .empty;
+    var base: []const u8 = "";
+    if (std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true })) |opened| {
+        var dir = opened;
+        defer dir.close(io);
+        base = std.mem.trimEnd(u8, path, "/");
+        var it = dir.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+            try files.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ base, entry.name }));
+        }
+        std.mem.sort([]const u8, files.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        if (files.items.len == 0) usageExit(io, "no *.tool.json manifests in '{s}'", .{path});
+    } else |_| {
+        // Not a directory: a single manifest, which is what an author editing
+        // one file wants to check.
+        try files.append(arena, path);
+        base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| path[0..slash] else "";
+    }
+
+    var errors: usize = 0;
+    var warnings: usize = 0;
+    for (files.items) |file| {
+        const raw = std.Io.Dir.cwd().readFileAlloc(io, file, arena, .limited(1 << 20)) catch |err| {
+            var buf: [512]u8 = undefined;
+            const line = std.fmt.bufPrint(&buf, "{s}: error: cannot read: {s}\n", .{ file, @errorName(err) }) catch "error: cannot read manifest\n";
+            try writeStdOut(io, line);
+            errors += 1;
+            continue;
+        };
+        var rep = try manifest_mod.validate(arena, file, raw);
+        rep.findings = try withCrossChecks(io, arena, base, file, raw, rep.findings);
+        errors += rep.errorCount();
+        warnings += rep.warningCount();
+        if (rep.findings.len > 0) try writeStdOut(io, try rep.render(arena));
+    }
+
+    var buf: [256]u8 = undefined;
+    const summary = std.fmt.bufPrint(&buf, "{d} manifest(s) checked, {d} error(s), {d} warning(s)\n", .{ files.items.len, errors, warnings }) catch "checked\n";
+    try writeStdOut(io, summary);
+    if (errors > 0) std.process.exit(1);
+}
+
+/// The two checks that need more than the manifest's own bytes: does the
+/// module it names exist, and does a guest that calls the model say so.
+///
+/// The second is the same rule `registry.zig`'s conformance test enforces for
+/// this repo, applied where a third party can actually see it — an undeclared
+/// model caller runs on the parallel worker pool and races the shared
+/// access-token cache, which is a crash in someone else's tool, not theirs.
+fn withCrossChecks(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    base: []const u8,
+    file: []const u8,
+    raw: []const u8,
+    findings: []const manifest_mod.Finding,
+) ![]const manifest_mod.Finding {
+    var out: std.ArrayList(manifest_mod.Finding) = .empty;
+    try out.appendSlice(arena, findings);
+
+    const tool = registry.Registry.parseDescriptor(arena, raw) catch return out.items;
+
+    // `resolveWasmPath`'s rule, applied where the manifest actually sits: a
+    // bare name lives beside its manifest, a path is read from the repo root.
+    const wasm_path = if (tool.wasm.len == 0 or std.mem.findScalar(u8, tool.wasm, '/') != null or base.len == 0)
+        tool.wasm
+    else
+        try std.fmt.allocPrint(arena, "{s}/{s}", .{ base, tool.wasm });
+    if (tool.wasm.len > 0) {
+        if (std.Io.Dir.cwd().statFile(io, wasm_path, .{})) |_| {} else |_| {
+            try out.append(arena, .{
+                .severity = .warn,
+                .key = "wasm",
+                .message = try std.fmt.allocPrint(arena, "'{s}' is not on disk (run `zig build tools`, or ship the module beside the manifest)", .{wasm_path}),
+            });
+        }
+    }
+
+    // The guest source, if it travels with the manifest: `tools/manifests/x`
+    // beside `tools/zig/x.zig` in this repo, or both in one directory for a
+    // package someone unpacked.
+    const name_start = if (std.mem.lastIndexOfScalar(u8, file, '/')) |slash| slash + 1 else 0;
+    if (file.len < name_start + ".tool.json".len) return out.items;
+    const stem = file[name_start .. file.len - ".tool.json".len];
+    const candidates = [_][]const u8{
+        try std.fmt.allocPrint(arena, "{s}/{s}.zig", .{ base, stem }),
+        try std.fmt.allocPrint(arena, "{s}/../zig/{s}.zig", .{ base, stem }),
+    };
+    for (candidates) |src_path| {
+        const body = std.Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(1 << 20)) catch continue;
+        if (manifest_mod.sourceCallsModel(body) and !tool.llm and !tool.sequential) {
+            try out.append(arena, .{
+                .severity = .err,
+                .key = "llm",
+                .message = try std.fmt.allocPrint(
+                    arena,
+                    "{s} calls the model, so the descriptor must set \"llm\": true (or at least \"sequential\": true) to stay off the parallel worker pool",
+                    .{src_path},
+                ),
+            });
+        }
+        break;
+    }
+    return out.items;
+}
+
+/// Scaffold a manifest and a guest source file that build and validate as
+/// they stand. Refuses to overwrite either: a scaffolder that clobbers is a
+/// scaffolder nobody runs twice.
+fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    const manifest_text = manifest_mod.scaffoldManifest(arena, name) catch
+        usageExit(io, "'{s}' is not a usable tool name (lowercase letters, digits and underscores)", .{name});
+    const guest_text = try manifest_mod.scaffoldGuest(arena, name);
+
+    const manifest_path = try std.fmt.allocPrint(arena, "{s}/{s}.tool.json", .{ std.mem.trimEnd(u8, tools_dir, "/"), name });
+    const guest_path = try std.fmt.allocPrint(arena, "tools/zig/{s}.zig", .{name});
+
+    for ([_][]const u8{ manifest_path, guest_path }) |p| {
+        if (std.Io.Dir.cwd().statFile(io, p, .{})) |_| {
+            usageExit(io, "{s} already exists; pick another name or delete it first", .{p});
+        } else |_| {}
+    }
+
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), manifest_path, manifest_text);
+    try atomic_write.writeFile(io, std.Io.Dir.cwd(), guest_path, guest_text);
+
+    var buf: [1024]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf,
+        \\wrote {s}
+        \\wrote {s}
+        \\
+        \\Next: fill in the description and the schema, implement tool_main, then
+        \\  zig build tools && clanker plugins validate {s}
+        \\
+    , .{ manifest_path, guest_path, manifest_path }) catch "scaffolded\n";
+    try writeStdOut(io, msg);
 }
 
 fn cmdEval(init: std.process.Init, opts: Options) !void {

@@ -313,7 +313,7 @@ dependency cache location is controlled by the Zig installation/environment.
 
 - `tools/zig/` — Zig tool sources.
 - `tools/ts/` — AssemblyScript tool sources.
-- `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`).
+- `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
 - `tools/bin/` — committed AssemblyScript artifacts (compiled JS/WASM).
 
@@ -398,10 +398,11 @@ Internal tools, never offered to the model:
 
 ## Plugins
 
-Every tool is a WASM plugin; the descriptor decides how much of the harness it gets.
+Every tool is a WASM plugin; the descriptor decides how much of the harness it gets. **[docs/manifest.md](manifest.md) is the full field reference** — every key the harness honors, what happens when one is wrong, and how to package a plugin that does not live in this repo. The table below is the shortlist.
 
 | Descriptor key | Meaning |
 |----------------|---------|
+| `manifest_version` | Schema version. Absent means 1; a version this build does not know is refused rather than read under v1 rules |
 | `internal` | Hidden from the model's tool catalog (slash commands, the web UI, transforms) |
 | `enabled` | Default on/off state; ships `false` for anything that spends tokens on its own |
 | `llm` | May call the model through `ck_llm`; forces sequential execution |
@@ -409,9 +410,14 @@ Every tool is a WASM plugin; the descriptor decides how much of the harness it g
 | `config` | Free-form settings object, returned to the guest by `ck_config` |
 | `transform` | Marks the tool as a chain link: `{ "phase": "before"\|"after", "tools": ["*"], "order": 50 }` |
 | `network_from_config` | `"peers"` or `"providers"`: the harness adds those configured hosts to `network_allow` at load |
-| `exec_allow` | Commands this tool may run through `ck_exec`; replaces the harness default set |
+| `exec_allow` | Commands this tool may run through `ck_exec`, matched against `argv[0]` exactly. Empty is no exec at all, not a default set |
 | `fs_prefixes` / `network_allow` | Filesystem and network authority |
 | `fuel` | Instruction budget for one call (wasm fuel). Tightens the sandbox default (10B); values above it are clamped down, so a descriptor can never raise its own ceiling |
+
+Check a manifest against all of it with `clanker plugins validate` (one file, or
+every `*.tool.json` in a directory), and start a new tool with `clanker plugins
+new <name>`, which writes a manifest and a Zig guest that build and validate as
+they stand.
 
 ### Switching plugins on and off
 
@@ -425,7 +431,7 @@ Two descriptor keys widen a tool's reach, both opt-in per tool:
 
 `network_from_config` solves a problem a descriptor cannot: peer and provider hosts live in `config.toml`, so no static `network_allow` can name them. A tool that sets `"network_from_config": "peers"` gets the configured peer hosts added to its allowlist at load, and adding a peer to config is enough. The `peers` tool uses this to scan agent cards and post notifications.
 
-`exec_allow` replaces the harness's default `ck_exec` set (`git`, `rg`, `ast-grep`, `semcode`, `zig`) with a narrower one. The `opencv` tool declares `"exec_allow": ["uv"]`, so it can run exactly one binary and not, say, `git`.
+`exec_allow` is the complete list of commands a tool may run through `ck_exec`, matched against `argv[0]` exactly. There is no default set to narrow: a tool that names nothing gets no exec at all (`host.execAllowed`). The `opencv` tool declares `"exec_allow": ["uv"]`, so it can run exactly one binary and not, say, `git`.
 
 The `opencv` tool is the shape to copy when a capability has no in-process WASM binding: a `wasm32-freestanding` guest cannot link OpenCV, so the tool shells out to `tools/py/opencv_tool.py` and `uv run --with` supplies `cv2` in a throwaway environment, leaving the host untouched. Path traversal is refused in the guest before the script ever sees the path, and written images land under `state/opencv/`.
 
