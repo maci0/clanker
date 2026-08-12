@@ -1,0 +1,42 @@
+{
+  "chat": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "board": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "goals": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "runs": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "fleet": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "rooms": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "tools": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  },
+  "system": {
+    "critical": 0,
+    "total": 0,
+    "violations": []
+  }
+}

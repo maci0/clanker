@@ -24,7 +24,8 @@ through a gated loop. Follow these conventions when changing this codebase.
 
 ## Architecture
 
-- `src/llm/` — provider adapters (openai_compat, anthropic) + HTTP client.
+- `src/llm/` — the shared HTTP client, provider request/response encoding,
+  provider configuration helpers, and Vertex authentication.
 - `src/sandbox/` — zwasm runtime wrapper + `ck_*` host functions + policy.
 - `src/agent/` — the agent loop, system prompt assembly, session store,
   execution graphs, sub-agents, autolearn.

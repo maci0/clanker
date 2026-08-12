@@ -172,10 +172,14 @@ Proposals are applied via exact-match `old` → `new` replacements, through the 
 
 ## WASM tool ABI
 
-Each tool is a WebAssembly module compiled to `wasm32-freestanding` with these exports:
-- `scratch`: a mutable memory region for scratch data.
-- `host_arena`: a larger memory region for results.
-- `run`: the entry point that takes input and writes output.
+Each tool is a WebAssembly module compiled to `wasm32-freestanding` with these
+exports:
+
+- `scratch(need) -> u32`: reserve guest memory for the JSON input and return
+  its address.
+- `host_arena() -> u32`: return the address of the guest's host-result arena.
+- `run(ptr, len) -> u64`: process the input bytes and return the output address
+  and length packed as `(out_ptr << 32) | out_len`.
 
 The guest imports `env.ck_*` functions listed above. The host writes the tool result into the host arena, and the guest reads it back via `ck_result`.
 
@@ -192,7 +196,11 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
 | `state/` | — | Runtime only, gitignored: `history/`, `logs/`, `runs/`, `sessions/`, `staging/` |
 
-Under `src/`, every module lives in a subsystem directory; only `main.zig`, `cli.zig`, and `config.zig` sit at the top. Build output (`zig-out/`), the fetched dependency cache (`zig-pkg/`), and `.zig-cache/` are generated and gitignored.
+Under `src/`, subsystem code lives in subsystem directories. The executable
+entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
+`config.zig`, `doctor.zig`, and `janitor.zig`—sit directly under `src/`. Build
+output (`zig-out/`) and `.zig-cache/` are generated and gitignored; Zig's
+dependency cache location is controlled by the Zig installation/environment.
 
 ## Tool layout
 
